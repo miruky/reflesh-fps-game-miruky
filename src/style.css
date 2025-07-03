@@ -235,6 +235,20 @@ button {
   grid-template-columns: auto 1fr;
 }
 
+.setting-row select {
+  grid-column: 2 / 4;
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.setting-row select option {
+  background: var(--bg);
+}
+
 .setting-value {
   text-align: right;
   color: var(--text-dim);
@@ -808,6 +822,15 @@ button {
 .hud-death-sub {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+}
+
+.hud-killcam {
+  font-size: 12px;
+  letter-spacing: 0.25em;
+  color: var(--accent);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 3px 10px;
 }
 
 .hud-scoreboard {
