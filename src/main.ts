@@ -71,6 +71,15 @@ function applyUiScale(): void {
 }
 applyUiScale();
 
+// UIのアクセント色は :root の data-accent で切り替える。既定の ember は
+// 素の :root が持つので属性を外す
+function applyAccent(): void {
+  const root = document.documentElement;
+  if (settings.uiAccent === 'ember') root.removeAttribute('data-accent');
+  else root.setAttribute('data-accent', settings.uiAccent);
+}
+applyAccent();
+
 let match: Match | null = null;
 let mode: 'menu' | 'playing' | 'paused' | 'result' = 'menu';
 let lastSelection: MenuSelection | null = null;
@@ -115,6 +124,7 @@ const menu = new Menu(menuRoot, settings, profile, {
   onSettingsChanged: () => {
     sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi);
     applyUiScale();
+    applyAccent();
   },
 });
 
