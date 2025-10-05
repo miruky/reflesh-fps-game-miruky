@@ -973,3 +973,144 @@ button {
   opacity: 0;
   pointer-events: none;
 }
+
+/* ---------------- モード・目標スコア ---------------- */
+
+.mode-list {
+  display: grid;
+  gap: 10px;
+}
+
+.mode-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.15s;
+}
+
+.mode-card:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.mode-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.mode-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.mode-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.hud-objective {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.hud-teamscore {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+
+.ts-mine {
+  color: #7fb0ff;
+}
+
+.ts-enemy {
+  color: #ff8a76;
+}
+
+.ts-target {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-dim);
+  letter-spacing: 0.2em;
+}
+
+.hud-zones {
+  display: flex;
+  gap: 6px;
+}
+
+.hud-zone-pill {
+  width: 26px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text);
+}
+
+.hud-zone-pill.zone-mine {
+  background: rgba(63, 127, 212, 0.75);
+}
+
+.hud-zone-pill.zone-enemy {
+  background: rgba(200, 75, 60, 0.75);
+}
+
+.hud-zone-pill.zone-contested {
+  outline: 1px solid rgba(255, 255, 255, 0.7);
+}
+
+.hud-announce {
+  position: absolute;
+  left: 50%;
+  top: 24%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.hud-announce-row {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+  transition: opacity 0.4s;
+}
+
+.hud-announce-row.announce-out {
+  opacity: 0;
+}
+
+.score-ally td {
+  color: #9cc1f7;
+}
+
+.result-mode {
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  color: var(--text-dim);
+}
+
+.result-teamscore {
+  font-size: 26px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
