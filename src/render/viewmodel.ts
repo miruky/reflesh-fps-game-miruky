@@ -43,10 +43,11 @@ export class ViewModel {
 
   setWeapon(def: WeaponDef): void {
     if (this.gun) this.root.remove(this.gun);
-    let entry = this.cache.get(def.id);
+    const key = `${def.id}:${(def.attachmentIds ?? []).join(',')}`;
+    let entry = this.cache.get(key);
     if (!entry) {
       entry = this.buildGun(def);
-      this.cache.set(def.id, entry);
+      this.cache.set(key, entry);
     }
     this.gun = entry.gun;
     this.muzzle = entry.muzzle;
@@ -61,7 +62,16 @@ export class ViewModel {
     const darker = new THREE.MeshStandardMaterial({ color: 0x1d1f24, roughness: 0.5 });
     const accent = new THREE.MeshStandardMaterial({ color: def.tracerColor, roughness: 0.35 });
 
-    const long = def.id === 'yamasemi-dmr' ? 1.25 : def.id === 'suzume' ? 0.65 : 1;
+    const long =
+      def.id === 'yamasemi-dmr'
+        ? 1.25
+        : def.id === 'suzume'
+          ? 0.65
+          : def.id === 'kumagera-lmg'
+            ? 1.15
+            : def.id === 'hiiragi-sg'
+              ? 1.1
+              : 1;
 
     const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.095, 0.34 * long), dark);
     const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.034, 0.24 * long), darker);
@@ -79,9 +89,25 @@ export class ViewModel {
     rearRight.position.x = 0.018;
     gun.add(receiver, barrel, grip, stripe, frontSight, rearLeft, rearRight);
 
-    if (def.id !== 'suzume') {
-      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.13, 0.07), dark);
-      mag.position.set(0, -0.11, -0.04);
+    const attachments = def.attachmentIds ?? [];
+    const extendedMag = attachments.includes('extended');
+
+    if (def.id === 'kumagera-lmg') {
+      // LMGは箱型弾倉を下に吊る
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.11, 0.13), dark);
+      box.position.set(0, -0.1, -0.05);
+      gun.add(box);
+    } else if (def.id === 'hiiragi-sg') {
+      // ショットガンはチューブ弾倉とフォアエンド
+      const tube = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.22 * long), darker);
+      tube.position.set(0, -0.025, -0.24 * long);
+      const forend = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.045, 0.12), dark);
+      forend.position.set(0, -0.03, -0.16);
+      gun.add(tube, forend);
+    } else if (def.id !== 'suzume') {
+      const magHeight = extendedMag ? 0.18 : 0.13;
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.045, magHeight, 0.07), dark);
+      mag.position.set(0, extendedMag ? -0.135 : -0.11, -0.04);
       mag.rotation.x = -0.15;
       gun.add(mag);
     }
@@ -92,8 +118,43 @@ export class ViewModel {
       gun.add(scope);
     }
 
+    if (attachments.includes('reflex')) {
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), darker);
+      frame.position.set(0, 0.075, 0.05);
+      const lens = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.034, 0.034),
+        new THREE.MeshBasicMaterial({
+          color: 0x7ad1ff,
+          transparent: true,
+          opacity: 0.35,
+          side: THREE.DoubleSide,
+        }),
+      );
+      lens.position.set(0, 0.075, 0.038);
+      gun.add(frame, lens);
+    }
+    if (attachments.includes('telescopic') && def.id !== 'yamasemi-dmr') {
+      const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.14), darker);
+      scope.rotation.x = Math.PI / 2;
+      scope.position.set(0, 0.08, 0.0);
+      gun.add(scope);
+    }
+    if (attachments.includes('suppressor')) {
+      const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.14), darker);
+      tube.rotation.x = Math.PI / 2;
+      tube.position.set(0, 0.012, -0.45 * long);
+      gun.add(tube);
+    }
+    if (attachments.includes('vertical') || attachments.includes('angled')) {
+      const foregrip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.09, 0.05), darker);
+      foregrip.position.set(0, -0.085, -0.2 * long);
+      if (attachments.includes('angled')) foregrip.rotation.x = 0.5;
+      gun.add(foregrip);
+    }
+
     const muzzle = new THREE.Object3D();
-    muzzle.position.set(0, 0.012, -0.4 * long);
+    const muzzleZ = attachments.includes('suppressor') ? -0.52 * long : -0.4 * long;
+    muzzle.position.set(0, 0.012, muzzleZ);
     gun.add(muzzle);
     return { gun, muzzle };
   }
@@ -122,8 +183,10 @@ export class ViewModel {
   ): void {
     const ads = state.adsProgress;
 
-    const swayTargetX = THREE.MathUtils.clamp(-state.mouseDX * 0.0011, -0.03, 0.03) * (1 - ads * 0.85);
-    const swayTargetY = THREE.MathUtils.clamp(state.mouseDY * 0.0011, -0.03, 0.03) * (1 - ads * 0.85);
+    const swayTargetX =
+      THREE.MathUtils.clamp(-state.mouseDX * 0.0011, -0.03, 0.03) * (1 - ads * 0.85);
+    const swayTargetY =
+      THREE.MathUtils.clamp(state.mouseDY * 0.0011, -0.03, 0.03) * (1 - ads * 0.85);
     this.swayX += (swayTargetX - this.swayX) * Math.min(1, dt * 10);
     this.swayY += (swayTargetY - this.swayY) * Math.min(1, dt * 10);
 
