@@ -34,6 +34,14 @@ const input = new Input();
 input.attach(renderer.domElement);
 
 const hud = new Hud(hudRoot);
+
+// UIスケールはzoomで反映する。投影座標(ダメージ数値など)は
+// ズーム後の座標系で算出するため、HUDへ渡す画面サイズも同じ倍率で割る
+function applyUiScale(): void {
+  hudRoot!.style.setProperty('zoom', String(settings.uiScale));
+}
+applyUiScale();
+
 let match: Match | null = null;
 let mode: 'menu' | 'playing' | 'paused' | 'result' = 'menu';
 let lastSelection: MenuSelection | null = null;
@@ -77,6 +85,7 @@ const menu = new Menu(menuRoot, settings, profile, {
   },
   onSettingsChanged: () => {
     sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi);
+    applyUiScale();
   },
 });
 
@@ -107,11 +116,13 @@ const loop = new GameLoop(
       match.frame(dt, mode === 'playing');
       if (mode === 'playing') {
         const snap = match.snapshot();
+        const uiW = window.innerWidth / settings.uiScale;
+        const uiH = window.innerHeight / settings.uiScale;
         hud.update(
           snap,
-          window.innerWidth,
-          window.innerHeight,
-          (world) => match!.projectToScreen(world, window.innerWidth, window.innerHeight),
+          uiW,
+          uiH,
+          (world) => match!.projectToScreen(world, uiW, uiH),
           input.isDown('scoreboard'),
         );
         if (match.over) {
