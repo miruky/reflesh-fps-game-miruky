@@ -26,6 +26,17 @@ import {
   type SurfaceRaycast,
   trajectoryPoints,
 } from './grenades';
+import {
+  DominationState,
+  ENEMY_TEAM,
+  MODE_DEFS,
+  PLAYER_TEAM,
+  ScoreBoard,
+  type GameMode,
+  type ModeDef,
+  type TeamId,
+  type ZoneSnapshot,
+} from './modes';
 import { Player } from './player';
 import { generateStage, type StageDef } from './stage';
 import { Weapon, WEAPON_DEFS } from './weapons';
@@ -41,7 +52,11 @@ const BOT_VIEW_DISTANCE = 60;
 const BOT_VIEW_CONE_COS = Math.cos((75 * Math.PI) / 180);
 const BOT_FALLOFF = { start: 14, end: 40, minFactor: 0.6 };
 const BOT_COLOR = 0xc84b3c;
+const ALLY_COLOR = 0x3f7fd4;
 const PLAYER_NAME = 'あなた';
+const ZONE_RADIUS = 3.5;
+const SPECTATE_RADIUS = 5.5;
+const SPECTATE_HEIGHT = 3;
 const ALERT_RADIUS = 35;
 const ALERT_RADIUS_SUPPRESSED = 9;
 // クッキング限界の直前で強制投擲し、手元爆発はさせない
@@ -50,6 +65,7 @@ const FIRE_TICK_S = 0.5;
 
 export interface MatchConfig {
   stage: StageDef;
+  mode: GameMode;
   primaryId: string;
   attachments: string[];
   grenade: GrenadeKind;
@@ -74,6 +90,25 @@ export interface ScoreRow {
   kills: number;
   deaths: number;
   isPlayer: boolean;
+  // チーム戦でプレイヤー側ならtrue。FFAではプレイヤー本人のみtrue
+  isAlly: boolean;
+}
+
+export interface ZoneView {
+  id: string;
+  owner: 'mine' | 'enemy' | null;
+  progress: number;
+  capturing: 'mine' | 'enemy' | null;
+  contested: boolean;
+}
+
+export interface MatchResult {
+  rows: ScoreRow[];
+  won: boolean;
+  accuracy: number;
+  headshots: number;
+  modeName: string;
+  teamScores: { mine: number; enemy: number } | null;
 }
 
 export interface MatchSnapshot {
@@ -100,6 +135,14 @@ export interface MatchSnapshot {
   grenadeCount: number;
   cookRatio: number; // 0=非クッキング、1=強制投擲直前
   whiteout: number; // フラッシュの白飛び 0..1
+  modeName: string;
+  teamBased: boolean;
+  scoreMine: number;
+  scoreEnemy: number; // FFAでは首位の敵スコア
+  scoreTarget: number;
+  zones: ZoneView[]; // ドミネーション以外は空
+  announcements: string[];
+  spectating: boolean;
   feed: FeedEntry[];
   hits: Array<'hit' | 'head' | 'kill'>;
   damageNumbers: DamageNumber[];
@@ -170,6 +213,15 @@ export class Match {
   private lastLookDY = 0;
   private elapsed = 0;
 
+  private readonly modeDef: ModeDef;
+  private readonly scores: ScoreBoard;
+  private readonly domination: DominationState | null;
+  private readonly zoneCenters = new Map<string, THREE.Vector3>();
+  private readonly zoneRings = new Map<string, THREE.Mesh>();
+  private announcements: string[] = [];
+  private deathPos: THREE.Vector3 | null = null;
+  private orbitAngle = 0;
+
   private grenadeKind: GrenadeKind;
   private readonly grenadeCounts: Record<GrenadeKind, number>;
   private cooking = false;
@@ -221,15 +273,27 @@ export class Match {
       incendiary: GRENADE_SPECS.incendiary.carry,
     };
 
-    for (let i = 0; i < config.stage.botCount; i += 1) {
+    this.modeDef = MODE_DEFS[config.mode];
+    this.scores = new ScoreBoard(this.modeDef.scoreTarget);
+
+    // チーム戦は人数の少ない側にプレイヤーが入る
+    const botCount = config.stage.botCount;
+    const allyCount = this.modeDef.teamBased ? Math.floor((botCount - 1) / 2) : 0;
+    for (let i = 0; i < botCount; i += 1) {
       const name = BOT_NAMES[i % BOT_NAMES.length] ?? `BOT-${i}`;
-      const botSpawn = this.botSpawns[i % this.botSpawns.length] ?? new THREE.Vector3();
-      const bot = new Bot(this.physics, name, botSpawn, BOT_COLOR);
+      const team = this.modeDef.teamBased ? (i < allyCount ? PLAYER_TEAM : ENEMY_TEAM) : i + 1;
+      const isAlly = team === PLAYER_TEAM;
+      const spawnList = isAlly ? this.playerSpawns : this.botSpawns;
+      const botSpawn = spawnList[(i + (isAlly ? 1 : 0)) % spawnList.length] ?? new THREE.Vector3();
+      const bot = new Bot(this.physics, name, botSpawn, isAlly ? ALLY_COLOR : BOT_COLOR, team);
       this.tags.set(bot.bodyCollider.handle, { kind: 'bot', bot, part: 'body' });
       this.tags.set(bot.headCollider.handle, { kind: 'bot', bot, part: 'head' });
       this.scene.add(bot.group);
       this.bots.push(bot);
     }
+
+    this.domination = config.mode === 'dom' ? new DominationState(['A', 'B', 'C']) : null;
+    if (this.domination) this.buildZones();
 
     this.effects = new Effects(this.scene);
     this.viewModel = new ViewModel(this.camera);
@@ -306,6 +370,98 @@ export class Match {
     }
   }
 
+  // ドミネーションの拠点を点対称に配置する。リングは所有チームの色に追従する
+  private buildZones(): void {
+    const size = this.config.stage.size;
+    const positions: Array<[string, number, number]> = [
+      ['A', -size * 0.3, size * 0.12],
+      ['B', 0, 0],
+      ['C', size * 0.3, -size * 0.12],
+    ];
+    for (const [id, x, z] of positions) {
+      const center = new THREE.Vector3(x, 0, z);
+      this.zoneCenters.set(id, center);
+
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(ZONE_RADIUS - 0.35, ZONE_RADIUS, 36),
+        new THREE.MeshBasicMaterial({
+          color: 0xb9c2cc,
+          transparent: true,
+          opacity: 0.65,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(x, 0.06, z);
+      this.scene.add(ring);
+      this.zoneRings.set(id, ring);
+
+      const pillar = new THREE.Mesh(
+        new THREE.CylinderGeometry(ZONE_RADIUS * 0.97, ZONE_RADIUS * 0.97, 7, 24, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: 0xb9c2cc,
+          transparent: true,
+          opacity: 0.06,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      pillar.position.set(x, 3.5, z);
+      pillar.userData.zoneId = id;
+      this.scene.add(pillar);
+    }
+  }
+
+  private zoneColor(owner: TeamId | null): number {
+    if (owner === null) return 0xb9c2cc;
+    return owner === PLAYER_TEAM ? ALLY_COLOR : BOT_COLOR;
+  }
+
+  private updateZones(dt: number): void {
+    if (!this.domination) return;
+    const presence = new Map<string, Map<TeamId, number>>();
+    for (const zone of this.domination.zones) {
+      const center = this.zoneCenters.get(zone.id);
+      if (!center) continue;
+      const counts = new Map<TeamId, number>();
+      const countEntity = (pos: THREE.Vector3, team: TeamId) => {
+        const dx = pos.x - center.x;
+        const dz = pos.z - center.z;
+        if (Math.hypot(dx, dz) < ZONE_RADIUS && pos.y < center.y + 3) {
+          counts.set(team, (counts.get(team) ?? 0) + 1);
+        }
+      };
+      if (this.player.alive) countEntity(this.player.position, PLAYER_TEAM);
+      for (const bot of this.bots) {
+        if (bot.alive) countEntity(bot.position, bot.team);
+      }
+      presence.set(zone.id, counts);
+    }
+
+    const points = this.domination.update(dt, presence, (zone, event) => {
+      if (event === 'captured') {
+        const mine = zone.owner === PLAYER_TEAM;
+        this.announcements.push(mine ? `${zone.id}拠点を制圧した` : `${zone.id}拠点を奪われた`);
+        if (mine) this.sounds.capture();
+        else this.sounds.zoneLost();
+      } else {
+        this.announcements.push(`${zone.id}拠点が中立化された`);
+        this.sounds.zoneLost();
+      }
+    });
+    for (const [team, n] of points) this.scores.add(team, n);
+
+    // リングの見た目を所有状態に同期する
+    for (const zone of this.domination.zones) {
+      const ring = this.zoneRings.get(zone.id);
+      if (!ring) continue;
+      const material = ring.material as THREE.MeshBasicMaterial;
+      material.color.setHex(this.zoneColor(zone.owner));
+      material.opacity = zone.contested || zone.capturingTeam !== null ? 0.95 : 0.65;
+    }
+  }
+
   // 固定60Hzで呼ばれるゲームロジック本体
   update(dt: number): void {
     if (this.over) return;
@@ -379,11 +535,15 @@ export class Match {
     this.updateGrenades(dt);
     this.updateFirePatches(dt);
     this.smokeZones = this.smokeZones.filter((zone) => zone.until > this.elapsed);
+    this.updateZones(dt);
 
     this.updateBots(dt);
     this.physics.step();
     this.syncCamera();
     this.handleRespawns();
+
+    // 先取スコア到達で試合終了
+    if (this.scores.winner() !== null) this.over = true;
   }
 
   // 描画フレームごとの処理。視点操作はフレームレートに追従させる
@@ -424,6 +584,10 @@ export class Match {
       this.effects.hideTrajectory();
     }
 
+    // 観戦カメラをゆっくり回し、死亡中は銃を映さない
+    this.orbitAngle += dt * 0.5;
+    this.viewModel.root.visible = this.player.alive;
+
     this.viewModel.update(dt, {
       adsProgress: weapon.adsProgress,
       mouseDX: this.lastLookDX,
@@ -437,6 +601,17 @@ export class Match {
   }
 
   private syncCamera(): void {
+    // 死亡中は倒れた地点を回る観戦カメラに切り替える
+    if (!this.player.alive && this.deathPos) {
+      const focus = this.deathPos.clone().setY(this.deathPos.y + 1);
+      this.camera.position.set(
+        this.deathPos.x + Math.cos(this.orbitAngle) * SPECTATE_RADIUS,
+        this.deathPos.y + SPECTATE_HEIGHT,
+        this.deathPos.z + Math.sin(this.orbitAngle) * SPECTATE_RADIUS,
+      );
+      this.camera.lookAt(focus);
+      return;
+    }
     const eye = this.player.eyePosition;
     this.camera.position.copy(eye);
     this.camera.rotation.y = this.player.yaw;
@@ -471,7 +646,7 @@ export class Match {
     const hit = this.castRay(origin, dir, MELEE_RANGE, this.player.body);
     if (!hit) return;
     const tag = this.tags.get(hit.collider.handle);
-    if (tag?.kind === 'bot' && tag.bot.alive) {
+    if (tag?.kind === 'bot' && tag.bot.alive && tag.bot.team !== PLAYER_TEAM) {
       const point = origin.clone().addScaledVector(dir, hitToi(hit));
       this.applyBotDamage(tag.bot, MELEE_DAMAGE, point, false, '近接');
     }
@@ -621,7 +796,7 @@ export class Match {
 
   private applyExplosionDamage(spec: (typeof GRENADE_SPECS)['frag'], point: THREE.Vector3): void {
     for (const bot of this.bots) {
-      if (!bot.alive) continue;
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
       const center = bot.position;
       const dist = Math.min(center.distanceTo(point), bot.headPosition().distanceTo(point));
       const damage = explosionDamage(spec, dist);
@@ -645,6 +820,7 @@ export class Match {
             headshot: false,
           });
           this.sounds.death();
+          this.notePlayerDeath();
         }
       }
     }
@@ -691,7 +867,7 @@ export class Match {
         const spec = GRENADE_SPECS.incendiary;
         const tickDamage = spec.maxDamage * FIRE_TICK_S;
         for (const bot of this.bots) {
-          if (bot.alive && this.insidePatch(patch, bot.position)) {
+          if (bot.alive && bot.team !== PLAYER_TEAM && this.insidePatch(patch, bot.position)) {
             this.applyBotDamage(bot, tickDamage, bot.position, false, spec.name);
           }
         }
@@ -708,6 +884,7 @@ export class Match {
               headshot: false,
             });
             this.sounds.death();
+            this.notePlayerDeath();
           }
         }
       }
@@ -797,6 +974,8 @@ export class Match {
 
       const tag = this.tags.get(hit.collider.handle);
       if (tag?.kind === 'bot' && tag.bot.alive) {
+        // 味方への誤射はダメージなしで弾が止まる
+        if (tag.bot.team === PLAYER_TEAM) return;
         const distance = traveled + hitToi(hit);
         let part: HitPart = tag.part;
         if (part === 'body') {
@@ -858,6 +1037,7 @@ export class Match {
     if (died) {
       this.player.kills += 1;
       this.player.streak += 1;
+      this.addKillScore(PLAYER_TEAM);
       this.hits.push('kill');
       this.feed.push({ killer: PLAYER_NAME, victim: bot.name, weapon: weaponName, headshot });
       this.sounds.kill();
@@ -878,29 +1058,86 @@ export class Match {
 
   private updateBots(dt: number): void {
     const tuning = DIFFICULTY[this.config.difficulty];
-    const playerEye = this.player.alive ? this.player.eyePosition : null;
     for (const bot of this.bots) {
-      let sees = false;
-      if (playerEye && bot.alive && bot.blind <= 0) {
-        const toPlayer = playerEye.clone().sub(bot.headPosition());
-        const distance = toPlayer.length();
-        if (distance < BOT_VIEW_DISTANCE && !this.smokeBlocks(bot.headPosition(), playerEye)) {
-          const dirNorm = toPlayer.clone().normalize();
-          const inCone = bot.alert > 0 || bot.facing().dot(dirNorm) > BOT_VIEW_CONE_COS;
-          if (inCone) {
-            const hit = this.castRay(bot.headPosition(), dirNorm, distance - 0.2, bot.body);
-            sees = hit === null || this.tags.get(hit.collider.handle)?.kind === 'player';
-          }
-        }
-      }
+      const targetEye = bot.alive && bot.blind <= 0 ? this.findTargetFor(bot) : null;
       bot.update(dt, {
-        playerEye,
-        seesPlayer: sees,
+        targetEye,
+        objective: bot.alive ? this.objectiveFor(bot) : null,
         tuning,
         rand: this.rand,
         onShoot: (origin, dir) => this.botShoot(bot, origin, dir),
       });
     }
+  }
+
+  // 視界内で最も近い敵対エンティティの目の位置。誰も見えなければnull
+  private findTargetFor(bot: Bot): THREE.Vector3 | null {
+    const head = bot.headPosition();
+    let best: THREE.Vector3 | null = null;
+    let bestDist = BOT_VIEW_DISTANCE;
+
+    if (this.player.alive && bot.team !== PLAYER_TEAM) {
+      const eye = this.player.eyePosition;
+      const dist = head.distanceTo(eye);
+      if (dist < bestDist && this.botCanSee(bot, head, eye, null)) {
+        best = eye;
+        bestDist = dist;
+      }
+    }
+    for (const other of this.bots) {
+      if (other === bot || !other.alive || other.team === bot.team) continue;
+      const eye = other.headPosition();
+      const dist = head.distanceTo(eye);
+      if (dist < bestDist && this.botCanSee(bot, head, eye, other)) {
+        best = eye;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  // targetBotがnullならプレイヤーを対象として視線判定する
+  private botCanSee(
+    bot: Bot,
+    head: THREE.Vector3,
+    eye: THREE.Vector3,
+    targetBot: Bot | null,
+  ): boolean {
+    if (this.smokeBlocks(head, eye)) return false;
+    const toTarget = eye.clone().sub(head);
+    const distance = toTarget.length();
+    const dirNorm = toTarget.normalize();
+    const inCone = bot.alert > 0 || bot.facing().dot(dirNorm) > BOT_VIEW_CONE_COS;
+    if (!inCone) return false;
+    const hit = this.castRay(head, dirNorm, distance - 0.2, bot.body);
+    if (hit === null) return true;
+    const tag = this.tags.get(hit.collider.handle);
+    if (targetBot === null) return tag?.kind === 'player';
+    return tag?.kind === 'bot' && tag.bot === targetBot;
+  }
+
+  // ドミネーションでは自チームが持っていない最寄り拠点へ、
+  // TDMの味方BOTはプレイヤーの近くへ向かわせる
+  private objectiveFor(bot: Bot): THREE.Vector3 | null {
+    if (this.domination) {
+      let best: THREE.Vector3 | null = null;
+      let bestDist = Infinity;
+      for (const zone of this.domination.zones) {
+        if (zone.owner === bot.team && !zone.contested) continue;
+        const center = this.zoneCenters.get(zone.id);
+        if (!center) continue;
+        const dist = bot.position.distanceTo(center);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = center;
+        }
+      }
+      return best;
+    }
+    if (this.config.mode === 'tdm' && bot.team === PLAYER_TEAM && this.player.alive) {
+      return this.player.position;
+    }
+    return null;
   }
 
   private botShoot(bot: Bot, origin: THREE.Vector3, dir: THREE.Vector3): void {
@@ -909,7 +1146,7 @@ export class Match {
     const end = hit
       ? origin.clone().addScaledVector(dir, hitToi(hit))
       : origin.clone().addScaledVector(dir, BOT_VIEW_DISTANCE);
-    this.effects.tracer(origin, end, 0xff7a6b);
+    this.effects.tracer(origin, end, bot.team === PLAYER_TEAM ? 0x7fa8ff : 0xff7a6b);
 
     // 発砲音は方向と距離をつけて鳴らす
     const { pan, distance } = this.panAndDistance(origin);
@@ -917,47 +1154,83 @@ export class Match {
 
     if (!hit) return;
     const tag = this.tags.get(hit.collider.handle);
-    if (tag?.kind !== 'player' || !this.player.alive) return;
-
     const damage = damageAtDistance(tuning.damage, hitToi(hit), BOT_FALLOFF);
-    const died = this.player.takeDamage(damage);
-    this.tookDamage = true;
-    this.sounds.hurt();
-    this.incoming.push(this.incomingAngle(origin));
 
-    if (died) {
-      bot.kills += 1;
-      this.feed.push({
-        killer: bot.name,
-        victim: PLAYER_NAME,
-        weapon: 'ボットAR',
-        headshot: false,
-      });
-      this.sounds.death();
+    if (tag?.kind === 'player' && this.player.alive) {
+      // 味方の流れ弾はダメージにしない
+      if (bot.team === PLAYER_TEAM) return;
+      const died = this.player.takeDamage(damage);
+      this.tookDamage = true;
+      this.sounds.hurt();
+      this.incoming.push(this.incomingAngle(origin));
+      if (died) {
+        bot.kills += 1;
+        this.addKillScore(bot.team);
+        this.feed.push({
+          killer: bot.name,
+          victim: PLAYER_NAME,
+          weapon: 'ボットAR',
+          headshot: false,
+        });
+        this.sounds.death();
+        this.notePlayerDeath();
+      }
+      return;
     }
+
+    if (tag?.kind === 'bot' && tag.bot.alive && tag.bot.team !== bot.team) {
+      const died = tag.bot.takeDamage(damage);
+      if (died) {
+        bot.kills += 1;
+        this.addKillScore(bot.team);
+        this.feed.push({
+          killer: bot.name,
+          victim: tag.bot.name,
+          weapon: 'ボットAR',
+          headshot: false,
+        });
+      }
+    }
+  }
+
+  // キルを取ったチームのスコアを進める。ドミネーションは拠点ポイントのみ
+  private addKillScore(team: TeamId): void {
+    if (this.config.mode !== 'dom') this.scores.add(team, 1);
+  }
+
+  private notePlayerDeath(): void {
+    this.deathPos = this.player.position;
+    this.orbitAngle = this.player.yaw + Math.PI / 2;
   }
 
   private alertBots(radius: number): void {
     const pos = this.player.position;
     for (const bot of this.bots) {
-      if (bot.alive && bot.position.distanceTo(pos) < radius) bot.alert = 4;
+      if (bot.alive && bot.team !== PLAYER_TEAM && bot.position.distanceTo(pos) < radius) {
+        bot.alert = 4;
+      }
     }
   }
 
   private handleRespawns(): void {
     if (!this.player.alive && this.player.respawnIn <= 0) {
-      this.player.respawnAt(this.pickSpawn(this.playerSpawns, this.botPositions()));
+      this.player.respawnAt(this.pickSpawn(this.playerSpawns, this.hostilesOf(PLAYER_TEAM)));
       this.activeWeapon.raise();
+      this.deathPos = null;
     }
     for (const bot of this.bots) {
       if (!bot.alive && bot.respawnIn <= 0) {
-        bot.respawnAt(this.pickSpawn(this.botSpawns, [this.player.position]));
+        const spawns = bot.team === PLAYER_TEAM ? this.playerSpawns : this.botSpawns;
+        bot.respawnAt(this.pickSpawn(spawns, this.hostilesOf(bot.team)));
       }
     }
   }
 
-  private botPositions(): THREE.Vector3[] {
-    return this.bots.filter((b) => b.alive).map((b) => b.position);
+  // 指定チームから見た敵対エンティティの現在位置一覧
+  private hostilesOf(team: TeamId): THREE.Vector3[] {
+    const positions = this.bots.filter((b) => b.alive && b.team !== team).map((b) => b.position);
+    if (team !== PLAYER_TEAM && this.player.alive) positions.push(this.player.position);
+    return positions;
   }
 
   // 敵から最も離れた地点に湧く
@@ -1053,6 +1326,14 @@ export class Match {
       grenadeCount: this.grenadeCounts[this.grenadeKind],
       cookRatio: this.cooking && spec.cookable ? Math.min(1, this.cookTimer / cookWindow) : 0,
       whiteout: this.whiteout,
+      modeName: this.modeDef.name,
+      teamBased: this.modeDef.teamBased,
+      scoreMine: this.scores.get(PLAYER_TEAM),
+      scoreEnemy: this.enemyTopScore(),
+      scoreTarget: this.modeDef.scoreTarget,
+      zones: this.zoneViews(),
+      announcements: this.announcements,
+      spectating: !this.player.alive && this.deathPos !== null,
       feed: this.feed,
       hits: this.hits,
       damageNumbers: this.damageNumbers,
@@ -1065,34 +1346,68 @@ export class Match {
     this.damageNumbers = [];
     this.incoming = [];
     this.tookDamage = false;
+    this.announcements = [];
     return snapshot;
+  }
+
+  // FFAでは首位の敵スコア、チーム戦では敵チームスコア
+  private enemyTopScore(): number {
+    if (this.modeDef.teamBased) return this.scores.get(ENEMY_TEAM);
+    let best = 0;
+    for (const bot of this.bots) best = Math.max(best, this.scores.get(bot.team));
+    return best;
+  }
+
+  private zoneViews(): ZoneView[] {
+    if (!this.domination) return [];
+    const side = (team: TeamId | null): 'mine' | 'enemy' | null =>
+      team === null ? null : team === PLAYER_TEAM ? 'mine' : 'enemy';
+    return this.domination.zones.map((zone): ZoneView => {
+      const snap: ZoneSnapshot = zone.snapshot();
+      return {
+        id: snap.id,
+        owner: side(snap.owner),
+        progress: snap.progress,
+        capturing: side(snap.capturingTeam),
+        contested: snap.contested,
+      };
+    });
   }
 
   scoreboard(): ScoreRow[] {
     const rows: ScoreRow[] = [
-      { name: PLAYER_NAME, kills: this.player.kills, deaths: this.player.deaths, isPlayer: true },
+      {
+        name: PLAYER_NAME,
+        kills: this.player.kills,
+        deaths: this.player.deaths,
+        isPlayer: true,
+        isAlly: true,
+      },
       ...this.bots.map((bot) => ({
         name: bot.name,
         kills: bot.kills,
         deaths: bot.deaths,
         isPlayer: false,
+        isAlly: bot.team === PLAYER_TEAM,
       })),
     ];
     return rows.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
   }
 
-  result(): {
-    rows: ScoreRow[];
-    won: boolean;
-    accuracy: number;
-    headshots: number;
-  } {
+  result(): MatchResult {
     const rows = this.scoreboard();
+    const won = this.modeDef.teamBased
+      ? this.scores.get(PLAYER_TEAM) > this.scores.get(ENEMY_TEAM)
+      : (rows[0]?.isPlayer ?? false);
     return {
       rows,
-      won: rows[0]?.isPlayer ?? false,
+      won,
       accuracy: this.player.shotsFired > 0 ? this.player.shotsHit / this.player.shotsFired : 0,
       headshots: this.player.headshots,
+      modeName: this.modeDef.name,
+      teamScores: this.modeDef.teamBased
+        ? { mine: this.scores.get(PLAYER_TEAM), enemy: this.scores.get(ENEMY_TEAM) }
+        : null,
     };
   }
 
