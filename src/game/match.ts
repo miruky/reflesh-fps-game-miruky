@@ -587,9 +587,11 @@ export class Match {
       const weapon = this.activeWeapon;
       const adsSlow = 1 - 0.4 * weapon.adsProgress;
       const k = LOOK_BASE * this.settings.sensitivity * adsSlow;
+      // 既定はマウスを上へ動かすと上を向く。invertYで上下を入れ替える
+      const pitchDir = this.settings.invertY ? 1 : -1;
       this.player.yaw -= this.input.mouseDX * k;
       this.player.pitch = THREE.MathUtils.clamp(
-        this.player.pitch - this.input.mouseDY * k,
+        this.player.pitch + pitchDir * this.input.mouseDY * k,
         -PITCH_LIMIT,
         PITCH_LIMIT,
       );
