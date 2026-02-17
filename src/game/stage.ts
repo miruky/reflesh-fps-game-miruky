@@ -94,6 +94,19 @@ export function generateStage(def: StageDef): StageLayout {
     [-(half - 4), 0, -(half - 4)],
   ];
 
+  const edge = half - 4;
+  const botSpawns: SpawnPoint[] = [
+    [0, 0, edge],
+    [0, 0, -edge],
+    [edge, 0, 0],
+    [-edge, 0, 0],
+    [edge / 2, 0, -edge / 2],
+    [-edge / 2, 0, edge / 2],
+  ];
+
+  // プレイヤー・BOT双方のスポーン地点を障害物から守る
+  const spawnGuards: SpawnPoint[] = [...corners, ...botSpawns];
+
   let attempts = 0;
   while (placed.length < def.obstacleCount && attempts < def.obstacleCount * 30) {
     attempts += 1;
@@ -104,7 +117,7 @@ export function generateStage(def: StageDef): StageLayout {
     const low = rand() < 0.3;
     const h = low ? 1 + rand() * 0.3 : 1.8 + rand() * (def.maxHeight - 1.8);
 
-    const nearSpawn = corners.some(
+    const nearSpawn = spawnGuards.some(
       ([sx, , sz]) => Math.hypot(x - sx, z - sz) < SPAWN_CLEARANCE,
     );
     if (nearSpawn) continue;
@@ -119,7 +132,7 @@ export function generateStage(def: StageDef): StageLayout {
 
     // 原点対称の複製。原点上や複製先が重なる場合は単体配置のままにする
     const mirror = aabbOf(-x, -z, w, d);
-    const mirrorNearSpawn = corners.some(
+    const mirrorNearSpawn = spawnGuards.some(
       ([sx, , sz]) => Math.hypot(-x - sx, -z - sz) < SPAWN_CLEARANCE,
     );
     if ((x !== 0 || z !== 0) && !mirrorNearSpawn && !placed.some((p) => overlaps(p, mirror, 1))) {
@@ -136,16 +149,6 @@ export function generateStage(def: StageDef): StageLayout {
       placed.push(mirror);
     }
   }
-
-  const edge = half - 4;
-  const botSpawns: SpawnPoint[] = [
-    [0, 0, edge],
-    [0, 0, -edge],
-    [edge, 0, 0],
-    [-edge, 0, 0],
-    [edge / 2, 0, -edge / 2],
-    [-edge / 2, 0, edge / 2],
-  ];
 
   return { boxes, playerSpawns: corners, botSpawns };
 }
