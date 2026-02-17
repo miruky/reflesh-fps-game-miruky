@@ -40,11 +40,22 @@ export class Input {
 
   attach(target: HTMLElement): void {
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'Tab') e.preventDefault();
+      // メニュー表示中(ロック外)はTabによるフォーカス移動を妨げない
+      if (e.code === 'Tab' && this.locked) e.preventDefault();
       if (!e.repeat) {
         this.down.add(e.code);
         this.pressed.add(e.code);
       }
+    });
+    // ロック状態の切替をまたいで単発入力を持ち越さない。
+    // メニューで押したキーやクリックが復帰直後に発火するのを防ぐ。
+    // 押しっぱなしのキーはkeyupで自然に消えるためdownは消さない。
+    document.addEventListener('pointerlockchange', () => {
+      this.pressed.clear();
+      for (let i = 0; i < 3; i += 1) this.mousePressed[i] = false;
+      this.mouseDX = 0;
+      this.mouseDY = 0;
+      this.wheelDelta = 0;
     });
     window.addEventListener('keyup', (e) => {
       this.down.delete(e.code);

@@ -283,7 +283,8 @@ export class Match {
     );
     for (const event of events) {
       if (event.type === 'fired') {
-        this.player.yaw += event.recoil.yaw;
+        // RecoilStepの規約はyaw正=右。rotation.yは正で左回りなので符号を反転する
+        this.player.yaw -= event.recoil.yaw;
         this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
         this.fireShot(event.spreadRad);
         this.viewModel.fire();
@@ -296,7 +297,7 @@ export class Match {
       }
     }
     const recovered = weapon.recoil.recover(dt);
-    this.player.yaw -= recovered.yaw;
+    this.player.yaw += recovered.yaw;
     this.player.pitch -= recovered.pitch;
 
     this.updateBots(dt);
@@ -677,7 +678,20 @@ export class Match {
   }
 
   dispose(): void {
-    this.effects.clear();
+    this.effects.dispose();
+    // 再戦のたびにGPUメモリが積み上がらないよう、シーン内の
+    // ジオメトリとマテリアルを明示的に解放する(共有分の二重disposeは無害)
+    this.scene.traverse((obj) => {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
+        obj.geometry.dispose();
+        const material = obj.material;
+        if (Array.isArray(material)) {
+          for (const m of material) m.dispose();
+        } else {
+          material.dispose();
+        }
+      }
+    });
     this.physics.free();
   }
 }
