@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Weapon, WEAPON_DEFS } from './weapons';
+import { PRIMARY_IDS, Weapon, WEAPON_DEFS } from './weapons';
 
 const CTX = { moveFactor: 0, airborne: false, crouched: false };
 
@@ -114,5 +114,45 @@ describe('Weapon 発射制御', () => {
     expect(during).toBeGreaterThan(before);
     settle(weapon, 3000);
     expect(weapon.currentSpreadRad(CTX)).toBeCloseTo(before, 5);
+  });
+
+  it('バーストは1トリガーでburstCount発まとめて出る', () => {
+    const weapon = makeWeapon('miyama-br');
+    settle(weapon, 1000);
+    let fired = 0;
+    // 最初の1フレームだけトリガーを引き、あとは離して待つ
+    for (let i = 0; i < 200; i += 1) {
+      const events = weapon.update(5, { trigger: i === 0, ads: false, reloadPressed: false }, CTX);
+      fired += events.filter((e) => e.type === 'fired').length;
+    }
+    expect(fired).toBe(weapon.def.burstCount);
+  });
+});
+
+describe('武器定義の整合性', () => {
+  it('全プライマリが定義表に存在しスロットが正しい', () => {
+    for (const id of PRIMARY_IDS) {
+      const def = WEAPON_DEFS[id];
+      expect(def).toBeDefined();
+      expect(def!.slot).toBe('primary');
+      expect(def!.id).toBe(id);
+    }
+  });
+
+  it('ショットガンだけが複数ペレットを持つ', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      if (def.id === 'hiiragi-sg') {
+        expect(def.pellets).toBeGreaterThan(1);
+        expect(def.pelletSpreadDeg).toBeGreaterThan(0);
+      } else {
+        expect(def.pellets).toBe(1);
+      }
+    }
+  });
+
+  it('貫通力は負にならない', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      expect(def.penetrationM).toBeGreaterThanOrEqual(0);
+    }
   });
 });
