@@ -13,6 +13,9 @@ const HEAD_RADIUS = 0.22;
 const MOVE_SPEED = 3.4;
 const GRAVITY = 18;
 
+// カプセル中心からこの高さより下への着弾は脚部扱い
+export const HIP_OFFSET_Y = -0.1;
+
 export type Difficulty = 'easy' | 'normal' | 'hard';
 
 export interface BotTuning {
@@ -60,6 +63,7 @@ export class Bot {
   kills = 0;
   deaths = 0;
   alert = 0; // 0より大きい間は視野制限なしで索敵する
+  blind = 0; // フラッシュで目が眩んでいる残り秒数
 
   private readonly controller: RAPIER.KinematicCharacterController;
   private heading = 0;
@@ -144,6 +148,7 @@ export class Bot {
     }
 
     this.alert = Math.max(0, this.alert - dt);
+    this.blind = Math.max(0, this.blind - dt);
     const engaged = ctx.seesPlayer && ctx.playerEye !== null;
 
     let wishX = 0;
@@ -273,6 +278,7 @@ export class Bot {
     this.alive = true;
     this.velY = 0;
     this.alert = 0;
+    this.blind = 0;
     this.group.visible = true;
     this.group.rotation.x = 0;
     this.bodyCollider.setEnabled(true);
