@@ -28,8 +28,27 @@ export function coneOffset(spreadRad: number, rand: Rand): ConeOffset {
 
 export const HEAD = 'head';
 export const BODY = 'body';
-export type HitPart = typeof HEAD | typeof BODY;
+export const LIMB = 'limb';
+export type HitPart = typeof HEAD | typeof BODY | typeof LIMB;
+
+const LIMB_MULTIPLIER = 0.8;
 
 export function partMultiplier(part: HitPart, headshotMultiplier: number): number {
-  return part === HEAD ? headshotMultiplier : 1;
+  if (part === HEAD) return headshotMultiplier;
+  if (part === LIMB) return LIMB_MULTIPLIER;
+  return 1;
+}
+
+// 胴体カプセルへの着弾高さから部位を割り出す。腰より下は脚部扱い。
+// relativeYはカプセル中心からの高さ
+export function partFromHitHeight(relativeY: number, hipOffset: number): HitPart {
+  return relativeY < hipOffset ? LIMB : BODY;
+}
+
+// 壁貫通後の残存ダメージ係数。powerMは貫通可能な壁の最大厚(m)。
+// 貫通できても3割は必ず失い、厚みに比例してさらに減衰する
+export function penetrationFactor(thicknessM: number, powerM: number): number {
+  if (powerM <= 0 || thicknessM < 0) return 0;
+  if (thicknessM >= powerM) return 0;
+  return (1 - thicknessM / powerM) * 0.7;
 }
