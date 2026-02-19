@@ -833,3 +833,143 @@ button {
   font-size: 11px;
   letter-spacing: 0.2em;
 }
+
+/* ---------------- アタッチメント・投擲物 ---------------- */
+
+.attach-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.attach-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+.attach-slot {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding-top: 7px;
+  letter-spacing: 0.1em;
+}
+
+.attach-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attach-btn {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-size: 12px;
+  transition: border-color 0.15s;
+}
+
+.attach-btn:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.attach-btn.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.grenade-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.grenade-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.15s;
+}
+
+.grenade-card:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.grenade-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.grenade-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.grenade-carry {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.grenade-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ---------------- HUD: グレネード・フラッシュ ---------------- */
+
+.hud-grenade {
+  margin-top: 6px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+
+.hud-gcount {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.hud-gcount-empty {
+  color: var(--text-dim);
+}
+
+.hud-cook {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 28px);
+  transform: translateX(-50%);
+}
+
+.hud-cook-bar {
+  width: 90px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.hud-cook-bar div {
+  height: 100%;
+  width: 0;
+  background: #ffd066;
+}
+
+.hud-cook-bar div.cook-danger {
+  background: var(--accent);
+}
+
+.hud-whiteout {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
