@@ -8,12 +8,14 @@ import {
 } from '../game/attachments';
 import type { Difficulty } from '../game/bot';
 import { GRENADE_KINDS, GRENADE_SPECS, type GrenadeKind } from '../game/grenades';
-import type { ScoreRow } from '../game/match';
+import type { MatchResult } from '../game/match';
+import { MODE_DEFS, MODE_IDS, type GameMode } from '../game/modes';
 import { STAGES } from '../game/stages';
 import { PRIMARY_IDS, WEAPON_DEFS } from '../game/weapons';
 
 export interface MenuSelection {
   stageId: string;
+  mode: GameMode;
   primaryId: string;
   attachments: string[];
   grenade: GrenadeKind;
@@ -88,6 +90,7 @@ const LOGO_SVG = `
 export class Menu {
   private selection: MenuSelection = {
     stageId: STAGES[0]?.id ?? 'kunren',
+    mode: 'ffa',
     primaryId: 'kaede-ar',
     attachments: [],
     grenade: 'frag',
@@ -120,6 +123,9 @@ export class Menu {
       }
       if (saved.primaryId && (PRIMARY_IDS as readonly string[]).includes(saved.primaryId)) {
         this.selection.primaryId = saved.primaryId;
+      }
+      if (saved.mode && MODE_IDS.includes(saved.mode)) {
+        this.selection.mode = saved.mode;
       }
       if (saved.grenade && GRENADE_KINDS.includes(saved.grenade)) {
         this.selection.grenade = saved.grenade;
@@ -169,6 +175,10 @@ export class Menu {
           </section>
           <div class="menu-side">
             <section class="menu-section">
+              <h2>モード</h2>
+              <div class="mode-list" data-id="modes"></div>
+            </section>
+            <section class="menu-section">
               <h2>メイン武器</h2>
               <div class="weapon-list" data-id="weapons"></div>
             </section>
@@ -198,6 +208,7 @@ export class Menu {
       </div>
     `;
     this.renderStages();
+    this.renderModes();
     this.renderWeapons();
     this.renderAttachments();
     this.renderGrenades();
@@ -230,26 +241,26 @@ export class Menu {
     this.query('quit').addEventListener('click', () => this.callbacks.onQuit());
   }
 
-  showResult(result: {
-    rows: ScoreRow[];
-    won: boolean;
-    accuracy: number;
-    headshots: number;
-  }): void {
+  showResult(result: MatchResult): void {
     this.root.hidden = false;
     const mvp = result.rows[0];
     const rowsHtml = result.rows
       .map(
         (row) => `
-        <tr class="${row.isPlayer ? 'score-you' : ''}">
+        <tr class="${row.isPlayer ? 'score-you' : result.teamScores && row.isAlly ? 'score-ally' : ''}">
           <td>${row.name}</td><td>${row.kills}</td><td>${row.deaths}</td>
         </tr>`,
       )
       .join('');
+    const teamScoreHtml = result.teamScores
+      ? `<p class="result-teamscore"><span class="ts-mine">${result.teamScores.mine}</span> - <span class="ts-enemy">${result.teamScores.enemy}</span></p>`
+      : '';
     this.root.innerHTML = `
       <div class="menu-screen menu-result">
         <div class="result-panel">
+          <p class="result-mode">${result.modeName}</p>
           <h1>${result.won ? '勝利' : '敗北'}</h1>
+          ${teamScoreHtml}
           <p class="result-mvp">MVP: ${mvp ? mvp.name : '-'}</p>
           <p class="result-stats">命中率 ${(result.accuracy * 100).toFixed(1)}% / ヘッドショット ${result.headshots}</p>
           <table class="result-table">
@@ -330,6 +341,26 @@ export class Menu {
         <span class="stat-label">${label}</span>
         <span class="stat-bar"><i style="width:${value * 10}%"></i></span>
       </span>`;
+  }
+
+  private renderModes(): void {
+    const list = this.query('modes');
+    for (const id of MODE_IDS) {
+      const def = MODE_DEFS[id];
+      const card = document.createElement('button');
+      card.className = 'mode-card';
+      card.dataset.mode = id;
+      card.innerHTML = `
+        <span class="mode-name">${def.name}</span>
+        <span class="mode-desc">${def.desc}</span>
+      `;
+      card.addEventListener('click', () => {
+        this.selection.mode = id;
+        this.markSelected(list, 'mode', id);
+      });
+      list.appendChild(card);
+    }
+    this.markSelected(list, 'mode', this.selection.mode);
   }
 
   private renderAttachments(): void {
