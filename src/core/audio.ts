@@ -64,7 +64,11 @@ export class SoundKit {
     gain.gain.exponentialRampToValueAtTime(0.001, t0 + opts.durationS);
     const pan = this.ctx.createStereoPanner();
     pan.pan.value = opts.pan ?? 0;
-    src.connect(filter).connect(gain).connect(pan).connect(opts.bus ?? this.sfxBus);
+    src
+      .connect(filter)
+      .connect(gain)
+      .connect(pan)
+      .connect(opts.bus ?? this.sfxBus);
     src.start(t0);
     src.stop(t0 + opts.durationS + 0.05);
   }
@@ -90,7 +94,10 @@ export class SoundKit {
     gain.gain.exponentialRampToValueAtTime(0.001, t0 + opts.durationS);
     const pan = this.ctx.createStereoPanner();
     pan.pan.value = opts.pan ?? 0;
-    osc.connect(gain).connect(pan).connect(opts.bus ?? this.sfxBus);
+    osc
+      .connect(gain)
+      .connect(pan)
+      .connect(opts.bus ?? this.sfxBus);
     osc.start(t0);
     osc.stop(t0 + opts.durationS + 0.05);
   }
@@ -98,6 +105,12 @@ export class SoundKit {
   shot(): void {
     this.noiseBurst({ durationS: 0.09, filterHz: 2400, filterType: 'lowpass', gain: 0.5 });
     this.tone({ freq: 130, endFreq: 55, durationS: 0.08, type: 'triangle', gain: 0.45 });
+  }
+
+  // サプレッサー装着時のくぐもった発砲音
+  shotSuppressed(): void {
+    this.noiseBurst({ durationS: 0.06, filterHz: 900, filterType: 'lowpass', gain: 0.3 });
+    this.tone({ freq: 90, endFreq: 50, durationS: 0.05, type: 'sine', gain: 0.25 });
   }
 
   // 距離と方向を持つ他者の発砲音
@@ -114,15 +127,33 @@ export class SoundKit {
   }
 
   hit(): void {
-    this.tone({ freq: 1150, durationS: 0.05, type: 'square', gain: 0.18, bus: this.uiBus ?? undefined });
+    this.tone({
+      freq: 1150,
+      durationS: 0.05,
+      type: 'square',
+      gain: 0.18,
+      bus: this.uiBus ?? undefined,
+    });
   }
 
   headshot(): void {
-    this.tone({ freq: 1500, durationS: 0.06, type: 'square', gain: 0.2, bus: this.uiBus ?? undefined });
+    this.tone({
+      freq: 1500,
+      durationS: 0.06,
+      type: 'square',
+      gain: 0.2,
+      bus: this.uiBus ?? undefined,
+    });
   }
 
   kill(): void {
-    this.tone({ freq: 880, durationS: 0.08, type: 'sine', gain: 0.25, bus: this.uiBus ?? undefined });
+    this.tone({
+      freq: 880,
+      durationS: 0.08,
+      type: 'sine',
+      gain: 0.25,
+      bus: this.uiBus ?? undefined,
+    });
     this.tone({
       freq: 1320,
       durationS: 0.12,
@@ -159,6 +190,97 @@ export class SoundKit {
     this.noiseBurst({ durationS: 0.09, filterHz: 600, filterType: 'bandpass', gain: 0.3 });
   }
 
+  slide(): void {
+    this.noiseBurst({ durationS: 0.35, filterHz: 420, filterType: 'lowpass', gain: 0.25 });
+  }
+
+  mantle(): void {
+    this.noiseBurst({ durationS: 0.12, filterHz: 500, filterType: 'bandpass', gain: 0.22 });
+    this.noiseBurst({
+      durationS: 0.08,
+      filterHz: 350,
+      filterType: 'lowpass',
+      gain: 0.2,
+      delayS: 0.18,
+    });
+  }
+
+  // ピンを抜いてクッキングを始めた合図
+  pinPull(): void {
+    this.tone({ freq: 1900, durationS: 0.04, type: 'square', gain: 0.12 });
+    this.noiseBurst({ durationS: 0.04, filterHz: 4200, filterType: 'bandpass', gain: 0.15 });
+  }
+
+  throwWhoosh(): void {
+    this.noiseBurst({ durationS: 0.18, filterHz: 1100, filterType: 'bandpass', gain: 0.2 });
+  }
+
+  bounce(pan: number, distance: number): void {
+    const att = 1 / (1 + distance * 0.1);
+    this.tone({ freq: 380, endFreq: 240, durationS: 0.06, type: 'triangle', gain: 0.2 * att, pan });
+  }
+
+  explosion(pan: number, distance: number): void {
+    const att = 1 / (1 + distance * 0.04);
+    this.noiseBurst({
+      durationS: 0.5,
+      filterHz: 700,
+      filterType: 'lowpass',
+      gain: 0.85 * att,
+      pan,
+    });
+    this.tone({ freq: 70, endFreq: 28, durationS: 0.45, type: 'sine', gain: 0.7 * att, pan });
+    this.noiseBurst({
+      durationS: 0.7,
+      filterHz: 240,
+      filterType: 'lowpass',
+      gain: 0.4 * att,
+      pan,
+      delayS: 0.08,
+    });
+  }
+
+  smokePop(pan: number, distance: number): void {
+    const att = 1 / (1 + distance * 0.08);
+    this.tone({ freq: 240, endFreq: 160, durationS: 0.1, type: 'triangle', gain: 0.25 * att, pan });
+    this.noiseBurst({
+      durationS: 1.4,
+      filterHz: 2400,
+      filterType: 'highpass',
+      gain: 0.08 * att,
+      pan,
+      delayS: 0.05,
+    });
+  }
+
+  // フラッシュ被弾時の耳鳴り。強度で長さと音量が変わる
+  flashRing(intensity: number): void {
+    if (intensity <= 0) return;
+    this.tone({
+      freq: 3400,
+      durationS: 0.8 + intensity * 1.4,
+      type: 'sine',
+      gain: 0.1 + intensity * 0.12,
+    });
+    this.noiseBurst({
+      durationS: 0.15,
+      filterHz: 5000,
+      filterType: 'highpass',
+      gain: 0.3 * intensity,
+    });
+  }
+
+  fireCrackle(pan: number, distance: number): void {
+    const att = 1 / (1 + distance * 0.12);
+    this.noiseBurst({
+      durationS: 0.1,
+      filterHz: 1800 + Math.random() * 1600,
+      filterType: 'bandpass',
+      gain: 0.07 * att,
+      pan,
+    });
+  }
+
   footstep(intensity: number): void {
     this.noiseBurst({
       durationS: 0.06,
@@ -177,6 +299,12 @@ export class SoundKit {
   }
 
   uiClick(): void {
-    this.tone({ freq: 700, durationS: 0.04, type: 'sine', gain: 0.15, bus: this.uiBus ?? undefined });
+    this.tone({
+      freq: 700,
+      durationS: 0.04,
+      type: 'sine',
+      gain: 0.15,
+      bus: this.uiBus ?? undefined,
+    });
   }
 }
