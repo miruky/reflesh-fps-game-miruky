@@ -44,8 +44,10 @@ export const BOT_NAMES = [
 ] as const;
 
 export interface BotContext {
-  playerEye: THREE.Vector3 | null; // プレイヤー死亡中はnull
-  seesPlayer: boolean;
+  // 現在見えている交戦対象の目の位置。誰も見えなければnull
+  targetEye: THREE.Vector3 | null;
+  // 非交戦時に向かう地点(ドミネーションの拠点など)。なければ徘徊する
+  objective: THREE.Vector3 | null;
   tuning: BotTuning;
   rand: Rand;
   onShoot: (origin: THREE.Vector3, dir: THREE.Vector3) => void;
@@ -82,6 +84,7 @@ export class Bot {
     readonly name: string,
     spawn: THREE.Vector3,
     color: number,
+    readonly team: number = 1,
   ) {
     const desc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
       spawn.x,
@@ -149,27 +152,38 @@ export class Bot {
 
     this.alert = Math.max(0, this.alert - dt);
     this.blind = Math.max(0, this.blind - dt);
-    const engaged = ctx.seesPlayer && ctx.playerEye !== null;
+    const engaged = ctx.targetEye !== null;
 
     let wishX = 0;
     let wishZ = 0;
-    if (engaged && ctx.playerEye) {
-      const toPlayer = ctx.playerEye.clone().sub(this.position);
-      toPlayer.y = 0;
-      const dist = toPlayer.length();
-      toPlayer.normalize();
-      this.heading = Math.atan2(-toPlayer.x, -toPlayer.z);
+    if (ctx.targetEye) {
+      const toTarget = ctx.targetEye.clone().sub(this.position);
+      toTarget.y = 0;
+      const dist = toTarget.length();
+      toTarget.normalize();
+      this.heading = Math.atan2(-toTarget.x, -toTarget.z);
 
       this.strafeTimer -= dt;
       if (this.strafeTimer <= 0) {
         this.strafeSign *= -1;
         this.strafeTimer = 1 + ctx.rand() * 2;
       }
-      const side = new THREE.Vector3(-toPlayer.z, 0, toPlayer.x).multiplyScalar(this.strafeSign);
+      const side = new THREE.Vector3(-toTarget.z, 0, toTarget.x).multiplyScalar(this.strafeSign);
       // 9〜20mの交戦距離を保つ
       const approach = dist > 20 ? 1 : dist < 9 ? -1 : 0;
-      wishX = (side.x * 0.8 + toPlayer.x * approach) * MOVE_SPEED;
-      wishZ = (side.z * 0.8 + toPlayer.z * approach) * MOVE_SPEED;
+      wishX = (side.x * 0.8 + toTarget.x * approach) * MOVE_SPEED;
+      wishZ = (side.z * 0.8 + toTarget.z * approach) * MOVE_SPEED;
+    } else if (ctx.objective && this.position.distanceTo(ctx.objective) > 3) {
+      // 拠点へ向かう。直進しすぎないよう周期的に揺らす
+      const toObjective = ctx.objective.clone().sub(this.position).setY(0).normalize();
+      this.headingTimer -= dt;
+      if (this.headingTimer <= 0) {
+        this.heading = Math.atan2(-toObjective.x, -toObjective.z) + (ctx.rand() - 0.5) * 0.7;
+        this.headingTimer = 0.8 + ctx.rand() * 1.2;
+      }
+      const f = this.facing();
+      wishX = f.x * MOVE_SPEED * 0.85;
+      wishZ = f.z * MOVE_SPEED * 0.85;
     } else {
       this.headingTimer -= dt;
       if (this.headingTimer <= 0) {
@@ -208,7 +222,7 @@ export class Bot {
   }
 
   private updateShooting(dt: number, ctx: BotContext, engaged: boolean): void {
-    if (!engaged || !ctx.playerEye) {
+    if (!engaged || !ctx.targetEye) {
       this.reaction = ctx.tuning.reactionS;
       this.burstLeft = 0;
       return;
@@ -236,7 +250,7 @@ export class Bot {
     }
 
     const origin = this.headPosition();
-    const dir = ctx.playerEye.clone().sub(origin).normalize();
+    const dir = ctx.targetEye.clone().sub(origin).normalize();
     const spread = (ctx.tuning.spreadDeg * Math.PI) / 180;
     const r = spread * Math.sqrt(ctx.rand());
     const theta = ctx.rand() * Math.PI * 2;
