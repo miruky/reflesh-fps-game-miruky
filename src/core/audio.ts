@@ -307,4 +307,36 @@ export class SoundKit {
       bus: this.uiBus ?? undefined,
     });
   }
+
+  // 拠点を制圧した時の上昇音
+  capture(): void {
+    this.tone({ freq: 520, durationS: 0.1, type: 'sine', gain: 0.2, bus: this.uiBus ?? undefined });
+    this.tone({
+      freq: 780,
+      durationS: 0.16,
+      type: 'sine',
+      gain: 0.2,
+      delayS: 0.09,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // 拠点を失った・中立化された時の下降音
+  zoneLost(): void {
+    this.tone({
+      freq: 520,
+      durationS: 0.1,
+      type: 'sine',
+      gain: 0.18,
+      bus: this.uiBus ?? undefined,
+    });
+    this.tone({
+      freq: 350,
+      durationS: 0.18,
+      type: 'sine',
+      gain: 0.18,
+      delayS: 0.09,
+      bus: this.uiBus ?? undefined,
+    });
+  }
 }
