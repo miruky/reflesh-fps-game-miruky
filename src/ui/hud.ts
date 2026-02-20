@@ -30,7 +30,16 @@ export class Hud {
       <div class="hud-top-center">
         <div class="hud-compass"><div class="hud-compass-strip" data-id="compass"></div><div class="hud-compass-needle"></div></div>
         <div class="hud-timer" data-id="timer">5:00</div>
+        <div class="hud-objective">
+          <div class="hud-teamscore">
+            <span class="ts-mine" data-id="scoremine">0</span>
+            <span class="ts-target" data-id="scoretarget"></span>
+            <span class="ts-enemy" data-id="scoreenemy">0</span>
+          </div>
+          <div class="hud-zones" data-id="zones" hidden></div>
+        </div>
       </div>
+      <div class="hud-announce" data-id="announce"></div>
       <div class="hud-feed" data-id="feed"></div>
       <div class="hud-crosshair" data-id="crosshair">
         <span class="ch-dot"></span>
@@ -130,6 +139,7 @@ export class Hud {
     this.updateCrosshair(snap, height);
     this.updateAmmo(snap);
     this.updateGrenade(snap);
+    this.updateObjective(snap);
     this.updateHp(snap);
     this.pushFeed(snap);
     this.pushHits(snap);
@@ -198,6 +208,50 @@ export class Hud {
     if (reload) reload.hidden = !snap.reloading;
     const fill = this.el['reloadfill'];
     if (fill && snap.reloading) fill.style.width = `${snap.reloadRatio * 100}%`;
+  }
+
+  private updateObjective(snap: MatchSnapshot): void {
+    this.text('scoremine', String(snap.scoreMine));
+    this.text('scoreenemy', String(snap.scoreEnemy));
+    this.text('scoretarget', `先取 ${snap.scoreTarget}`);
+
+    const zones = this.el['zones'];
+    if (zones) {
+      zones.hidden = snap.zones.length === 0;
+      if (snap.zones.length > 0) {
+        // 拠点ピルは数が固定なので毎フレーム作り直さず属性だけ更新する
+        if (zones.childElementCount !== snap.zones.length) {
+          zones.innerHTML = '';
+          for (const zone of snap.zones) {
+            const pill = document.createElement('span');
+            pill.className = 'hud-zone-pill';
+            pill.textContent = zone.id;
+            zones.appendChild(pill);
+          }
+        }
+        snap.zones.forEach((zone, i) => {
+          const pill = zones.children[i] as HTMLElement;
+          pill.classList.toggle('zone-mine', zone.owner === 'mine');
+          pill.classList.toggle('zone-enemy', zone.owner === 'enemy');
+          pill.classList.toggle('zone-contested', zone.contested || zone.capturing !== null);
+        });
+      }
+    }
+
+    const announce = this.el['announce'];
+    if (announce) {
+      for (const message of snap.announcements) {
+        const node = document.createElement('div');
+        node.className = 'hud-announce-row';
+        node.textContent = message;
+        announce.appendChild(node);
+        window.setTimeout(() => {
+          node.classList.add('announce-out');
+          window.setTimeout(() => node.remove(), 400);
+        }, 2600);
+      }
+      while (announce.childElementCount > 3) announce.firstElementChild?.remove();
+    }
   }
 
   private updateGrenade(snap: MatchSnapshot): void {
@@ -317,6 +371,7 @@ export class Hud {
     for (const row of snap.scoreboard) {
       const tr = document.createElement('tr');
       if (row.isPlayer) tr.className = 'score-you';
+      else if (snap.teamBased && row.isAlly) tr.className = 'score-ally';
       const name = document.createElement('td');
       name.textContent = row.name;
       const kills = document.createElement('td');
