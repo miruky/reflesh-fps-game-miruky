@@ -4,8 +4,10 @@ import * as THREE from 'three';
 import { SoundKit } from './core/audio';
 import { Input } from './core/input';
 import { GameLoop } from './core/loop';
+import { loadProfile, saveProfile } from './core/profile';
 import { loadSettings } from './core/settings';
 import { Match, type MatchConfig } from './game/match';
+import { applyMatch } from './game/progression';
 import { stageById } from './game/stages';
 import { Hud } from './ui/hud';
 import { Menu, type MenuSelection } from './ui/menu';
@@ -25,6 +27,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 appRoot.appendChild(renderer.domElement);
 
 const settings = loadSettings();
+const profile = loadProfile();
 const sounds = new SoundKit();
 sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi);
 const input = new Input();
@@ -56,7 +59,7 @@ function startMatch(selection: MenuSelection): void {
   input.requestLock(renderer.domElement);
 }
 
-const menu = new Menu(menuRoot, settings, {
+const menu = new Menu(menuRoot, settings, profile, {
   onStart: startMatch,
   onResume: () => {
     sounds.ensure();
@@ -115,7 +118,10 @@ const loop = new GameLoop(
           mode = 'result';
           input.exitLock();
           hud.hide();
-          menu.showResult(match.result());
+          const result = match.result();
+          const progress = applyMatch(profile, result.summary);
+          saveProfile(profile);
+          menu.showResult(result, progress);
         }
       }
       renderer.render(match.scene, match.camera);
