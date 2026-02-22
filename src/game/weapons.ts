@@ -32,6 +32,16 @@ export interface WeaponDef {
   recoilRecoveryPerS: number;
   range: number;
   tracerColor: number;
+  // 1発で飛ぶ弾の数。ショットガンは複数
+  pellets: number;
+  // ペレット同士の固有拡散。照準精度とは別にかかる
+  pelletSpreadDeg: number;
+  // 貫通できる壁の最大厚(m)。0は貫通不可
+  penetrationM: number;
+  // サプレッサー装着時にtrue。発砲音とBOTへの警戒範囲が変わる
+  suppressed?: boolean;
+  // applyAttachmentsが適用済みIDを記録する
+  attachmentIds?: string[];
 }
 
 const DEG = Math.PI / 180;
@@ -77,6 +87,9 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     recoilRecoveryPerS: 6,
     range: 220,
     tracerColor: 0xffc46b,
+    pellets: 1,
+    pelletSpreadDeg: 0,
+    penetrationM: 0.35,
   },
   'tsubaki-smg': {
     id: 'tsubaki-smg',
@@ -105,6 +118,9 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     recoilRecoveryPerS: 7,
     range: 160,
     tracerColor: 0xff8d6b,
+    pellets: 1,
+    pelletSpreadDeg: 0,
+    penetrationM: 0.15,
   },
   'yamasemi-dmr': {
     id: 'yamasemi-dmr',
@@ -133,6 +149,102 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     recoilRecoveryPerS: 5,
     range: 300,
     tracerColor: 0x9bd1ff,
+    pellets: 1,
+    pelletSpreadDeg: 0,
+    penetrationM: 0.6,
+  },
+  'hiiragi-sg': {
+    id: 'hiiragi-sg',
+    name: 'ヒイラギSG',
+    slot: 'primary',
+    damage: 11,
+    headshotMultiplier: 1.3,
+    rpm: 75,
+    magazineSize: 6,
+    reserveAmmo: 30,
+    reloadTacticalMs: 2400,
+    reloadEmptyMs: 2900,
+    spreadHipDeg: 1.6,
+    spreadAdsDeg: 0.8,
+    bloomPerShotDeg: 0.5,
+    bloomMaxDeg: 2.0,
+    bloomRecoveryDegPerS: 1.8,
+    movementSpreadDeg: 0.7,
+    falloff: { start: 7, end: 20, minFactor: 0.25 },
+    mode: 'semi',
+    burstCount: 1,
+    adsFovScale: 0.82,
+    adsTimeMs: 240,
+    switchMs: 500,
+    recoilPattern: risingPattern(3, 1.6, 0.1),
+    recoilRecoveryPerS: 4,
+    range: 60,
+    tracerColor: 0xffe08a,
+    pellets: 8,
+    pelletSpreadDeg: 2.6,
+    penetrationM: 0,
+  },
+  'miyama-br': {
+    id: 'miyama-br',
+    name: 'ミヤマBR',
+    slot: 'primary',
+    damage: 31,
+    headshotMultiplier: 1.7,
+    rpm: 650,
+    magazineSize: 24,
+    reserveAmmo: 96,
+    reloadTacticalMs: 1800,
+    reloadEmptyMs: 2400,
+    spreadHipDeg: 2.8,
+    spreadAdsDeg: 0.15,
+    bloomPerShotDeg: 0.2,
+    bloomMaxDeg: 1.2,
+    bloomRecoveryDegPerS: 1.6,
+    movementSpreadDeg: 1.1,
+    falloff: { start: 28, end: 60, minFactor: 0.7 },
+    mode: 'burst',
+    burstCount: 3,
+    adsFovScale: 0.65,
+    adsTimeMs: 260,
+    switchMs: 500,
+    recoilPattern: risingPattern(6, 0.5, 0.1),
+    recoilRecoveryPerS: 5.5,
+    range: 260,
+    tracerColor: 0xb8ffd1,
+    pellets: 1,
+    pelletSpreadDeg: 0,
+    penetrationM: 0.4,
+  },
+  'kumagera-lmg': {
+    id: 'kumagera-lmg',
+    name: 'クマゲラLMG',
+    slot: 'primary',
+    damage: 24,
+    headshotMultiplier: 1.5,
+    rpm: 600,
+    magazineSize: 75,
+    reserveAmmo: 150,
+    reloadTacticalMs: 3600,
+    reloadEmptyMs: 4300,
+    spreadHipDeg: 3.4,
+    spreadAdsDeg: 0.5,
+    bloomPerShotDeg: 0.1,
+    bloomMaxDeg: 1.4,
+    bloomRecoveryDegPerS: 1.2,
+    movementSpreadDeg: 1.8,
+    falloff: { start: 26, end: 58, minFactor: 0.7 },
+    mode: 'auto',
+    burstCount: 1,
+    adsFovScale: 0.7,
+    adsTimeMs: 340,
+    switchMs: 700,
+    recoilPattern: risingPattern(14, 0.4, -0.14),
+    recoilRecoveryPerS: 5,
+    range: 240,
+    tracerColor: 0xffa3e0,
+    pellets: 1,
+    pelletSpreadDeg: 0,
+    penetrationM: 0.8,
   },
   suzume: {
     id: 'suzume',
@@ -161,10 +273,20 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     recoilRecoveryPerS: 7,
     range: 140,
     tracerColor: 0xfff0a8,
+    pellets: 1,
+    pelletSpreadDeg: 0,
+    penetrationM: 0.1,
   },
 };
 
-export const PRIMARY_IDS = ['kaede-ar', 'tsubaki-smg', 'yamasemi-dmr'] as const;
+export const PRIMARY_IDS = [
+  'kaede-ar',
+  'tsubaki-smg',
+  'yamasemi-dmr',
+  'hiiragi-sg',
+  'miyama-br',
+  'kumagera-lmg',
+] as const;
 
 export interface WeaponInput {
   trigger: boolean;
