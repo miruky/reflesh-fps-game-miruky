@@ -1,3 +1,4 @@
+import { exportProfile, importProfile, saveProfile } from '../core/profile';
 import type { Settings } from '../core/settings';
 import { saveSettings } from '../core/settings';
 import {
@@ -10,6 +11,15 @@ import type { Difficulty } from '../game/bot';
 import { GRENADE_KINDS, GRENADE_SPECS, type GrenadeKind } from '../game/grenades';
 import type { MatchResult } from '../game/match';
 import { MODE_DEFS, MODE_IDS, type GameMode } from '../game/modes';
+import {
+  CHALLENGES,
+  isUnlocked,
+  levelFromXp,
+  rankFromRating,
+  unlockLevelOf,
+  type MatchProgress,
+  type Profile,
+} from '../game/progression';
 import { STAGES } from '../game/stages';
 import { PRIMARY_IDS, WEAPON_DEFS } from '../game/weapons';
 
@@ -106,10 +116,15 @@ export class Menu {
   constructor(
     private readonly root: HTMLElement,
     private readonly settings: Settings,
+    private readonly profile: Profile,
     private readonly callbacks: MenuCallbacks,
   ) {
     this.loadLoadout();
     this.showMain();
+  }
+
+  private playerLevel(): number {
+    return levelFromXp(this.profile.xp).level;
   }
 
   // 前回のロードアウトを復元する。存在しないIDは黙って捨てる
@@ -167,12 +182,19 @@ export class Menu {
             <h1>hibana</h1>
             <p class="menu-tagline">ブラウザで動く3D FPS</p>
           </div>
+          <div class="menu-profile" data-id="profile"></div>
         </header>
         <div class="menu-columns">
-          <section class="menu-section">
-            <h2>ステージ</h2>
-            <div class="stage-grid" data-id="stages"></div>
-          </section>
+          <div>
+            <section class="menu-section">
+              <h2>ステージ</h2>
+              <div class="stage-grid" data-id="stages"></div>
+            </section>
+            <section class="menu-section">
+              <h2>任務</h2>
+              <div class="challenge-list" data-id="challenges"></div>
+            </section>
+          </div>
           <div class="menu-side">
             <section class="menu-section">
               <h2>モード</h2>
@@ -207,6 +229,8 @@ export class Menu {
         </footer>
       </div>
     `;
+    this.renderProfile();
+    this.renderChallenges();
     this.renderStages();
     this.renderModes();
     this.renderWeapons();
@@ -241,7 +265,7 @@ export class Menu {
     this.query('quit').addEventListener('click', () => this.callbacks.onQuit());
   }
 
-  showResult(result: MatchResult): void {
+  showResult(result: MatchResult, progress: MatchProgress): void {
     this.root.hidden = false;
     const mvp = result.rows[0];
     const rowsHtml = result.rows
@@ -267,6 +291,7 @@ export class Menu {
             <thead><tr><th>名前</th><th>キル</th><th>デス</th></tr></thead>
             <tbody>${rowsHtml}</tbody>
           </table>
+          ${this.progressHtml(progress)}
           <div class="result-buttons">
             <button class="menu-start" data-id="restart">もう一度</button>
             <button class="menu-quiet" data-id="menu">メニューに戻る</button>
@@ -276,6 +301,51 @@ export class Menu {
     `;
     this.query('restart').addEventListener('click', () => this.callbacks.onRestart());
     this.query('menu').addEventListener('click', () => this.callbacks.onQuit());
+  }
+
+  // リザルト下部の獲得XP・レベル・レート変動の表示
+  private progressHtml(progress: MatchProgress): string {
+    const xpRows = progress.xpBreakdown
+      .map(
+        (entry) =>
+          `<li><span class="xp-label">${entry.label}</span><span class="xp-value">+${entry.xp}</span></li>`,
+      )
+      .join('');
+    const level = progress.levelAfter;
+    const xpRatio = level.toNext > 0 ? (level.intoLevel / level.toNext) * 100 : 100;
+    const levelUp =
+      level.level > progress.levelBefore.level
+        ? `<p class="result-levelup">レベルアップ Lv ${progress.levelBefore.level} から Lv ${level.level} へ</p>`
+        : '';
+    const unlocks = progress.newUnlocks.length
+      ? `<ul class="result-unlocks">${progress.newUnlocks
+          .map((u) => `<li>${u.kind === 'weapon' ? '武器' : 'アタッチメント'}解放: ${u.name}</li>`)
+          .join('')}</ul>`
+      : '';
+    const delta = progress.ratingAfter - progress.ratingBefore;
+    const rankNote =
+      progress.rankAfter.name === progress.rankBefore.name
+        ? `階級 ${progress.rankAfter.name}`
+        : delta > 0
+          ? `${progress.rankAfter.name} へ昇格`
+          : `${progress.rankAfter.name} へ降格`;
+    const rating =
+      delta === 0
+        ? `<p class="result-rating">レート ${progress.ratingAfter} / ${rankNote}</p>`
+        : `<p class="result-rating">レート ${progress.ratingBefore} <span class="${delta > 0 ? 'rating-up' : 'rating-down'}">${delta > 0 ? '+' : ''}${delta}</span> / ${rankNote}</p>`;
+    return `
+      <section class="result-progress">
+        <ul class="result-xp-list">${xpRows}</ul>
+        <p class="result-xp-total">獲得 ${progress.xpTotal} XP</p>
+        <div class="result-levelrow">
+          <span class="result-level">Lv ${level.level}</span>
+          <span class="profile-xpbar"><i style="width:${xpRatio}%"></i></span>
+        </div>
+        ${levelUp}
+        ${unlocks}
+        ${rating}
+      </section>
+    `;
   }
 
   private query(id: string): HTMLElement {
@@ -311,25 +381,39 @@ export class Menu {
 
   private renderWeapons(): void {
     const list = this.query('weapons');
+    const level = this.playerLevel();
+    // 保存されていた選択がロック中(記録の読み込み直後など)なら初期武器へ戻す
+    if (!isUnlocked('weapon', this.selection.primaryId, level)) {
+      this.selection.primaryId = 'kaede-ar';
+    }
     for (const id of PRIMARY_IDS) {
       const def = WEAPON_DEFS[id];
       if (!def) continue;
       const bars = WEAPON_BARS[id] ?? { power: 5, rate: 5, control: 5 };
+      const unlocked = isUnlocked('weapon', id, level);
       const card = document.createElement('button');
-      card.className = 'weapon-card';
+      card.className = unlocked ? 'weapon-card' : 'weapon-card locked';
       card.dataset.weapon = id;
       const mode = def.mode === 'auto' ? 'フルオート' : def.mode === 'burst' ? 'バースト' : '単発';
+      const lockNote = unlocked
+        ? ''
+        : `<span class="locked-note">Lv ${unlockLevelOf('weapon', id)} で解放</span>`;
       card.innerHTML = `
         <span class="weapon-name">${def.name}</span>
         <span class="weapon-mode">${mode} / 装弾数 ${def.magazineSize}</span>
         ${this.bar('火力', bars.power)}
         ${this.bar('連射', bars.rate)}
         ${this.bar('制御', bars.control)}
+        ${lockNote}
       `;
-      card.addEventListener('click', () => {
-        this.selection.primaryId = id;
-        this.markSelected(list, 'weapon', id);
-      });
+      if (unlocked) {
+        card.addEventListener('click', () => {
+          this.selection.primaryId = id;
+          this.markSelected(list, 'weapon', id);
+        });
+      } else {
+        card.disabled = true;
+      }
       list.appendChild(card);
     }
     this.markSelected(list, 'weapon', this.selection.primaryId);
@@ -341,6 +425,56 @@ export class Menu {
         <span class="stat-label">${label}</span>
         <span class="stat-bar"><i style="width:${value * 10}%"></i></span>
       </span>`;
+  }
+
+  private renderProfile(): void {
+    const panel = this.query('profile');
+    const level = levelFromXp(this.profile.xp);
+    const rank = rankFromRating(this.profile.rating);
+    const stats = this.profile.stats;
+    const winRate = stats.matches > 0 ? ((stats.wins / stats.matches) * 100).toFixed(0) : '-';
+    const kd = stats.deaths > 0 ? (stats.kills / stats.deaths).toFixed(2) : String(stats.kills);
+    const accuracy =
+      stats.shotsFired > 0 ? ((stats.shotsHit / stats.shotsFired) * 100).toFixed(1) : '-';
+    const xpRatio = level.toNext > 0 ? (level.intoLevel / level.toNext) * 100 : 100;
+    panel.innerHTML = `
+      <div class="profile-top">
+        <span class="profile-rank">${rank.name}</span>
+        <span class="profile-rating">レート ${this.profile.rating}</span>
+        <span class="profile-level">Lv ${level.level}</span>
+      </div>
+      <div class="profile-xpbar"><i style="width:${xpRatio}%"></i></div>
+      <div class="profile-stats">${stats.matches}戦 / 勝率 ${winRate}% / K/D ${kd} / 命中 ${accuracy}%</div>
+      <div class="profile-actions">
+        <button class="profile-btn" data-id="export">記録を書き出す</button>
+        <button class="profile-btn" data-id="import">記録を読み込む</button>
+      </div>
+    `;
+    this.query('export').addEventListener('click', () => exportProfile(this.profile));
+    this.query('import').addEventListener('click', () => {
+      importProfile((imported) => {
+        Object.assign(this.profile, imported);
+        saveProfile(this.profile);
+        this.showMain();
+      });
+    });
+  }
+
+  private renderChallenges(): void {
+    const list = this.query('challenges');
+    for (const challenge of CHALLENGES) {
+      const done = this.profile.completedChallenges.includes(challenge.id);
+      const [current, goal] = challenge.progress(this.profile.stats, this.profile.weaponKills);
+      const row = document.createElement('div');
+      row.className = done ? 'challenge-row challenge-done' : 'challenge-row';
+      row.innerHTML = `
+        <span class="challenge-name">${challenge.name}</span>
+        <span class="challenge-desc">${challenge.desc}</span>
+        <span class="challenge-bar"><i style="width:${done ? 100 : (current / goal) * 100}%"></i></span>
+        <span class="challenge-xp">${done ? '達成' : `${challenge.xp} XP`}</span>
+      `;
+      list.appendChild(row);
+    }
   }
 
   private renderModes(): void {
@@ -365,7 +499,13 @@ export class Menu {
 
   private renderAttachments(): void {
     const panel = this.query('attachments');
+    const level = this.playerLevel();
     for (const { slot, label } of ATTACHMENT_SLOTS) {
+      // ロック中のアタッチメントが選択に残っていたら外す
+      const selected = this.attachmentBySlot[slot];
+      if (selected && !isUnlocked('attachment', selected, level)) {
+        this.attachmentBySlot[slot] = null;
+      }
       const row = document.createElement('div');
       row.className = 'attach-row';
       const name = document.createElement('span');
@@ -389,6 +529,13 @@ export class Menu {
         btn.textContent = choice.text;
         if (choice.title) btn.title = choice.title;
         btn.dataset.attach = choice.id ?? 'none';
+        if (choice.id && !isUnlocked('attachment', choice.id, level)) {
+          btn.classList.add('locked');
+          btn.disabled = true;
+          btn.title = `Lv ${unlockLevelOf('attachment', choice.id)} で解放`;
+          buttons.appendChild(btn);
+          continue;
+        }
         btn.addEventListener('click', () => {
           this.attachmentBySlot[slot] = choice.id;
           this.syncAttachments();
