@@ -74,6 +74,7 @@ export class Hud {
       <div class="hud-death" data-id="death" hidden>
         <div class="hud-death-title">やられた</div>
         <div class="hud-death-sub">リスポーンまで <span data-id="respawn">0.0</span> 秒</div>
+        <div class="hud-killcam" data-id="killcam" hidden></div>
       </div>
       <div class="hud-scoreboard" data-id="scoreboard" hidden>
         <table>
@@ -362,6 +363,11 @@ export class Hud {
     if (!death) return;
     death.hidden = snap.alive;
     if (!snap.alive) this.text('respawn', snap.respawnIn.toFixed(1));
+    const killcam = this.el['killcam'];
+    if (killcam) {
+      killcam.hidden = snap.killcam === null;
+      if (snap.killcam !== null) this.text('killcam', `キルカメラ: ${snap.killcam}`);
+    }
   }
 
   private renderScoreboard(snap: MatchSnapshot): void {
