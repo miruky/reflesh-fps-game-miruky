@@ -5,6 +5,12 @@ export interface Settings {
   volSfx: number;
   volUi: number;
   adsToggle: boolean;
+  crouchToggle: boolean;
+  // 画面揺れ軽減: 武器のスウェイ・ボブを抑える
+  reduceMotion: boolean;
+  uiScale: number;
+  // 色覚サポート: teamcolors.tsのパレットID
+  teamPaletteId: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -14,6 +20,10 @@ export const DEFAULT_SETTINGS: Settings = {
   volSfx: 0.8,
   volUi: 0.6,
   adsToggle: false,
+  crouchToggle: false,
+  reduceMotion: false,
+  uiScale: 1,
+  teamPaletteId: 'standard',
 };
 
 const KEY = 'hibana.settings.v1';
