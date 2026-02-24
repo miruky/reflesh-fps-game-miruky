@@ -864,6 +864,13 @@ tr.score-ally td {
   padding: 2px 0;
 }
 
+.result-record {
+  color: var(--ember-ink);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 8px;
+}
+
 .result-rating {
   font-size: 13px;
   color: var(--ink-soft);
@@ -937,6 +944,24 @@ tr.score-ally td {
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
+}
+
+.profile-records {
+  margin-top: 6px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.profile-records b {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.profile-streak {
+  color: var(--ember-ink);
+  font-weight: 700;
 }
 
 .profile-actions {
