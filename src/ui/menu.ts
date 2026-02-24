@@ -339,6 +339,9 @@ export class Menu {
       delta === 0
         ? `<p class="result-rating">レート ${progress.ratingAfter} / ${rankNote}</p>`
         : `<p class="result-rating">レート ${progress.ratingBefore} <span class="${delta > 0 ? 'rating-up' : 'rating-down'}">${delta > 0 ? '+' : ''}${delta}</span> / ${rankNote}</p>`;
+    const recordsHtml = progress.newRecords.length
+      ? `<p class="result-record">自己ベスト更新 ${progress.newRecords.join(' / ')}</p>`
+      : '';
     return `
       <section class="result-progress">
         <ul class="result-xp-list">${xpRows}</ul>
@@ -349,6 +352,7 @@ export class Menu {
         </div>
         ${levelUp}
         ${unlocks}
+        ${recordsHtml}
         ${rating}
       </section>
     `;
@@ -473,6 +477,15 @@ export class Menu {
     const accuracy =
       stats.shotsFired > 0 ? ((stats.shotsHit / stats.shotsFired) * 100).toFixed(1) : '-';
     const xpRatio = level.toNext > 0 ? (level.intoLevel / level.toNext) * 100 : 100;
+    const records = this.profile.records;
+    const streakNow =
+      records.currentWinStreak >= 2
+        ? ` <span class="profile-streak">${records.currentWinStreak}連勝中</span>`
+        : '';
+    const recordsLine =
+      records.mostKills > 0 || records.bestWinStreak > 0
+        ? `<div class="profile-records">自己ベスト 最多キル <b>${records.mostKills}</b> / 最長連勝 <b>${records.bestWinStreak}</b>${streakNow}</div>`
+        : '';
     panel.innerHTML = `
       <div class="profile-top">
         <span class="profile-rank">${rank.name}</span>
@@ -481,6 +494,7 @@ export class Menu {
       </div>
       <div class="profile-xpbar"><i style="width:${xpRatio}%"></i></div>
       <div class="profile-stats">${stats.matches}戦 / 勝率 ${winRate}% / K/D ${kd} / 命中 ${accuracy}%</div>
+      ${recordsLine}
       <div class="profile-actions">
         <button class="profile-btn" data-id="export">記録を書き出す</button>
         <button class="profile-btn" data-id="import">記録を読み込む</button>
