@@ -946,20 +946,24 @@ tr.score-ally td {
 }
 
 .profile-btn {
-  background: none;
   border: none;
-  padding: 2px 0;
+  padding: 2px 0 3px;
   font-size: 12px;
   color: var(--ink-faint);
-  border-bottom: 1px solid transparent;
+  /* 下線は即時の線でなく、ホバーで左から引かれる(background-sizeトリック)*/
+  background-image: linear-gradient(var(--ember), var(--ember));
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: 0% 1px;
   transition:
     color 0.18s var(--ease),
-    border-color 0.18s var(--ease);
+    background-size 0.26s var(--ease-out);
 }
 
-.profile-btn:hover {
+.profile-btn:hover,
+.profile-btn:focus-visible {
   color: var(--ink);
-  border-color: var(--ember);
+  background-size: 100% 1px;
 }
 
 /* ── 任務(チャレンジ)── */
@@ -1680,6 +1684,29 @@ tr.score-ally td {
 .pause-panel,
 .result-panel {
   animation: rise 0.4s var(--ease-out) both;
+}
+
+/* 一覧の各行を順に灯す。セクションの入場と干渉しないよう不透明度だけ動かす。
+   reduced-motionでは下のメディアクエリで止まり、全行が即表示される。 */
+@keyframes fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .menu-main .stage-card,
+  .menu-main .mode-card,
+  .menu-main .weapon-card,
+  .menu-main .grenade-card,
+  .menu-main .difficulty-card,
+  .menu-main .challenge-row {
+    animation: fadein 0.4s var(--ease) both;
+    animation-delay: calc(0.08s + var(--i, 0) * 0.03s);
+  }
 }
 
 /* ====================== レスポンシブ ====================== */
