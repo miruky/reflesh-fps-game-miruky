@@ -186,7 +186,7 @@ export class Menu {
           <div class="menu-profile" data-id="profile"></div>
         </header>
         <div class="menu-columns">
-          <div>
+          <div class="menu-context">
             <section class="menu-section">
               <h2>ステージ</h2>
               <div class="stage-grid" data-id="stages"></div>
@@ -194,6 +194,10 @@ export class Menu {
             <section class="menu-section">
               <h2>任務</h2>
               <div class="challenge-list" data-id="challenges"></div>
+            </section>
+            <section class="menu-section">
+              <h2>設定</h2>
+              <div data-id="settings"></div>
             </section>
           </div>
           <div class="menu-side">
@@ -216,10 +220,6 @@ export class Menu {
             <section class="menu-section">
               <h2>BOTの腕前</h2>
               <div class="difficulty-list" data-id="difficulties"></div>
-            </section>
-            <section class="menu-section">
-              <h2>設定</h2>
-              <div data-id="settings"></div>
             </section>
             <button class="menu-start" data-id="start">出撃する</button>
           </div>
