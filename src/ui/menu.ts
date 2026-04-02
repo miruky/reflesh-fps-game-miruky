@@ -21,6 +21,7 @@ import {
   type Profile,
 } from '../game/progression';
 import { STAGES } from '../game/stages';
+import { TEAM_PALETTES } from '../game/teamcolors';
 import { PRIMARY_IDS, WEAPON_DEFS } from '../game/weapons';
 
 export interface MenuSelection {
@@ -631,9 +632,26 @@ export class Menu {
       this.slider('UI音量', 0, 1, 0.05, this.settings.volUi, (v) => {
         this.settings.volUi = v;
       }),
+      this.slider('UIの大きさ', 0.8, 1.3, 0.05, this.settings.uiScale, (v) => {
+        this.settings.uiScale = v;
+      }),
       this.checkbox('ADSをトグルにする', this.settings.adsToggle, (v) => {
         this.settings.adsToggle = v;
       }),
+      this.checkbox('しゃがみをトグルにする', this.settings.crouchToggle, (v) => {
+        this.settings.crouchToggle = v;
+      }),
+      this.checkbox('画面の揺れを軽減する', this.settings.reduceMotion, (v) => {
+        this.settings.reduceMotion = v;
+      }),
+      this.select(
+        '敵味方の配色',
+        TEAM_PALETTES.map((p) => ({ value: p.id, label: p.name })),
+        this.settings.teamPaletteId,
+        (v) => {
+          this.settings.teamPaletteId = v;
+        },
+      ),
     );
   }
 
@@ -666,6 +684,34 @@ export class Menu {
       this.callbacks.onSettingsChanged();
     });
     row.append(text, input, display);
+    return row;
+  }
+
+  // 配色は次の試合開始時に反映される
+  private select(
+    label: string,
+    options: Array<{ value: string; label: string }>,
+    value: string,
+    apply: (v: string) => void,
+  ): HTMLElement {
+    const row = document.createElement('label');
+    row.className = 'setting-row';
+    const text = document.createElement('span');
+    text.textContent = label;
+    const input = document.createElement('select');
+    for (const option of options) {
+      const node = document.createElement('option');
+      node.value = option.value;
+      node.textContent = option.label;
+      input.appendChild(node);
+    }
+    input.value = value;
+    input.addEventListener('change', () => {
+      apply(input.value);
+      saveSettings(this.settings);
+      this.callbacks.onSettingsChanged();
+    });
+    row.append(text, input);
     return row;
   }
 
