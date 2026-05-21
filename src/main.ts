@@ -41,6 +41,7 @@ function startMatch(selection: MenuSelection): void {
   match?.dispose();
   const config: MatchConfig = {
     stage: stageById(selection.stageId),
+    mode: selection.mode,
     primaryId: selection.primaryId,
     attachments: selection.attachments,
     grenade: selection.grenade,
