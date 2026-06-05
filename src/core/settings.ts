@@ -6,14 +6,27 @@ export interface Settings {
   volUi: number;
   adsToggle: boolean;
   crouchToggle: boolean;
+  // 上下の視点操作を反転する(マウスを上へ動かすと下を向く)
+  invertY: boolean;
   // 画面揺れ軽減: 武器のスウェイ・ボブを抑える
   reduceMotion: boolean;
   uiScale: number;
+  // UIのアクセント色。style.cssの data-accent バリアントID
+  uiAccent: string;
   // 色覚サポート: teamcolors.tsのパレットID
   teamPaletteId: string;
   // 試合の制限時間(秒)。先取スコアに届かなければこの時間で決着する
   matchLengthS: number;
 }
+
+// UIのアクセント色の選択肢。idはstyle.cssの :root[data-accent='…'] と対応し、
+// 既定の ember は素の :root なので data-accent 属性を付けない
+export const UI_ACCENTS: ReadonlyArray<{ id: string; name: string }> = [
+  { id: 'ember', name: '火花(既定)' },
+  { id: 'cyan', name: '水' },
+  { id: 'amber', name: '琥珀' },
+  { id: 'violet', name: '菫' },
+];
 
 // 設定UIのスライダーと読み込み時の検証で同じ範囲を使う
 export const SETTING_BOUNDS = {
@@ -40,8 +53,10 @@ export const DEFAULT_SETTINGS: Settings = {
   volUi: 0.6,
   adsToggle: false,
   crouchToggle: false,
+  invertY: false,
   reduceMotion: false,
   uiScale: 1,
+  uiAccent: 'ember',
   teamPaletteId: 'standard',
   matchLengthS: 300,
 };
@@ -93,8 +108,12 @@ export function sanitizeSettings(raw: Partial<Settings>): Settings {
     volUi: clamp(merged.volUi, b.volUi.min, b.volUi.max, DEFAULT_SETTINGS.volUi),
     adsToggle: Boolean(merged.adsToggle),
     crouchToggle: Boolean(merged.crouchToggle),
+    invertY: Boolean(merged.invertY),
     reduceMotion: Boolean(merged.reduceMotion),
     uiScale: clamp(merged.uiScale, b.uiScale.min, b.uiScale.max, DEFAULT_SETTINGS.uiScale),
+    uiAccent: UI_ACCENTS.some((a) => a.id === merged.uiAccent)
+      ? merged.uiAccent
+      : DEFAULT_SETTINGS.uiAccent,
     teamPaletteId:
       typeof merged.teamPaletteId === 'string' && merged.teamPaletteId.length > 0
         ? merged.teamPaletteId
