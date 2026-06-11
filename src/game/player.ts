@@ -182,6 +182,8 @@ export class Player {
       this.deaths += 1;
       this.streak = 0;
       this.respawnIn = 2.5;
+      // 死亡中の体をBOTの弾・移動・視線の障害物にしない
+      this.collider.setEnabled(false);
       return true;
     }
     return false;
@@ -193,6 +195,7 @@ export class Player {
     this.velY = 0;
     this.vel.set(0, 0, 0);
     this.sinceDamage = 99;
+    this.collider.setEnabled(true);
     this.body.setTranslation(
       { x: spawn.x, y: spawn.y + CENTER_TO_FEET, z: spawn.z },
       true,
