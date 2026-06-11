@@ -225,11 +225,14 @@ export class Weapon {
     return this.def.switchMs > 0 ? this.raiseRemainingMs / this.def.switchMs : 0;
   }
 
-  // 武器切替で構え直す
+  // 武器切替で構え直す。前回しまった時の照準状態を持ち越さない
   raise(): void {
     this.raiseRemainingMs = this.def.switchMs;
     this.cancelReload();
     this.burstLeft = 0;
+    this.adsProgress = 0;
+    this.bloomDeg = 0;
+    this.recoil.reset();
   }
 
   cancelReload(): void {
