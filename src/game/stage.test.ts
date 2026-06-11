@@ -39,10 +39,11 @@ describe('generateStage', () => {
     expect(new Set(STAGES.map((s) => s.id)).size).toBe(10);
   });
 
-  it('スポーン地点付近に障害物を置かない', () => {
+  it('プレイヤー・BOTどちらのスポーン地点付近にも障害物を置かない', () => {
     for (const def of STAGES) {
       const layout = generateStage(def);
-      for (const [sx, , sz] of layout.playerSpawns) {
+      const spawns = [...layout.playerSpawns, ...layout.botSpawns];
+      for (const [sx, , sz] of spawns) {
         for (const box of layout.boxes) {
           if (box.color === def.palette.wall && box.h >= 5) continue;
           const dx = Math.max(0, Math.abs(box.x - sx) - box.w / 2);

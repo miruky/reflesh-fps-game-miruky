@@ -89,6 +89,20 @@ describe('Weapon 発射制御', () => {
     expect(weapon.adsProgress).toBe(1);
   });
 
+  it('構え直しでADSとブルームを持ち越さない', () => {
+    const weapon = makeWeapon('kaede-ar');
+    settle(weapon, 1000);
+    for (let i = 0; i < 100; i += 1) {
+      weapon.update(10, { trigger: true, ads: true, reloadPressed: false }, CTX);
+    }
+    expect(weapon.adsProgress).toBe(1);
+    expect(weapon.bloomDeg).toBeGreaterThan(0);
+    weapon.raise();
+    expect(weapon.adsProgress).toBe(0);
+    expect(weapon.bloomDeg).toBe(0);
+    expect(weapon.recoil.stepIndex).toBe(0);
+  });
+
   it('連射でブルームが乗り、時間経過で回復する', () => {
     const weapon = makeWeapon('kaede-ar');
     settle(weapon, 1000);
