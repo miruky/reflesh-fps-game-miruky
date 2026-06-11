@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 380" role="img" aria-label="hibanaのアーキテクチャ図">
+  <title>hibanaのアーキテクチャ</title>
+  <style>
+    .box { fill: none; stroke: #768390; stroke-width: 1.5; rx: 8; }
+    .accent-box { fill: none; stroke: #ff5a3c; stroke-width: 1.5; }
+    .label { font: 600 14px 'Hiragino Sans', 'Noto Sans JP', sans-serif; fill: #768390; }
+    .small { font: 400 11.5px 'Hiragino Sans', 'Noto Sans JP', sans-serif; fill: #768390; }
+    .accent-label { font: 700 14px 'Hiragino Sans', 'Noto Sans JP', sans-serif; fill: #ff5a3c; }
+    .arrow { stroke: #768390; stroke-width: 1.5; fill: none; marker-end: url(#head); }
+  </style>
+  <defs>
+    <marker id="head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8z" fill="#768390"/>
+    </marker>
+  </defs>
+
+  <rect x="10" y="10" width="840" height="360" rx="12" class="box" stroke-dasharray="6 4"/>
+  <text x="30" y="38" class="label">ブラウザ(GitHub Pagesから静的配信)</text>
+
+  <rect x="40" y="70" width="150" height="78" rx="8" class="box"/>
+  <text x="60" y="100" class="label">Input</text>
+  <text x="60" y="122" class="small">キーボード / マウス</text>
+  <text x="60" y="138" class="small">Pointer Lock</text>
+
+  <rect x="260" y="60" width="280" height="180" rx="8" class="accent-box"/>
+  <text x="280" y="90" class="accent-label">Match(固定60Hz更新)</text>
+  <text x="280" y="118" class="small">Player(移動・HP・リスポーン)</text>
+  <text x="280" y="138" class="small">Weapon(発射制御・反動・弾倉)</text>
+  <text x="280" y="158" class="small">Bot AI(索敵・交戦・射撃)</text>
+  <text x="280" y="178" class="small">Rapier 物理(WASM・レイキャスト)</text>
+  <text x="280" y="198" class="small">ステージ生成(シード決定論)</text>
+  <text x="280" y="218" class="small">弾道計算(距離減衰・部位倍率)</text>
+
+  <rect x="620" y="60" width="200" height="100" rx="8" class="box"/>
+  <text x="640" y="90" class="label">Three.js 描画</text>
+  <text x="640" y="114" class="small">シーン / 影 / フォグ</text>
+  <text x="640" y="132" class="small">ViewModel(一人称武器)</text>
+  <text x="640" y="150" class="small">Effects(トレーサー・弾痕)</text>
+
+  <rect x="620" y="190" width="200" height="74" rx="8" class="box"/>
+  <text x="640" y="218" class="label">HUD / メニュー(DOM)</text>
+  <text x="640" y="240" class="small">スナップショット駆動</text>
+  <text x="640" y="256" class="small">SVGクロスヘア・コンパス</text>
+
+  <rect x="620" y="294" width="200" height="56" rx="8" class="box"/>
+  <text x="640" y="320" class="label">Web Audio</text>
+  <text x="640" y="338" class="small">全効果音をリアルタイム合成</text>
+
+  <path class="arrow" d="M190 109 H252"/>
+  <path class="arrow" d="M540 110 H612"/>
+  <path class="arrow" d="M540 200 C580 200 590 222 612 224"/>
+  <path class="arrow" d="M540 230 C580 240 580 310 612 318"/>
+
+  <text x="196" y="100" class="small">状態</text>
+  <text x="556" y="100" class="small">毎フレーム</text>
+  <text x="552" y="190" class="small">60Hz</text>
+  <text x="556" y="296" class="small">イベント</text>
+</svg>
