@@ -1,10 +1,15 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { Rand } from '../core/rng';
-import { CAPSULE_HALF, CAPSULE_RADIUS } from './player';
 
-const CENTER_TO_FEET = CAPSULE_HALF + CAPSULE_RADIUS;
-const HEAD_OFFSET = 0.78;
+// 胴体カプセルは首までの高さに留め、頭の判定球をカプセルの外に出す。
+// 全身を覆うカプセルにすると水平レイが常に胴体へ先に当たり、
+// ヘッドショットが成立しなくなる。頭頂は足元から1.9mでプレイヤーと同じ。
+const BODY_HALF = 0.45;
+const BODY_RADIUS = 0.35;
+const CENTER_TO_FEET = BODY_HALF + BODY_RADIUS;
+const HEAD_OFFSET = 0.88;
+const HEAD_RADIUS = 0.22;
 const MOVE_SPEED = 3.4;
 const GRAVITY = 18;
 
@@ -81,11 +86,11 @@ export class Bot {
     );
     this.body = world.createRigidBody(desc);
     this.bodyCollider = world.createCollider(
-      RAPIER.ColliderDesc.capsule(CAPSULE_HALF, CAPSULE_RADIUS),
+      RAPIER.ColliderDesc.capsule(BODY_HALF, BODY_RADIUS),
       this.body,
     );
     this.headCollider = world.createCollider(
-      RAPIER.ColliderDesc.ball(0.22).setTranslation(0, HEAD_OFFSET, 0),
+      RAPIER.ColliderDesc.ball(HEAD_RADIUS).setTranslation(0, HEAD_OFFSET, 0),
       this.body,
     );
     this.controller = world.createCharacterController(0.05);
@@ -97,16 +102,16 @@ export class Bot {
       color: new THREE.Color(color).multiplyScalar(0.6),
       roughness: 0.6,
     });
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HALF * 2), bodyMat);
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(BODY_RADIUS, BODY_HALF * 2), bodyMat);
     torso.castShadow = true;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), headMat);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(HEAD_RADIUS, 16, 12), headMat);
     head.position.y = HEAD_OFFSET;
     head.castShadow = true;
     const visor = new THREE.Mesh(
       new THREE.BoxGeometry(0.26, 0.07, 0.08),
       new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.3 }),
     );
-    visor.position.set(0, HEAD_OFFSET + 0.02, -0.18);
+    visor.position.set(0, HEAD_OFFSET + 0.02, -0.2);
     this.group.add(torso, head, visor);
   }
 
@@ -255,6 +260,9 @@ export class Bot {
       this.deaths += 1;
       this.respawnIn = 3;
       this.dyingTimer = 0.4;
+      // 死体を見えない壁にしない。リスポーンまで弾と移動の判定から外す
+      this.bodyCollider.setEnabled(false);
+      this.headCollider.setEnabled(false);
       return true;
     }
     return false;
@@ -267,6 +275,8 @@ export class Bot {
     this.alert = 0;
     this.group.visible = true;
     this.group.rotation.x = 0;
+    this.bodyCollider.setEnabled(true);
+    this.headCollider.setEnabled(true);
     this.body.setTranslation({ x: spawn.x, y: spawn.y + CENTER_TO_FEET, z: spawn.z }, true);
     this.syncMesh();
   }
