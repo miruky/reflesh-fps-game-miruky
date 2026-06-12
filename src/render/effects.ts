@@ -41,7 +41,7 @@ export class Effects {
     this.decals.push({ obj: decal, life: 8, maxLife: 8 });
     if (this.decals.length > MAX_DECALS) {
       const oldest = this.decals.shift();
-      if (oldest) this.dispose(oldest.obj);
+      if (oldest) this.disposeObject(oldest.obj);
     }
   }
 
@@ -73,9 +73,16 @@ export class Effects {
 
   clear(): void {
     for (const list of [this.tracers, this.puffs, this.decals]) {
-      for (const item of list) this.dispose(item.obj);
+      for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
+  }
+
+  // 試合破棄時に呼ぶ。プール共有ジオメトリも含めて解放する
+  dispose(): void {
+    this.clear();
+    this.decalGeometry.dispose();
+    this.puffGeometry.dispose();
   }
 
   private tick<T extends THREE.Object3D>(
@@ -87,7 +94,7 @@ export class Effects {
     for (const item of list) {
       item.life -= dt;
       if (item.life <= 0) {
-        this.dispose(item.obj);
+        this.disposeObject(item.obj);
         continue;
       }
       fade(item.obj, item.life / item.maxLife);
@@ -96,7 +103,7 @@ export class Effects {
     return kept;
   }
 
-  private dispose(obj: THREE.Object3D): void {
+  private disposeObject(obj: THREE.Object3D): void {
     this.scene.remove(obj);
     if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
       if (obj.geometry !== this.decalGeometry && obj.geometry !== this.puffGeometry) {

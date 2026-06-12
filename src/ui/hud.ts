@@ -150,7 +150,8 @@ export class Hud {
       const visible = Math.abs(relative) <= 65;
       mark.el.style.opacity = visible ? '1' : '0';
       if (visible) {
-        mark.el.style.transform = `translateX(${relative * PX_PER_DEG}px)`;
+        // ラベル自身の幅の半分を引いて文字の中心を目盛り位置に合わせる
+        mark.el.style.transform = `translateX(${relative * PX_PER_DEG}px) translateX(-50%)`;
       }
     }
   }
