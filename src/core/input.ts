@@ -10,6 +10,10 @@ export type Action =
   | 'melee'
   | 'weapon1'
   | 'weapon2'
+  | 'grenade'
+  | 'grenadeswitch'
+  | 'leanleft'
+  | 'leanright'
   | 'scoreboard';
 
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
@@ -24,6 +28,10 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   melee: ['KeyV'],
   weapon1: ['Digit1'],
   weapon2: ['Digit2'],
+  grenade: ['KeyG'],
+  grenadeswitch: ['Digit3'],
+  leanleft: ['KeyQ'],
+  leanright: ['KeyE'],
   scoreboard: ['Tab'],
 };
 
@@ -34,6 +42,7 @@ export class Input {
 
   private readonly down = new Set<string>();
   private readonly pressed = new Set<string>();
+  private readonly released = new Set<string>();
   private readonly mouseDown = [false, false, false];
   private readonly mousePressed = [false, false, false];
   private bindings = DEFAULT_BINDINGS;
@@ -52,13 +61,14 @@ export class Input {
     // 押しっぱなしのキーはkeyupで自然に消えるためdownは消さない。
     document.addEventListener('pointerlockchange', () => {
       this.pressed.clear();
+      this.released.clear();
       for (let i = 0; i < 3; i += 1) this.mousePressed[i] = false;
       this.mouseDX = 0;
       this.mouseDY = 0;
       this.wheelDelta = 0;
     });
     window.addEventListener('keyup', (e) => {
-      this.down.delete(e.code);
+      if (this.down.delete(e.code)) this.released.add(e.code);
     });
     window.addEventListener('blur', () => {
       this.down.clear();
@@ -113,6 +123,15 @@ export class Input {
     let hit = false;
     for (const code of this.bindings[action]) {
       if (this.pressed.delete(code)) hit = true;
+    }
+    return hit;
+  }
+
+  // キーを離した立ち下がり。読み取りと同時に消費する
+  wasReleased(action: Action): boolean {
+    let hit = false;
+    for (const code of this.bindings[action]) {
+      if (this.released.delete(code)) hit = true;
     }
     return hit;
   }
