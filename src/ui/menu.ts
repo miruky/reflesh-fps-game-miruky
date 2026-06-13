@@ -1,6 +1,13 @@
 import type { Settings } from '../core/settings';
 import { saveSettings } from '../core/settings';
+import {
+  ATTACHMENT_DEFS,
+  ATTACHMENT_SLOTS,
+  attachmentsForSlot,
+  type AttachmentSlot,
+} from '../game/attachments';
 import type { Difficulty } from '../game/bot';
+import { GRENADE_KINDS, GRENADE_SPECS, type GrenadeKind } from '../game/grenades';
 import type { ScoreRow } from '../game/match';
 import { STAGES } from '../game/stages';
 import { PRIMARY_IDS, WEAPON_DEFS } from '../game/weapons';
@@ -8,6 +15,8 @@ import { PRIMARY_IDS, WEAPON_DEFS } from '../game/weapons';
 export interface MenuSelection {
   stageId: string;
   primaryId: string;
+  attachments: string[];
+  grenade: GrenadeKind;
   difficulty: Difficulty;
 }
 
@@ -29,7 +38,19 @@ const WEAPON_BARS: Record<string, WeaponBars> = {
   'kaede-ar': { power: 7, rate: 7, control: 6 },
   'tsubaki-smg': { power: 5, rate: 9, control: 5 },
   'yamasemi-dmr': { power: 9, rate: 3, control: 8 },
+  'hiiragi-sg': { power: 9, rate: 2, control: 4 },
+  'miyama-br': { power: 7, rate: 6, control: 7 },
+  'kumagera-lmg': { power: 6, rate: 6, control: 3 },
 };
+
+const GRENADE_DESCS: Record<GrenadeKind, string> = {
+  frag: '長押しでクッキング。爆発範囲ダメージ',
+  smoke: '視線を遮る煙幕を張る',
+  flash: '視界を白く焼く。正面で食らうと長い',
+  incendiary: '着弾点に燃え続ける火災を残す',
+};
+
+const LOADOUT_KEY = 'hibana.loadout.v1';
 
 const DIFFICULTIES: Array<{ id: Difficulty; label: string; desc: string }> = [
   { id: 'easy', label: '新兵', desc: '反応が遅く、よく外す' },
@@ -42,11 +63,15 @@ const CONTROLS: Array<[string, string]> = [
   ['視点', 'マウス'],
   ['射撃', '左クリック'],
   ['ADS(覗き込み)', '右クリック'],
-  ['ジャンプ', 'Space'],
+  ['ジャンプ / よじ登り', 'Space(空中で前進)'],
   ['しゃがみ', 'C / 左Ctrl'],
   ['スプリント', '左Shift'],
+  ['スライディング', 'スプリント中に C'],
+  ['リーン', 'Q / E'],
   ['リロード', 'R'],
   ['武器切替', '1 / 2 / ホイール'],
+  ['グレネード', 'G 長押しで構え、離して投擲'],
+  ['投擲物切替', '3'],
   ['近接攻撃', 'V'],
   ['スコアボード', 'Tab'],
   ['ポーズ', 'Esc'],
@@ -64,7 +89,15 @@ export class Menu {
   private selection: MenuSelection = {
     stageId: STAGES[0]?.id ?? 'kunren',
     primaryId: 'kaede-ar',
+    attachments: [],
+    grenade: 'frag',
     difficulty: 'normal',
+  };
+  private readonly attachmentBySlot: Record<AttachmentSlot, string | null> = {
+    sight: null,
+    muzzle: null,
+    grip: null,
+    mag: null,
   };
 
   constructor(
@@ -72,7 +105,46 @@ export class Menu {
     private readonly settings: Settings,
     private readonly callbacks: MenuCallbacks,
   ) {
+    this.loadLoadout();
     this.showMain();
+  }
+
+  // 前回のロードアウトを復元する。存在しないIDは黙って捨てる
+  private loadLoadout(): void {
+    try {
+      const raw = localStorage.getItem(LOADOUT_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as Partial<MenuSelection>;
+      if (saved.stageId && STAGES.some((s) => s.id === saved.stageId)) {
+        this.selection.stageId = saved.stageId;
+      }
+      if (saved.primaryId && (PRIMARY_IDS as readonly string[]).includes(saved.primaryId)) {
+        this.selection.primaryId = saved.primaryId;
+      }
+      if (saved.grenade && GRENADE_KINDS.includes(saved.grenade)) {
+        this.selection.grenade = saved.grenade;
+      }
+      if (saved.difficulty && ['easy', 'normal', 'hard'].includes(saved.difficulty)) {
+        this.selection.difficulty = saved.difficulty;
+      }
+      for (const id of saved.attachments ?? []) {
+        const def = ATTACHMENT_DEFS[id];
+        if (def) this.attachmentBySlot[def.slot] = id;
+      }
+    } catch {
+      // 壊れた保存値は初期値で開く
+    }
+  }
+
+  private syncAttachments(): void {
+    this.selection.attachments = Object.values(this.attachmentBySlot).filter(
+      (id): id is string => id !== null,
+    );
+  }
+
+  private saveLoadout(): void {
+    this.syncAttachments();
+    localStorage.setItem(LOADOUT_KEY, JSON.stringify(this.selection));
   }
 
   hide(): void {
@@ -101,6 +173,14 @@ export class Menu {
               <div class="weapon-list" data-id="weapons"></div>
             </section>
             <section class="menu-section">
+              <h2>アタッチメント</h2>
+              <div class="attach-panel" data-id="attachments"></div>
+            </section>
+            <section class="menu-section">
+              <h2>投擲物</h2>
+              <div class="grenade-list" data-id="grenades"></div>
+            </section>
+            <section class="menu-section">
               <h2>BOTの腕前</h2>
               <div class="difficulty-list" data-id="difficulties"></div>
             </section>
@@ -119,10 +199,15 @@ export class Menu {
     `;
     this.renderStages();
     this.renderWeapons();
+    this.renderAttachments();
+    this.renderGrenades();
     this.renderDifficulties();
     this.renderSettings(this.query('settings'));
     this.renderControls();
-    this.query('start').addEventListener('click', () => this.callbacks.onStart(this.selection));
+    this.query('start').addEventListener('click', () => {
+      this.saveLoadout();
+      this.callbacks.onStart(this.selection);
+    });
   }
 
   showPause(): void {
@@ -145,7 +230,12 @@ export class Menu {
     this.query('quit').addEventListener('click', () => this.callbacks.onQuit());
   }
 
-  showResult(result: { rows: ScoreRow[]; won: boolean; accuracy: number; headshots: number }): void {
+  showResult(result: {
+    rows: ScoreRow[];
+    won: boolean;
+    accuracy: number;
+    headshots: number;
+  }): void {
     this.root.hidden = false;
     const mvp = result.rows[0];
     const rowsHtml = result.rows
@@ -217,9 +307,10 @@ export class Menu {
       const card = document.createElement('button');
       card.className = 'weapon-card';
       card.dataset.weapon = id;
+      const mode = def.mode === 'auto' ? 'フルオート' : def.mode === 'burst' ? 'バースト' : '単発';
       card.innerHTML = `
         <span class="weapon-name">${def.name}</span>
-        <span class="weapon-mode">${def.mode === 'auto' ? 'フルオート' : '単発'} / 装弾数 ${def.magazineSize}</span>
+        <span class="weapon-mode">${mode} / 装弾数 ${def.magazineSize}</span>
         ${this.bar('火力', bars.power)}
         ${this.bar('連射', bars.rate)}
         ${this.bar('制御', bars.control)}
@@ -239,6 +330,73 @@ export class Menu {
         <span class="stat-label">${label}</span>
         <span class="stat-bar"><i style="width:${value * 10}%"></i></span>
       </span>`;
+  }
+
+  private renderAttachments(): void {
+    const panel = this.query('attachments');
+    for (const { slot, label } of ATTACHMENT_SLOTS) {
+      const row = document.createElement('div');
+      row.className = 'attach-row';
+      const name = document.createElement('span');
+      name.className = 'attach-slot';
+      name.textContent = label;
+      row.appendChild(name);
+
+      const buttons = document.createElement('div');
+      buttons.className = 'attach-options';
+      const choices: Array<{ id: string | null; text: string; title: string }> = [
+        { id: null, text: 'なし', title: '' },
+        ...attachmentsForSlot(slot).map((a) => ({
+          id: a.id,
+          text: a.name,
+          title: a.cons === 'なし' ? a.pros : `${a.pros} / ${a.cons}`,
+        })),
+      ];
+      for (const choice of choices) {
+        const btn = document.createElement('button');
+        btn.className = 'attach-btn';
+        btn.textContent = choice.text;
+        if (choice.title) btn.title = choice.title;
+        btn.dataset.attach = choice.id ?? 'none';
+        btn.addEventListener('click', () => {
+          this.attachmentBySlot[slot] = choice.id;
+          this.syncAttachments();
+          buttons.querySelectorAll('.attach-btn').forEach((node) => {
+            node.classList.toggle(
+              'selected',
+              (node as HTMLElement).dataset.attach === (choice.id ?? 'none'),
+            );
+          });
+        });
+        if ((this.attachmentBySlot[slot] ?? 'none') === (choice.id ?? 'none')) {
+          btn.classList.add('selected');
+        }
+        buttons.appendChild(btn);
+      }
+      row.appendChild(buttons);
+      panel.appendChild(row);
+    }
+    this.syncAttachments();
+  }
+
+  private renderGrenades(): void {
+    const list = this.query('grenades');
+    for (const kind of GRENADE_KINDS) {
+      const spec = GRENADE_SPECS[kind];
+      const card = document.createElement('button');
+      card.className = 'grenade-card';
+      card.dataset.grenade = kind;
+      card.innerHTML = `
+        <span class="grenade-name">${spec.name} <span class="grenade-carry">x ${spec.carry}</span></span>
+        <span class="grenade-desc">${GRENADE_DESCS[kind]}</span>
+      `;
+      card.addEventListener('click', () => {
+        this.selection.grenade = kind;
+        this.markSelected(list, 'grenade', kind);
+      });
+      list.appendChild(card);
+    }
+    this.markSelected(list, 'grenade', this.selection.grenade);
   }
 
   private renderDifficulties(): void {
