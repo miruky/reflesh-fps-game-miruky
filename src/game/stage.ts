@@ -84,7 +84,16 @@ export function generateStage(def: StageDef): StageLayout {
     [half + 0.5, 0, 1, def.size + 2],
   ];
   for (const [x, z, w, d] of walls) {
-    boxes.push({ x, y: wallHeight / 2, z, w, h: wallHeight, d, color: def.palette.wall, emissive: false });
+    boxes.push({
+      x,
+      y: wallHeight / 2,
+      z,
+      w,
+      h: wallHeight,
+      d,
+      color: def.palette.wall,
+      emissive: false,
+    });
   }
 
   const corners: SpawnPoint[] = [
