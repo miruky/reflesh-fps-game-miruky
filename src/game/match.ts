@@ -6,14 +6,34 @@ import { mulberry32, type Rand } from '../core/rng';
 import type { Settings } from '../core/settings';
 import { Effects } from '../render/effects';
 import { ViewModel } from '../render/viewmodel';
-import { coneOffset, damageAtDistance, partMultiplier, type HitPart } from './ballistics';
-import { Bot, BOT_NAMES, DIFFICULTY, type Difficulty } from './bot';
+import { applyAttachments } from './attachments';
+import {
+  coneOffset,
+  damageAtDistance,
+  partFromHitHeight,
+  partMultiplier,
+  penetrationFactor,
+  type HitPart,
+} from './ballistics';
+import { Bot, BOT_NAMES, DIFFICULTY, HIP_OFFSET_Y, type Difficulty } from './bot';
+import {
+  explosionDamage,
+  flashIntensity,
+  GRENADE_KINDS,
+  GRENADE_SPECS,
+  GrenadeProjectile,
+  type GrenadeKind,
+  type SurfaceRaycast,
+  trajectoryPoints,
+} from './grenades';
 import { Player } from './player';
 import { generateStage, type StageDef } from './stage';
 import { Weapon, WEAPON_DEFS } from './weapons';
 
+const DEG = Math.PI / 180;
 const LOOK_BASE = 0.0022;
 const PITCH_LIMIT = (89 * Math.PI) / 180;
+const LEAN_ROLL = 0.2;
 const MELEE_RANGE = 2.2;
 const MELEE_DAMAGE = 75;
 const MELEE_COOLDOWN = 0.8;
@@ -22,10 +42,17 @@ const BOT_VIEW_CONE_COS = Math.cos((75 * Math.PI) / 180);
 const BOT_FALLOFF = { start: 14, end: 40, minFactor: 0.6 };
 const BOT_COLOR = 0xc84b3c;
 const PLAYER_NAME = 'あなた';
+const ALERT_RADIUS = 35;
+const ALERT_RADIUS_SUPPRESSED = 9;
+// クッキング限界の直前で強制投擲し、手元爆発はさせない
+const COOK_SAFETY_S = 0.25;
+const FIRE_TICK_S = 0.5;
 
 export interface MatchConfig {
   stage: StageDef;
   primaryId: string;
+  attachments: string[];
+  grenade: GrenadeKind;
   difficulty: Difficulty;
   durationS: number;
 }
@@ -69,6 +96,10 @@ export interface MatchSnapshot {
   yaw: number;
   fov: number;
   over: boolean;
+  grenadeName: string;
+  grenadeCount: number;
+  cookRatio: number; // 0=非クッキング、1=強制投擲直前
+  whiteout: number; // フラッシュの白飛び 0..1
   feed: FeedEntry[];
   hits: Array<'hit' | 'head' | 'kill'>;
   damageNumbers: DamageNumber[];
@@ -96,6 +127,25 @@ type ColliderTag =
   | { kind: 'player' }
   | { kind: 'bot'; bot: Bot; part: HitPart };
 
+interface SmokeZone {
+  pos: THREE.Vector3;
+  radius: number;
+  until: number;
+}
+
+interface FirePatch {
+  pos: THREE.Vector3;
+  radius: number;
+  until: number;
+  tickIn: number;
+  crackleIn: number;
+}
+
+interface ThrownGrenade {
+  projectile: GrenadeProjectile;
+  mesh: THREE.Mesh;
+}
+
 export class Match {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
@@ -118,6 +168,17 @@ export class Match {
   private adsLatch = false;
   private lastLookDX = 0;
   private lastLookDY = 0;
+  private elapsed = 0;
+
+  private grenadeKind: GrenadeKind;
+  private readonly grenadeCounts: Record<GrenadeKind, number>;
+  private cooking = false;
+  private cookTimer = 0;
+  private thrown: ThrownGrenade[] = [];
+  private smokeZones: SmokeZone[] = [];
+  private firePatches: FirePatch[] = [];
+  private whiteout = 0;
+  private readonly grenadeGeometry = new THREE.SphereGeometry(0.09, 10, 8);
 
   private feed: FeedEntry[] = [];
   private hits: Array<'hit' | 'head' | 'kill'> = [];
@@ -148,8 +209,17 @@ export class Match {
     this.player = new Player(this.physics, spawn);
     this.tags.set(this.player.collider.handle, { kind: 'player' });
 
-    const primaryDef = WEAPON_DEFS[config.primaryId] ?? WEAPON_DEFS['kaede-ar']!;
+    const primaryBase = WEAPON_DEFS[config.primaryId] ?? WEAPON_DEFS['kaede-ar']!;
+    const primaryDef = applyAttachments(primaryBase, config.attachments);
     this.weapons = [new Weapon(primaryDef), new Weapon(WEAPON_DEFS['suzume']!)];
+
+    this.grenadeKind = config.grenade;
+    this.grenadeCounts = {
+      frag: GRENADE_SPECS.frag.carry,
+      smoke: GRENADE_SPECS.smoke.carry,
+      flash: GRENADE_SPECS.flash.carry,
+      incendiary: GRENADE_SPECS.incendiary.carry,
+    };
 
     for (let i = 0; i < config.stage.botCount; i += 1) {
       const name = BOT_NAMES[i % BOT_NAMES.length] ?? `BOT-${i}`;
@@ -239,6 +309,7 @@ export class Match {
   // 固定60Hzで呼ばれるゲームロジック本体
   update(dt: number): void {
     if (this.over) return;
+    this.elapsed += dt;
     this.timeLeft -= dt;
     if (this.timeLeft <= 0) {
       this.timeLeft = 0;
@@ -247,6 +318,7 @@ export class Match {
     }
 
     this.meleeCooldown = Math.max(0, this.meleeCooldown - dt);
+    this.whiteout = Math.max(0, this.whiteout - dt / 3.2);
     const weapon = this.activeWeapon;
 
     // ADS: ホールドまたはトグル(アクセシビリティ設定)
@@ -260,19 +332,22 @@ export class Match {
       z: (this.input.isDown('forward') ? 1 : 0) - (this.input.isDown('back') ? 1 : 0),
       jumpPressed: this.input.wasPressed('jump'),
       crouch: this.input.isDown('crouch'),
+      crouchPressed: this.input.wasPressed('crouch'),
       sprint: this.input.isDown('sprint'),
+      lean: (this.input.isDown('leanright') ? 1 : 0) - (this.input.isDown('leanleft') ? 1 : 0),
     };
     this.player.update(dt, moveInput, weapon.adsProgress, this.sounds);
 
     this.handleWeaponSwitch();
     this.handleMelee();
+    this.handleGrenadeInput(dt);
 
     const sprintBlocksFire = this.player.sprinting;
     const events = weapon.update(
       dt * 1000,
       {
-        trigger: this.input.fireDown() && this.player.alive && !sprintBlocksFire,
-        ads: wantAds && this.player.alive,
+        trigger: this.input.fireDown() && this.player.alive && !sprintBlocksFire && !this.cooking,
+        ads: wantAds && this.player.alive && !this.cooking,
         reloadPressed: this.input.wasPressed('reload'),
       },
       {
@@ -288,8 +363,9 @@ export class Match {
         this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
         this.fireShot(event.spreadRad);
         this.viewModel.fire();
-        this.sounds.shot();
-        this.alertBots();
+        if (weapon.def.suppressed) this.sounds.shotSuppressed();
+        else this.sounds.shot();
+        this.alertBots(weapon.def.suppressed ? ALERT_RADIUS_SUPPRESSED : ALERT_RADIUS);
       } else if (event.type === 'reload-start') {
         this.sounds.reload(event.durationMs);
       } else if (event.type === 'dryfire') {
@@ -299,6 +375,10 @@ export class Match {
     const recovered = weapon.recoil.recover(dt);
     this.player.yaw += recovered.yaw;
     this.player.pitch -= recovered.pitch;
+
+    this.updateGrenades(dt);
+    this.updateFirePatches(dt);
+    this.smokeZones = this.smokeZones.filter((zone) => zone.until > this.elapsed);
 
     this.updateBots(dt);
     this.physics.step();
@@ -328,11 +408,20 @@ export class Match {
     this.syncCamera();
 
     const weapon = this.activeWeapon;
-    const targetFov =
-      this.settings.fov * (1 - (1 - weapon.def.adsFovScale) * weapon.adsProgress);
+    const targetFov = this.settings.fov * (1 - (1 - weapon.def.adsFovScale) * weapon.adsProgress);
     if (Math.abs(this.camera.fov - targetFov) > 0.01) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 14);
       this.camera.updateProjectionMatrix();
+    }
+
+    // クッキング中は投擲軌道をプレビューする
+    if (this.cooking && this.player.alive) {
+      const spec = GRENADE_SPECS[this.grenadeKind];
+      const origin = this.grenadeOrigin();
+      const velocity = this.cameraForward().multiplyScalar(spec.throwSpeed);
+      this.effects.showTrajectory(trajectoryPoints(spec, origin, velocity, this.grenadeRaycast));
+    } else {
+      this.effects.hideTrajectory();
     }
 
     this.viewModel.update(dt, {
@@ -342,7 +431,7 @@ export class Match {
       moveFactor: this.player.moveFactor,
       grounded: this.player.grounded,
       reloadRatio: weapon.reloading ? weapon.reloadRatio : null,
-      raiseRatio: weapon.raiseRatio,
+      raiseRatio: Math.max(weapon.raiseRatio, this.cooking ? 0.65 : 0),
     });
     this.effects.update(dt);
   }
@@ -352,9 +441,11 @@ export class Match {
     this.camera.position.copy(eye);
     this.camera.rotation.y = this.player.yaw;
     this.camera.rotation.x = this.player.pitch;
+    this.camera.rotation.z = -this.player.lean * LEAN_ROLL;
   }
 
   private handleWeaponSwitch(): void {
+    if (this.cooking) return;
     let target: number | null = null;
     if (this.input.wasPressed('weapon1')) target = 0;
     if (this.input.wasPressed('weapon2')) target = 1;
@@ -370,6 +461,7 @@ export class Match {
 
   private handleMelee(): void {
     if (!this.input.wasPressed('melee') || this.meleeCooldown > 0 || !this.player.alive) return;
+    if (this.cooking) return;
     this.meleeCooldown = MELEE_COOLDOWN;
     this.viewModel.fire();
     this.sounds.melee();
@@ -385,6 +477,269 @@ export class Match {
     }
   }
 
+  private handleGrenadeInput(dt: number): void {
+    // 投擲物の切替。クッキング中は不可
+    if (!this.cooking && this.input.wasPressed('grenadeswitch')) {
+      const index = GRENADE_KINDS.indexOf(this.grenadeKind);
+      this.grenadeKind = GRENADE_KINDS[(index + 1) % GRENADE_KINDS.length]!;
+      this.sounds.uiClick();
+    }
+
+    if (
+      !this.cooking &&
+      this.input.wasPressed('grenade') &&
+      this.player.alive &&
+      this.grenadeCounts[this.grenadeKind] > 0
+    ) {
+      this.cooking = true;
+      this.cookTimer = 0;
+      // 強制投擲後にキーを離した分の古いリリースを持ち越さない。
+      // キーが押されている今、残っているリリースは必ず過去のもの
+      if (this.input.isDown('grenade')) this.input.wasReleased('grenade');
+      this.sounds.pinPull();
+    }
+
+    if (!this.cooking) return;
+
+    // 構え中に倒されたら、その場に落とす
+    if (!this.player.alive) {
+      this.releaseGrenade(2);
+      return;
+    }
+
+    this.cookTimer += dt;
+    const spec = GRENADE_SPECS[this.grenadeKind];
+    const forced = spec.cookable && this.cookTimer >= spec.fuseS - COOK_SAFETY_S;
+    if (forced || this.input.wasReleased('grenade')) {
+      this.releaseGrenade(spec.throwSpeed);
+    }
+  }
+
+  private grenadeOrigin(): THREE.Vector3 {
+    const origin = this.player.eyePosition;
+    origin.addScaledVector(this.cameraForward(), 0.35);
+    origin.y -= 0.1;
+    return origin;
+  }
+
+  private releaseGrenade(speed: number): void {
+    const spec = GRENADE_SPECS[this.grenadeKind];
+    const cooked = spec.cookable ? this.cookTimer : 0;
+    const velocity = this.cameraForward().multiplyScalar(speed);
+    const projectile = new GrenadeProjectile(spec, this.grenadeOrigin(), velocity, cooked);
+    const mesh = new THREE.Mesh(
+      this.grenadeGeometry,
+      new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.55 }),
+    );
+    mesh.castShadow = true;
+    mesh.position.copy(projectile.position);
+    this.scene.add(mesh);
+    this.thrown.push({ projectile, mesh });
+    this.grenadeCounts[this.grenadeKind] -= 1;
+    this.cooking = false;
+    this.cookTimer = 0;
+    this.sounds.throwWhoosh();
+    this.viewModel.fire();
+  }
+
+  private readonly grenadeRaycast: SurfaceRaycast = (origin, dir, maxDist) => {
+    const hit = this.castRayWithNormal(origin, dir, maxDist, this.player.body);
+    if (!hit || !hit.normal) return null;
+    return { distance: hitToi(hit), normal: hit.normal };
+  };
+
+  private updateGrenades(dt: number): void {
+    const kept: ThrownGrenade[] = [];
+    for (const item of this.thrown) {
+      const exploded = item.projectile.update(dt, this.grenadeRaycast);
+      item.mesh.position.copy(item.projectile.position);
+      if (item.projectile.bounced) {
+        const { pan, distance } = this.panAndDistance(item.projectile.position);
+        this.sounds.bounce(pan, distance);
+      }
+      if (!exploded) {
+        kept.push(item);
+        continue;
+      }
+      this.scene.remove(item.mesh);
+      (item.mesh.material as THREE.Material).dispose();
+      this.detonate(item.projectile);
+    }
+    this.thrown = kept;
+  }
+
+  private detonate(projectile: GrenadeProjectile): void {
+    const spec = projectile.spec;
+    const point = projectile.position.clone();
+    const { pan, distance } = this.panAndDistance(point);
+
+    if (spec.kind === 'frag') {
+      this.effects.explosion(point, spec.radius * 0.55);
+      this.sounds.explosion(pan, distance);
+      this.applyExplosionDamage(spec, point);
+    } else if (spec.kind === 'smoke') {
+      this.effects.smokeCloud(point, spec.radius, spec.effectDurationS);
+      this.sounds.smokePop(pan, distance);
+      this.smokeZones.push({
+        pos: point,
+        radius: spec.radius,
+        until: this.elapsed + spec.effectDurationS,
+      });
+    } else if (spec.kind === 'flash') {
+      this.effects.explosion(point, 1.6);
+      this.sounds.explosion(pan, distance + 25);
+      this.applyFlash(spec, point);
+    } else {
+      // 焼夷: 接地点に火災を残す
+      const down = this.castRayWithNormal(point, new THREE.Vector3(0, -1, 0), 6, this.player.body);
+      const groundY = down ? point.y - hitToi(down) : point.y;
+      const ground = new THREE.Vector3(point.x, groundY + 0.02, point.z);
+      this.effects.explosion(point, 1.4);
+      this.effects.firePatch(ground, spec.radius, spec.effectDurationS);
+      this.sounds.explosion(pan, distance + 15);
+      this.firePatches.push({
+        pos: ground,
+        radius: spec.radius,
+        until: this.elapsed + spec.effectDurationS,
+        tickIn: 0,
+        crackleIn: 0,
+      });
+    }
+  }
+
+  // 爆心からの視線が通っているかを判定する。遮蔽物に隠れていれば爆風は届かない
+  private explosionReaches(point: THREE.Vector3, target: THREE.Vector3): boolean {
+    const dir = target.clone().sub(point);
+    const dist = dir.length();
+    if (dist < 0.01) return true;
+    dir.normalize();
+    const hit = this.castRay(point, dir, dist - 0.15, null);
+    if (!hit) return true;
+    const tag = this.tags.get(hit.collider.handle);
+    return tag?.kind !== 'world';
+  }
+
+  private applyExplosionDamage(spec: (typeof GRENADE_SPECS)['frag'], point: THREE.Vector3): void {
+    for (const bot of this.bots) {
+      if (!bot.alive) continue;
+      const center = bot.position;
+      const dist = Math.min(center.distanceTo(point), bot.headPosition().distanceTo(point));
+      const damage = explosionDamage(spec, dist);
+      if (damage <= 0 || !this.explosionReaches(point, center)) continue;
+      this.applyBotDamage(bot, damage, center, false, spec.name);
+    }
+
+    if (this.player.alive) {
+      const dist = this.player.position.distanceTo(point);
+      const damage = explosionDamage(spec, dist);
+      if (damage > 0 && this.explosionReaches(point, this.player.position)) {
+        const died = this.player.takeDamage(damage);
+        this.tookDamage = true;
+        this.incoming.push(this.incomingAngle(point));
+        this.sounds.hurt();
+        if (died) {
+          this.feed.push({
+            killer: PLAYER_NAME,
+            victim: PLAYER_NAME,
+            weapon: spec.name,
+            headshot: false,
+          });
+          this.sounds.death();
+        }
+      }
+    }
+  }
+
+  private applyFlash(spec: (typeof GRENADE_SPECS)['flash'], point: THREE.Vector3): void {
+    if (this.player.alive) {
+      const eye = this.player.eyePosition;
+      const toFlash = point.clone().sub(eye);
+      const dist = toFlash.length();
+      const viewDot = this.cameraForward().dot(toFlash.normalize());
+      const occluded = !this.explosionReaches(point, eye);
+      const intensity = flashIntensity(dist, spec.radius, viewDot, occluded);
+      if (intensity > 0) {
+        this.whiteout = Math.max(this.whiteout, intensity);
+        this.sounds.flashRing(intensity);
+      }
+    }
+    for (const bot of this.bots) {
+      if (!bot.alive) continue;
+      const head = bot.headPosition();
+      const dist = head.distanceTo(point);
+      if (dist >= spec.radius || !this.explosionReaches(point, head)) continue;
+      // BOTは常に爆心の方を向いていたとみなして全力で食らわせる
+      const intensity = flashIntensity(dist, spec.radius, 1, false);
+      bot.blind = Math.max(bot.blind, spec.effectDurationS * intensity);
+    }
+  }
+
+  private updateFirePatches(dt: number): void {
+    const kept: FirePatch[] = [];
+    for (const patch of this.firePatches) {
+      if (patch.until <= this.elapsed) continue;
+      patch.crackleIn -= dt;
+      if (patch.crackleIn <= 0) {
+        const { pan, distance } = this.panAndDistance(patch.pos);
+        this.sounds.fireCrackle(pan, distance);
+        patch.crackleIn = 0.12 + this.rand() * 0.2;
+      }
+
+      patch.tickIn -= dt;
+      if (patch.tickIn <= 0) {
+        patch.tickIn = FIRE_TICK_S;
+        const spec = GRENADE_SPECS.incendiary;
+        const tickDamage = spec.maxDamage * FIRE_TICK_S;
+        for (const bot of this.bots) {
+          if (bot.alive && this.insidePatch(patch, bot.position)) {
+            this.applyBotDamage(bot, tickDamage, bot.position, false, spec.name);
+          }
+        }
+        if (this.player.alive && this.insidePatch(patch, this.player.position)) {
+          const died = this.player.takeDamage(tickDamage);
+          this.tookDamage = true;
+          this.incoming.push(this.incomingAngle(patch.pos));
+          this.sounds.hurt();
+          if (died) {
+            this.feed.push({
+              killer: PLAYER_NAME,
+              victim: PLAYER_NAME,
+              weapon: spec.name,
+              headshot: false,
+            });
+            this.sounds.death();
+          }
+        }
+      }
+      kept.push(patch);
+    }
+    this.firePatches = kept;
+  }
+
+  private insidePatch(patch: FirePatch, position: THREE.Vector3): boolean {
+    const dx = position.x - patch.pos.x;
+    const dz = position.z - patch.pos.z;
+    const dy = position.y - patch.pos.y;
+    return Math.hypot(dx, dz) < patch.radius + 0.4 && dy > -1 && dy < 2.2;
+  }
+
+  private panAndDistance(source: THREE.Vector3): { pan: number; distance: number } {
+    const eye = this.player.eyePosition;
+    const toSource = source.clone().sub(eye);
+    const distance = toSource.length();
+    const rightDir = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    const pan = THREE.MathUtils.clamp(toSource.normalize().dot(rightDir), -1, 1);
+    return { pan, distance };
+  }
+
+  private incomingAngle(source: THREE.Vector3): number {
+    const eye = this.player.eyePosition;
+    const flat = source.clone().sub(eye).setY(0).normalize();
+    const forwardFlat = this.cameraForward().setY(0).normalize();
+    const cross = forwardFlat.x * flat.z - forwardFlat.z * flat.x;
+    return Math.atan2(cross, forwardFlat.dot(flat));
+  }
+
   private cameraForward(): THREE.Vector3 {
     return new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
   }
@@ -394,34 +749,99 @@ export class Match {
     this.player.shotsFired += 1;
     const weapon = this.activeWeapon;
     const origin = this.player.eyePosition;
-    const offset = coneOffset(spreadRad, Math.random);
-    const dir = this.cameraForward();
+    const muzzle = this.viewModel.muzzleWorldPosition(new THREE.Vector3());
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
-    dir
-      .addScaledVector(right, Math.tan(offset.yaw))
-      .addScaledVector(up, Math.tan(offset.pitch))
-      .normalize();
+    const pelletSpreadRad = weapon.def.pelletSpreadDeg * DEG;
 
-    const hit = this.castRayWithNormal(origin, dir, weapon.def.range, this.player.body);
-    const end = hit
-      ? origin.clone().addScaledVector(dir, hitToi(hit))
-      : origin.clone().addScaledVector(dir, weapon.def.range);
+    // ペレット武器は1発の命中・部位を集約して扱う
+    const results = new Map<Bot, { damage: number; headshot: boolean; point: THREE.Vector3 }>();
 
-    const muzzle = this.viewModel.muzzleWorldPosition(new THREE.Vector3());
-    this.effects.tracer(muzzle, end, weapon.def.tracerColor);
+    for (let i = 0; i < weapon.def.pellets; i += 1) {
+      const offset = coneOffset(spreadRad + pelletSpreadRad, Math.random);
+      const dir = this.cameraForward()
+        .addScaledVector(right, Math.tan(offset.yaw))
+        .addScaledVector(up, Math.tan(offset.pitch))
+        .normalize();
+      this.tracePellet(origin, dir, muzzle, results);
+    }
 
-    if (!hit) return;
-    const tag = this.tags.get(hit.collider.handle);
-    if (tag?.kind === 'bot' && tag.bot.alive) {
-      const distance = hitToi(hit);
-      const base = damageAtDistance(weapon.def.damage, distance, weapon.def.falloff);
-      const damage = base * partMultiplier(tag.part, weapon.def.headshotMultiplier);
+    for (const [bot, result] of results) {
       this.player.shotsHit += 1;
-      if (tag.part === 'head') this.player.headshots += 1;
-      this.applyBotDamage(tag.bot, damage, end, tag.part === 'head', weapon.def.name);
-    } else if (tag?.kind === 'world' && hit.normal) {
+      if (result.headshot) this.player.headshots += 1;
+      this.applyBotDamage(bot, result.damage, result.point, result.headshot, weapon.def.name);
+    }
+  }
+
+  // 1本の弾道を追う。世界ジオメトリに当たった場合は貫通力の範囲で1枚だけ抜ける
+  private tracePellet(
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    muzzle: THREE.Vector3,
+    results: Map<Bot, { damage: number; headshot: boolean; point: THREE.Vector3 }>,
+  ): void {
+    const weapon = this.activeWeapon;
+    let from = origin.clone();
+    let tracerFrom = muzzle;
+    let remainingRange = weapon.def.range;
+    let traveled = 0;
+    let damageFactor = 1;
+
+    for (let leg = 0; leg < 2; leg += 1) {
+      const hit = this.castRayWithNormal(from, dir, remainingRange, this.player.body);
+      const end = hit
+        ? from.clone().addScaledVector(dir, hitToi(hit))
+        : from.clone().addScaledVector(dir, remainingRange);
+      this.effects.tracer(tracerFrom, end, weapon.def.tracerColor);
+      if (!hit) return;
+
+      const tag = this.tags.get(hit.collider.handle);
+      if (tag?.kind === 'bot' && tag.bot.alive) {
+        const distance = traveled + hitToi(hit);
+        let part: HitPart = tag.part;
+        if (part === 'body') {
+          part = partFromHitHeight(end.y - tag.bot.position.y, HIP_OFFSET_Y);
+        }
+        const base = damageAtDistance(weapon.def.damage, distance, weapon.def.falloff);
+        const damage = base * partMultiplier(part, weapon.def.headshotMultiplier) * damageFactor;
+        const entry = results.get(tag.bot) ?? {
+          damage: 0,
+          headshot: false,
+          point: end,
+        };
+        entry.damage += damage;
+        entry.headshot = entry.headshot || part === 'head';
+        entry.point = end;
+        results.set(tag.bot, entry);
+        return;
+      }
+
+      if (tag?.kind !== 'world' || !hit.normal) return;
       this.effects.impact(end, new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z));
+
+      if (leg > 0 || weapon.def.penetrationM <= 0) return;
+
+      // 壁の厚みを反対側から測る。貫通力以下なら減衰した弾が抜ける
+      const maxDepth = weapon.def.penetrationM;
+      const probe = end.clone().addScaledVector(dir, maxDepth);
+      const back = this.castRayWithNormal(
+        probe,
+        dir.clone().negate(),
+        maxDepth - 0.005,
+        this.player.body,
+      );
+      if (!back || !back.normal) return;
+      const thickness = maxDepth - hitToi(back);
+      const factor = penetrationFactor(thickness, maxDepth);
+      if (factor <= 0) return;
+
+      const exit = probe.clone().addScaledVector(dir, -hitToi(back));
+      this.effects.impact(exit, new THREE.Vector3(back.normal.x, back.normal.y, back.normal.z));
+      damageFactor *= factor;
+      traveled += hitToi(hit) + thickness;
+      remainingRange = Math.max(0, remainingRange - hitToi(hit) - thickness);
+      from = exit.clone().addScaledVector(dir, 0.01);
+      tracerFrom = from.clone();
     }
   }
 
@@ -448,18 +868,25 @@ export class Match {
     }
   }
 
+  // 視線の途中にスモークがあれば互いに見えない
+  private smokeBlocks(a: THREE.Vector3, b: THREE.Vector3): boolean {
+    for (const zone of this.smokeZones) {
+      if (segmentDistance(a, b, zone.pos) < zone.radius * 0.75) return true;
+    }
+    return false;
+  }
+
   private updateBots(dt: number): void {
     const tuning = DIFFICULTY[this.config.difficulty];
     const playerEye = this.player.alive ? this.player.eyePosition : null;
     for (const bot of this.bots) {
       let sees = false;
-      if (playerEye && bot.alive) {
+      if (playerEye && bot.alive && bot.blind <= 0) {
         const toPlayer = playerEye.clone().sub(bot.headPosition());
         const distance = toPlayer.length();
-        if (distance < BOT_VIEW_DISTANCE) {
+        if (distance < BOT_VIEW_DISTANCE && !this.smokeBlocks(bot.headPosition(), playerEye)) {
           const dirNorm = toPlayer.clone().normalize();
-          const inCone =
-            bot.alert > 0 || bot.facing().dot(dirNorm) > BOT_VIEW_CONE_COS;
+          const inCone = bot.alert > 0 || bot.facing().dot(dirNorm) > BOT_VIEW_CONE_COS;
           if (inCone) {
             const hit = this.castRay(bot.headPosition(), dirNorm, distance - 0.2, bot.body);
             sees = hit === null || this.tags.get(hit.collider.handle)?.kind === 'player';
@@ -485,12 +912,7 @@ export class Match {
     this.effects.tracer(origin, end, 0xff7a6b);
 
     // 発砲音は方向と距離をつけて鳴らす
-    const eye = this.player.eyePosition;
-    const toSource = origin.clone().sub(eye);
-    const distance = toSource.length();
-    const forward = this.cameraForward();
-    const rightDir = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
-    const pan = THREE.MathUtils.clamp(toSource.clone().normalize().dot(rightDir), -1, 1);
+    const { pan, distance } = this.panAndDistance(origin);
     this.sounds.enemyShot(pan, distance);
 
     if (!hit) return;
@@ -501,25 +923,24 @@ export class Match {
     const died = this.player.takeDamage(damage);
     this.tookDamage = true;
     this.sounds.hurt();
-
-    // 被弾方向インジケータ用の角度(カメラ正面基準)
-    const flat = toSource.clone().setY(0).normalize();
-    const forwardFlat = forward.clone().setY(0).normalize();
-    const cross = forwardFlat.x * flat.z - forwardFlat.z * flat.x;
-    const angle = Math.atan2(cross, forwardFlat.dot(flat));
-    this.incoming.push(angle);
+    this.incoming.push(this.incomingAngle(origin));
 
     if (died) {
       bot.kills += 1;
-      this.feed.push({ killer: bot.name, victim: PLAYER_NAME, weapon: 'ボットAR', headshot: false });
+      this.feed.push({
+        killer: bot.name,
+        victim: PLAYER_NAME,
+        weapon: 'ボットAR',
+        headshot: false,
+      });
       this.sounds.death();
     }
   }
 
-  private alertBots(): void {
+  private alertBots(radius: number): void {
     const pos = this.player.position;
     for (const bot of this.bots) {
-      if (bot.alive && bot.position.distanceTo(pos) < 35) bot.alert = 4;
+      if (bot.alive && bot.position.distanceTo(pos) < radius) bot.alert = 4;
     }
   }
 
@@ -544,9 +965,7 @@ export class Match {
     let best = candidates[0] ?? new THREE.Vector3();
     let bestScore = -Infinity;
     for (const candidate of candidates) {
-      const score = enemies.length
-        ? Math.min(...enemies.map((e) => e.distanceTo(candidate)))
-        : 1;
+      const score = enemies.length ? Math.min(...enemies.map((e) => e.distanceTo(candidate))) : 1;
       if (score > bestScore) {
         bestScore = score;
         best = candidate;
@@ -559,7 +978,7 @@ export class Match {
     origin: THREE.Vector3,
     dir: THREE.Vector3,
     maxToi: number,
-    exclude: RAPIER.RigidBody,
+    exclude: RAPIER.RigidBody | null,
   ): RayHitLike | null {
     const ray = new RAPIER.Ray(
       { x: origin.x, y: origin.y, z: origin.z },
@@ -572,7 +991,7 @@ export class Match {
       undefined,
       undefined,
       undefined,
-      exclude,
+      exclude ?? undefined,
     ) as unknown as RayHitLike | null;
   }
 
@@ -580,7 +999,7 @@ export class Match {
     origin: THREE.Vector3,
     dir: THREE.Vector3,
     maxToi: number,
-    exclude: RAPIER.RigidBody,
+    exclude: RAPIER.RigidBody | null,
   ): RayNormalHitLike | null {
     const ray = new RAPIER.Ray(
       { x: origin.x, y: origin.y, z: origin.z },
@@ -593,12 +1012,14 @@ export class Match {
       undefined,
       undefined,
       undefined,
-      exclude,
+      exclude ?? undefined,
     ) as unknown as RayNormalHitLike | null;
   }
 
   snapshot(): MatchSnapshot {
     const weapon = this.activeWeapon;
+    const spec = GRENADE_SPECS[this.grenadeKind];
+    const cookWindow = spec.fuseS - COOK_SAFETY_S;
     const snapshot: MatchSnapshot = {
       hp: Math.ceil(this.player.hp),
       maxHp: this.player.maxHp,
@@ -608,7 +1029,11 @@ export class Match {
       reserve: weapon.magazine.reserve,
       weaponName: weapon.def.name,
       fireMode:
-        weapon.def.mode === 'auto' ? 'フルオート' : weapon.def.mode === 'semi' ? '単発' : 'バースト',
+        weapon.def.mode === 'auto'
+          ? 'フルオート'
+          : weapon.def.mode === 'semi'
+            ? '単発'
+            : 'バースト',
       reloading: weapon.reloading,
       reloadRatio: weapon.reloadRatio,
       spreadRad: weapon.currentSpreadRad({
@@ -624,6 +1049,10 @@ export class Match {
       yaw: this.player.yaw,
       fov: this.camera.fov,
       over: this.over,
+      grenadeName: spec.name,
+      grenadeCount: this.grenadeCounts[this.grenadeKind],
+      cookRatio: this.cooking && spec.cookable ? Math.min(1, this.cookTimer / cookWindow) : 0,
+      whiteout: this.whiteout,
       feed: this.feed,
       hits: this.hits,
       damageNumbers: this.damageNumbers,
@@ -662,13 +1091,16 @@ export class Match {
     return {
       rows,
       won: rows[0]?.isPlayer ?? false,
-      accuracy:
-        this.player.shotsFired > 0 ? this.player.shotsHit / this.player.shotsFired : 0,
+      accuracy: this.player.shotsFired > 0 ? this.player.shotsHit / this.player.shotsFired : 0,
       headshots: this.player.headshots,
     };
   }
 
-  projectToScreen(world: THREE.Vector3, width: number, height: number): { x: number; y: number; behind: boolean } {
+  projectToScreen(
+    world: THREE.Vector3,
+    width: number,
+    height: number,
+  ): { x: number; y: number; behind: boolean } {
     const projected = world.clone().project(this.camera);
     return {
       x: ((projected.x + 1) / 2) * width,
@@ -679,6 +1111,12 @@ export class Match {
 
   dispose(): void {
     this.effects.dispose();
+    for (const item of this.thrown) {
+      this.scene.remove(item.mesh);
+      (item.mesh.material as THREE.Material).dispose();
+    }
+    this.thrown = [];
+    this.grenadeGeometry.dispose();
     // 再戦のたびにGPUメモリが積み上がらないよう、シーン内の
     // ジオメトリとマテリアルを明示的に解放する(共有分の二重disposeは無害)
     this.scene.traverse((obj) => {
@@ -694,4 +1132,13 @@ export class Match {
     });
     this.physics.free();
   }
+}
+
+// 線分abと点pの最短距離
+function segmentDistance(a: THREE.Vector3, b: THREE.Vector3, p: THREE.Vector3): number {
+  const ab = b.clone().sub(a);
+  const lengthSq = ab.lengthSq();
+  if (lengthSq < 1e-9) return a.distanceTo(p);
+  const t = THREE.MathUtils.clamp(p.clone().sub(a).dot(ab) / lengthSq, 0, 1);
+  return a.clone().addScaledVector(ab, t).distanceTo(p);
 }
