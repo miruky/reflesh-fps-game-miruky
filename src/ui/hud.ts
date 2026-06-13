@@ -44,6 +44,9 @@ export class Hud {
         <div class="hud-reload-bar"><div data-id="reloadfill"></div></div>
         <span>リロード中</span>
       </div>
+      <div class="hud-cook" data-id="cook" hidden>
+        <div class="hud-cook-bar"><div data-id="cookfill"></div></div>
+      </div>
       <div class="hud-bottom-left">
         <div class="hud-hp-num" data-id="hp">100</div>
         <div class="hud-hp-bar"><div data-id="hpfill"></div></div>
@@ -52,11 +55,13 @@ export class Hud {
         <div class="hud-weapon" data-id="weapon"></div>
         <div class="hud-ammo"><span data-id="ammo">30</span><span class="hud-reserve" data-id="reserve">/ 120</span></div>
         <div class="hud-mode" data-id="mode"></div>
+        <div class="hud-grenade"><span data-id="gname"></span><span class="hud-gcount" data-id="gcount"></span></div>
       </div>
       <div class="hud-dmg-layer" data-id="dmg"></div>
       <div class="hud-incoming" data-id="incoming"></div>
       <div class="hud-vignette" data-id="vignette"></div>
       <div class="hud-flash" data-id="flash"></div>
+      <div class="hud-whiteout" data-id="whiteout"></div>
       <div class="hud-death" data-id="death" hidden>
         <div class="hud-death-title">やられた</div>
         <div class="hud-death-sub">リスポーンまで <span data-id="respawn">0.0</span> 秒</div>
@@ -124,6 +129,7 @@ export class Hud {
     this.updateCompass(snap.yaw, width);
     this.updateCrosshair(snap, height);
     this.updateAmmo(snap);
+    this.updateGrenade(snap);
     this.updateHp(snap);
     this.pushFeed(snap);
     this.pushHits(snap);
@@ -192,6 +198,24 @@ export class Hud {
     if (reload) reload.hidden = !snap.reloading;
     const fill = this.el['reloadfill'];
     if (fill && snap.reloading) fill.style.width = `${snap.reloadRatio * 100}%`;
+  }
+
+  private updateGrenade(snap: MatchSnapshot): void {
+    this.text('gname', snap.grenadeName);
+    this.text('gcount', `x ${snap.grenadeCount}`);
+    const grenade = this.el['gcount'];
+    if (grenade) grenade.classList.toggle('hud-gcount-empty', snap.grenadeCount === 0);
+
+    const cook = this.el['cook'];
+    if (cook) cook.hidden = snap.cookRatio <= 0;
+    const fill = this.el['cookfill'];
+    if (fill && snap.cookRatio > 0) {
+      fill.style.width = `${snap.cookRatio * 100}%`;
+      fill.classList.toggle('cook-danger', snap.cookRatio > 0.7);
+    }
+
+    const whiteout = this.el['whiteout'];
+    if (whiteout) whiteout.style.opacity = String(Math.min(1, snap.whiteout * 1.15));
   }
 
   private updateHp(snap: MatchSnapshot): void {
