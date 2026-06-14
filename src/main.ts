@@ -12,12 +12,41 @@ import { stageById } from './game/stages';
 import { Hud } from './ui/hud';
 import { Menu, type MenuSelection } from './ui/menu';
 
-await RAPIER.init();
-
 const appRoot = document.getElementById('app');
 const hudRoot = document.getElementById('hud');
 const menuRoot = document.getElementById('menu');
 if (!appRoot || !hudRoot || !menuRoot) throw new Error('マウント先の要素が見つからない');
+
+// WebGLも物理エンジンも無い環境では黒画面で詰まらせず、理由を示して止める。
+function showFatal(message: string): void {
+  menuRoot!.hidden = false;
+  menuRoot!.innerHTML =
+    '<div class="menu-screen menu-fatal"><div class="fatal-panel">' +
+    `<h1>起動できません</h1><p>${message}</p></div></div>`;
+}
+
+function webglAvailable(): boolean {
+  try {
+    const probe = document.createElement('canvas');
+    return Boolean(probe.getContext('webgl2') ?? probe.getContext('webgl'));
+  } catch {
+    return false;
+  }
+}
+
+if (!webglAvailable()) {
+  showFatal(
+    'このブラウザではWebGLが使えません。設定でWebGLを有効にするか、対応ブラウザで開いてください。',
+  );
+  throw new Error('WebGL を初期化できない');
+}
+
+try {
+  await RAPIER.init();
+} catch {
+  showFatal('物理エンジンの読み込みに失敗しました。通信環境を確認して再読み込みしてください。');
+  throw new Error('物理エンジンを初期化できない');
+}
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
