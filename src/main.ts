@@ -86,7 +86,7 @@ function startMatch(selection: MenuSelection): void {
     attachments: selection.attachments,
     grenade: selection.grenade,
     difficulty: selection.difficulty,
-    durationS: 300,
+    durationS: settings.matchLengthS,
   };
   match = new Match(config, settings, input, sounds, window.innerWidth / window.innerHeight);
   hud.reset();
