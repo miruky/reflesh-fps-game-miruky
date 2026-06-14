@@ -179,21 +179,26 @@ export class ViewModel {
       grounded: boolean;
       reloadRatio: number | null; // 0..1、リロード中以外はnull
       raiseRatio: number; // 1=構え直し開始直後、0=構え完了
+      motionScale: number; // 画面揺れ軽減で1未満になる
     },
   ): void {
     const ads = state.adsProgress;
 
     const swayTargetX =
-      THREE.MathUtils.clamp(-state.mouseDX * 0.0011, -0.03, 0.03) * (1 - ads * 0.85);
+      THREE.MathUtils.clamp(-state.mouseDX * 0.0011, -0.03, 0.03) *
+      (1 - ads * 0.85) *
+      state.motionScale;
     const swayTargetY =
-      THREE.MathUtils.clamp(state.mouseDY * 0.0011, -0.03, 0.03) * (1 - ads * 0.85);
+      THREE.MathUtils.clamp(state.mouseDY * 0.0011, -0.03, 0.03) *
+      (1 - ads * 0.85) *
+      state.motionScale;
     this.swayX += (swayTargetX - this.swayX) * Math.min(1, dt * 10);
     this.swayY += (swayTargetY - this.swayY) * Math.min(1, dt * 10);
 
     if (state.grounded && state.moveFactor > 0.05) {
       this.bobPhase += dt * (6 + state.moveFactor * 6);
     }
-    const bobAmp = 0.008 * state.moveFactor * (1 - ads * 0.9);
+    const bobAmp = 0.008 * state.moveFactor * (1 - ads * 0.9) * state.motionScale;
     const bobX = Math.sin(this.bobPhase) * bobAmp;
     const bobY = Math.abs(Math.cos(this.bobPhase)) * bobAmp;
 
