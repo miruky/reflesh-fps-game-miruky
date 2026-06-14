@@ -38,6 +38,7 @@ import {
   type ZoneSnapshot,
 } from './modes';
 import { Player } from './player';
+import type { MatchSummary } from './progression';
 import { generateStage, type StageDef } from './stage';
 import { Weapon, WEAPON_DEFS } from './weapons';
 
@@ -109,6 +110,8 @@ export interface MatchResult {
   headshots: number;
   modeName: string;
   teamScores: { mine: number; enemy: number } | null;
+  // 進行度(XP・チャレンジ)への入力
+  summary: MatchSummary;
 }
 
 export interface MatchSnapshot {
@@ -221,6 +224,9 @@ export class Match {
   private announcements: string[] = [];
   private deathPos: THREE.Vector3 | null = null;
   private orbitAngle = 0;
+  private bestStreak = 0;
+  private playerCaptures = 0;
+  private readonly playerWeaponKills: Record<string, number> = {};
 
   private grenadeKind: GrenadeKind;
   private readonly grenadeCounts: Record<GrenadeKind, number>;
@@ -443,8 +449,19 @@ export class Match {
       if (event === 'captured') {
         const mine = zone.owner === PLAYER_TEAM;
         this.announcements.push(mine ? `${zone.id}拠点を制圧した` : `${zone.id}拠点を奪われた`);
-        if (mine) this.sounds.capture();
-        else this.sounds.zoneLost();
+        if (mine) {
+          this.sounds.capture();
+          // プレイヤー自身が圏内にいた制圧だけを個人成績に数える
+          const center = this.zoneCenters.get(zone.id);
+          if (
+            center &&
+            this.player.alive &&
+            Math.hypot(this.player.position.x - center.x, this.player.position.z - center.z) <
+              ZONE_RADIUS
+          ) {
+            this.playerCaptures += 1;
+          }
+        } else this.sounds.zoneLost();
       } else {
         this.announcements.push(`${zone.id}拠点が中立化された`);
         this.sounds.zoneLost();
@@ -1037,6 +1054,8 @@ export class Match {
     if (died) {
       this.player.kills += 1;
       this.player.streak += 1;
+      this.bestStreak = Math.max(this.bestStreak, this.player.streak);
+      this.playerWeaponKills[weaponName] = (this.playerWeaponKills[weaponName] ?? 0) + 1;
       this.addKillScore(PLAYER_TEAM);
       this.hits.push('kill');
       this.feed.push({ killer: PLAYER_NAME, victim: bot.name, weapon: weaponName, headshot });
@@ -1408,6 +1427,18 @@ export class Match {
       teamScores: this.modeDef.teamBased
         ? { mine: this.scores.get(PLAYER_TEAM), enemy: this.scores.get(ENEMY_TEAM) }
         : null,
+      summary: {
+        won,
+        rated: this.over,
+        kills: this.player.kills,
+        deaths: this.player.deaths,
+        headshots: this.player.headshots,
+        shotsFired: this.player.shotsFired,
+        shotsHit: this.player.shotsHit,
+        captures: this.playerCaptures,
+        bestStreak: this.bestStreak,
+        weaponKills: { ...this.playerWeaponKills },
+      },
     };
   }
 
