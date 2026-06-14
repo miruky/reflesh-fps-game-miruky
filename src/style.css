@@ -1114,3 +1114,236 @@ button {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------------- プロフィール・進行度 ---------------- */
+
+.menu-profile {
+  margin-left: auto;
+  min-width: 280px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-size: 13px;
+}
+
+.profile-top {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.profile-rank {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.profile-rating {
+  color: var(--text-dim);
+}
+
+.profile-level {
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-xpbar {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.profile-xpbar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.profile-stats {
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.profile-btn {
+  background: none;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.profile-btn:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+@media (max-width: 980px) {
+  .menu-profile {
+    margin-left: 0;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .menu-header {
+    flex-wrap: wrap;
+  }
+}
+
+.challenge-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.challenge-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 90px 64px;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.challenge-name {
+  font-weight: 700;
+}
+
+.challenge-desc {
+  color: var(--text-dim);
+}
+
+.challenge-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.challenge-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.challenge-xp {
+  text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.challenge-done {
+  opacity: 0.55;
+}
+
+.challenge-done .challenge-xp {
+  color: var(--accent);
+}
+
+.weapon-card.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.locked-note {
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+}
+
+.attach-btn.locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.result-progress {
+  border-top: 1px solid var(--panel-border);
+  padding-top: 16px;
+  margin-bottom: 20px;
+}
+
+.result-xp-list {
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.result-xp-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+}
+
+.result-xp-list .xp-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.result-xp-total {
+  font-weight: 700;
+  text-align: right;
+  margin-bottom: 10px;
+}
+
+.result-levelrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.result-levelrow .profile-xpbar {
+  flex: 1;
+}
+
+.result-level {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.result-levelup {
+  color: var(--accent);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.result-unlocks {
+  list-style: none;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.result-unlocks li {
+  color: var(--accent);
+  padding: 1px 0;
+}
+
+.result-rating {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.rating-up {
+  color: #8fd18a;
+  font-weight: 700;
+}
+
+.rating-down {
+  color: #ff8a76;
+  font-weight: 700;
+}
