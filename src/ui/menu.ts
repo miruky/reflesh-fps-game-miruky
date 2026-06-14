@@ -95,7 +95,7 @@ const LOGO_SVG = `
   <title>hibana</title>
   <circle cx="32" cy="32" r="20" fill="none" stroke="currentColor" stroke-width="3" opacity="0.55"/>
   <path d="M32 4v12M32 48v12M4 32h12M48 32h12" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
-  <path d="M32 22l3.2 6.8L42 32l-6.8 3.2L32 42l-3.2-6.8L22 32l6.8-3.2z" fill="#ff5a3c"/>
+  <path class="spark" d="M32 22l3.2 6.8L42 32l-6.8 3.2L32 42l-3.2-6.8L22 32l6.8-3.2z"/>
 </svg>`;
 
 export class Menu {
@@ -281,7 +281,7 @@ export class Menu {
       ? `<p class="result-teamscore"><span class="ts-mine">${result.teamScores.mine}</span> - <span class="ts-enemy">${result.teamScores.enemy}</span></p>`
       : '';
     this.root.innerHTML = `
-      <div class="menu-screen menu-result">
+      <div class="menu-screen menu-result${result.won ? ' result-won' : ''}">
         <div class="result-panel">
           <p class="result-mode">${result.modeName}</p>
           <h1>${result.won ? '勝利' : '敗北'}</h1>
