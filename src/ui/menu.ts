@@ -1,6 +1,5 @@
 import { exportProfile, importProfile, saveProfile } from '../core/profile';
-import type { Settings } from '../core/settings';
-import { saveSettings } from '../core/settings';
+import { MATCH_LENGTHS, saveSettings, type Settings } from '../core/settings';
 import {
   ATTACHMENT_DEFS,
   ATTACHMENT_SLOTS,
@@ -650,6 +649,14 @@ export class Menu {
         this.settings.teamPaletteId,
         (v) => {
           this.settings.teamPaletteId = v;
+        },
+      ),
+      this.select(
+        '試合時間',
+        MATCH_LENGTHS.map((m) => ({ value: String(m.value), label: m.label })),
+        String(this.settings.matchLengthS),
+        (v) => {
+          this.settings.matchLengthS = Number(v);
         },
       ),
     );
