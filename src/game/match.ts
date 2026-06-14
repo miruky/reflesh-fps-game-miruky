@@ -40,6 +40,7 @@ import {
 import { Player } from './player';
 import type { MatchSummary } from './progression';
 import { generateStage, type StageDef } from './stage';
+import { teamPalette, type TeamPalette } from './teamcolors';
 import { Weapon, WEAPON_DEFS } from './weapons';
 
 const DEG = Math.PI / 180;
@@ -52,12 +53,11 @@ const MELEE_COOLDOWN = 0.8;
 const BOT_VIEW_DISTANCE = 60;
 const BOT_VIEW_CONE_COS = Math.cos((75 * Math.PI) / 180);
 const BOT_FALLOFF = { start: 14, end: 40, minFactor: 0.6 };
-const BOT_COLOR = 0xc84b3c;
-const ALLY_COLOR = 0x3f7fd4;
 const PLAYER_NAME = 'あなた';
 const ZONE_RADIUS = 3.5;
 const SPECTATE_RADIUS = 5.5;
 const SPECTATE_HEIGHT = 3;
+const KILLCAM_S = 2.4;
 const ALERT_RADIUS = 35;
 const ALERT_RADIUS_SUPPRESSED = 9;
 // クッキング限界の直前で強制投擲し、手元爆発はさせない
@@ -146,6 +146,7 @@ export interface MatchSnapshot {
   zones: ZoneView[]; // ドミネーション以外は空
   announcements: string[];
   spectating: boolean;
+  killcam: string | null; // キルカメラ中に映している相手の名前
   feed: FeedEntry[];
   hits: Array<'hit' | 'head' | 'kill'>;
   damageNumbers: DamageNumber[];
@@ -224,6 +225,10 @@ export class Match {
   private announcements: string[] = [];
   private deathPos: THREE.Vector3 | null = null;
   private orbitAngle = 0;
+  private killer: Bot | null = null;
+  private killcamTimer = 0;
+  private crouchLatch = false;
+  private readonly colors: TeamPalette;
   private bestStreak = 0;
   private playerCaptures = 0;
   private readonly playerWeaponKills: Record<string, number> = {};
@@ -252,6 +257,7 @@ export class Match {
     aspect: number,
   ) {
     this.timeLeft = config.durationS;
+    this.colors = teamPalette(settings.teamPaletteId);
     this.rand = mulberry32(Date.now() % 0xffffffff);
     this.physics = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     this.camera = new THREE.PerspectiveCamera(settings.fov, aspect, 0.05, 400);
@@ -291,7 +297,13 @@ export class Match {
       const isAlly = team === PLAYER_TEAM;
       const spawnList = isAlly ? this.playerSpawns : this.botSpawns;
       const botSpawn = spawnList[(i + (isAlly ? 1 : 0)) % spawnList.length] ?? new THREE.Vector3();
-      const bot = new Bot(this.physics, name, botSpawn, isAlly ? ALLY_COLOR : BOT_COLOR, team);
+      const bot = new Bot(
+        this.physics,
+        name,
+        botSpawn,
+        isAlly ? this.colors.ally : this.colors.enemy,
+        team,
+      );
       this.tags.set(bot.bodyCollider.handle, { kind: 'bot', bot, part: 'body' });
       this.tags.set(bot.headCollider.handle, { kind: 'bot', bot, part: 'head' });
       this.scene.add(bot.group);
@@ -421,7 +433,7 @@ export class Match {
 
   private zoneColor(owner: TeamId | null): number {
     if (owner === null) return 0xb9c2cc;
-    return owner === PLAYER_TEAM ? ALLY_COLOR : BOT_COLOR;
+    return owner === PLAYER_TEAM ? this.colors.ally : this.colors.enemy;
   }
 
   private updateZones(dt: number): void {
@@ -500,12 +512,16 @@ export class Match {
     }
     const wantAds = this.settings.adsToggle ? this.adsLatch : this.input.adsDown();
 
+    // しゃがみ: ホールドまたはトグル(アクセシビリティ設定)。
+    // wasPressedは消費型なので1回だけ読む
+    const crouchPressed = this.input.wasPressed('crouch');
+    if (this.settings.crouchToggle && crouchPressed) this.crouchLatch = !this.crouchLatch;
     const moveInput = {
       x: (this.input.isDown('right') ? 1 : 0) - (this.input.isDown('left') ? 1 : 0),
       z: (this.input.isDown('forward') ? 1 : 0) - (this.input.isDown('back') ? 1 : 0),
       jumpPressed: this.input.wasPressed('jump'),
-      crouch: this.input.isDown('crouch'),
-      crouchPressed: this.input.wasPressed('crouch'),
+      crouch: this.settings.crouchToggle ? this.crouchLatch : this.input.isDown('crouch'),
+      crouchPressed,
       sprint: this.input.isDown('sprint'),
       lean: (this.input.isDown('leanright') ? 1 : 0) - (this.input.isDown('leanleft') ? 1 : 0),
     };
@@ -553,6 +569,8 @@ export class Match {
     this.updateFirePatches(dt);
     this.smokeZones = this.smokeZones.filter((zone) => zone.until > this.elapsed);
     this.updateZones(dt);
+
+    if (!this.player.alive && this.killcamTimer > 0) this.killcamTimer -= dt;
 
     this.updateBots(dt);
     this.physics.step();
@@ -613,13 +631,20 @@ export class Match {
       grounded: this.player.grounded,
       reloadRatio: weapon.reloading ? weapon.reloadRatio : null,
       raiseRatio: Math.max(weapon.raiseRatio, this.cooking ? 0.65 : 0),
+      motionScale: this.settings.reduceMotion ? 0.25 : 1,
     });
     this.effects.update(dt);
   }
 
   private syncCamera(): void {
-    // 死亡中は倒れた地点を回る観戦カメラに切り替える
+    // 死亡直後はキルカメラ: 倒した相手の視点から自分の倒れた地点を見せ、
+    // どこから撃たれたのかを伝える。相手が倒れたら観戦カメラへ移る
     if (!this.player.alive && this.deathPos) {
+      if (this.killcamTimer > 0 && this.killer?.alive) {
+        this.camera.position.copy(this.killer.headPosition());
+        this.camera.lookAt(this.deathPos.x, this.deathPos.y + 0.6, this.deathPos.z);
+        return;
+      }
       const focus = this.deathPos.clone().setY(this.deathPos.y + 1);
       this.camera.position.set(
         this.deathPos.x + Math.cos(this.orbitAngle) * SPECTATE_RADIUS,
@@ -1165,7 +1190,11 @@ export class Match {
     const end = hit
       ? origin.clone().addScaledVector(dir, hitToi(hit))
       : origin.clone().addScaledVector(dir, BOT_VIEW_DISTANCE);
-    this.effects.tracer(origin, end, bot.team === PLAYER_TEAM ? 0x7fa8ff : 0xff7a6b);
+    this.effects.tracer(
+      origin,
+      end,
+      bot.team === PLAYER_TEAM ? this.colors.allyTracer : this.colors.enemyTracer,
+    );
 
     // 発砲音は方向と距離をつけて鳴らす
     const { pan, distance } = this.panAndDistance(origin);
@@ -1192,7 +1221,7 @@ export class Match {
           headshot: false,
         });
         this.sounds.death();
-        this.notePlayerDeath();
+        this.notePlayerDeath(bot);
       }
       return;
     }
@@ -1217,9 +1246,12 @@ export class Match {
     if (this.config.mode !== 'dom') this.scores.add(team, 1);
   }
 
-  private notePlayerDeath(): void {
+  // killerは敵BOTに倒された場合のみ。自爆や火災ではキルカメラを出さない
+  private notePlayerDeath(killer: Bot | null = null): void {
     this.deathPos = this.player.position;
     this.orbitAngle = this.player.yaw + Math.PI / 2;
+    this.killer = killer;
+    this.killcamTimer = killer ? KILLCAM_S : 0;
   }
 
   private alertBots(radius: number): void {
@@ -1236,6 +1268,8 @@ export class Match {
       this.player.respawnAt(this.pickSpawn(this.playerSpawns, this.hostilesOf(PLAYER_TEAM)));
       this.activeWeapon.raise();
       this.deathPos = null;
+      this.killer = null;
+      this.killcamTimer = 0;
     }
     for (const bot of this.bots) {
       if (!bot.alive && bot.respawnIn <= 0) {
@@ -1353,6 +1387,8 @@ export class Match {
       zones: this.zoneViews(),
       announcements: this.announcements,
       spectating: !this.player.alive && this.deathPos !== null,
+      killcam:
+        !this.player.alive && this.killcamTimer > 0 && this.killer?.alive ? this.killer.name : null,
       feed: this.feed,
       hits: this.hits,
       damageNumbers: this.damageNumbers,
