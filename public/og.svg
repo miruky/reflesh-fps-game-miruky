@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="hibana — ブラウザで動く3D FPS">
+  <title>hibana — ブラウザで動く3D FPS</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.45" y2="1">
+      <stop offset="0" stop-color="#1c1813" />
+      <stop offset="0.62" stop-color="#121009" />
+      <stop offset="1" stop-color="#0e0c07" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0.84" cy="-0.05" r="0.7">
+      <stop offset="0" stop-color="#ff5a3c" stop-opacity="0.28" />
+      <stop offset="0.6" stop-color="#ff5a3c" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)" />
+  <rect width="1200" height="630" fill="url(#glow)" />
+  <rect x="40.5" y="40.5" width="1119" height="549" fill="none" stroke="#2a251e" stroke-width="1" />
+
+  <g transform="translate(112 235) scale(2.5)">
+    <circle cx="32" cy="32" r="20" fill="none" stroke="#ece7dd" stroke-width="3" opacity="0.5" />
+    <path d="M32 4v12M32 48v12M4 32h12M48 32h12" stroke="#ece7dd" stroke-width="4" stroke-linecap="round" />
+    <path d="M32 22l3.2 6.8L42 32l-6.8 3.2L32 42l-3.2-6.8L22 32l6.8-3.2z" fill="#ff5a3c" />
+  </g>
+
+  <rect x="304" y="200" width="34" height="3" fill="#ff5a3c" />
+  <text x="350" y="211" font-family="'Helvetica Neue',Arial,sans-serif" font-size="22" font-weight="600" letter-spacing="9" fill="#a39c8f">BROWSER · 3D · FPS</text>
+
+  <text x="300" y="360" font-family="'Helvetica Neue',Arial,sans-serif" font-size="158" font-weight="800" letter-spacing="-4" fill="#ece7dd">hibana</text>
+
+  <text x="306" y="430" font-family="'Hiragino Sans','Noto Sans JP',sans-serif" font-size="34" fill="#a39c8f">ブラウザで動く3D FPS。撃って、走って、BOTと撃ち合う。</text>
+
+  <line x1="300" y1="520" x2="1104" y2="520" stroke="#2a251e" stroke-width="1" />
+  <text x="300" y="562" font-family="'Helvetica Neue',Arial,sans-serif" font-size="24" letter-spacing="1" fill="#6d675c">Three.js · Rapier · TypeScript</text>
+  <text x="1104" y="562" text-anchor="end" font-family="'Helvetica Neue',Arial,sans-serif" font-size="24" letter-spacing="1" fill="#6d675c">miruky.github.io/hibana</text>
+</svg>
