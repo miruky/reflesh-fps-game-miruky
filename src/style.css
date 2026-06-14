@@ -171,9 +171,9 @@ button {
 }
 
 .menu-tagline {
-  margin-top: 8px;
-  font-size: 11px;
-  letter-spacing: 0.42em;
+  margin-top: 9px;
+  font-size: 10.5px;
+  letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--ink-faint);
 }
@@ -184,19 +184,31 @@ button {
   margin-bottom: 38px;
 }
 
-.menu-section h2 {
+.menu-section h2,
+.menu-controls h2 {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 13px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.32em;
+  letter-spacing: 0.26em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-  margin-bottom: 20px;
+  color: var(--ink-soft);
+  margin-bottom: 22px;
 }
 
-.menu-section h2::after {
+/* キッカーの頭に火花の標(ember)。全セクションに通底させる。 */
+.menu-section h2::before,
+.menu-controls h2::before {
+  content: '';
+  flex: none;
+  width: 18px;
+  height: 2px;
+  background: var(--ember);
+}
+
+.menu-section h2::after,
+.menu-controls h2::after {
   content: '';
   flex: 1;
   height: 1px;
@@ -605,15 +617,6 @@ button {
   margin-top: 52px;
   border-top: 1px solid var(--rule);
   padding-top: 28px;
-}
-
-.menu-controls h2 {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.32em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin-bottom: 20px;
 }
 
 .controls-grid {
