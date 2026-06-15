@@ -112,6 +112,44 @@ describe('applyMatch', () => {
   });
 });
 
+describe('自己ベスト記録', () => {
+  it('1試合最多キルを更新し、下回る試合では更新しない', () => {
+    const profile = emptyProfile();
+    const first = applyMatch(profile, summary({ kills: 5 }));
+    expect(profile.records.mostKills).toBe(5);
+    expect(first.newRecords).toContain('1試合最多キル 5');
+    const second = applyMatch(profile, summary({ kills: 3 }));
+    expect(profile.records.mostKills).toBe(5);
+    expect(second.newRecords).toHaveLength(0);
+  });
+
+  it('0キルの試合は記録にならない', () => {
+    const profile = emptyProfile();
+    const progress = applyMatch(profile, summary({ kills: 0 }));
+    expect(profile.records.mostKills).toBe(0);
+    expect(progress.newRecords).toHaveLength(0);
+  });
+
+  it('連勝を数え、敗北で途切れても最長は残る', () => {
+    const profile = emptyProfile();
+    applyMatch(profile, summary({ won: true }));
+    applyMatch(profile, summary({ won: true }));
+    expect(profile.records.currentWinStreak).toBe(2);
+    expect(profile.records.bestWinStreak).toBe(2);
+    applyMatch(profile, summary({ won: false }));
+    expect(profile.records.currentWinStreak).toBe(0);
+    expect(profile.records.bestWinStreak).toBe(2);
+  });
+
+  it('連勝の報告は2連勝以上から', () => {
+    const profile = emptyProfile();
+    const one = applyMatch(profile, summary({ won: true }));
+    expect(one.newRecords.some((r) => r.startsWith('連勝'))).toBe(false);
+    const two = applyMatch(profile, summary({ won: true }));
+    expect(two.newRecords).toContain('連勝 2');
+  });
+});
+
 describe('rankFromRating', () => {
   it('初期レートは新兵', () => {
     expect(rankFromRating(1000).name).toBe('新兵');
