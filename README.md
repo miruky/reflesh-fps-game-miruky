@@ -57,7 +57,7 @@
 | 描画     | Three.js(WebGL)        |
 | 物理     | Rapier(Rust 製 / WASM) |
 | ビルド   | Vite                   |
-| テスト   | Vitest(107 テスト)     |
+| テスト   | Vitest(115 テスト)     |
 | リンタ   | ESLint + Prettier      |
 | CI / CD  | GitHub Actions         |
 | 配信     | GitHub Pages           |
