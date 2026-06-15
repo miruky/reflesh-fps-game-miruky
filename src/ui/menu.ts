@@ -185,6 +185,7 @@ export class Menu {
           </div>
           <div class="menu-profile" data-id="profile"></div>
         </header>
+        <p class="menu-touchnote">この作品はキーボードとマウスで操作します。スマートフォンやタブレットでは遊べません。PCで開いてください。</p>
         <div class="menu-columns">
           <div class="menu-context">
             <section class="menu-section">
@@ -250,7 +251,7 @@ export class Menu {
     this.root.hidden = false;
     this.root.innerHTML = `
       <div class="menu-screen menu-pause">
-        <div class="pause-panel">
+        <div class="pause-panel" role="dialog" aria-modal="true" aria-label="一時停止">
           <h1>一時停止</h1>
           <button class="menu-start" data-id="resume">再開する</button>
           <section class="menu-section">
@@ -264,6 +265,7 @@ export class Menu {
     this.renderSettings(this.query('settings'));
     this.query('resume').addEventListener('click', () => this.callbacks.onResume());
     this.query('quit').addEventListener('click', () => this.callbacks.onQuit());
+    this.query('resume').focus({ preventScroll: true });
   }
 
   showResult(result: MatchResult, progress: MatchProgress): void {
@@ -282,7 +284,7 @@ export class Menu {
       : '';
     this.root.innerHTML = `
       <div class="menu-screen menu-result${result.won ? ' result-won' : ''}">
-        <div class="result-panel">
+        <div class="result-panel" role="dialog" aria-modal="true" aria-label="試合結果">
           <p class="result-mode">${result.modeName}</p>
           <h1>${result.won ? '勝利' : '敗北'}</h1>
           ${teamScoreHtml}
@@ -307,6 +309,7 @@ export class Menu {
       this.countUp(this.query('tsmine'), result.teamScores.mine, 650);
       this.countUp(this.query('tsenemy'), result.teamScores.enemy, 650);
     }
+    this.query('restart').focus({ preventScroll: true });
   }
 
   // リザルト下部の獲得XP・レベル・レート変動の表示
@@ -592,15 +595,14 @@ export class Menu {
           this.attachmentBySlot[slot] = choice.id;
           this.syncAttachments();
           buttons.querySelectorAll('.attach-btn').forEach((node) => {
-            node.classList.toggle(
-              'selected',
-              (node as HTMLElement).dataset.attach === (choice.id ?? 'none'),
-            );
+            const on = (node as HTMLElement).dataset.attach === (choice.id ?? 'none');
+            node.classList.toggle('selected', on);
+            node.setAttribute('aria-pressed', String(on));
           });
         });
-        if ((this.attachmentBySlot[slot] ?? 'none') === (choice.id ?? 'none')) {
-          btn.classList.add('selected');
-        }
+        const active = (this.attachmentBySlot[slot] ?? 'none') === (choice.id ?? 'none');
+        btn.classList.toggle('selected', active);
+        btn.setAttribute('aria-pressed', String(active));
         buttons.appendChild(btn);
       }
       row.appendChild(buttons);
@@ -649,7 +651,10 @@ export class Menu {
 
   private markSelected(container: HTMLElement, key: string, value: string): void {
     container.querySelectorAll<HTMLElement>('[data-' + key + ']').forEach((node) => {
-      node.classList.toggle('selected', node.dataset[key] === value);
+      const on = node.dataset[key] === value;
+      node.classList.toggle('selected', on);
+      // 選択トグルであることと現在の状態を支援技術へ伝える
+      node.setAttribute('aria-pressed', String(on));
     });
   }
 
