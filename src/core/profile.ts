@@ -28,6 +28,13 @@ export function parseProfile(raw: string): Profile {
     }
   }
 
+  if (typeof source.records === 'object' && source.records !== null) {
+    const records = source.records as Record<string, unknown>;
+    for (const key of Object.keys(base.records) as Array<keyof Profile['records']>) {
+      base.records[key] = num(records[key], 0);
+    }
+  }
+
   if (Array.isArray(source.completedChallenges)) {
     base.completedChallenges = source.completedChallenges.filter(
       (id): id is string => typeof id === 'string',
