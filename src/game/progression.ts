@@ -12,10 +12,20 @@ export interface CareerStats {
   bestStreak: number;
 }
 
+// 1試合単位の自己ベスト。累計のCareerStatsとは別に「最高の一戦」を覚えておく
+export interface PersonalRecords {
+  // 1試合での最多キル
+  mostKills: number;
+  // 連勝の最長記録と現在の連勝数(敗北で0へ戻る)
+  bestWinStreak: number;
+  currentWinStreak: number;
+}
+
 export interface Profile {
   xp: number;
   rating: number;
   stats: CareerStats;
+  records: PersonalRecords;
   completedChallenges: string[];
   // 表示名ごとのキル数(武器・投擲物・近接)
   weaponKills: Record<string, number>;
@@ -48,6 +58,11 @@ export function emptyProfile(): Profile {
       shotsHit: 0,
       captures: 0,
       bestStreak: 0,
+    },
+    records: {
+      mostKills: 0,
+      bestWinStreak: 0,
+      currentWinStreak: 0,
     },
     completedChallenges: [],
     weaponKills: {},
@@ -253,6 +268,8 @@ export interface MatchProgress {
   ratingAfter: number;
   rankBefore: RankDef;
   rankAfter: RankDef;
+  // この試合で更新した自己ベストの説明(なければ空)
+  newRecords: string[];
 }
 
 // 試合結果をプロフィールへ反映する。profileはその場で更新される
@@ -269,6 +286,23 @@ export function applyMatch(profile: Profile, summary: MatchSummary): MatchProgre
   stats.bestStreak = Math.max(stats.bestStreak, summary.bestStreak);
   for (const [name, count] of Object.entries(summary.weaponKills)) {
     profile.weaponKills[name] = (profile.weaponKills[name] ?? 0) + count;
+  }
+
+  // 自己ベストの更新。更新したものは結果画面で知らせる
+  const records = profile.records;
+  const newRecords: string[] = [];
+  if (summary.kills > records.mostKills) {
+    records.mostKills = summary.kills;
+    if (summary.kills > 0) newRecords.push(`1試合最多キル ${summary.kills}`);
+  }
+  if (summary.won) {
+    records.currentWinStreak += 1;
+    if (records.currentWinStreak > records.bestWinStreak) {
+      records.bestWinStreak = records.currentWinStreak;
+      if (records.currentWinStreak >= 2) newRecords.push(`連勝 ${records.currentWinStreak}`);
+    }
+  } else {
+    records.currentWinStreak = 0;
   }
 
   const xpBreakdown: XpEntry[] = [];
@@ -317,5 +351,6 @@ export function applyMatch(profile: Profile, summary: MatchSummary): MatchProgre
     ratingAfter: profile.rating,
     rankBefore: rankFromRating(ratingBefore),
     rankAfter: rankFromRating(profile.rating),
+    newRecords,
   };
 }
