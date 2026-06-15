@@ -1,3 +1,4 @@
+import { easeOutCubic } from '../core/easing';
 import { exportProfile, importProfile, saveProfile } from '../core/profile';
 import { MATCH_LENGTHS, saveSettings, type Settings } from '../core/settings';
 import {
@@ -277,7 +278,7 @@ export class Menu {
       )
       .join('');
     const teamScoreHtml = result.teamScores
-      ? `<p class="result-teamscore"><span class="ts-mine">${result.teamScores.mine}</span> - <span class="ts-enemy">${result.teamScores.enemy}</span></p>`
+      ? `<p class="result-teamscore"><span class="ts-mine" data-id="tsmine">0</span> - <span class="ts-enemy" data-id="tsenemy">0</span></p>`
       : '';
     this.root.innerHTML = `
       <div class="menu-screen menu-result${result.won ? ' result-won' : ''}">
@@ -301,6 +302,11 @@ export class Menu {
     `;
     this.query('restart').addEventListener('click', () => this.callbacks.onRestart());
     this.query('menu').addEventListener('click', () => this.callbacks.onQuit());
+    this.countUp(this.query('xptotal'), progress.xpTotal);
+    if (result.teamScores) {
+      this.countUp(this.query('tsmine'), result.teamScores.mine, 650);
+      this.countUp(this.query('tsenemy'), result.teamScores.enemy, 650);
+    }
   }
 
   // リザルト下部の獲得XP・レベル・レート変動の表示
@@ -336,7 +342,7 @@ export class Menu {
     return `
       <section class="result-progress">
         <ul class="result-xp-list">${xpRows}</ul>
-        <p class="result-xp-total">獲得 ${progress.xpTotal} XP</p>
+        <p class="result-xp-total">獲得 <span data-id="xptotal">0</span> XP</p>
         <div class="result-levelrow">
           <span class="result-level">Lv ${level.level}</span>
           <span class="profile-xpbar"><i style="width:${xpRatio}%"></i></span>
@@ -352,6 +358,34 @@ export class Menu {
     const node = this.root.querySelector<HTMLElement>(`[data-id="${id}"]`);
     if (!node) throw new Error(`menu element not found: ${id}`);
     return node;
+  }
+
+  // prefers-reduced-motionの利用者には演出を飛ばして即値を見せる
+  private get prefersReducedMotion(): boolean {
+    return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  }
+
+  // 0から目標値まで数字を駆け上がらせる。画面差し替えで要素が外れたら止める
+  private countUp(el: HTMLElement, to: number, durationMs = 750): void {
+    if (this.prefersReducedMotion || to <= 0) {
+      el.textContent = String(to);
+      return;
+    }
+    const start = performance.now();
+    const tick = (now: number): void => {
+      if (!el.isConnected) return;
+      const p = Math.min(1, (now - start) / durationMs);
+      el.textContent = String(Math.round(easeOutCubic(p) * to));
+      if (p < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  // 一覧の各行へ入場の段差(--i)を与える。CSS側でanimation-delayに使う
+  private stagger(container: HTMLElement): void {
+    Array.from(container.children).forEach((child, i) => {
+      (child as HTMLElement).style.setProperty('--i', String(i));
+    });
   }
 
   private renderStages(): void {
@@ -376,6 +410,7 @@ export class Menu {
       });
       grid.appendChild(card);
     }
+    this.stagger(grid);
     this.markSelected(grid, 'stage', this.selection.stageId);
   }
 
@@ -416,6 +451,7 @@ export class Menu {
       }
       list.appendChild(card);
     }
+    this.stagger(list);
     this.markSelected(list, 'weapon', this.selection.primaryId);
   }
 
@@ -475,6 +511,7 @@ export class Menu {
       `;
       list.appendChild(row);
     }
+    this.stagger(list);
   }
 
   private renderModes(): void {
@@ -494,6 +531,7 @@ export class Menu {
       });
       list.appendChild(card);
     }
+    this.stagger(list);
     this.markSelected(list, 'mode', this.selection.mode);
   }
 
@@ -574,6 +612,7 @@ export class Menu {
       });
       list.appendChild(card);
     }
+    this.stagger(list);
     this.markSelected(list, 'grenade', this.selection.grenade);
   }
 
@@ -590,6 +629,7 @@ export class Menu {
       });
       list.appendChild(card);
     }
+    this.stagger(list);
     this.markSelected(list, 'difficulty', this.selection.difficulty);
   }
 
