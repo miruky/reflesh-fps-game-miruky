@@ -143,6 +143,26 @@ button {
   margin-inline: auto;
 }
 
+/* ポインタが粗い端末(タッチ)でのみ、操作不能を事前に知らせる */
+.menu-touchnote {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .menu-touchnote {
+    display: block;
+    max-width: var(--shell);
+    margin: -16px auto 32px;
+    padding: 12px 16px;
+    border-left: 2px solid var(--ember);
+    background: var(--ember-wash);
+    color: var(--ink-soft);
+    font-size: 13px;
+    line-height: 1.7;
+    text-wrap: pretty;
+  }
+}
+
 /* ── ヘッダー(ワードマーク)── */
 
 .menu-header {
