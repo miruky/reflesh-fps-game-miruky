@@ -181,11 +181,30 @@ export class Menu {
           <span class="menu-logo">${LOGO_SVG}</span>
           <div>
             <h1>hibana</h1>
-            <p class="menu-tagline">ブラウザで動く3D FPS</p>
+            <p class="menu-tagline">Browser tactical simulation</p>
           </div>
           <div class="menu-profile" data-id="profile"></div>
         </header>
         <p class="menu-touchnote">この作品はキーボードとマウスで操作します。スマートフォンやタブレットでは遊べません。PCで開いてください。</p>
+        <section class="deployment-briefing" aria-label="出撃構成">
+          <div class="briefing-heading">
+            <span>Deployment briefing</span>
+            <strong>出撃構成</strong>
+          </div>
+          <dl class="briefing-loadout">
+            <div><dt>Stage</dt><dd data-id="brief-stage"></dd></div>
+            <div><dt>Mode</dt><dd data-id="brief-mode"></dd></div>
+            <div><dt>Primary</dt><dd data-id="brief-weapon"></dd></div>
+            <div><dt>Utility</dt><dd data-id="brief-grenade"></dd></div>
+            <div><dt>Threat</dt><dd data-id="brief-difficulty"></dd></div>
+          </dl>
+          <button class="menu-start" data-id="start">
+            <span>出撃する</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h13m-5-5 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </section>
         <div class="menu-columns">
           <div class="menu-context">
             <section class="menu-section">
@@ -222,7 +241,6 @@ export class Menu {
               <h2>BOTの腕前</h2>
               <div class="difficulty-list" data-id="difficulties"></div>
             </section>
-            <button class="menu-start" data-id="start">出撃する</button>
           </div>
         </div>
         <footer class="menu-controls">
@@ -241,6 +259,7 @@ export class Menu {
     this.renderDifficulties();
     this.renderSettings(this.query('settings'));
     this.renderControls();
+    this.renderBriefing();
     this.query('start').addEventListener('click', () => {
       this.saveLoadout();
       this.callbacks.onStart(this.selection);
@@ -397,28 +416,54 @@ export class Menu {
 
   private renderStages(): void {
     const grid = this.query('stages');
-    for (const stage of STAGES) {
+    STAGES.forEach((stage, index) => {
       const card = document.createElement('button');
       card.className = 'stage-card';
       card.dataset.stage = stage.id;
       const palette = stage.palette;
       card.innerHTML = `
-        <span class="stage-swatch" aria-hidden="true">
-          <i style="background:${palette.floor}"></i><i style="background:${palette.wall}"></i>
-          <i style="background:${palette.obstacle}"></i><i style="background:${palette.accent}"></i>
+        <span class="stage-preview">${this.stagePreview(stage, index)}</span>
+        <span class="stage-card-body">
+          <span class="stage-swatch" aria-hidden="true">
+            <i style="background:${palette.floor}"></i><i style="background:${palette.wall}"></i>
+            <i style="background:${palette.obstacle}"></i><i style="background:${palette.accent}"></i>
+          </span>
+          <span class="stage-name">${stage.name}</span>
+          <span class="stage-sub">${stage.subtitle}</span>
+          <span class="stage-meta">${stage.size}m 四方 / BOT ${stage.botCount}体 / Seed ${stage.seed}</span>
         </span>
-        <span class="stage-name">${stage.name}</span>
-        <span class="stage-sub">${stage.subtitle}</span>
-        <span class="stage-meta">${stage.size}m 四方 / BOT ${stage.botCount}体</span>
       `;
       card.addEventListener('click', () => {
         this.selection.stageId = stage.id;
         this.markSelected(grid, 'stage', stage.id);
+        this.renderBriefing();
       });
       grid.appendChild(card);
-    }
+    });
     this.stagger(grid);
     this.markSelected(grid, 'stage', this.selection.stageId);
+  }
+
+  private stagePreview(stage: (typeof STAGES)[number], index: number): string {
+    const palette = stage.palette;
+    const blocks = Array.from({ length: 5 }, (_, blockIndex) => {
+      const x = 13 + blockIndex * 27;
+      const y = 35 + ((stage.seed + blockIndex * 11) % 30);
+      const width = 12 + ((stage.seed + blockIndex * 7) % 13);
+      const height = 10 + ((stage.seed + blockIndex * 5) % 18);
+      return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="1" fill="${blockIndex % 2 === 0 ? palette.wall : palette.obstacle}" opacity="${0.68 + blockIndex * 0.05}"/>`;
+    }).join('');
+    const routeY = 28 + ((stage.seed * 3) % 42);
+    return `
+      <svg viewBox="0 0 160 92" role="img" aria-label="${stage.name}の戦域プレビュー">
+        <title>${stage.name}の戦域プレビュー</title>
+        <rect width="160" height="92" fill="${palette.sky}"/>
+        <path d="M0 29 34 18l32 12 30-17 64 21v58H0Z" fill="${palette.floor}"/>
+        <g>${blocks}</g>
+        <path d="M8 ${routeY} C42 ${routeY - 18}, 78 ${routeY + 20}, 151 ${routeY - 7}" fill="none" stroke="${palette.accent}" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="${index % 2 === 0 ? '1 7' : '8 5'}"/>
+        <circle cx="${24 + ((stage.seed * 2) % 104)}" cy="${24 + (stage.seed % 48)}" r="4" fill="${palette.accent}"/>
+        <path d="M12 12h28M12 17h18" stroke="${palette.lightColor}" stroke-width="2" opacity=".72"/>
+      </svg>`;
   }
 
   private renderWeapons(): void {
@@ -452,6 +497,7 @@ export class Menu {
         card.addEventListener('click', () => {
           this.selection.primaryId = id;
           this.markSelected(list, 'weapon', id);
+          this.renderBriefing();
         });
       } else {
         card.disabled = true;
@@ -545,6 +591,7 @@ export class Menu {
       card.addEventListener('click', () => {
         this.selection.mode = id;
         this.markSelected(list, 'mode', id);
+        this.renderBriefing();
       });
       list.appendChild(card);
     }
@@ -599,6 +646,7 @@ export class Menu {
             node.classList.toggle('selected', on);
             node.setAttribute('aria-pressed', String(on));
           });
+          this.renderBriefing();
         });
         const active = (this.attachmentBySlot[slot] ?? 'none') === (choice.id ?? 'none');
         btn.classList.toggle('selected', active);
@@ -625,6 +673,7 @@ export class Menu {
       card.addEventListener('click', () => {
         this.selection.grenade = kind;
         this.markSelected(list, 'grenade', kind);
+        this.renderBriefing();
       });
       list.appendChild(card);
     }
@@ -642,11 +691,28 @@ export class Menu {
       card.addEventListener('click', () => {
         this.selection.difficulty = item.id;
         this.markSelected(list, 'difficulty', item.id);
+        this.renderBriefing();
       });
       list.appendChild(card);
     }
     this.stagger(list);
     this.markSelected(list, 'difficulty', this.selection.difficulty);
+  }
+
+  private renderBriefing(): void {
+    const stage = STAGES.find((item) => item.id === this.selection.stageId) ?? STAGES[0];
+    const mode = MODE_DEFS[this.selection.mode];
+    const weapon = WEAPON_DEFS[this.selection.primaryId];
+    const grenade = GRENADE_SPECS[this.selection.grenade];
+    const difficulty = DIFFICULTIES.find((item) => item.id === this.selection.difficulty);
+    this.query('brief-stage').textContent = stage?.name ?? '-';
+    this.query('brief-mode').textContent = mode.name;
+    this.query('brief-weapon').textContent = weapon?.name ?? '-';
+    this.query('brief-grenade').textContent =
+      this.selection.attachments.length > 0
+        ? `${grenade.name} / Attach ${this.selection.attachments.length}`
+        : grenade.name;
+    this.query('brief-difficulty').textContent = difficulty?.label ?? '-';
   }
 
   private markSelected(container: HTMLElement, key: string, value: string): void {
