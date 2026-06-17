@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   MATCH_LENGTHS,
   SETTING_BOUNDS,
+  UI_ACCENTS,
   sanitizeSettings,
   type Settings,
 } from './settings';
@@ -42,14 +43,33 @@ describe('sanitizeSettings', () => {
   });
 
   it('真偽値は型を問わず論理値へ変換する', () => {
-    const truthy = dirty({ adsToggle: 1, crouchToggle: 'yes', reduceMotion: {} });
+    const truthy = dirty({ adsToggle: 1, crouchToggle: 'yes', reduceMotion: {}, invertY: 1 });
     expect(truthy.adsToggle).toBe(true);
     expect(truthy.crouchToggle).toBe(true);
     expect(truthy.reduceMotion).toBe(true);
-    const falsy = dirty({ adsToggle: 0, crouchToggle: '', reduceMotion: null });
+    expect(truthy.invertY).toBe(true);
+    const falsy = dirty({ adsToggle: 0, crouchToggle: '', reduceMotion: null, invertY: 0 });
     expect(falsy.adsToggle).toBe(false);
     expect(falsy.crouchToggle).toBe(false);
     expect(falsy.reduceMotion).toBe(false);
+    expect(falsy.invertY).toBe(false);
+  });
+
+  it('Y軸反転は既定でオフ', () => {
+    expect(DEFAULT_SETTINGS.invertY).toBe(false);
+  });
+
+  it('UIアクセントは既知のIDだけ受け入れ、それ以外は既定へ戻す', () => {
+    for (const accent of UI_ACCENTS) {
+      expect(dirty({ uiAccent: accent.id }).uiAccent).toBe(accent.id);
+    }
+    expect(dirty({ uiAccent: 'neon' }).uiAccent).toBe(DEFAULT_SETTINGS.uiAccent);
+    expect(dirty({ uiAccent: 123 }).uiAccent).toBe(DEFAULT_SETTINGS.uiAccent);
+    expect(dirty({ uiAccent: '' }).uiAccent).toBe(DEFAULT_SETTINGS.uiAccent);
+  });
+
+  it('既定のUIアクセントは選択肢に含まれる', () => {
+    expect(UI_ACCENTS.some((a) => a.id === DEFAULT_SETTINGS.uiAccent)).toBe(true);
   });
 
   it('試合時間は候補の中で一番近い値へ寄せる', () => {
