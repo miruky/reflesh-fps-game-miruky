@@ -24,12 +24,16 @@ export class Hud {
   constructor(private readonly root: HTMLElement) {
     root.innerHTML = `
       <div class="hud-top-left">
-        <div class="hud-score"><span data-id="kills">0</span> キル <span class="hud-dim">/</span> <span data-id="deaths">0</span> デス</div>
+        <div class="hud-match-chip"><span data-id="modename">フリーフォーオール</span><i>LIVE</i></div>
+        <div class="hud-score">
+          <span><strong data-id="kills">0</strong><small>KILLS</small></span>
+          <span><strong data-id="deaths">0</strong><small>DEATHS</small></span>
+        </div>
         <div class="hud-streak" data-id="streak" hidden></div>
       </div>
       <div class="hud-top-center">
         <div class="hud-compass"><div class="hud-compass-strip" data-id="compass"></div><div class="hud-compass-needle"></div></div>
-        <div class="hud-timer" data-id="timer">5:00</div>
+        <div class="hud-timer"><small>TIME</small><strong data-id="timer">5:00</strong></div>
         <div class="hud-objective">
           <div class="hud-teamscore">
             <span class="ts-mine" data-id="scoremine">0</span>
@@ -57,14 +61,19 @@ export class Hud {
         <div class="hud-cook-bar"><div data-id="cookfill"></div></div>
       </div>
       <div class="hud-bottom-left">
-        <div class="hud-hp-num" data-id="hp">100</div>
-        <div class="hud-hp-bar"><div data-id="hpfill"></div></div>
+        <div class="hud-vitals-heading"><span>VITAL</span><small data-id="hpmax">/ 100</small></div>
+        <div class="hud-vitals-row">
+          <div class="hud-hp-num" data-id="hp">100</div>
+          <div class="hud-hp-bar"><div data-id="hpfill"></div></div>
+        </div>
       </div>
       <div class="hud-bottom-right">
-        <div class="hud-weapon" data-id="weapon"></div>
-        <div class="hud-ammo"><span data-id="ammo">30</span><span class="hud-reserve" data-id="reserve">/ 120</span></div>
-        <div class="hud-mode" data-id="mode"></div>
-        <div class="hud-grenade"><span data-id="gname"></span><span class="hud-gcount" data-id="gcount"></span></div>
+        <div class="hud-weapon-row"><span>PRIMARY</span><strong class="hud-weapon" data-id="weapon"></strong></div>
+        <div class="hud-ammo-row">
+          <div class="hud-ammo"><span data-id="ammo">30</span><span class="hud-reserve" data-id="reserve">/ 120</span></div>
+          <div class="hud-mode" data-id="mode"></div>
+        </div>
+        <div class="hud-grenade"><span>UTILITY</span><strong data-id="gname"></strong><span class="hud-gcount" data-id="gcount"></span></div>
       </div>
       <div class="hud-dmg-layer" data-id="dmg"></div>
       <div class="hud-incoming" data-id="incoming"></div>
@@ -77,6 +86,7 @@ export class Hud {
         <div class="hud-killcam" data-id="killcam" hidden></div>
       </div>
       <div class="hud-scoreboard" data-id="scoreboard" hidden>
+        <header><span data-id="scoremode"></span><strong data-id="scoregoal"></strong></header>
         <table>
           <thead><tr><th>名前</th><th>キル</th><th>デス</th></tr></thead>
           <tbody data-id="scorerows"></tbody>
@@ -125,6 +135,7 @@ export class Hud {
   ): void {
     this.text('kills', String(snap.kills));
     this.text('deaths', String(snap.deaths));
+    this.text('modename', snap.modeName);
 
     const streak = this.el['streak'];
     if (streak) {
@@ -275,6 +286,7 @@ export class Hud {
 
   private updateHp(snap: MatchSnapshot): void {
     this.text('hp', String(snap.hp));
+    this.text('hpmax', `/ ${snap.maxHp}`);
     const fill = this.el['hpfill'];
     if (fill) {
       const ratio = snap.hp / snap.maxHp;
@@ -373,6 +385,8 @@ export class Hud {
   private renderScoreboard(snap: MatchSnapshot): void {
     const body = this.el['scorerows'];
     if (!body) return;
+    this.text('scoremode', snap.modeName);
+    this.text('scoregoal', `先取 ${snap.scoreTarget}`);
     body.innerHTML = '';
     for (const row of snap.scoreboard) {
       const tr = document.createElement('tr');
