@@ -1206,15 +1206,64 @@ tr.score-ally td {
 
 .hud-top-left {
   position: absolute;
-  top: 22px;
-  left: 26px;
+  top: 20px;
+  left: 22px;
+  min-width: 184px;
+  padding: 11px 13px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-left: 2px solid var(--ember);
+  background: rgba(8, 10, 12, 0.62);
+  backdrop-filter: blur(7px);
+}
+
+.hud-match-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.13);
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.hud-match-chip i {
+  color: var(--ember-ink);
+  font-family: var(--mono);
+  font-size: 8px;
+  font-style: normal;
+  letter-spacing: 0.12em;
 }
 
 .hud-score {
-  font-size: 15px;
-  font-weight: 600;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 9px;
   font-variant-numeric: tabular-nums;
+}
+
+.hud-score > span {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.hud-score strong {
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.hud-score small {
+  color: rgba(255, 255, 255, 0.52);
+  font-family: var(--mono);
+  font-size: 7.5px;
+  letter-spacing: 0.08em;
 }
 
 .hud-dim {
@@ -1222,9 +1271,11 @@ tr.score-ally td {
 }
 
 .hud-streak {
-  margin-top: 5px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.13);
   color: var(--ember-ink);
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
@@ -1232,7 +1283,7 @@ tr.score-ally td {
 
 .hud-top-center {
   position: absolute;
-  top: 18px;
+  top: 16px;
   left: 50%;
   transform: translateX(-50%);
   text-align: center;
@@ -1240,8 +1291,8 @@ tr.score-ally td {
 
 .hud-compass {
   position: relative;
-  width: 320px;
-  height: 22px;
+  width: min(360px, 42vw);
+  height: 24px;
   overflow: hidden;
   mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
 }
@@ -1282,12 +1333,32 @@ tr.score-ally td {
 }
 
 .hud-timer {
-  margin-top: 5px;
-  font-size: 15px;
-  font-weight: 700;
+  width: 112px;
+  min-height: 36px;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  margin: 5px auto 0;
+  padding: 7px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.26);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.13);
+  background: rgba(8, 10, 12, 0.45);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.hud-timer small {
+  color: rgba(255, 255, 255, 0.5);
+  font-family: var(--mono);
+  font-size: 7.5px;
+  letter-spacing: 0.12em;
+}
+
+.hud-timer strong {
+  color: #fff;
+  font-size: 16px;
+  letter-spacing: 0.04em;
 }
 
 .hud-feed {
@@ -1304,9 +1375,10 @@ tr.score-ally td {
   display: flex;
   gap: 8px;
   font-size: 12.5px;
-  background: rgba(12, 10, 7, 0.6);
-  border-radius: 3px;
-  padding: 4px 10px;
+  border-right: 2px solid var(--ember);
+  background: rgba(8, 10, 12, 0.68);
+  padding: 5px 10px;
+  backdrop-filter: blur(5px);
   transition: opacity 0.4s;
 }
 
@@ -1451,33 +1523,60 @@ tr.score-ally td {
 
 .hud-bottom-left {
   position: absolute;
-  left: 26px;
-  bottom: 26px;
+  left: 22px;
+  bottom: 22px;
+  min-width: 236px;
+  padding: 11px 13px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-left: 2px solid var(--signal);
+  background: rgba(8, 10, 12, 0.62);
+  backdrop-filter: blur(7px);
+}
+
+.hud-vitals-heading {
   display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.13);
+  color: rgba(255, 255, 255, 0.62);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+}
+
+.hud-vitals-heading small {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 8px;
+}
+
+.hud-vitals-row {
+  display: grid;
+  grid-template-columns: 54px 1fr;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
+  margin-top: 9px;
 }
 
 .hud-hp-num {
-  font-size: 30px;
+  color: #fff;
+  font-size: 29px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.75);
 }
 
 .hud-hp-bar {
-  width: 180px;
-  height: 6px;
-  background: rgba(255, 255, 255, 0.14);
-  border-radius: 3px;
+  width: 100%;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.16);
   overflow: hidden;
 }
 
 .hud-hp-bar div {
   height: 100%;
   width: 100%;
-  background: #fff;
-  border-radius: 3px;
+  background: var(--signal);
   transition:
     width 0.15s,
     background-color 0.2s;
@@ -1489,19 +1588,50 @@ tr.score-ally td {
 
 .hud-bottom-right {
   position: absolute;
-  right: 26px;
-  bottom: 26px;
+  right: 22px;
+  bottom: 22px;
+  min-width: 250px;
+  padding: 11px 13px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-right: 2px solid var(--ember);
+  background: rgba(8, 10, 12, 0.62);
   text-align: right;
+  backdrop-filter: blur(7px);
+}
+
+.hud-weapon-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.13);
+}
+
+.hud-weapon-row > span {
+  color: rgba(255, 255, 255, 0.5);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.13em;
 }
 
 .hud-weapon {
-  font-size: 13px;
-  letter-spacing: 0.12em;
-  color: var(--ink-soft);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.hud-ammo-row {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 7px;
 }
 
 .hud-ammo {
-  font-size: 34px;
+  color: #fff;
+  font-size: 35px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.75);
@@ -1519,16 +1649,33 @@ tr.score-ally td {
 }
 
 .hud-mode {
+  margin-bottom: 4px;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   font-size: 11px;
-  letter-spacing: 0.2em;
-  color: var(--ink-faint);
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.62);
 }
 
 .hud-grenade {
-  margin-top: 7px;
-  font-size: 12px;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 6px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.hud-grenade > span:first-child {
+  margin-right: auto;
+  color: rgba(255, 255, 255, 0.42);
+  font-family: var(--mono);
+  font-size: 8px;
   letter-spacing: 0.12em;
-  color: var(--ink-soft);
 }
 
 .hud-gcount {
@@ -1786,11 +1933,35 @@ tr.score-ally td {
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  background: rgba(20, 17, 12, 0.92);
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  padding: 18px 10px;
-  min-width: 340px;
+  min-width: 390px;
+  padding: 0 12px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(8, 10, 12, 0.9);
+  backdrop-filter: blur(12px);
+}
+
+.hud-scoreboard header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-inline: -12px;
+  margin-bottom: 10px;
+  padding: 12px 15px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.hud-scoreboard header span {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hud-scoreboard header strong {
+  color: rgba(255, 255, 255, 0.5);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
 }
 
 .hud-scoreboard table {
@@ -1804,7 +1975,7 @@ tr.score-ally td {
 .hud-scoreboard td {
   padding: 7px 14px;
   text-align: left;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .hud-scoreboard th {
@@ -1956,6 +2127,28 @@ tr.score-ally td {
   .setting-row {
     grid-template-columns: 110px 1fr 40px;
     gap: 10px;
+  }
+}
+
+@media (max-width: 900px) and (pointer: fine) {
+  .hud-top-left {
+    min-width: 160px;
+  }
+
+  .hud-bottom-left {
+    min-width: 196px;
+  }
+
+  .hud-bottom-right {
+    min-width: 214px;
+  }
+
+  .hud-feed {
+    max-width: 230px;
+  }
+
+  .hud-compass {
+    width: 260px;
   }
 }
 
