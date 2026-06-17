@@ -5,25 +5,25 @@
 */
 
 :root {
-  /* 地色: 青黒でなく、温度のある暗い炭。 */
-  --base: #15120e;
-  --base-2: #1c1813;
-  --raise: #221d17;
+  /* 地色: 色味を抑えたカーボン。戦域色とアクセントが埋もれない。 */
+  --base: #101214;
+  --base-2: #16191c;
+  --raise: #1c2024;
 
   /* 文字の階調 */
-  --ink: #ece7dd;
-  --ink-soft: #a39c8f;
-  --ink-faint: #6d675c;
+  --ink: #f0f1ee;
+  --ink-soft: #a9afb1;
+  --ink-faint: #71787b;
 
-  /* 罫線は灰色既定でなく地になじむ暖色の淡色 */
-  --rule: #2a251e;
-  --rule-strong: #3a342a;
+  --rule: #292e32;
+  --rule-strong: #3a4146;
 
   /* アクセント1色(火花)。小さな文字には少し明るい方を使う。 */
-  --ember: #ff5a3c;
-  --ember-ink: #ff7d5e;
-  --ember-deep: #d8401f;
+  --ember: #ff574f;
+  --ember-ink: #ff817b;
+  --ember-deep: #d83b34;
   --ember-wash: color-mix(in srgb, var(--ember) 12%, transparent);
+  --signal: #71c4d1;
 
   /* 敵味方など機能上の二色(配色設定で上書きされる) */
   --ally: #7fb0ff;
@@ -34,7 +34,7 @@
   --sans: 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Roboto Mono', 'DejaVu Sans Mono', monospace;
 
-  --shell: 1120px;
+  --shell: 1280px;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
@@ -126,17 +126,16 @@ button {
   inset: 0;
   overflow-y: auto;
   background:
-    radial-gradient(
-      1100px 560px at 84% -14%,
-      color-mix(in srgb, var(--ember) 15%, transparent),
-      transparent 60%
-    ),
-    linear-gradient(168deg, #1c1813 0%, #121009 64%, #0e0c07 100%);
-  padding: clamp(32px, 5vw, 64px) clamp(20px, 6vw, 88px) 72px;
+    linear-gradient(color-mix(in srgb, var(--rule) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--rule) 55%, transparent) 1px, transparent 1px),
+    var(--base);
+  background-size: 72px 72px;
+  padding: clamp(28px, 4vw, 52px) clamp(20px, 5vw, 72px) 72px;
 }
 
 /* 主要ブロックは中央寄せの版面に収める */
 .menu-header,
+.deployment-briefing,
 .menu-columns,
 .menu-controls {
   max-width: var(--shell);
@@ -169,8 +168,8 @@ button {
   display: flex;
   align-items: center;
   gap: 22px;
-  padding-bottom: 28px;
-  margin-bottom: 40px;
+  padding-bottom: 24px;
+  margin-bottom: 18px;
   border-bottom: 1px solid var(--rule);
 }
 
@@ -179,12 +178,17 @@ button {
   display: inline-flex;
 }
 
+.menu-logo svg {
+  width: 52px;
+  height: 52px;
+}
+
 .menu-logo .spark {
   fill: var(--ember);
 }
 
 .menu-header h1 {
-  font-size: clamp(38px, 6vw, 56px);
+  font-size: clamp(38px, 6vw, 62px);
   font-weight: 800;
   letter-spacing: -0.02em;
   line-height: 0.96;
@@ -196,6 +200,77 @@ button {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--ink-faint);
+}
+
+/* ── 現在の選択を常時見せる出撃ブリーフィング ── */
+
+.deployment-briefing {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  min-height: 86px;
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 190px;
+  align-items: center;
+  gap: 22px;
+  margin-bottom: 38px;
+  padding: 13px 14px 13px 18px;
+  border: 1px solid var(--rule-strong);
+  background: color-mix(in srgb, var(--base-2) 94%, transparent);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(14px);
+}
+
+.briefing-heading {
+  display: flex;
+  flex-direction: column;
+}
+
+.briefing-heading span {
+  color: var(--signal);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.briefing-heading strong {
+  margin-top: 6px;
+  font-size: 17px;
+}
+
+.briefing-loadout {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.briefing-loadout div {
+  min-width: 0;
+  padding-inline: 14px;
+  border-left: 1px solid var(--rule);
+}
+
+.briefing-loadout dt {
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.briefing-loadout dd {
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deployment-briefing .menu-start {
+  margin: 0;
 }
 
 /* ── セクション見出しはキッカー(小さな見出し+罫線)── */
@@ -237,8 +312,8 @@ button {
 
 .menu-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(330px, 1fr);
-  gap: clamp(36px, 5vw, 72px);
+  grid-template-columns: minmax(0, 1.55fr) minmax(360px, 0.82fr);
+  gap: clamp(34px, 4vw, 58px);
   align-items: start;
 }
 
@@ -253,7 +328,7 @@ button {
 
 .stage-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
   background: var(--rule);
   border: 1px solid var(--rule);
@@ -262,11 +337,12 @@ button {
 .stage-card {
   position: relative;
   background: var(--base);
-  padding: 16px 16px 18px;
+  padding: 0;
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 0;
+  overflow: hidden;
   transition:
     background-color 0.22s var(--ease),
     color 0.22s var(--ease);
@@ -276,7 +352,8 @@ button {
   content: '';
   position: absolute;
   inset: 0 auto 0 0;
-  width: 2px;
+  z-index: 3;
+  width: 3px;
   background: var(--ember);
   transform: scaleY(0);
   transform-origin: top;
@@ -289,6 +366,47 @@ button {
 
 .stage-card.selected {
   background: color-mix(in srgb, var(--ember) 9%, var(--base));
+}
+
+.stage-preview {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 7;
+  overflow: hidden;
+  border-bottom: 1px solid var(--rule);
+  background: var(--raise);
+}
+
+.stage-preview::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 50%, rgba(0, 0, 0, 0.24));
+  pointer-events: none;
+}
+
+.stage-preview svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  filter: saturate(0.78) contrast(1.05);
+  transition:
+    filter 0.25s var(--ease),
+    transform 0.45s var(--ease-out);
+}
+
+.stage-card:hover .stage-preview svg,
+.stage-card.selected .stage-preview svg {
+  filter: saturate(1) contrast(1.08);
+  transform: scale(1.025);
+}
+
+.stage-card-body {
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 15px 16px 17px;
 }
 
 .stage-card.selected::before {
@@ -592,18 +710,26 @@ button {
 
 .menu-start {
   width: 100%;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-top: 8px;
-  padding: 16px;
-  font-size: 16px;
+  padding: 0 16px;
+  font-size: 14px;
   font-weight: 800;
-  letter-spacing: 0.34em;
-  text-indent: 0.34em;
+  letter-spacing: 0.18em;
   background: var(--ember);
   color: #1a120c;
-  border-radius: 8px;
+  border-radius: 4px;
   transition:
     background-color 0.18s var(--ease),
     transform 0.12s var(--ease);
+}
+
+.menu-start svg {
+  width: 19px;
+  height: 19px;
 }
 
 .menu-start:hover {
@@ -911,7 +1037,7 @@ tr.score-ally td {
 
 .menu-profile {
   margin-left: auto;
-  min-width: 290px;
+  min-width: 320px;
   align-self: stretch;
   display: flex;
   flex-direction: column;
@@ -1757,6 +1883,24 @@ tr.score-ally td {
 /* ====================== レスポンシブ ====================== */
 
 @media (max-width: 980px) {
+  .deployment-briefing {
+    position: static;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .briefing-loadout {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .briefing-loadout div:first-child {
+    border-left: none;
+  }
+
+  .deployment-briefing .menu-start {
+    width: 100%;
+  }
+
   .menu-profile {
     margin-left: 0;
     min-width: 0;
@@ -1781,6 +1925,23 @@ tr.score-ally td {
   .challenge-row {
     grid-template-columns: 1fr 60px;
     gap: 6px 12px;
+  }
+
+  .stage-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .briefing-loadout {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .briefing-loadout div {
+    padding: 8px 10px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .briefing-loadout div:nth-child(odd) {
+    border-left: none;
   }
 
   .challenge-desc,
