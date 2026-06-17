@@ -1,6 +1,6 @@
 import { easeOutCubic } from '../core/easing';
 import { exportProfile, importProfile, saveProfile } from '../core/profile';
-import { MATCH_LENGTHS, saveSettings, type Settings } from '../core/settings';
+import { MATCH_LENGTHS, UI_ACCENTS, saveSettings, type Settings } from '../core/settings';
 import {
   ATTACHMENT_DEFS,
   ATTACHMENT_SLOTS,
@@ -699,9 +699,20 @@ export class Menu {
       this.checkbox('しゃがみをトグルにする', this.settings.crouchToggle, (v) => {
         this.settings.crouchToggle = v;
       }),
+      this.checkbox('Y軸を反転する', this.settings.invertY, (v) => {
+        this.settings.invertY = v;
+      }),
       this.checkbox('画面の揺れを軽減する', this.settings.reduceMotion, (v) => {
         this.settings.reduceMotion = v;
       }),
+      this.select(
+        'UIのアクセント',
+        UI_ACCENTS.map((a) => ({ value: a.id, label: a.name })),
+        this.settings.uiAccent,
+        (v) => {
+          this.settings.uiAccent = v;
+        },
+      ),
       this.select(
         '敵味方の配色',
         TEAM_PALETTES.map((p) => ({ value: p.id, label: p.name })),
