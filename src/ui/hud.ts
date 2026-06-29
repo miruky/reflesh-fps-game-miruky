@@ -1,6 +1,18 @@
+import { RETICLE_COLORS } from '../core/settings';
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
 import { MOVE_SPEEDS } from '../game/player';
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function clampN(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+// レティクル色IDをCSS色へ。未知IDはアクセント色に追従
+function reticleColorValue(id: string): string {
+  return RETICLE_COLORS.find((c) => c.id === id)?.value ?? 'var(--accent)';
+}
 
 type Project = (world: THREE.Vector3) => { x: number; y: number; behind: boolean };
 
@@ -24,6 +36,7 @@ export class Hud {
   private lastStreak = 0;
   private lastMoveState = '';
   private lastUltActive = false; // オーバードライブ発動の立ち上がり検出用
+  private scopeOn = false; // スコープ表示の立ち上がり検出用
 
   constructor(private readonly root: HTMLElement) {
     root.innerHTML = `
@@ -55,6 +68,52 @@ export class Hud {
         <span class="ch-bar ch-b" data-id="chb"></span>
         <span class="ch-bar ch-l" data-id="chl"></span>
         <span class="ch-bar ch-r" data-id="chr"></span>
+      </div>
+      <div class="hud-scope" data-id="scope" hidden>
+        <div class="sc-mask"></div>
+        <div class="sc-frame">
+          <div class="sc-glass"><i class="sc-grid"></i></div>
+          <svg class="sc-frame-svg" viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            <circle class="sc-ring" r="95"></circle>
+            <circle class="sc-chroma sc-c" r="95"></circle>
+            <circle class="sc-chroma sc-m" r="95"></circle>
+            <g class="sc-brackets">
+              <polyline points="-40,-26 -40,-40 -26,-40"></polyline>
+              <polyline points="40,-26 40,-40 26,-40"></polyline>
+              <polyline points="-40,26 -40,40 -26,40"></polyline>
+              <polyline points="40,26 40,40 26,40"></polyline>
+            </g>
+            <g class="sc-cardinals">
+              <line x1="0" y1="-95" x2="0" y2="-88"></line>
+              <line x1="0" y1="95" x2="0" y2="88"></line>
+              <line x1="-95" y1="0" x2="-88" y2="0"></line>
+              <line x1="95" y1="0" x2="88" y2="0"></line>
+            </g>
+          </svg>
+          <div class="sc-glint" data-id="scopeglint"></div>
+          <div class="sc-readout"><span data-id="scoperange">0</span><i>M</i> · <span data-id="scopezoom">3.1</span><i>X</i></div>
+          <div class="sc-breath"><i data-id="scopebreath"></i></div>
+        </div>
+        <svg class="sc-cross" viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <defs>
+            <g id="sc-marks">
+              <line x1="-92" y1="0" x2="-2.5" y2="0"></line>
+              <line x1="2.5" y1="0" x2="92" y2="0"></line>
+              <line x1="0" y1="-92" x2="0" y2="-2.5"></line>
+              <line x1="0" y1="2.5" x2="0" y2="92"></line>
+              <line x1="-3" y1="20" x2="3" y2="20"></line>
+              <line x1="-5" y1="34" x2="5" y2="34"></line>
+              <line x1="-7" y1="48" x2="7" y2="48"></line>
+            </g>
+          </defs>
+          <circle class="sc-refring-halo" r="60"></circle>
+          <circle class="sc-refring" r="60"></circle>
+          <use href="#sc-marks" class="sc-halo"></use>
+          <use href="#sc-marks" class="sc-core"></use>
+          <circle class="sc-dot-halo" r="1.6"></circle>
+          <circle class="sc-dot" r="0.7"></circle>
+          <circle class="sc-lock" r="5"></circle>
+        </svg>
       </div>
       <div class="hud-hitmarker" data-id="hitmarker"><span></span><span></span><span></span><span></span></div>
       <div class="hud-reload" data-id="reload" hidden>
@@ -112,6 +171,37 @@ export class Hud {
       this.el[node.dataset.id ?? ''] = node;
     });
     this.buildCompass();
+    this.buildScope();
+    // スコープの暗い周辺マスクが上のスコア/キルフィードを暗く沈めないよう、
+    // スコープを最前(=描画最背面)へ移し、他のHUDがマスクの上に描かれるようにする
+    const scopeEl = this.el['scope'];
+    if (scopeEl) this.root.insertBefore(scopeEl, this.root.firstChild);
+  }
+
+  // スコープのミルティックを #sc-marks に追加する。<use>が2回参照するので
+  // ハロー(暗縁)とコア(白)の両方へ自動的に描かれる
+  private buildScope(): void {
+    const marks = this.root.querySelector('#sc-marks');
+    if (!marks) return;
+    const TICKS: ReadonlyArray<[number, number]> = [
+      [16, 2.4],
+      [32, 1.8],
+      [48, 1.2],
+    ];
+    const line = (x1: number, y1: number, x2: number, y2: number): void => {
+      const el = document.createElementNS(SVG_NS, 'line');
+      el.setAttribute('x1', String(x1));
+      el.setAttribute('y1', String(y1));
+      el.setAttribute('x2', String(x2));
+      el.setAttribute('y2', String(y2));
+      marks.appendChild(el);
+    };
+    for (const [r, h] of TICKS) {
+      line(r, -h, r, h); // 右腕
+      line(-r, -h, -r, h); // 左腕
+      line(-h, r, h, r); // 下腕
+      line(-h, -r, h, -r); // 上腕
+    }
   }
 
   private buildCompass(): void {
@@ -142,6 +232,7 @@ export class Hud {
     this.lastStreak = 0;
     this.lastMoveState = '';
     this.lastUltActive = false;
+    this.scopeOn = false;
   }
 
   update(
@@ -167,6 +258,7 @@ export class Hud {
 
     this.updateCompass(snap.yaw, width);
     this.updateCrosshair(snap, height);
+    this.updateScope(snap, width, height);
     this.updateAmmo(snap);
     this.updateGrenade(snap);
     this.updateObjective(snap);
@@ -208,7 +300,18 @@ export class Hud {
   private updateCrosshair(snap: MatchSnapshot, height: number): void {
     const crosshair = this.el['crosshair'];
     if (!crosshair) return;
+    // 形状・色はユーザー設定に追従(腰だめクロスヘア)
+    if (crosshair.dataset.reticle !== snap.reticleStyle) {
+      crosshair.dataset.reticle = snap.reticleStyle;
+    }
+    crosshair.style.setProperty('--reticle-color', reticleColorValue(snap.reticleColor));
     if (!snap.alive) {
+      crosshair.style.opacity = '0';
+      return;
+    }
+    // スコープ覗き込み中はDOMスコープに任せ、通常クロスヘアは丸ごと消す
+    // (.ch-dotはバー不透明度の影響を受けないため、コンテナごと0にする)
+    if (snap.scopedWeapon && snap.adsProgress > 0.5) {
       crosshair.style.opacity = '0';
       return;
     }
@@ -227,6 +330,46 @@ export class Hud {
     set('chb', `translate(-50%, ${gap}px)`);
     set('chl', `translate(${-gap - 9}px, -50%)`);
     set('chr', `translate(${gap}px, -50%)`);
+  }
+
+  // DSR風スコープ。adsProgress 0.5→1で開き、ピン留めの照準点は常に中央=弾着点。
+  // 揺れはフレーム/グラスの視差にのみ使う(reduceMotion時は無効)
+  private updateScope(snap: MatchSnapshot, width: number, height: number): void {
+    const scope = this.el['scope'];
+    if (!scope) return;
+    const t = clampN((snap.adsProgress - 0.5) / 0.5, 0, 1);
+    const on = snap.alive && snap.scopedWeapon && t > 0;
+    scope.hidden = !on;
+    if (!on) {
+      this.scopeOn = false;
+      return;
+    }
+    scope.style.opacity = String(t);
+    scope.style.setProperty('--in', String(t));
+    scope.style.setProperty('--conv', String(1 - t));
+    scope.style.setProperty('--scope-reticle', reticleColorValue(snap.reticleColor));
+    scope.style.setProperty('--breath', String(snap.scope.breath01));
+
+    const lens = Math.min(width, height);
+    const fovRad = (snap.fov * Math.PI) / 180;
+    const pxPerDeg = ((lens / 2) * (Math.PI / 180)) / Math.tan(fovRad / 2);
+    const cap = lens * 0.025;
+    const swx = snap.reduceMotion ? 0 : clampN(snap.scope.sway.x * pxPerDeg, -cap, cap);
+    const swy = snap.reduceMotion ? 0 : clampN(snap.scope.sway.y * pxPerDeg, -cap, cap);
+    scope.style.setProperty('--swx', `${swx}px`);
+    scope.style.setProperty('--swy', `${swy}px`);
+
+    scope.classList.toggle('steady', snap.scope.steady);
+    scope.classList.toggle('engaged', snap.aimAssistEngaged);
+    scope.classList.toggle('reduced', snap.reduceMotion);
+
+    // 立ち上がり(覗き込み開始)でレンズグリント
+    if (!this.scopeOn) {
+      if (!snap.reduceMotion) this.restartAnimation('scopeglint', 'show');
+      this.scopeOn = true;
+    }
+    this.text('scoperange', snap.rangeM > 0 ? String(Math.round(snap.rangeM)) : '--');
+    this.text('scopezoom', snap.zoomX.toFixed(1));
   }
 
   private updateAmmo(snap: MatchSnapshot): void {
@@ -318,7 +461,12 @@ export class Hud {
     }
     const vignette = this.el['vignette'];
     if (vignette) {
-      vignette.style.opacity = String(Math.min(0.85, Math.max(0, (40 - snap.hp) / 40)));
+      const ratio = snap.hp / snap.maxHp;
+      // 瀕死(25%未満)は赤いビネットを脈動させる。脈動中はopacityをCSSアニメに委ねる
+      const lowPulse = snap.alive && ratio < 0.25 && !snap.reduceMotion;
+      vignette.classList.toggle('low', lowPulse);
+      if (lowPulse) vignette.style.removeProperty('opacity');
+      else vignette.style.opacity = String(Math.min(0.85, Math.max(0, (40 - snap.hp) / 40)));
     }
     if (snap.tookDamage) this.restartAnimation('flash', 'show');
   }
@@ -351,12 +499,14 @@ export class Hud {
   private pushHits(snap: MatchSnapshot): void {
     const marker = this.el['hitmarker'];
     if (!marker || snap.hits.length === 0) return;
-    const strongest = snap.hits.includes('kill')
-      ? 'hm-kill'
-      : snap.hits.includes('head')
-        ? 'hm-head'
-        : 'hm-hit';
-    marker.classList.remove('hm-hit', 'hm-head', 'hm-kill', 'show');
+    const strongest = snap.hits.includes('snipe')
+      ? 'hm-snipe'
+      : snap.hits.includes('kill')
+        ? 'hm-kill'
+        : snap.hits.includes('head')
+          ? 'hm-head'
+          : 'hm-hit';
+    marker.classList.remove('hm-hit', 'hm-head', 'hm-kill', 'hm-snipe', 'show');
     void marker.offsetWidth;
     marker.classList.add(strongest, 'show');
   }
@@ -368,7 +518,12 @@ export class Hud {
       const point = project(dn.world);
       if (point.behind) continue;
       const node = document.createElement('span');
-      node.className = 'hud-dmg-num';
+      node.className =
+        dn.kind === 'kill'
+          ? 'hud-dmg-num hud-dmg-num--kill'
+          : dn.kind === 'head'
+            ? 'hud-dmg-num hud-dmg-num--head'
+            : 'hud-dmg-num';
       node.textContent = String(dn.amount);
       node.style.left = `${point.x}px`;
       node.style.top = `${point.y}px`;

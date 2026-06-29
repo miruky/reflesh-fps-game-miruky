@@ -1,6 +1,14 @@
 import { easeOutCubic } from '../core/easing';
 import { exportProfile, importProfile, saveProfile } from '../core/profile';
-import { MATCH_LENGTHS, UI_ACCENTS, saveSettings, type Settings } from '../core/settings';
+import {
+  DEFAULT_SETTINGS,
+  MATCH_LENGTHS,
+  RETICLE_COLORS,
+  RETICLE_STYLES,
+  UI_ACCENTS,
+  saveSettings,
+  type Settings,
+} from '../core/settings';
 import {
   ATTACHMENT_DEFS,
   ATTACHMENT_SLOTS,
@@ -91,6 +99,7 @@ const CONTROLS: Array<[string, string]> = [
   ['投擲物切替', '3'],
   ['近接攻撃', 'V'],
   ['アルティメット', 'F(ゲージ満タンで発動)'],
+  ['息止め(スコープ)', 'Shift(覗き込み中に揺れを止める)'],
   ['スコアボード', 'Tab'],
   ['ポーズ', 'Esc'],
 ];
@@ -800,7 +809,48 @@ export class Menu {
           this.settings.matchLengthS = Number(v);
         },
       ),
+      this.checkbox('エイムアシスト', this.settings.aimAssist, (v) => {
+        this.settings.aimAssist = v;
+      }),
+      this.slider('エイムアシスト強度', 0, 1, 0.05, this.settings.aimAssistStrength, (v) => {
+        this.settings.aimAssistStrength = v;
+      }),
+      this.slider('ADS感度倍率', 0.3, 1.5, 0.05, this.settings.adsSensMul, (v) => {
+        this.settings.adsSensMul = v;
+      }),
+      this.slider('画面の揺れ', 0, 1, 0.05, this.settings.screenShake, (v) => {
+        this.settings.screenShake = v;
+      }),
+      this.select(
+        'レティクル形状',
+        RETICLE_STYLES.map((r) => ({ value: r.id, label: r.name })),
+        this.settings.reticleStyle,
+        (v) => {
+          this.settings.reticleStyle = v;
+        },
+      ),
+      this.select(
+        'レティクル色',
+        RETICLE_COLORS.map((r) => ({ value: r.id, label: r.name })),
+        this.settings.reticleColor,
+        (v) => {
+          this.settings.reticleColor = v;
+        },
+      ),
     );
+
+    // 設定を既定へ戻すボタン
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'setting-reset';
+    reset.textContent = '設定を既定に戻す';
+    reset.addEventListener('click', () => {
+      Object.assign(this.settings, DEFAULT_SETTINGS);
+      saveSettings(this.settings);
+      this.callbacks.onSettingsChanged();
+      this.renderSettings(container);
+    });
+    container.appendChild(reset);
   }
 
   private slider(
@@ -835,7 +885,8 @@ export class Menu {
     return row;
   }
 
-  // 配色は次の試合開始時に反映される
+  // 汎用セレクト。反映タイミングは項目による(配色/試合時間は次の試合開始時、
+  // アクセント色やレティクルは即時)
   private select(
     label: string,
     options: Array<{ value: string; label: string }>,

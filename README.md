@@ -45,6 +45,7 @@
 | 投擲物切替          | 3                             |
 | 近接攻撃            | V                             |
 | アルティメット      | F(ゲージ満タンで発動)         |
+| 息止め(スコープ)    | Shift(覗き込み中に揺れを止める) |
 | スコアボード        | Tab                           |
 | ポーズ              | Esc                           |
 
@@ -62,7 +63,7 @@
 | 描画     | Three.js(WebGL)        |
 | 物理     | Rapier(Rust 製 / WASM) |
 | ビルド   | Vite                   |
-| テスト   | Vitest(119 テスト)     |
+| テスト   | Vitest(150 テスト)     |
 | リンタ   | ESLint + Prettier      |
 | CI / CD  | GitHub Actions         |
 | 配信     | GitHub Pages           |

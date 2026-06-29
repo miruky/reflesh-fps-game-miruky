@@ -17,6 +17,18 @@ export interface Settings {
   teamPaletteId: string;
   // 試合の制限時間(秒)。先取スコアに届かなければこの時間で決着する
   matchLengthS: number;
+  // エイムアシスト(主にスナイパー)。視認できる敵が照準錐内にいると微妙に吸着する
+  aimAssist: boolean;
+  // エイムアシストの強さ。スローダウン/吸着/弾道補正の倍率(0で実質無効)
+  aimAssistStrength: number;
+  // ADS(覗き込み)時のマウス感度倍率。高倍率スコープが速すぎる問題の調整用
+  adsSensMul: number;
+  // レティクル(照準)の形状。RETICLE_STYLESのID
+  reticleStyle: string;
+  // レティクルの色。RETICLE_COLORSのID
+  reticleColor: string;
+  // 画面の揺れ(カメラシェイク)の倍率。0で無効、1で既定
+  screenShake: number;
 }
 
 // UIのアクセント色の選択肢。idはstyle.cssの :root[data-accent='…'] と対応し、
@@ -28,6 +40,24 @@ export const UI_ACCENTS: ReadonlyArray<{ id: string; name: string }> = [
   { id: 'violet', name: '菫' },
 ];
 
+// レティクル形状の選択肢。最初の値を既定とする
+export const RETICLE_STYLES: ReadonlyArray<{ id: string; name: string }> = [
+  { id: 'cross', name: 'クロス' },
+  { id: 'dot', name: 'ドット' },
+  { id: 'chevron', name: 'シェブロン' },
+  { id: 'circle', name: 'サークル' },
+];
+
+// レティクル色の選択肢。valueはstyle.cssへ渡すCSS色(accentはテーマ変数に追従)
+export const RETICLE_COLORS: ReadonlyArray<{ id: string; name: string; value: string }> = [
+  { id: 'accent', name: 'アクセント', value: 'var(--accent)' },
+  { id: 'white', name: '白', value: '#ffffff' },
+  { id: 'cyan', name: 'シアン', value: '#19e6ff' },
+  { id: 'lime', name: 'ライム', value: '#7cfc00' },
+  { id: 'magenta', name: 'マゼンタ', value: '#ff3df0' },
+  { id: 'amber', name: '琥珀', value: '#ffb020' },
+];
+
 // 設定UIのスライダーと読み込み時の検証で同じ範囲を使う
 export const SETTING_BOUNDS = {
   sensitivity: { min: 0.2, max: 3 },
@@ -36,6 +66,9 @@ export const SETTING_BOUNDS = {
   volSfx: { min: 0, max: 1 },
   volUi: { min: 0, max: 1 },
   uiScale: { min: 0.8, max: 1.3 },
+  aimAssistStrength: { min: 0, max: 1 },
+  adsSensMul: { min: 0.3, max: 1.5 },
+  screenShake: { min: 0, max: 1 },
 } as const;
 
 // 試合時間の選択肢(秒)。最初の値を既定とする
@@ -59,6 +92,12 @@ export const DEFAULT_SETTINGS: Settings = {
   uiAccent: 'ember',
   teamPaletteId: 'standard',
   matchLengthS: 300,
+  aimAssist: true,
+  aimAssistStrength: 0.6,
+  adsSensMul: 1.0,
+  reticleStyle: 'cross',
+  reticleColor: 'accent',
+  screenShake: 1.0,
 };
 
 const KEY = 'hibana.settings.v1';
@@ -119,6 +158,31 @@ export function sanitizeSettings(raw: Partial<Settings>): Settings {
         ? merged.teamPaletteId
         : DEFAULT_SETTINGS.teamPaletteId,
     matchLengthS: nearestMatchLength(merged.matchLengthS),
+    aimAssist: Boolean(merged.aimAssist),
+    aimAssistStrength: clamp(
+      merged.aimAssistStrength,
+      b.aimAssistStrength.min,
+      b.aimAssistStrength.max,
+      DEFAULT_SETTINGS.aimAssistStrength,
+    ),
+    adsSensMul: clamp(
+      merged.adsSensMul,
+      b.adsSensMul.min,
+      b.adsSensMul.max,
+      DEFAULT_SETTINGS.adsSensMul,
+    ),
+    reticleStyle: RETICLE_STYLES.some((r) => r.id === merged.reticleStyle)
+      ? merged.reticleStyle
+      : DEFAULT_SETTINGS.reticleStyle,
+    reticleColor: RETICLE_COLORS.some((r) => r.id === merged.reticleColor)
+      ? merged.reticleColor
+      : DEFAULT_SETTINGS.reticleColor,
+    screenShake: clamp(
+      merged.screenShake,
+      b.screenShake.min,
+      b.screenShake.max,
+      DEFAULT_SETTINGS.screenShake,
+    ),
   };
 }
 

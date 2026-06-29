@@ -88,6 +88,7 @@ export class Bot {
   private walkPhase = 0;
   private walkAmp = 0;
   private hitFlash = 0; // 被弾時に装甲を一瞬発光させる残り時間
+  private flinch = 0; // 被弾時に一瞬のけぞる残り時間
   private armorMat: THREE.MeshStandardMaterial | null = null;
 
   constructor(
@@ -234,6 +235,7 @@ export class Bot {
       this.hitFlash = Math.max(0, this.hitFlash - dt);
       this.armorMat.emissiveIntensity = (this.hitFlash / 0.12) * 0.9;
     }
+    if (this.flinch > 0) this.flinch = Math.max(0, this.flinch - dt);
     const engaged = ctx.targetEye !== null;
 
     let wishX = 0;
@@ -364,6 +366,8 @@ export class Bot {
     this.kneeL.rotation.x = Math.max(0, -s) * this.walkAmp;
     this.kneeR.rotation.x = Math.max(0, s) * this.walkAmp;
     this.rig.position.y = Math.abs(Math.cos(this.walkPhase)) * this.walkAmp * 0.04;
+    // 被弾時の一瞬ののけぞり(上体を後ろへ傾ける)
+    this.rig.rotation.x = -(this.flinch / 0.14) * 0.18;
   }
 
   takeDamage(amount: number): boolean {
@@ -371,6 +375,7 @@ export class Bot {
     this.hp -= amount;
     this.alert = 5;
     this.hitFlash = 0.12;
+    this.flinch = 0.14;
     if (this.hp <= 0) {
       this.hp = 0;
       this.alive = false;
@@ -380,6 +385,8 @@ export class Bot {
       // 死亡フレームでupdateの被弾発光減衰(alive早期returnの後)が止まるため、
       // ここで明示的に消す。さもないと倒れる演出中ずっと装甲が光ったままになる
       this.hitFlash = 0;
+      this.flinch = 0;
+      this.rig.rotation.x = 0;
       if (this.armorMat) this.armorMat.emissiveIntensity = 0;
       // 死体を見えない壁にしない。リスポーンまで弾と移動の判定から外す
       this.bodyCollider.setEnabled(false);
@@ -399,7 +406,9 @@ export class Bot {
     this.group.rotation.x = 0;
     this.walkAmp = 0;
     this.rig.position.y = 0;
+    this.rig.rotation.x = 0;
     this.hitFlash = 0;
+    this.flinch = 0;
     if (this.armorMat) this.armorMat.emissiveIntensity = 0;
     this.bodyCollider.setEnabled(true);
     this.headCollider.setEnabled(true);

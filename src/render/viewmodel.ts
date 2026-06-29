@@ -189,9 +189,10 @@ export class ViewModel {
     return { gun, muzzle };
   }
 
-  fire(): void {
-    this.kickZ = Math.min(0.08, this.kickZ + 0.045);
-    this.kickRot = Math.min(0.18, this.kickRot + 0.09);
+  fire(scoped = false): void {
+    // スコープ武器はボルト排莢のように大きく後退・跳ね上げる
+    this.kickZ = Math.min(scoped ? 0.14 : 0.08, this.kickZ + (scoped ? 0.12 : 0.045));
+    this.kickRot = Math.min(scoped ? 0.26 : 0.18, this.kickRot + (scoped ? 0.16 : 0.09));
     this.flashTimer = 0.045;
   }
 
@@ -227,6 +228,8 @@ export class ViewModel {
       reloadRatio: number | null; // 0..1、リロード中以外はnull
       raiseRatio: number; // 1=構え直し開始直後、0=構え完了
       motionScale: number; // 画面揺れ軽減で1未満になる
+      alive: boolean; // 死亡中は銃を隠す
+      scopeReveal01: number; // スコープ覗き込み度。1に近いほど銃を引っ込めて隠す
     },
   ): void {
     const ads = state.adsProgress;
@@ -260,9 +263,11 @@ export class ViewModel {
 
     const pos = new THREE.Vector3().lerpVectors(HIP_POSITION, ADS_POSITION, ads);
     pos.x += this.swayX + bobX;
-    pos.y += this.swayY + bobY + LOWERED_OFFSET * state.raiseRatio;
+    // スコープを覗き込むほど銃を下げ、完全に覗いたらDOMスコープのため非表示にする
+    pos.y += this.swayY + bobY + LOWERED_OFFSET * state.raiseRatio - 0.55 * state.scopeReveal01;
     pos.z += this.kickZ;
     this.root.position.copy(pos);
+    this.root.visible = state.alive && state.scopeReveal01 < 0.95;
 
     let rotX = this.kickRot * 0.6 + state.raiseRatio * -0.5;
     let rotZ = 0;

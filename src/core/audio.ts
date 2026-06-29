@@ -1,8 +1,11 @@
+import type { SoundProfile } from '../game/weapons';
+
 // 音声アセットを一切持たず、Web Audio APIで全効果音を合成する。
 // AudioContextはブラウザの自動再生制限のため最初の操作時に生成する。
 export class SoundKit {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private compressor: DynamicsCompressorNode | null = null;
   private sfxBus: GainNode | null = null;
   private uiBus: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
@@ -20,9 +23,19 @@ export class SoundKit {
     this.master = this.ctx.createGain();
     this.master.gain.value = this.masterVol;
     this.master.connect(this.ctx.destination);
+    // ブリックウォール・リミッターは「世界の音(SFX)」だけに掛ける。UIのヒット/
+    // キル音まで通すと、発砲音の重低音でフィードバックがダッキングして潰れるため、
+    // sfxBus→compressor→master、uiBus→master(圧縮を迂回)とする
+    this.compressor = this.ctx.createDynamicsCompressor();
+    this.compressor.threshold.value = -6;
+    this.compressor.knee.value = 0;
+    this.compressor.ratio.value = 16;
+    this.compressor.attack.value = 0.002;
+    this.compressor.release.value = 0.12;
+    this.compressor.connect(this.master);
     this.sfxBus = this.ctx.createGain();
     this.sfxBus.gain.value = this.sfxVol;
-    this.sfxBus.connect(this.master);
+    this.sfxBus.connect(this.compressor);
     this.uiBus = this.ctx.createGain();
     this.uiBus.gain.value = this.uiVol;
     this.uiBus.connect(this.master);
@@ -102,9 +115,53 @@ export class SoundKit {
     osc.stop(t0 + opts.durationS + 0.05);
   }
 
-  shot(): void {
-    this.noiseBurst({ durationS: 0.09, filterHz: 2400, filterType: 'lowpass', gain: 0.5 });
-    this.tone({ freq: 130, endFreq: 55, durationS: 0.08, type: 'triangle', gain: 0.45 });
+  // 武器クラスごとに異なる発砲音。スナイパーは専用の重厚な5層ブーム
+  shot(profile: SoundProfile = 'ar'): void {
+    switch (profile) {
+      case 'dmr':
+        this.sniperShot();
+        return;
+      case 'smg':
+        this.noiseBurst({ durationS: 0.06, filterHz: 2800, filterType: 'lowpass', gain: 0.42 });
+        this.tone({ freq: 160, endFreq: 70, durationS: 0.05, type: 'triangle', gain: 0.34 });
+        return;
+      case 'shotgun':
+        this.noiseBurst({ durationS: 0.16, filterHz: 1600, filterType: 'lowpass', gain: 0.6 });
+        this.tone({ freq: 110, endFreq: 45, durationS: 0.14, type: 'triangle', gain: 0.5 });
+        return;
+      case 'lmg':
+        this.noiseBurst({ durationS: 0.11, filterHz: 2000, filterType: 'lowpass', gain: 0.55 });
+        this.tone({ freq: 120, endFreq: 48, durationS: 0.1, type: 'sawtooth', gain: 0.45 });
+        return;
+      case 'pistol':
+        this.noiseBurst({ durationS: 0.07, filterHz: 2600, filterType: 'lowpass', gain: 0.42 });
+        this.tone({ freq: 180, endFreq: 80, durationS: 0.06, type: 'triangle', gain: 0.34 });
+        return;
+      case 'br':
+        this.noiseBurst({ durationS: 0.08, filterHz: 2500, filterType: 'lowpass', gain: 0.46 });
+        this.tone({ freq: 150, endFreq: 64, durationS: 0.07, type: 'triangle', gain: 0.4 });
+        return;
+      case 'ar':
+      default:
+        this.noiseBurst({ durationS: 0.09, filterHz: 2400, filterType: 'lowpass', gain: 0.5 });
+        this.tone({ freq: 130, endFreq: 55, durationS: 0.08, type: 'triangle', gain: 0.45 });
+        return;
+    }
+  }
+
+  // スナイパーの一撃を演出する重厚な5層: オンセット/超音速クラック/ボディ/サブ/テイル
+  private sniperShot(): void {
+    this.noiseBurst({ durationS: 0.03, filterHz: 3500, filterType: 'bandpass', gain: 0.4 });
+    this.noiseBurst({ durationS: 0.05, filterHz: 1400, filterType: 'highpass', gain: 0.5 });
+    this.noiseBurst({ durationS: 0.16, filterHz: 1100, filterType: 'lowpass', gain: 0.72 });
+    this.tone({ freq: 95, endFreq: 40, durationS: 0.22, type: 'sine', gain: 0.7 });
+    this.noiseBurst({
+      durationS: 0.45,
+      filterHz: 600,
+      filterType: 'lowpass',
+      gain: 0.28,
+      delayS: 0.04,
+    });
   }
 
   // サプレッサー装着時のくぐもった発砲音
@@ -126,9 +183,10 @@ export class SoundKit {
     this.tone({ freq: 110, endFreq: 50, durationS: 0.1, type: 'triangle', gain: 0.3 * att, pan });
   }
 
-  hit(): void {
+  // ダメージ量に応じてピッチを上げ、手応えを段階的に伝える
+  hit(pitch = 1): void {
     this.tone({
-      freq: 1150,
+      freq: 1000 * pitch,
       durationS: 0.05,
       type: 'square',
       gain: 0.18,
@@ -136,32 +194,105 @@ export class SoundKit {
     });
   }
 
+  // 「ティッ・ディン」の2音でヘッドショットを明確に区別する
   headshot(): void {
     this.tone({
       freq: 1500,
-      durationS: 0.06,
+      durationS: 0.05,
       type: 'square',
       gain: 0.2,
       bus: this.uiBus ?? undefined,
     });
+    this.tone({
+      freq: 2100,
+      durationS: 0.07,
+      type: 'square',
+      gain: 0.18,
+      delayS: 0.03,
+      bus: this.uiBus ?? undefined,
+    });
   }
 
-  kill(): void {
+  // 連続キルでピッチを少し上げ、勢いを表現する
+  kill(pitch = 1): void {
     this.tone({
-      freq: 880,
+      freq: 880 * pitch,
       durationS: 0.08,
       type: 'sine',
       gain: 0.25,
       bus: this.uiBus ?? undefined,
     });
     this.tone({
-      freq: 1320,
+      freq: 1320 * pitch,
       durationS: 0.12,
       type: 'sine',
       gain: 0.22,
       delayS: 0.07,
       bus: this.uiBus ?? undefined,
     });
+  }
+
+  // スナイパーで仕留めた時の専用キル音(低い余韻 + 高いピン)
+  snipeKill(): void {
+    this.tone({
+      freq: 180,
+      endFreq: 90,
+      durationS: 0.18,
+      type: 'sine',
+      gain: 0.3,
+      bus: this.uiBus ?? undefined,
+    });
+    this.tone({
+      freq: 1600,
+      durationS: 0.1,
+      type: 'square',
+      gain: 0.2,
+      delayS: 0.04,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // スコープを覗き込んだ瞬間のレンズ音(上昇する「シンッ」)
+  scopeIn(): void {
+    this.noiseBurst({
+      durationS: 0.05,
+      filterHz: 1800,
+      filterType: 'bandpass',
+      gain: 0.22,
+      bus: this.uiBus ?? undefined,
+    });
+    this.tone({
+      freq: 520,
+      endFreq: 880,
+      durationS: 0.12,
+      type: 'sine',
+      gain: 0.16,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // 息を止めた合図(息を吸う柔らかいノイズ + 小さなクリック)
+  holdBreath(): void {
+    this.noiseBurst({
+      durationS: 0.18,
+      filterHz: 600,
+      filterType: 'lowpass',
+      gain: 0.12,
+      bus: this.uiBus ?? undefined,
+    });
+    this.tone({
+      freq: 1200,
+      durationS: 0.03,
+      type: 'sine',
+      gain: 0.06,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // 瀕死の心音(2拍の低い鼓動)
+  heartbeat(): void {
+    this.tone({ freq: 70, endFreq: 45, durationS: 0.12, type: 'sine', gain: 0.18 });
+    this.tone({ freq: 70, endFreq: 45, durationS: 0.12, type: 'sine', gain: 0.18, delayS: 0.18 });
   }
 
   reload(durationMs: number): void {

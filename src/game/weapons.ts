@@ -4,6 +4,8 @@ import { RecoilTracker, type RecoilStep } from './recoil';
 
 export type FireMode = 'auto' | 'semi' | 'burst';
 export type WeaponSlot = 'primary' | 'secondary';
+// 発砲音の合成プロファイル。audio.tsのSHOT_PROFILESと対応する
+export type SoundProfile = 'ar' | 'smg' | 'dmr' | 'shotgun' | 'lmg' | 'pistol' | 'br';
 
 export interface WeaponDef {
   id: string;
@@ -41,6 +43,17 @@ export interface WeaponDef {
   suppressed?: boolean;
   // applyAttachmentsが適用済みIDを記録する
   attachmentIds?: string[];
+  // スナイパー用フルスクリーンスコープを出す武器(ヤマセミDMRのみ)
+  scope?: boolean;
+  // エイムアシストの対象武器(スコープ覗き込み時に微吸着)
+  aimAssist?: boolean;
+  // 発砲音の合成プロファイル
+  soundProfile: SoundProfile;
+  // ADS時に動的拡散(ブルーム/移動/空中)を打ち消す割合(0..1)。
+  // スナイパーは高くして覗けばほぼ無拡散、自動火器は低めに留める
+  adsMoveSuppression: number;
+  // 空中での追加拡散(度)。従来の一律+2.5を武器別に置き換える
+  airSpreadDeg: number;
 }
 
 const DEG = Math.PI / 180;
@@ -88,6 +101,9 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pellets: 1,
     pelletSpreadDeg: 0,
     penetrationM: 0.35,
+    soundProfile: 'ar',
+    adsMoveSuppression: 0.35,
+    airSpreadDeg: 2.2,
   },
   'tsubaki-smg': {
     id: 'tsubaki-smg',
@@ -118,36 +134,45 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pellets: 1,
     pelletSpreadDeg: 0,
     penetrationM: 0.15,
+    soundProfile: 'smg',
+    adsMoveSuppression: 0.3,
+    airSpreadDeg: 1.6,
   },
   'yamasemi-dmr': {
     id: 'yamasemi-dmr',
     name: 'ヤマセミDMR',
     slot: 'primary',
-    damage: 58,
-    headshotMultiplier: 1.9,
+    // DSR系の一撃: 胴・頭はOSK、脚だけ生存。falloffは全域でOSKを維持
+    damage: 110,
+    headshotMultiplier: 1.9, // 頭=209、脚(0.8)=88で非キル
     rpm: 240,
     magazineSize: 12,
     reloadTacticalMs: 1900,
     reloadEmptyMs: 2600,
-    spreadHipDeg: 3.2,
-    spreadAdsDeg: 0.06,
-    bloomPerShotDeg: 0.3,
-    bloomMaxDeg: 1.8,
-    bloomRecoveryDegPerS: 0.9,
-    movementSpreadDeg: 1.4,
-    falloff: { start: 35, end: 80, minFactor: 0.75 },
+    spreadHipDeg: 3.2, // 腰だめは悪いまま(スナイパーらしさ)
+    spreadAdsDeg: 0.02, // 覗けばピンポイント
+    bloomPerShotDeg: 0.12,
+    bloomMaxDeg: 0.6,
+    bloomRecoveryDegPerS: 2.5,
+    movementSpreadDeg: 0.8,
+    falloff: { start: 80, end: 140, minFactor: 0.92 }, // 胴は全域>=101
     mode: 'semi',
     burstCount: 1,
-    adsFovScale: 0.5,
-    adsTimeMs: 300,
+    adsFovScale: 0.32, // 約3.1倍ズーム
+    adsTimeMs: 320,
     switchMs: 550,
-    recoilPattern: risingPattern(5, 0.95, 0.15),
-    recoilRecoveryPerS: 5,
+    recoilPattern: risingPattern(4, 0.5, 0.08), // パンチはあるが素早く収束
+    recoilRecoveryPerS: 9,
     range: 300,
     tracerColor: 0x9bd1ff,
     pellets: 1,
     pelletSpreadDeg: 0,
     penetrationM: 0.6,
+    scope: true,
+    aimAssist: true,
+    soundProfile: 'dmr',
+    adsMoveSuppression: 0.95,
+    airSpreadDeg: 2.2,
   },
   'hiiragi-sg': {
     id: 'hiiragi-sg',
@@ -178,6 +203,9 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pellets: 8,
     pelletSpreadDeg: 2.6,
     penetrationM: 0,
+    soundProfile: 'shotgun',
+    adsMoveSuppression: 0.25,
+    airSpreadDeg: 2.0,
   },
   'miyama-br': {
     id: 'miyama-br',
@@ -208,6 +236,9 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pellets: 1,
     pelletSpreadDeg: 0,
     penetrationM: 0.4,
+    soundProfile: 'br',
+    adsMoveSuppression: 0.45,
+    airSpreadDeg: 2.0,
   },
   'kumagera-lmg': {
     id: 'kumagera-lmg',
@@ -238,6 +269,9 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pellets: 1,
     pelletSpreadDeg: 0,
     penetrationM: 0.8,
+    soundProfile: 'lmg',
+    adsMoveSuppression: 0.2,
+    airSpreadDeg: 3.0,
   },
   suzume: {
     id: 'suzume',
@@ -268,6 +302,9 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pellets: 1,
     pelletSpreadDeg: 0,
     penetrationM: 0.1,
+    soundProfile: 'pistol',
+    adsMoveSuppression: 0.45,
+    airSpreadDeg: 1.8,
   },
 };
 
@@ -296,6 +333,8 @@ export interface SpreadContext {
   moveFactor: number; // 0(静止)..1(全力移動)
   airborne: boolean;
   crouched: boolean;
+  sliding?: boolean; // スライド中は移動拡散を半減
+  wallRunning?: boolean; // ウォールラン中は移動拡散をやや軽減
 }
 
 export class Weapon {
@@ -369,10 +408,19 @@ export class Weapon {
   currentSpreadRad(ctx: SpreadContext): number {
     const ads = this.def.spreadAdsDeg;
     const hip = this.def.spreadHipDeg;
-    let deg = hip + (ads - hip) * this.adsProgress;
-    deg += this.bloomDeg;
-    deg += this.def.movementSpreadDeg * ctx.moveFactor;
-    if (ctx.airborne) deg += 2.5;
+    // クイックスコープ: スコープ武器は85%覗き込めば完全ADS扱い(決まれば必ず当たる)。
+    // 非スコープ武器は従来どおり滑らかなADS曲線を保つ
+    const adsP = this.def.scope === true && this.adsProgress >= 0.85 ? 1 : this.adsProgress;
+    let deg = hip + (ads - hip) * adsP;
+    // 動的拡散(ブルーム/移動/空中)はADSの度合いに応じて打ち消す。
+    // これが無いと覗いても移動・空中・ブルームの誤差が残り「当たらない」
+    const cancel = 1 - adsP * this.def.adsMoveSuppression;
+    deg += this.bloomDeg * cancel;
+    let moveTerm = this.def.movementSpreadDeg * ctx.moveFactor;
+    if (ctx.airborne) moveTerm += this.def.airSpreadDeg;
+    if (ctx.sliding) moveTerm *= 0.5;
+    else if (ctx.wallRunning) moveTerm *= 0.7;
+    deg += moveTerm * cancel;
     if (ctx.crouched) deg *= 0.8;
     return deg * DEG;
   }

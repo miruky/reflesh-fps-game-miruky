@@ -15,6 +15,7 @@ export type Action =
   | 'leanleft'
   | 'leanright'
   | 'ultimate'
+  | 'holdBreath'
   | 'scoreboard';
 
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
@@ -34,6 +35,8 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   leanleft: ['KeyQ'],
   leanright: ['KeyE'],
   ultimate: ['KeyF'],
+  // 息止めはスプリントキーと共有。覗き込み中のみ参照する(ADS中はスプリント不可)
+  holdBreath: ['ShiftLeft'],
   scoreboard: ['Tab'],
 };
 

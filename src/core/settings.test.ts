@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SETTINGS,
   MATCH_LENGTHS,
+  RETICLE_COLORS,
+  RETICLE_STYLES,
   SETTING_BOUNDS,
   UI_ACCENTS,
   sanitizeSettings,
@@ -94,5 +96,37 @@ describe('sanitizeSettings', () => {
     const s = dirty({ legacyOption: true, sensitivity: 1.5 });
     expect(s).not.toHaveProperty('legacyOption');
     expect(s.sensitivity).toBe(1.5);
+  });
+
+  it('エイムアシスト関連の数値を範囲へ丸める', () => {
+    expect(dirty({ aimAssistStrength: 5 }).aimAssistStrength).toBe(1);
+    expect(dirty({ aimAssistStrength: -1 }).aimAssistStrength).toBe(0);
+    expect(dirty({ aimAssistStrength: 'x' }).aimAssistStrength).toBe(
+      DEFAULT_SETTINGS.aimAssistStrength,
+    );
+    expect(dirty({ adsSensMul: 5 }).adsSensMul).toBe(SETTING_BOUNDS.adsSensMul.max);
+    expect(dirty({ adsSensMul: 0 }).adsSensMul).toBe(SETTING_BOUNDS.adsSensMul.min);
+    expect(dirty({ screenShake: 9 }).screenShake).toBe(1);
+    expect(dirty({ screenShake: -1 }).screenShake).toBe(0);
+  });
+
+  it('エイムアシストの有効/無効は論理値へ変換する', () => {
+    expect(dirty({ aimAssist: 1 }).aimAssist).toBe(true);
+    expect(dirty({ aimAssist: 0 }).aimAssist).toBe(false);
+    expect(DEFAULT_SETTINGS.aimAssist).toBe(true);
+  });
+
+  it('レティクル形状/色は許可リストのみ受け入れ、それ以外は既定へ', () => {
+    for (const style of RETICLE_STYLES) {
+      expect(dirty({ reticleStyle: style.id }).reticleStyle).toBe(style.id);
+    }
+    expect(dirty({ reticleStyle: 'spiral' }).reticleStyle).toBe(DEFAULT_SETTINGS.reticleStyle);
+    expect(dirty({ reticleStyle: 7 }).reticleStyle).toBe(DEFAULT_SETTINGS.reticleStyle);
+    for (const color of RETICLE_COLORS) {
+      expect(dirty({ reticleColor: color.id }).reticleColor).toBe(color.id);
+    }
+    expect(dirty({ reticleColor: 'rainbow' }).reticleColor).toBe(DEFAULT_SETTINGS.reticleColor);
+    expect(RETICLE_STYLES.some((r) => r.id === DEFAULT_SETTINGS.reticleStyle)).toBe(true);
+    expect(RETICLE_COLORS.some((r) => r.id === DEFAULT_SETTINGS.reticleColor)).toBe(true);
   });
 });

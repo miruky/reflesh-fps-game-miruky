@@ -6,6 +6,16 @@ import { mulberry32, type Rand } from '../core/rng';
 import type { Settings } from '../core/settings';
 import { Effects } from '../render/effects';
 import { ViewModel } from '../render/viewmodel';
+import {
+  ACQUIRE_CONE_DEG,
+  adsSensScale,
+  aimAssistDelta,
+  bulletBendFraction,
+  BULLET_MAG_CONE_DEG,
+  BULLET_MAG_MAX_DEG,
+  distanceFactor,
+  slowdownFactor,
+} from './aimassist';
 import { applyAttachments } from './attachments';
 import {
   coneOffset,
@@ -15,6 +25,7 @@ import {
   penetrationFactor,
   type HitPart,
 } from './ballistics';
+import { breathStep, BREATH_MAX_S, lissajousSway, SWAY_AMP_DEG } from './scope';
 import { Bot, BOT_NAMES, DIFFICULTY, HIP_OFFSET_Y, type Difficulty } from './bot';
 import {
   explosionDamage,
@@ -104,6 +115,7 @@ export interface FeedEntry {
 export interface DamageNumber {
   amount: number;
   world: THREE.Vector3;
+  kind: 'body' | 'head' | 'kill'; // 色・大きさの段階分け
 }
 
 export interface ScoreRow {
@@ -163,6 +175,15 @@ export interface MatchSnapshot {
   reduceMotion: boolean;
   ultCharge: number; // 0..1
   ultActive: boolean; // オーバードライブ発動中
+  // スナイパースコープ/エイムアシスト関連
+  scopedWeapon: boolean; // 現在の武器がスコープ持ちか(オーバーレイ表示の起点)
+  scope: { sway: { x: number; y: number }; steady: boolean; breath01: number }; // swayは度
+  aimAssistEngaged: boolean; // 視認できる敵が吸着円錐内にいる
+  rangeM: number; // スコープのレンジ表示(対象までの距離m、無ければ0)
+  zoomX: number; // スコープ倍率(fov/adsFov)
+  reticleStyle: string; // 設定のレティクル形状(腰だめクロスヘア用)
+  reticleColor: string; // 設定のレティクル色
+  weaponId: string; // 現在の武器ID
   grenadeName: string;
   grenadeCount: number;
   cookRatio: number; // 0=非クッキング、1=強制投擲直前
@@ -177,7 +198,7 @@ export interface MatchSnapshot {
   spectating: boolean;
   killcam: string | null; // キルカメラ中に映している相手の名前
   feed: FeedEntry[];
-  hits: Array<'hit' | 'head' | 'kill'>;
+  hits: Array<'hit' | 'head' | 'kill' | 'snipe'>;
   damageNumbers: DamageNumber[];
   incoming: number[]; // 被弾方向(カメラ基準の角度rad)
   tookDamage: boolean;
@@ -273,7 +294,7 @@ export class Match {
   private readonly grenadeGeometry = new THREE.SphereGeometry(0.09, 10, 8);
 
   private feed: FeedEntry[] = [];
-  private hits: Array<'hit' | 'head' | 'kill'> = [];
+  private hits: Array<'hit' | 'head' | 'kill' | 'snipe'> = [];
   private damageNumbers: DamageNumber[] = [];
   private incoming: number[] = [];
   private tookDamage = false;
@@ -281,6 +302,17 @@ export class Match {
   private ultCharge = 0; // 0..1 アルティメットの充填量(死亡で消えない)
   private ultActive = 0; // オーバードライブの残り秒数
   private ultReadyNotified = false; // 準備完了音を鳴らし終えたか(立ち上がり検出用)
+  // エイムアシスト/スコープの状態
+  private aimAssistEngaged = false;
+  private aimAssistTargetDir: THREE.Vector3 | null = null; // 弾道補正用の対象方向(無ければnull)
+  private aimAssistTargetAngle = 0; // 照準と対象のなす角(rad)
+  private aimAssistTargetDist = 0; // 対象までの距離(m)
+  private scopeSway = { x: 0, y: 0 }; // レティクル視差用の揺れ(度、100%)
+  private breathMeter = BREATH_MAX_S; // 息止めの残量(秒)
+  private breathSteady = false; // 息止めが効いている
+  private prevScopeProgress = 0; // scope-in立ち上がり検出用
+  private heartbeatTimer = 0; // 瀕死の心音の次の拍までの残り秒数
+  private scopeRangeM = 0; // スコープのレンジファインダー(照準中心までの距離m)
 
   constructor(
     readonly config: MatchConfig,
@@ -621,6 +653,19 @@ export class Match {
 
     this.meleeCooldown = Math.max(0, this.meleeCooldown - dt);
     this.whiteout = Math.max(0, this.whiteout - dt / 3.2);
+
+    // 瀕死(HP25%未満)で心音が鳴り、HPが低いほど速くなる
+    const hpRatio = this.player.hp / this.player.maxHp;
+    if (this.player.alive && hpRatio > 0 && hpRatio < 0.25) {
+      this.heartbeatTimer -= dt;
+      if (this.heartbeatTimer <= 0) {
+        this.sounds.heartbeat();
+        this.heartbeatTimer = 0.48 + (hpRatio / 0.25) * (0.9 - 0.48);
+      }
+    } else {
+      this.heartbeatTimer = 0;
+    }
+
     this.updateUltimate(dt);
     const weapon = this.activeWeapon;
 
@@ -664,6 +709,8 @@ export class Match {
         moveFactor: this.player.moveFactor,
         airborne: !this.player.grounded,
         crouched: this.player.crouching,
+        sliding: this.player.sliding,
+        wallRunning: this.player.wallRunning,
       },
     );
     for (const event of events) {
@@ -672,10 +719,10 @@ export class Match {
         this.player.yaw -= event.recoil.yaw;
         this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
         this.fireShot(event.spreadRad);
-        this.viewModel.fire();
-        this.addShake(0.035);
+        this.viewModel.fire(weapon.def.scope === true);
+        this.addShake(0.035 * (1 - 0.85 * weapon.adsProgress));
         if (weapon.def.suppressed) this.sounds.shotSuppressed();
-        else this.sounds.shot();
+        else this.sounds.shot(weapon.def.soundProfile);
         this.alertBots(weapon.def.suppressed ? ALERT_RADIUS_SUPPRESSED : ALERT_RADIUS);
       } else if (event.type === 'reload-start') {
         this.sounds.reload(event.durationMs);
@@ -686,6 +733,22 @@ export class Match {
     const recovered = weapon.recoil.recover(dt);
     this.player.yaw += recovered.yaw;
     this.player.pitch -= recovered.pitch;
+
+    // スコープの揺れ(視覚のみ・弾道は汚さない)と息止めメーター。
+    // 揺れはオーバーレイのフレーム視差に使い、ピン留めの照準点は常に真。
+    const scopedNow = weapon.def.scope === true && weapon.adsProgress > 0.5 && this.player.alive;
+    const holding = scopedNow && this.input.isDown('holdBreath');
+    const breath = breathStep(this.breathMeter, dt, holding);
+    this.breathMeter = breath.meter;
+    const wasSteady = this.breathSteady;
+    this.breathSteady = breath.steady;
+    const amp = scopedNow && !this.settings.reduceMotion && !this.breathSteady ? SWAY_AMP_DEG : 0;
+    this.scopeSway = lissajousSway(this.elapsed, amp);
+    if (this.breathSteady && !wasSteady) this.sounds.holdBreath();
+    // scope-inの立ち上がりでレンズ音
+    const scopeProg = weapon.def.scope ? weapon.adsProgress : 0;
+    if (this.prevScopeProgress < 0.5 && scopeProg >= 0.5) this.sounds.scopeIn();
+    this.prevScopeProgress = scopeProg;
 
     this.updateGrenades(dt);
     this.updateFirePatches(dt);
@@ -707,16 +770,64 @@ export class Match {
   frame(dt: number, playing: boolean): void {
     if (playing && !this.over) {
       const weapon = this.activeWeapon;
-      const adsSlow = 1 - 0.4 * weapon.adsProgress;
-      const k = LOOK_BASE * this.settings.sensitivity * adsSlow;
+      // ADS感度はズーム倍率に追従(焦点距離パリティ)+ユーザー倍率。高倍率スコープが速すぎない
+      const adsScale = adsSensScale(
+        this.settings.fov,
+        weapon.def.adsFovScale,
+        this.settings.adsSensMul,
+        weapon.adsProgress,
+      );
+      let k = LOOK_BASE * this.settings.sensitivity * adsScale;
       // 既定はマウスを上へ動かすと上を向く。invertYで上下を入れ替える
       const pitchDir = this.settings.invertY ? 1 : -1;
+
+      // エイムアシスト: スコープ覗き込み中、視認できる最寄りの敵へ微吸着する。
+      // 強い入力(フリック/対象切替)中は弱め、決してハードロックしない
+      this.aimAssistEngaged = false;
+      this.aimAssistTargetDir = null;
+      const assistActive =
+        this.settings.aimAssist &&
+        weapon.def.aimAssist === true &&
+        weapon.adsProgress > 0.5 &&
+        this.player.alive;
+      const target = assistActive ? this.aimAssistTarget(weapon.def.range) : null;
+      // スローダウンと吸着の両方を同じadsGateで滑らかに立ち上げる(0.5境界での段差防止)
+      const adsGate = THREE.MathUtils.smoothstep(weapon.adsProgress, 0.5, 1);
+      if (target) {
+        k *= slowdownFactor(
+          target.angle,
+          ACQUIRE_CONE_DEG * DEG,
+          0.4 * this.settings.aimAssistStrength * adsGate,
+        );
+      }
+
       this.player.yaw -= this.input.mouseDX * k;
-      this.player.pitch = THREE.MathUtils.clamp(
-        this.player.pitch + pitchDir * this.input.mouseDY * k,
-        -PITCH_LIMIT,
-        PITCH_LIMIT,
-      );
+      // ピッチはアシスト適用後に一度だけクランプする
+      let pitch = this.player.pitch + pitchDir * this.input.mouseDY * k;
+
+      if (target) {
+        const inputMag = Math.hypot(this.input.mouseDX, this.input.mouseDY);
+        const inputDamp = THREE.MathUtils.clamp(1 - inputMag / 40, 0.15, 1);
+        const strength = this.settings.aimAssistStrength * adsGate * inputDamp;
+        const delta = aimAssistDelta({
+          curYaw: this.player.yaw,
+          curPitch: pitch,
+          tgtYaw: target.yaw,
+          tgtPitch: target.pitch,
+          angleRad: target.angle,
+          distanceM: target.dist,
+          dtS: dt,
+          strength,
+          maxRangeM: weapon.def.range,
+        });
+        this.player.yaw += delta.dYaw;
+        pitch += delta.dPitch;
+        this.aimAssistEngaged = true;
+        this.aimAssistTargetDir = target.dir;
+        this.aimAssistTargetAngle = target.angle;
+        this.aimAssistTargetDist = target.dist;
+      }
+      this.player.pitch = THREE.MathUtils.clamp(pitch, -PITCH_LIMIT, PITCH_LIMIT);
       this.lastLookDX = this.input.mouseDX;
       this.lastLookDY = this.input.mouseDY;
     } else {
@@ -735,8 +846,12 @@ export class Match {
       this.player.alive && !this.settings.reduceMotion
         ? this.player.fovSpeedKick01 * FOV_SPEED_KICK * (1 - weapon.adsProgress)
         : 0;
+    // 息止め中はスコープをさらに約1割ズームインし、精密射撃の実利を与える
+    const breathZoom = weapon.def.scope === true && this.breathSteady ? 0.9 : 1;
     const targetFov =
-      (this.settings.fov + speedFov) * (1 - (1 - weapon.def.adsFovScale) * weapon.adsProgress);
+      (this.settings.fov + speedFov) *
+      (1 - (1 - weapon.def.adsFovScale) * weapon.adsProgress) *
+      breathZoom;
     if (Math.abs(this.camera.fov - targetFov) > 0.01) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 14);
       this.camera.updateProjectionMatrix();
@@ -752,9 +867,24 @@ export class Match {
       this.effects.hideTrajectory();
     }
 
-    // 観戦カメラをゆっくり回し、死亡中は銃を映さない
+    // 観戦カメラをゆっくり回す。銃の表示はviewModel側でscopeReveal/aliveから決める
     this.orbitAngle += dt * 0.5;
-    this.viewModel.root.visible = this.player.alive;
+    const scopeReveal = weapon.def.scope
+      ? THREE.MathUtils.smoothstep(weapon.adsProgress, 0.55, 0.9)
+      : 0;
+
+    // レンジファインダー: 照準中心レイで、見ている地点までの距離を測る
+    if (weapon.def.scope === true && weapon.adsProgress > 0.5 && this.player.alive) {
+      const hit = this.castRay(
+        this.player.eyePosition,
+        this.cameraForward(),
+        weapon.def.range,
+        this.player.body,
+      );
+      this.scopeRangeM = hit ? hitToi(hit) : 0;
+    } else {
+      this.scopeRangeM = 0;
+    }
 
     this.viewModel.update(dt, {
       adsProgress: weapon.adsProgress,
@@ -765,6 +895,8 @@ export class Match {
       reloadRatio: weapon.reloading ? weapon.reloadRatio : null,
       raiseRatio: Math.max(weapon.raiseRatio, this.cooking ? 0.65 : 0),
       motionScale: this.settings.reduceMotion ? 0.25 : 1,
+      alive: this.player.alive,
+      scopeReveal01: scopeReveal,
     });
     this.effects.update(dt);
   }
@@ -794,12 +926,16 @@ export class Match {
     this.camera.rotation.z =
       -this.player.lean * LEAN_ROLL +
       (this.settings.reduceMotion ? 0 : this.player.wallRunTilt * WALLRUN_VIEW_ROLL);
-    // トラウマ式カメラシェイク。揺れ軽減設定では無効
-    if (this.shakeTrauma > 0 && !this.settings.reduceMotion) {
-      const t = this.shakeTrauma * this.shakeTrauma;
-      this.camera.rotation.x += (Math.random() * 2 - 1) * t * SHAKE_PITCH;
-      this.camera.rotation.y += (Math.random() * 2 - 1) * t * SHAKE_YAW;
-      this.camera.rotation.z += (Math.random() * 2 - 1) * t * SHAKE_ROLL;
+    // トラウマ式カメラシェイク。揺れ軽減設定では無効、設定倍率で強さを調整。
+    // 乱数ではなく滑らかな多重正弦にして、ガクつかない自然な揺れにする
+    const shakeScale = this.settings.reduceMotion ? 0 : this.settings.screenShake;
+    if (this.shakeTrauma > 0 && shakeScale > 0) {
+      const t = this.shakeTrauma * this.shakeTrauma * shakeScale;
+      const n = (seed: number): number =>
+        (Math.sin(this.elapsed * 37 + seed) + 0.6 * Math.sin(this.elapsed * 61 + seed * 1.7)) * 0.62;
+      this.camera.rotation.x += n(1) * t * SHAKE_PITCH;
+      this.camera.rotation.y += n(13) * t * SHAKE_YAW;
+      this.camera.rotation.z += n(27) * t * SHAKE_ROLL;
     }
   }
 
@@ -1121,7 +1257,11 @@ export class Match {
     this.player.shotsFired += 1;
     const weapon = this.activeWeapon;
     const origin = this.player.eyePosition;
-    const muzzle = this.viewModel.muzzleWorldPosition(new THREE.Vector3());
+    // スコープ覗き込み中は銃が引っ込んで隠れるため、トレーサーは視線基点から出す
+    const scopedShot = weapon.def.scope === true && weapon.adsProgress > 0.85;
+    const muzzle = scopedShot
+      ? origin.clone().addScaledVector(this.cameraForward(), 0.4)
+      : this.viewModel.muzzleWorldPosition(new THREE.Vector3());
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
     const pelletSpreadRad = weapon.def.pelletSpreadDeg * DEG;
@@ -1129,9 +1269,23 @@ export class Match {
     // ペレット武器は1発の命中・部位を集約して扱う
     const results = new Map<Bot, { damage: number; headshot: boolean; point: THREE.Vector3 }>();
 
+    // 基準方向を1回だけ算出。バレットマグネティズムで対象が極近ならわずかに寄せる。
+    // 曲げ角は強度に加えて距離でも減衰させ、遠距離での過剰な自動命中を防ぐ
+    let base = this.cameraForward();
+    if (this.aimAssistTargetDir && this.aimAssistTargetAngle <= BULLET_MAG_CONE_DEG * DEG) {
+      const maxBend =
+        BULLET_MAG_MAX_DEG *
+        DEG *
+        this.settings.aimAssistStrength *
+        distanceFactor(this.aimAssistTargetDist, weapon.def.range);
+      const frac = bulletBendFraction(this.aimAssistTargetAngle, maxBend);
+      if (frac > 0) base = base.lerp(this.aimAssistTargetDir, frac).normalize();
+    }
+
     for (let i = 0; i < weapon.def.pellets; i += 1) {
       const offset = coneOffset(spreadRad + pelletSpreadRad, Math.random);
-      const dir = this.cameraForward()
+      const dir = base
+        .clone()
         .addScaledVector(right, Math.tan(offset.yaw))
         .addScaledVector(up, Math.tan(offset.pitch))
         .normalize();
@@ -1141,7 +1295,15 @@ export class Match {
     for (const [bot, result] of results) {
       this.player.shotsHit += 1;
       if (result.headshot) this.player.headshots += 1;
-      this.applyBotDamage(bot, result.damage, result.point, result.headshot, weapon.def.name);
+      this.applyBotDamage(
+        bot,
+        result.damage,
+        result.point,
+        result.headshot,
+        weapon.def.name,
+        true,
+        weapon.def.scope === true,
+      );
     }
   }
 
@@ -1226,25 +1388,31 @@ export class Match {
     headshot: boolean,
     weaponName: string,
     grantUlt = true,
+    scopeKill = false,
   ): void {
     const died = bot.takeDamage(damage);
     this.effects.hitPuff(point);
-    this.damageNumbers.push({ amount: Math.round(damage), world: point.clone() });
+    this.damageNumbers.push({
+      amount: Math.round(damage),
+      world: point.clone(),
+      kind: died ? 'kill' : headshot ? 'head' : 'body',
+    });
     if (died) {
       this.player.kills += 1;
       this.player.streak += 1;
       this.bestStreak = Math.max(this.bestStreak, this.player.streak);
       this.playerWeaponKills[weaponName] = (this.playerWeaponKills[weaponName] ?? 0) + 1;
       this.addKillScore(PLAYER_TEAM);
-      this.hits.push('kill');
+      this.hits.push(scopeKill ? 'snipe' : 'kill');
       this.feed.push({ killer: PLAYER_NAME, victim: bot.name, weapon: weaponName, headshot });
-      this.sounds.kill();
+      if (scopeKill) this.sounds.snipeKill();
+      else this.sounds.kill(1 + Math.min(this.player.streak, 5) * 0.06);
       this.botDeathFx(bot);
       if (grantUlt) this.addUltCharge(ULT_ON_KILL);
     } else {
       this.hits.push(headshot ? 'head' : 'hit');
       if (headshot) this.sounds.headshot();
-      else this.sounds.hit();
+      else this.sounds.hit(1 + THREE.MathUtils.clamp((damage - 12) / 90, 0, 0.45));
     }
   }
 
@@ -1314,6 +1482,53 @@ export class Match {
     const tag = this.tags.get(hit.collider.handle);
     if (targetBot === null) return tag?.kind === 'player';
     return tag?.kind === 'bot' && tag.bot === targetBot;
+  }
+
+  // エイムアシスト対象: 視認できる敵のうち、照準に最も近い(なす角が最小の)1体。
+  // 索敵円錐・射程・スモーク・遮蔽をすべて満たすものだけを返す
+  private aimAssistTarget(
+    maxRange: number,
+  ): { dir: THREE.Vector3; yaw: number; pitch: number; angle: number; dist: number } | null {
+    const eye = this.player.eyePosition;
+    const forward = this.cameraForward();
+    let best: { dir: THREE.Vector3; yaw: number; pitch: number; angle: number; dist: number } | null =
+      null;
+    let bestAngle = ACQUIRE_CONE_DEG * DEG;
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const aim = bot.position;
+      aim.y += 0.15; // 胸元を狙う(positionはカプセル中心の新規ベクトルなので加算可)
+      const to = aim.clone().sub(eye);
+      const dist = to.length();
+      if (dist > maxRange || dist < 0.001) continue;
+      const dir = to.multiplyScalar(1 / dist);
+      const angle = Math.acos(THREE.MathUtils.clamp(forward.dot(dir), -1, 1));
+      if (angle >= bestAngle) continue;
+      if (this.smokeBlocks(eye, aim)) continue;
+      if (!this.playerCanSee(eye, aim, bot)) continue;
+      bestAngle = angle;
+      best = {
+        dir,
+        yaw: Math.atan2(-dir.x, -dir.z),
+        pitch: Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1)),
+        angle,
+        dist,
+      };
+    }
+    return best;
+  }
+
+  // プレイヤー視点からpointが見えるか(botCanSeeのプレイヤー版)。
+  // 自分のコライダーは除外し、最初に当たったのが対象botなら可視
+  private playerCanSee(eye: THREE.Vector3, point: THREE.Vector3, bot: Bot): boolean {
+    const to = point.clone().sub(eye);
+    const dist = to.length();
+    if (dist < 0.2) return true;
+    const dir = to.multiplyScalar(1 / dist);
+    const hit = this.castRay(eye, dir, dist - 0.2, this.player.body);
+    if (hit === null) return true;
+    const tag = this.tags.get(hit.collider.handle);
+    return tag?.kind === 'bot' && tag.bot === bot;
   }
 
   // ドミネーションでは自チームが持っていない最寄り拠点へ、
@@ -1620,6 +1835,8 @@ export class Match {
         moveFactor: this.player.moveFactor,
         airborne: !this.player.grounded,
         crouched: this.player.crouching,
+        sliding: this.player.sliding,
+        wallRunning: this.player.wallRunning,
       }),
       adsProgress: weapon.adsProgress,
       kills: this.player.kills,
@@ -1636,6 +1853,18 @@ export class Match {
       reduceMotion: this.settings.reduceMotion,
       ultCharge: this.ultCharge,
       ultActive: this.ultActive > 0,
+      scopedWeapon: weapon.def.scope === true,
+      scope: {
+        sway: this.settings.reduceMotion ? { x: 0, y: 0 } : this.scopeSway,
+        steady: this.breathSteady,
+        breath01: this.breathMeter / BREATH_MAX_S,
+      },
+      aimAssistEngaged: this.aimAssistEngaged,
+      rangeM: this.scopeRangeM,
+      zoomX: Math.round((1 / weapon.def.adsFovScale) * 10) / 10,
+      reticleStyle: this.settings.reticleStyle,
+      reticleColor: this.settings.reticleColor,
+      weaponId: weapon.def.id,
       grenadeName: spec.name,
       grenadeCount: this.grenadeCounts[this.grenadeKind],
       cookRatio: this.cooking && spec.cookable ? Math.min(1, this.cookTimer / cookWindow) : 0,

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { BODY, HEAD, LIMB, partMultiplier } from './ballistics';
 import { PRIMARY_IDS, Weapon, WEAPON_DEFS } from './weapons';
 
+const DEG = Math.PI / 180;
 const CTX = { moveFactor: 0, airborne: false, crouched: false };
 
 function makeWeapon(id: string): Weapon {
@@ -154,5 +156,63 @@ describe('武器定義の整合性', () => {
     for (const def of Object.values(WEAPON_DEFS)) {
       expect(def.penetrationM).toBeGreaterThanOrEqual(0);
     }
+  });
+
+  it('全武器が音プロファイルと拡散抑制/空中拡散を持つ', () => {
+    const profiles = ['ar', 'smg', 'dmr', 'shotgun', 'lmg', 'pistol', 'br'];
+    for (const def of Object.values(WEAPON_DEFS)) {
+      expect(profiles).toContain(def.soundProfile);
+      expect(def.adsMoveSuppression).toBeGreaterThanOrEqual(0);
+      expect(def.adsMoveSuppression).toBeLessThanOrEqual(1);
+      expect(def.airSpreadDeg).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('スコープ/エイムアシストはヤマセミDMRだけが持つ', () => {
+    expect(WEAPON_DEFS['yamasemi-dmr']!.scope).toBe(true);
+    expect(WEAPON_DEFS['yamasemi-dmr']!.aimAssist).toBe(true);
+    for (const def of Object.values(WEAPON_DEFS)) {
+      if (def.id === 'yamasemi-dmr') continue;
+      expect(def.scope).not.toBe(true);
+      expect(def.aimAssist).not.toBe(true);
+    }
+  });
+
+  it('DMRは胴・頭で一撃、脚だけ生存する', () => {
+    const def = WEAPON_DEFS['yamasemi-dmr']!;
+    expect(def.damage * partMultiplier(BODY, def.headshotMultiplier)).toBeGreaterThanOrEqual(100);
+    expect(def.damage * partMultiplier(HEAD, def.headshotMultiplier)).toBeGreaterThanOrEqual(100);
+    expect(def.damage * partMultiplier(LIMB, def.headshotMultiplier)).toBeLessThan(100);
+  });
+});
+
+describe('スコープ精度', () => {
+  it('覗いて移動・空中でもDMRはほぼ無拡散、腰だめは大きく開く', () => {
+    const weapon = new Weapon(WEAPON_DEFS['yamasemi-dmr']!);
+    const ctx = { moveFactor: 1, airborne: true, crouched: false };
+    weapon.adsProgress = 0; // 腰だめ
+    expect(weapon.currentSpreadRad(ctx)).toBeGreaterThan(5 * DEG);
+    weapon.adsProgress = 1; // 完全に覗いた状態
+    expect(weapon.currentSpreadRad(ctx)).toBeLessThan(0.3 * DEG);
+  });
+
+  it('クイックスコープ: 85%覗けば完全ADSと同じ拡散になる', () => {
+    const weapon = new Weapon(WEAPON_DEFS['yamasemi-dmr']!);
+    const ctx = { moveFactor: 0.5, airborne: false, crouched: false };
+    weapon.adsProgress = 0.85;
+    const quick = weapon.currentSpreadRad(ctx);
+    weapon.adsProgress = 1;
+    const full = weapon.currentSpreadRad(ctx);
+    expect(quick).toBeCloseTo(full, 6);
+  });
+
+  it('非スコープ武器はクイックスコープ・スナップを受けない', () => {
+    const weapon = new Weapon(WEAPON_DEFS['kaede-ar']!);
+    const ctx = { moveFactor: 0.5, airborne: false, crouched: false };
+    weapon.adsProgress = 0.85;
+    const partial = weapon.currentSpreadRad(ctx);
+    weapon.adsProgress = 1;
+    const full = weapon.currentSpreadRad(ctx);
+    expect(partial).toBeGreaterThan(full); // 85%ではまだ完全ADSより拡散が大きい
   });
 });

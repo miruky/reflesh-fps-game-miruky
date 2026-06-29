@@ -80,6 +80,12 @@ function applyAccent(): void {
 }
 applyAccent();
 
+// アプリ内の揺れ軽減設定をルートクラスへ反映し、CSSアニメも止める
+function applyMotion(): void {
+  document.documentElement.classList.toggle('reduce-motion', settings.reduceMotion);
+}
+applyMotion();
+
 let match: Match | null = null;
 let mode: 'menu' | 'playing' | 'paused' | 'result' = 'menu';
 let lastSelection: MenuSelection | null = null;
@@ -125,6 +131,7 @@ const menu = new Menu(menuRoot, settings, profile, {
     sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi);
     applyUiScale();
     applyAccent();
+    applyMotion();
   },
 });
 

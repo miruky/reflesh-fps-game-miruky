@@ -706,6 +706,27 @@ button {
   font-size: 12.5px;
 }
 
+.setting-reset {
+  margin-top: 14px;
+  padding: 9px 14px;
+  font: inherit;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  background: var(--raise);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    border-color 0.18s var(--ease),
+    color 0.18s var(--ease);
+}
+
+.setting-reset:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+
 /* ── 出撃ボタンと控えめなボタン ── */
 
 .menu-start {
@@ -1416,14 +1437,14 @@ tr.score-ally td {
   width: 3px;
   height: 3px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--reticle-color, #fff);
   transform: translate(-50%, -50%);
   box-shadow: 0 0 2px rgba(0, 0, 0, 0.85);
 }
 
 .ch-bar {
   position: absolute;
-  background: #fff;
+  background: var(--reticle-color, #fff);
   box-shadow: 0 0 2px rgba(0, 0, 0, 0.85);
 }
 
@@ -1437,6 +1458,39 @@ tr.score-ally td {
 .ch-r {
   width: 9px;
   height: 2px;
+}
+
+/* レティクル形状(設定): ドット/サークル/シェブロンはバーを隠して別形状を出す */
+.hud-crosshair[data-reticle='dot'] .ch-bar,
+.hud-crosshair[data-reticle='circle'] .ch-bar,
+.hud-crosshair[data-reticle='chevron'] .ch-bar {
+  display: none;
+}
+
+.hud-crosshair[data-reticle='circle']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--reticle-color, #fff);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.85);
+}
+
+.hud-crosshair[data-reticle='chevron']::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-left: 2px solid var(--reticle-color, #fff);
+  border-bottom: 2px solid var(--reticle-color, #fff);
+  transform: translate(-50%, -150%) rotate(-45deg);
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.85));
 }
 
 .hud-hitmarker {
@@ -1482,6 +1536,13 @@ tr.score-ally td {
 .hud-hitmarker.hm-kill span {
   background: var(--ember);
   height: 10px;
+}
+
+.hud-hitmarker.hm-snipe span {
+  background: var(--accent);
+  height: 13px;
+  width: 2.5px;
+  box-shadow: 0 0 5px var(--accent);
 }
 
 @keyframes hitmark {
@@ -1738,6 +1799,19 @@ tr.score-ally td {
   opacity: 0;
 }
 
+.hud-dmg-num--head {
+  font-size: 18px;
+  color: var(--warn);
+}
+
+.hud-dmg-num--kill {
+  font-size: 22px;
+  color: #ff5a4d;
+  text-shadow:
+    0 0 8px rgba(255, 60, 40, 0.6),
+    0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
 .hud-incoming {
   position: absolute;
   left: 50%;
@@ -1774,6 +1848,316 @@ tr.score-ally td {
   background: radial-gradient(ellipse at center, transparent 52%, rgba(160, 16, 16, 0.55) 100%);
   opacity: 0;
   transition: opacity 0.25s;
+}
+
+/* 瀕死(HP25%未満)で赤いビネットを脈動させる */
+.hud-vignette.low {
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(200, 20, 20, 0.72) 100%);
+  animation: lowpulse 0.9s ease-in-out infinite;
+}
+
+@keyframes lowpulse {
+  0%,
+  100% {
+    opacity: 0.42;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+/* ====================== DSR風スナイパースコープ ====================== */
+.hud-scope {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  --scope-reticle: var(--accent);
+  --scope-reticle-core: #fff;
+}
+
+.hud-scope[hidden] {
+  display: none;
+}
+
+.sc-mask,
+.sc-frame,
+.sc-glass,
+.sc-frame-svg,
+.sc-cross {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(100vh, 100vw);
+  height: min(100vh, 100vw);
+}
+
+/* 円形フィールドストップ: 1枚の巨大シャドウで円外を黒く落とす + 縁とビネット */
+.sc-mask {
+  border-radius: 50%;
+  transform: translate3d(-50%, -50%, 0) scale(calc(1.1 - 0.1 * var(--in, 0)));
+  box-shadow:
+    0 0 0 100vmax color-mix(in srgb, var(--base) 86%, #000),
+    inset 0 0 0 2px rgba(255, 255, 255, 0.1),
+    inset 0 0 70px 26px rgba(0, 0, 0, 0.85);
+  will-change: transform, opacity;
+}
+
+.sc-mask::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(120% 90% at 32% 22%, rgba(255, 255, 255, 0.1), transparent 44%);
+}
+
+.sc-frame {
+  transform: translate3d(-50%, -50%, 0)
+    translate(calc(var(--swx, 0px) * 0.6), calc(var(--swy, 0px) * 0.6));
+  will-change: transform;
+}
+
+.sc-glass {
+  transform: translate3d(-50%, -50%, 0) translate(var(--swx, 0px), var(--swy, 0px));
+  will-change: transform;
+}
+
+.sc-grid {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 23px, rgba(255, 255, 255, 0.045) 23px 24px),
+    repeating-linear-gradient(90deg, transparent 0 23px, rgba(255, 255, 255, 0.045) 23px 24px);
+  -webkit-mask: radial-gradient(circle, #000 55%, transparent 74%);
+  mask: radial-gradient(circle, #000 55%, transparent 74%);
+}
+
+/* 親.sc-frameの中心へ重ねる(揺れは親から継承するので自前のswayは持たない) */
+.sc-frame-svg {
+  transform: translate3d(-50%, -50%, 0);
+}
+
+.sc-frame-svg * {
+  vector-effect: non-scaling-stroke;
+  fill: none;
+}
+
+.sc-ring {
+  stroke: color-mix(in srgb, var(--accent) 22%, transparent);
+  stroke-width: 0.7;
+}
+
+.sc-chroma {
+  stroke-width: 0.9;
+  opacity: 0.16;
+  mix-blend-mode: screen;
+  filter: blur(0.5px);
+}
+
+.sc-c {
+  stroke: #19e6ff;
+  transform: translate(0.8px, 0);
+}
+
+.sc-m {
+  stroke: #ff3df0;
+  transform: translate(-0.8px, 0);
+}
+
+.sc-brackets {
+  transform: scale(calc(1 + 0.18 * var(--conv, 0)));
+  transform-origin: center;
+  opacity: calc(1 - var(--conv, 0));
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.85));
+}
+
+.sc-cardinals {
+  stroke: var(--accent);
+  stroke-width: 0.6;
+  opacity: 0.6;
+}
+
+.sc-cross {
+  transform: translate3d(-50%, -50%, 0);
+  opacity: calc((var(--in, 0) - 0.18) / 0.82);
+  will-change: opacity;
+}
+
+.sc-cross * {
+  vector-effect: non-scaling-stroke;
+  fill: none;
+  stroke-linecap: round;
+}
+
+.sc-halo {
+  stroke: rgba(0, 0, 0, 0.85);
+  stroke-width: 3;
+}
+
+.sc-core {
+  stroke: var(--scope-reticle-core, #fff);
+  stroke-width: 1.3;
+}
+
+.sc-refring-halo {
+  stroke: rgba(0, 0, 0, 0.7);
+  stroke-width: 2;
+}
+
+.sc-refring {
+  stroke: color-mix(in srgb, #fff 50%, transparent);
+  stroke-width: 1;
+}
+
+.sc-dot-halo {
+  fill: rgba(0, 0, 0, 0.9);
+  stroke: none;
+}
+
+.sc-dot {
+  fill: var(--scope-reticle, var(--accent));
+  stroke: none;
+}
+
+.sc-readout {
+  position: absolute;
+  right: 16%;
+  bottom: 18%;
+  font: 600 12px/1 var(--mono);
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  text-shadow: 0 0 3px #000;
+  opacity: 0.7;
+}
+
+.sc-readout i {
+  opacity: 0.6;
+  font-style: normal;
+  margin: 0 0.1em;
+}
+
+.sc-breath {
+  position: absolute;
+  left: 50%;
+  bottom: 13%;
+  width: 64px;
+  height: 2px;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.14);
+  opacity: 0;
+}
+
+.sc-breath > i {
+  display: block;
+  height: 100%;
+  width: calc(var(--breath, 1) * 100%);
+  background: var(--accent);
+}
+
+.sc-glint {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  opacity: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.18) 50%,
+    transparent 60%
+  );
+}
+
+.sc-glint.show {
+  animation: scopeglint 0.5s ease-out;
+}
+
+@keyframes scopeglint {
+  0% {
+    opacity: 0;
+    transform: translateX(-40%);
+  }
+  40% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(40%);
+  }
+}
+
+/* エイムアシスト・ロック: 色(pip→警告色+拡大)と形(脈動するロックリング)の二重符号化。
+   リングは形状の手がかりなので、レティクル色を琥珀にしても識別できる */
+.sc-lock {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 1.4;
+  opacity: 0;
+  vector-effect: non-scaling-stroke;
+}
+
+.hud-scope.engaged .sc-dot {
+  fill: var(--warn);
+  transform: scale(1.7);
+  transform-origin: center;
+}
+
+.hud-scope.engaged .sc-lock {
+  opacity: 0.95;
+  animation: scopelock 0.6s ease-in-out infinite;
+}
+
+@keyframes scopelock {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.95;
+  }
+  50% {
+    transform: scale(0.8);
+    opacity: 0.55;
+  }
+}
+
+/* 息止め: 揺れを止め、ブレスメーターを見せ、ブラケットを明るく */
+.sc-glass,
+.sc-frame {
+  transition: none;
+}
+
+.hud-scope.steady .sc-glass,
+.hud-scope.steady .sc-frame {
+  transition: transform 0.18s var(--ease-out);
+}
+
+.hud-scope.steady .sc-breath {
+  opacity: 0.9;
+}
+
+.hud-scope.steady .sc-brackets {
+  opacity: 1;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent) 60%, transparent));
+}
+
+/* reduceMotion: 変形を中立化(全体のduration0化だけでは移動量が残るため) */
+.hud-scope.reduced .sc-mask {
+  transform: translate3d(-50%, -50%, 0) scale(1);
+}
+
+.hud-scope.reduced .sc-glass,
+.hud-scope.reduced .sc-frame {
+  transform: translate3d(-50%, -50%, 0);
+}
+
+.hud-scope.reduced .sc-brackets {
+  transform: none;
+  opacity: 1;
+}
+
+.hud-scope.reduced .sc-cross {
+  opacity: var(--in, 0);
 }
 
 .hud-flash {
@@ -2393,4 +2777,14 @@ tr.score-ally td {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* アプリ内「画面の揺れを軽減する」設定をOSの prefers-reduced-motion と同等に扱い、
+   中央のヒットマーカー/バナー/被弾フラッシュなどのアニメも止める(JSゲートと併用) */
+:root.reduce-motion *,
+:root.reduce-motion *::before,
+:root.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }
