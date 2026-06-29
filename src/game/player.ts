@@ -106,6 +106,9 @@ export class Player {
   // 1フレーム単位の演出フック。matchが update 後に読み取って消費する
   landImpact = 0; // 着地した落下速度(無ければ0)
   justBoosted = false; // スラスト/スライド/壁ジャンプで加速した瞬間
+  // matchが制御する一時バフ。アルティメット(オーバードライブ)中に上書きされる
+  speedMul = 1; // 水平移動速度の倍率
+  damageResist = 0; // 0..1 被ダメージ軽減
 
   private readonly world: RAPIER.World;
   private readonly controller: RAPIER.KinematicCharacterController;
@@ -252,7 +255,7 @@ export class Player {
 
     // ── 水平移動 ──
     if (this.sliding) {
-      const speed = slideSpeedAt(this.slideTimer / SLIDE_DURATION);
+      const speed = slideSpeedAt(this.slideTimer / SLIDE_DURATION) * this.speedMul;
       this.slideDir.addScaledVector(right, input.x * SLIDE_STEER * dt * 0.1).normalize();
       this.vel.x = this.slideDir.x * speed;
       this.vel.z = this.slideDir.z * speed;
@@ -261,6 +264,7 @@ export class Player {
     } else if (this.grounded) {
       let speed = this.crouching ? CROUCH_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED;
       speed *= 1 - (1 - ADS_SPEED_FACTOR) * adsProgress;
+      speed *= this.speedMul;
 
       const wish = new THREE.Vector3()
         .addScaledVector(forward, input.z)
@@ -274,7 +278,7 @@ export class Player {
       // 空中: 運動量を保つ射影式エアアクセル + ソフト上限
       const wishX = forward.x * input.z + right.x * input.x;
       const wishZ = forward.z * input.z + right.z * input.x;
-      airAccelerate(this.vel, wishX, wishZ, AIR_WISH_SPEED, AIR_ACCEL, dt);
+      airAccelerate(this.vel, wishX, wishZ, AIR_WISH_SPEED * this.speedMul, AIR_ACCEL, dt);
       softAirCap(this.vel, dt);
     }
 
@@ -554,6 +558,7 @@ export class Player {
   // diedをtrueで返す
   takeDamage(amount: number): boolean {
     if (!this.alive) return false;
+    amount *= 1 - this.damageResist;
     this.hp -= amount;
     this.sinceDamage = 0;
     if (this.hp <= 0) {
@@ -592,6 +597,8 @@ export class Player {
     this.lean = 0;
     this.landImpact = 0;
     this.justBoosted = false;
+    this.speedMul = 1;
+    this.damageResist = 0;
     // 死亡時の姿勢(スライド/しゃがみ)を持ち越して視点が湧き直後に
     // 伸び上がらないよう、視点高と移動状態も初期化する
     this.eyeHeight = EYE_STAND;

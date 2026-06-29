@@ -79,6 +79,17 @@ export class Bot {
   private pauseTimer = 0;
   private dyingTimer = 0;
 
+  // 歩行アニメ用。胴体ボブと四肢スイングを駆動する
+  private readonly rig = new THREE.Group();
+  private readonly legL = new THREE.Group();
+  private readonly legR = new THREE.Group();
+  private readonly kneeL = new THREE.Group();
+  private readonly kneeR = new THREE.Group();
+  private walkPhase = 0;
+  private walkAmp = 0;
+  private hitFlash = 0; // 被弾時に装甲を一瞬発光させる残り時間
+  private armorMat: THREE.MeshStandardMaterial | null = null;
+
   constructor(
     world: RAPIER.World,
     readonly name: string,
@@ -104,22 +115,89 @@ export class Bot {
     this.controller.enableAutostep(0.4, 0.3, true);
     this.controller.enableSnapToGround(0.4);
 
-    const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.7 });
-    const headMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(color).multiplyScalar(0.6),
+    this.buildMesh(color);
+  }
+
+  // チーム色の装甲・暗い下地・発光バイザーで構成したヒューマノイド兵士。
+  // 当たり判定(胴カプセル+頭球)は別管理なので見た目は自由に組める。
+  private buildMesh(color: number): void {
+    const c = new THREE.Color(color);
+    const armor = new THREE.MeshStandardMaterial({
+      color: c,
+      roughness: 0.55,
+      metalness: 0.12,
+      emissive: c.clone(),
+      emissiveIntensity: 0,
+    });
+    this.armorMat = armor;
+    const dark = new THREE.MeshStandardMaterial({
+      color: c.clone().multiplyScalar(0.42),
       roughness: 0.6,
     });
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(BODY_RADIUS, BODY_HALF * 2), bodyMat);
-    torso.castShadow = true;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(HEAD_RADIUS, 16, 12), headMat);
-    head.position.y = HEAD_OFFSET;
-    head.castShadow = true;
-    const visor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.26, 0.07, 0.08),
-      new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.3 }),
+    const glow = new THREE.MeshStandardMaterial({
+      color: 0x0d0f13,
+      emissive: c.clone(),
+      emissiveIntensity: 1.15,
+      roughness: 0.3,
+    });
+    const gun = new THREE.MeshStandardMaterial({ color: 0x202227, roughness: 0.5 });
+    const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+    const part = (geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.castShadow = true;
+      return m;
+    };
+
+    // 胴・腰・胸・背・肩・首・頭・ヘルメット・発光バイザーと胸の発光帯
+    this.rig.add(
+      part(box(0.4, 0.26, 0.28), dark, 0, -0.2, 0), // 腰
+      part(box(0.38, 0.3, 0.28), armor, 0, 0.02, 0), // 腹
+      part(box(0.52, 0.38, 0.32), armor, 0, 0.34, 0), // 胸
+      part(box(0.54, 0.06, 0.02), glow, 0, 0.36, -0.17), // 胸の発光帯
+      part(box(0.3, 0.34, 0.16), dark, 0, 0.3, 0.2), // バックパック
+      part(box(0.18, 0.16, 0.22), dark, -0.32, 0.5, 0), // 左肩
+      part(box(0.18, 0.16, 0.22), dark, 0.32, 0.5, 0), // 右肩
+      part(new THREE.CylinderGeometry(0.07, 0.08, 0.1, 10), dark, 0, 0.6, 0), // 首
+      part(new THREE.SphereGeometry(0.19, 16, 12), dark, 0, HEAD_OFFSET, 0), // 頭
+      part(box(0.3, 0.17, 0.32), armor, 0, HEAD_OFFSET + 0.08, 0.02), // ヘルメット
+      part(box(0.27, 0.09, 0.06), glow, 0, HEAD_OFFSET - 0.01, -0.16), // 発光バイザー
     );
-    visor.position.set(0, HEAD_OFFSET + 0.02, -0.2);
-    this.group.add(torso, head, visor);
+
+    // 腕(ライフルを前方に構える静的ポーズ)
+    const arm = (sx: number) => {
+      const g = new THREE.Group();
+      g.position.set(sx, 0.48, 0);
+      g.rotation.x = -1.15;
+      g.rotation.z = -sx * 0.4;
+      g.add(part(box(0.12, 0.3, 0.12), armor, 0, -0.13, 0)); // 上腕
+      g.add(part(box(0.1, 0.28, 0.1), dark, 0, -0.34, 0.02)); // 前腕
+      return g;
+    };
+    this.rig.add(arm(-0.34), arm(0.34));
+
+    // 構えるライフル
+    const rifle = new THREE.Group();
+    rifle.position.set(0.02, 0.34, -0.36);
+    rifle.add(part(box(0.08, 0.1, 0.42), gun, 0, 0, 0));
+    rifle.add(part(box(0.04, 0.04, 0.3), gun, 0, 0.01, -0.32));
+    rifle.add(part(box(0.05, 0.16, 0.08), gun, 0, -0.12, 0.04));
+    this.rig.add(rifle);
+
+    // 脚(股関節ピボット + 膝ピボット)。歩行で前後にスイングする
+    const buildLeg = (pivot: THREE.Group, knee: THREE.Group, sx: number) => {
+      pivot.position.set(sx, -0.18, 0);
+      pivot.add(part(box(0.15, 0.32, 0.16), armor, 0, -0.16, 0)); // 腿
+      knee.position.set(0, -0.32, 0);
+      knee.add(part(box(0.13, 0.3, 0.14), dark, 0, -0.15, 0)); // 脛
+      knee.add(part(box(0.14, 0.08, 0.26), dark, 0, -0.3, -0.05)); // 足
+      pivot.add(knee);
+      this.rig.add(pivot);
+    };
+    buildLeg(this.legL, this.kneeL, -0.12);
+    buildLeg(this.legR, this.kneeR, 0.12);
+
+    this.group.add(this.rig);
   }
 
   get position(): THREE.Vector3 {
@@ -152,6 +230,10 @@ export class Bot {
 
     this.alert = Math.max(0, this.alert - dt);
     this.blind = Math.max(0, this.blind - dt);
+    if (this.hitFlash > 0 && this.armorMat) {
+      this.hitFlash = Math.max(0, this.hitFlash - dt);
+      this.armorMat.emissiveIntensity = (this.hitFlash / 0.12) * 0.9;
+    }
     const engaged = ctx.targetEye !== null;
 
     let wishX = 0;
@@ -217,6 +299,12 @@ export class Bot {
       z: t.z + moved.z,
     });
 
+    // 歩行アニメ: 実移動量から歩調(位相)と振幅を進める
+    const step = Math.hypot(moved.x, moved.z);
+    const targetAmp = Math.min(1, step / Math.max(1e-4, MOVE_SPEED * dt));
+    this.walkAmp += (targetAmp - this.walkAmp) * Math.min(1, dt * 8);
+    this.walkPhase += step * 9;
+
     this.updateShooting(dt, ctx, engaged);
     this.syncMesh();
   }
@@ -266,19 +354,33 @@ export class Bot {
   syncMesh(): void {
     const t = this.body.translation();
     this.group.position.set(t.x, t.y, t.z);
-    if (this.alive) this.group.rotation.y = this.heading;
+    if (!this.alive) return;
+    this.group.rotation.y = this.heading;
+    // 歩行サイクル: 左右の脚を逆位相でスイングし、接地脚側の膝を曲げ、胴を上下させる
+    const s = Math.sin(this.walkPhase);
+    const swing = s * this.walkAmp * 0.8;
+    this.legL.rotation.x = swing;
+    this.legR.rotation.x = -swing;
+    this.kneeL.rotation.x = Math.max(0, -s) * this.walkAmp;
+    this.kneeR.rotation.x = Math.max(0, s) * this.walkAmp;
+    this.rig.position.y = Math.abs(Math.cos(this.walkPhase)) * this.walkAmp * 0.04;
   }
 
   takeDamage(amount: number): boolean {
     if (!this.alive) return false;
     this.hp -= amount;
     this.alert = 5;
+    this.hitFlash = 0.12;
     if (this.hp <= 0) {
       this.hp = 0;
       this.alive = false;
       this.deaths += 1;
       this.respawnIn = 3;
       this.dyingTimer = 0.4;
+      // 死亡フレームでupdateの被弾発光減衰(alive早期returnの後)が止まるため、
+      // ここで明示的に消す。さもないと倒れる演出中ずっと装甲が光ったままになる
+      this.hitFlash = 0;
+      if (this.armorMat) this.armorMat.emissiveIntensity = 0;
       // 死体を見えない壁にしない。リスポーンまで弾と移動の判定から外す
       this.bodyCollider.setEnabled(false);
       this.headCollider.setEnabled(false);
@@ -295,6 +397,10 @@ export class Bot {
     this.blind = 0;
     this.group.visible = true;
     this.group.rotation.x = 0;
+    this.walkAmp = 0;
+    this.rig.position.y = 0;
+    this.hitFlash = 0;
+    if (this.armorMat) this.armorMat.emissiveIntensity = 0;
     this.bodyCollider.setEnabled(true);
     this.headCollider.setEnabled(true);
     this.body.setTranslation({ x: spawn.x, y: spawn.y + CENTER_TO_FEET, z: spawn.z }, true);

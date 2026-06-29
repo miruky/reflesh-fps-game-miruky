@@ -152,6 +152,36 @@ export class ViewModel {
       gun.add(foregrip);
     }
 
+    // 一人称の腕。銃を両手で構えるように前腕+手を追加する。銃グループの
+    // 子なのでADS・スウェイ・反動・リロードの動きにそのまま追従する。
+    const sleeve = new THREE.MeshStandardMaterial({ color: 0x2b2e34, roughness: 0.7 });
+    const glove = new THREE.MeshStandardMaterial({ color: 0x161820, roughness: 0.55 });
+    const limb = (
+      mat: THREE.Material,
+      w: number,
+      h: number,
+      d: number,
+      x: number,
+      y: number,
+      z: number,
+      rx: number,
+      ry: number,
+      rz: number,
+    ): THREE.Mesh => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      return m;
+    };
+    // 右手(グリップ)と右前腕(画面右下へ抜ける)
+    const rHand = limb(glove, 0.06, 0.07, 0.11, 0.0, -0.11, 0.11, 0.3, 0, 0);
+    const rArm = limb(sleeve, 0.08, 0.08, 0.3, 0.03, -0.22, 0.3, 0.62, -0.1, 0);
+    // 左手(ハンドガード)と左前腕。前腕の手首側が左手に届くよう、ハンドガード
+    // 寄りに置いて横断ヨーを抑える(以前は左下へ流れて手と分離していた)
+    const lHand = limb(glove, 0.06, 0.07, 0.11, 0.0, -0.05, -0.16 * long, 0.2, 0, 0);
+    const lArm = limb(sleeve, 0.08, 0.08, 0.3, -0.03, -0.13, -0.04, 0.5, 0.2, 0.12);
+    gun.add(rHand, rArm, lHand, lArm);
+
     const muzzle = new THREE.Object3D();
     const muzzleZ = attachments.includes('suppressor') ? -0.52 * long : -0.4 * long;
     muzzle.position.set(0, 0.012, muzzleZ);
@@ -167,6 +197,23 @@ export class ViewModel {
 
   muzzleWorldPosition(out: THREE.Vector3): THREE.Vector3 {
     return this.muzzle.getWorldPosition(out);
+  }
+
+  // 試合破棄時に呼ぶ。キャッシュ済みの非アクティブな銃(切替で外した方)は
+  // シーングラフから外れていてMatch.disposeのtraverseに拾われないため、
+  // ここで全キャッシュとフラッシュメッシュのGPU資源を明示的に解放する
+  dispose(): void {
+    for (const entry of this.cache.values()) {
+      entry.gun.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.geometry.dispose();
+          (node.material as THREE.Material).dispose();
+        }
+      });
+    }
+    this.cache.clear();
+    this.flashMesh.geometry.dispose();
+    (this.flashMesh.material as THREE.Material).dispose();
   }
 
   update(

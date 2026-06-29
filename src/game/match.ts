@@ -56,6 +56,17 @@ const SHAKE_DECAY = 1.6;
 const SHAKE_PITCH = 0.05;
 const SHAKE_YAW = 0.05;
 const SHAKE_ROLL = 0.07;
+// アルティメット(オーバードライブ + グラビティスラム)。メーターは死亡しても消えない
+const ULT_PASSIVE_PER_S = 1 / 110; // 何もしなくても約110秒で満タン
+const ULT_ON_KILL = 0.12;
+const ULT_ON_CAPTURE = 0.12;
+const ULT_ON_DAMAGE_PER_HP = 0.0015; // 被弾で溜まる逆転要素
+const OVERDRIVE_DURATION = 6;
+const OVERDRIVE_SPEED_MUL = 1.35;
+const OVERDRIVE_RESIST = 0.5;
+const SLAM_RADIUS = 8;
+const SLAM_DAMAGE = 220;
+const PLAYER_FEET_OFFSET = 0.95; // カプセル中心から足元まで(CAPSULE_HALF+CAPSULE_RADIUS)
 const MELEE_RANGE = 2.2;
 const MELEE_DAMAGE = 75;
 const MELEE_COOLDOWN = 0.8;
@@ -150,6 +161,8 @@ export interface MatchSnapshot {
   wallRunning: boolean;
   airborne: boolean;
   reduceMotion: boolean;
+  ultCharge: number; // 0..1
+  ultActive: boolean; // オーバードライブ発動中
   grenadeName: string;
   grenadeCount: number;
   cookRatio: number; // 0=非クッキング、1=強制投擲直前
@@ -265,6 +278,9 @@ export class Match {
   private incoming: number[] = [];
   private tookDamage = false;
   private shakeTrauma = 0; // 0..1 カメラシェイクの蓄積
+  private ultCharge = 0; // 0..1 アルティメットの充填量(死亡で消えない)
+  private ultActive = 0; // オーバードライブの残り秒数
+  private ultReadyNotified = false; // 準備完了音を鳴らし終えたか(立ち上がり検出用)
 
   constructor(
     readonly config: MatchConfig,
@@ -403,6 +419,89 @@ export class Match {
       );
       this.tags.set(collider.handle, { kind: 'world' });
     }
+
+    this.buildAtmosphere(this.config.stage.palette, this.config.stage.size);
+  }
+
+  // 当たり判定を持たない装飾。グラデ天球・床グリッド・外周ライトバー・
+  // 四隅ビーコンでアリーナに空気感を足す。フェアネスには影響しない。
+  private buildAtmosphere(palette: StageDef['palette'], size: number): void {
+    // グラデーション天球(フォグの影響を切り、地平はフォグ色へ馴染ませる)
+    const skyGeo = new THREE.SphereGeometry(size * 1.6, 24, 16);
+    const top = new THREE.Color(palette.sky);
+    const bottom = new THREE.Color(palette.fog);
+    const colors: number[] = [];
+    const pos = skyGeo.getAttribute('position') as THREE.BufferAttribute;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i += 1) {
+      v.fromBufferAttribute(pos, i).normalize();
+      const t = THREE.MathUtils.clamp(v.y * 0.5 + 0.5, 0, 1);
+      const col = bottom.clone().lerp(top, Math.pow(t, 0.8));
+      colors.push(col.r, col.g, col.b);
+    }
+    skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    const sky = new THREE.Mesh(
+      skyGeo,
+      new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        side: THREE.BackSide,
+        fog: false,
+        depthWrite: false,
+        depthTest: false,
+      }),
+    );
+    sky.renderOrder = -1;
+    this.scene.add(sky);
+
+    // 床のグリッド(アクセント色の薄い線)で平坦さを解消する
+    const grid = new THREE.GridHelper(
+      size,
+      Math.max(8, Math.round(size / 4)),
+      new THREE.Color(palette.accent),
+      new THREE.Color(palette.wall),
+    );
+    const gridMat = grid.material as THREE.LineBasicMaterial;
+    gridMat.transparent = true;
+    gridMat.opacity = 0.22;
+    // 床に薄く重ねる線なので深度書き込みを切り、ポリゴンオフセットで遠距離の
+    // Zファイト(線のちらつき・欠落)を防ぐ。微小なY浮かせだけでは破綻する
+    gridMat.depthWrite = false;
+    gridMat.polygonOffset = true;
+    gridMat.polygonOffsetFactor = -1;
+    gridMat.polygonOffsetUnits = -1;
+    grid.position.y = 0.02;
+    this.scene.add(grid);
+
+    // 外周ライトバーと四隅ビーコン(発光マテリアルで光って見せる)
+    const accentGlow = new THREE.MeshStandardMaterial({
+      color: palette.accent,
+      emissive: new THREE.Color(palette.accent),
+      emissiveIntensity: 1.25,
+      roughness: 0.4,
+    });
+    const half = size / 2;
+    const barTop = Math.max(5, this.config.stage.maxHeight + 2.5) - 0.4;
+    const barGeo = new THREE.BoxGeometry(size, 0.16, 0.16);
+    const bars: Array<[number, number, number]> = [
+      [0, -half, 0],
+      [0, half, 0],
+      [-half, 0, Math.PI / 2],
+      [half, 0, Math.PI / 2],
+    ];
+    for (const [x, z, ry] of bars) {
+      const bar = new THREE.Mesh(barGeo, accentGlow);
+      bar.position.set(x, barTop, z);
+      bar.rotation.y = ry;
+      this.scene.add(bar);
+    }
+    const beaconGeo = new THREE.CylinderGeometry(0.1, 0.13, 5, 8);
+    for (const sx of [-1, 1] as const) {
+      for (const sz of [-1, 1] as const) {
+        const beacon = new THREE.Mesh(beaconGeo, accentGlow);
+        beacon.position.set(sx * (half - 1.2), 2.5, sz * (half - 1.2));
+        this.scene.add(beacon);
+      }
+    }
   }
 
   // ドミネーションの拠点を点対称に配置する。リングは所有チームの色に追従する
@@ -480,6 +579,7 @@ export class Match {
         this.announcements.push(mine ? `${zone.id}拠点を制圧した` : `${zone.id}拠点を奪われた`);
         if (mine) {
           this.sounds.capture();
+          this.addUltCharge(ULT_ON_CAPTURE);
           // プレイヤー自身が圏内にいた制圧だけを個人成績に数える
           const center = this.zoneCenters.get(zone.id);
           if (
@@ -521,6 +621,7 @@ export class Match {
 
     this.meleeCooldown = Math.max(0, this.meleeCooldown - dt);
     this.whiteout = Math.max(0, this.whiteout - dt / 3.2);
+    this.updateUltimate(dt);
     const weapon = this.activeWeapon;
 
     // ADS: ホールドまたはトグル(アクセシビリティ設定)
@@ -894,6 +995,7 @@ export class Match {
         const died = this.player.takeDamage(damage);
         this.tookDamage = true;
         this.addShake(Math.min(0.7, damage * 0.01));
+        this.addUltCharge(damage * ULT_ON_DAMAGE_PER_HP);
         this.incoming.push(this.incomingAngle(point));
         this.sounds.hurt();
         if (died) {
@@ -959,6 +1061,7 @@ export class Match {
           const died = this.player.takeDamage(tickDamage);
           this.tookDamage = true;
           this.addShake(0.06);
+          this.addUltCharge(tickDamage * ULT_ON_DAMAGE_PER_HP);
           this.incoming.push(this.incomingAngle(patch.pos));
           this.sounds.hurt();
           if (died) {
@@ -1122,6 +1225,7 @@ export class Match {
     point: THREE.Vector3,
     headshot: boolean,
     weaponName: string,
+    grantUlt = true,
   ): void {
     const died = bot.takeDamage(damage);
     this.effects.hitPuff(point);
@@ -1135,6 +1239,8 @@ export class Match {
       this.hits.push('kill');
       this.feed.push({ killer: PLAYER_NAME, victim: bot.name, weapon: weaponName, headshot });
       this.sounds.kill();
+      this.botDeathFx(bot);
+      if (grantUlt) this.addUltCharge(ULT_ON_KILL);
     } else {
       this.hits.push(headshot ? 'head' : 'hit');
       if (headshot) this.sounds.headshot();
@@ -1260,6 +1366,7 @@ export class Match {
       const died = this.player.takeDamage(damage);
       this.tookDamage = true;
       this.addShake(0.16);
+      this.addUltCharge(damage * ULT_ON_DAMAGE_PER_HP);
       this.sounds.hurt();
       this.incoming.push(this.incomingAngle(origin));
       if (died) {
@@ -1288,6 +1395,7 @@ export class Match {
           weapon: 'ボットAR',
           headshot: false,
         });
+        this.botDeathFx(tag.bot);
       }
     }
   }
@@ -1317,6 +1425,84 @@ export class Match {
   // カメラシェイクのトラウマを加算する(0..1で頭打ち)
   private addShake(amount: number): void {
     this.shakeTrauma = Math.min(1, this.shakeTrauma + amount);
+  }
+
+  // 撃破時のチーム色バースト演出
+  private botDeathFx(bot: Bot): void {
+    const color = bot.team === PLAYER_TEAM ? this.colors.ally : this.colors.enemy;
+    const point = bot.position;
+    point.y += 0.4;
+    this.effects.deathBurst(point, color);
+  }
+
+  private addUltCharge(amount: number): void {
+    this.ultCharge = Math.min(1, this.ultCharge + amount);
+  }
+
+  // アルティメットの充填・発動・オーバードライブ持続。player.update前に呼ぶ
+  private updateUltimate(dt: number): void {
+    // 死亡中はオーバードライブを終了し、バフを残さない(ゲージ自体は維持)。
+    // 落下死などnotePlayerDeathを通らない経路も含めて確実に解除する
+    if (!this.player.alive) {
+      this.ultActive = 0;
+      this.player.speedMul = 1;
+      this.player.damageResist = 0;
+      return;
+    }
+
+    this.ultCharge = Math.min(1, this.ultCharge + dt * ULT_PASSIVE_PER_S);
+
+    if (
+      this.input.wasPressed('ultimate') &&
+      this.ultCharge >= 1 &&
+      this.ultActive <= 0 &&
+      !this.cooking
+    ) {
+      this.activateUltimate();
+    }
+
+    if (this.ultActive > 0) {
+      this.ultActive = Math.max(0, this.ultActive - dt);
+      this.player.speedMul = OVERDRIVE_SPEED_MUL;
+      this.player.damageResist = OVERDRIVE_RESIST;
+    } else {
+      this.player.speedMul = 1;
+      this.player.damageResist = 0;
+    }
+
+    // 準備完了音は永続フラグで立ち上がりを検出する。戦闘(キル/制圧/被弾)で
+    // 充填されるのはupdateUltimateより後なので、ローカル変数では取りこぼす。
+    // 発動でフラグを倒し、オーバードライブ中・死亡中は鳴らさない
+    if (!this.ultReadyNotified && this.ultCharge >= 1 && this.ultActive <= 0) {
+      this.sounds.ultReady();
+      this.ultReadyNotified = true;
+    }
+  }
+
+  // グラビティスラムで周囲の敵を吹き飛ばし、オーバードライブを起動する
+  private activateUltimate(): void {
+    this.ultCharge = 0;
+    this.ultActive = OVERDRIVE_DURATION;
+    this.ultReadyNotified = false;
+    const center = this.player.position;
+    // 演出はカメラの内側で生成すると裏面カリングで消えるため、足元の地面で炸裂
+    // させて衝撃波・土煙が周囲に広がって見えるようにする。画面側の閃光はHUDが
+    // ultActiveの立ち上がりから出す(reduceMotion尊重)。判定は胴中心のまま
+    const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
+    this.effects.explosion(ground, SLAM_RADIUS * 0.6);
+    this.effects.deathBurst(ground, this.colors.ally);
+    const { pan, distance } = this.panAndDistance(center);
+    this.sounds.explosion(pan, distance);
+    this.sounds.ultActivate();
+    this.addShake(0.6);
+    this.announcements.push('オーバードライブ発動');
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      if (bot.position.distanceTo(center) < SLAM_RADIUS && this.explosionReaches(center, bot.position)) {
+        // スラムのキルでアルトを再充填しない(自己還元の連鎖を防ぐ)
+        this.applyBotDamage(bot, SLAM_DAMAGE, bot.position, false, 'グラビティスラム', false);
+      }
+    }
   }
 
   private refillGrenades(): void {
@@ -1448,6 +1634,8 @@ export class Match {
       wallRunning: this.player.wallRunning,
       airborne: !this.player.grounded && this.player.alive,
       reduceMotion: this.settings.reduceMotion,
+      ultCharge: this.ultCharge,
+      ultActive: this.ultActive > 0,
       grenadeName: spec.name,
       grenadeCount: this.grenadeCounts[this.grenadeKind],
       cookRatio: this.cooking && spec.cookable ? Math.min(1, this.cookTimer / cookWindow) : 0,
@@ -1566,6 +1754,7 @@ export class Match {
 
   dispose(): void {
     this.effects.dispose();
+    this.viewModel.dispose();
     for (const item of this.thrown) {
       this.scene.remove(item.mesh);
       (item.mesh.material as THREE.Material).dispose();

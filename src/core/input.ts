@@ -14,6 +14,7 @@ export type Action =
   | 'grenadeswitch'
   | 'leanleft'
   | 'leanright'
+  | 'ultimate'
   | 'scoreboard';
 
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
@@ -32,6 +33,7 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   grenadeswitch: ['Digit3'],
   leanleft: ['KeyQ'],
   leanright: ['KeyE'],
+  ultimate: ['KeyF'],
   scoreboard: ['Tab'],
 };
 

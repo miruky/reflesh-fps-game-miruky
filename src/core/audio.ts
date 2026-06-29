@@ -222,6 +222,25 @@ export class SoundKit {
     this.noiseBurst({ durationS: 0.12, filterHz: 900, filterType: 'bandpass', gain: 0.22 });
   }
 
+  // アルティメット充填完了の上昇チャイム
+  ultReady(): void {
+    this.tone({ freq: 660, durationS: 0.1, type: 'sine', gain: 0.2, bus: this.uiBus ?? undefined });
+    this.tone({
+      freq: 990,
+      durationS: 0.18,
+      type: 'sine',
+      gain: 0.2,
+      delayS: 0.1,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // アルティメット発動(オーバードライブ + スラム)の重低音
+  ultActivate(): void {
+    this.tone({ freq: 150, endFreq: 620, durationS: 0.4, type: 'sawtooth', gain: 0.3 });
+    this.noiseBurst({ durationS: 0.5, filterHz: 820, filterType: 'lowpass', gain: 0.5 });
+  }
+
   // ピンを抜いてクッキングを始めた合図
   pinPull(): void {
     this.tone({ freq: 1900, durationS: 0.04, type: 'square', gain: 0.12 });

@@ -23,6 +23,7 @@ export class Hud {
   private compassMarks: Array<{ bearing: number; el: HTMLElement }> = [];
   private lastStreak = 0;
   private lastMoveState = '';
+  private lastUltActive = false; // オーバードライブ発動の立ち上がり検出用
 
   constructor(private readonly root: HTMLElement) {
     root.innerHTML = `
@@ -82,6 +83,7 @@ export class Hud {
       <div class="hud-incoming" data-id="incoming"></div>
       <div class="hud-vignette" data-id="vignette"></div>
       <div class="hud-flash" data-id="flash"></div>
+      <div class="hud-ultflash" data-id="ultflash"></div>
       <div class="hud-whiteout" data-id="whiteout"></div>
       <div class="hud-speedlines" data-id="speedlines"></div>
       <div class="hud-move" data-id="move" hidden>
@@ -89,6 +91,10 @@ export class Hud {
         <div class="hud-move-bar"><div data-id="speedfill"></div></div>
       </div>
       <div class="hud-banner" data-id="banner"></div>
+      <div class="hud-ult" data-id="ult">
+        <div class="hud-ult-bar"><div data-id="ultfill"></div></div>
+        <span class="hud-ult-label" data-id="ultlabel">ULT</span>
+      </div>
       <div class="hud-death" data-id="death" hidden>
         <div class="hud-death-title">やられた</div>
         <div class="hud-death-sub">リスポーンまで <span data-id="respawn">0.0</span> 秒</div>
@@ -135,6 +141,7 @@ export class Hud {
     if (dmg) dmg.innerHTML = '';
     this.lastStreak = 0;
     this.lastMoveState = '';
+    this.lastUltActive = false;
   }
 
   update(
@@ -171,6 +178,7 @@ export class Hud {
     this.updateDeath(snap);
     this.updateMovement(snap);
     this.updateBanner(snap);
+    this.updateUlt(snap);
 
     const scoreboard = this.el['scoreboard'];
     if (scoreboard) {
@@ -425,6 +433,29 @@ export class Hud {
       if (fill) fill.style.width = `${Math.min(100, (snap.speed / MOVE_SPEEDS.airMax) * 100)}%`;
     }
     this.lastMoveState = state;
+  }
+
+  // アルティメットの充填メーター。満タンで点灯、発動中はオーバードライブ表示
+  private updateUlt(snap: MatchSnapshot): void {
+    const fill = this.el['ultfill'];
+    if (fill) fill.style.width = `${Math.min(100, snap.ultCharge * 100)}%`;
+    const ult = this.el['ult'];
+    if (ult) {
+      ult.hidden = !snap.alive;
+      ult.classList.toggle('ult-ready', snap.ultCharge >= 1 && !snap.ultActive);
+      ult.classList.toggle('ult-active', snap.ultActive);
+    }
+    const label = this.el['ultlabel'];
+    if (label) {
+      const text = snap.ultActive ? 'OVERDRIVE' : snap.ultCharge >= 1 ? 'ULT 準備完了 [F]' : 'ULT';
+      if (label.textContent !== text) label.textContent = text;
+    }
+    // 発動の瞬間に画面側の閃光を一度だけ出す(ワールド側の炸裂はカメラ内側で
+    // 見えないため)。単発のソフトパルスでreduceMotion時は出さない
+    if (snap.ultActive && !this.lastUltActive && !snap.reduceMotion) {
+      this.restartAnimation('ultflash', 'show');
+    }
+    this.lastUltActive = snap.ultActive;
   }
 
   // 連続キルの節目で中央上にバナーを出す

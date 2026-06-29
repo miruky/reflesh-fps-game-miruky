@@ -17,11 +17,13 @@ export class Effects {
   private blasts: Timed<THREE.Mesh>[] = [];
   private clouds: Timed<THREE.Group>[] = [];
   private flames: Timed<THREE.Group>[] = [];
+  private sparks: Timed<THREE.Group>[] = [];
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
   private readonly cloudGeometry = new THREE.SphereGeometry(1, 10, 8);
   private readonly blastGeometry = new THREE.SphereGeometry(1, 12, 10);
+  private readonly sparkGeometry = new THREE.BoxGeometry(0.05, 0.05, 0.05);
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -105,6 +107,42 @@ export class Effects {
       this.scene.add(dust);
       this.blasts.push({ obj: dust, life: 1.1, maxLife: 1.1 });
     }
+  }
+
+  // 撃破時の発光バーストと飛散する破片(チーム色)
+  deathBurst(point: THREE.Vector3, color: number): void {
+    const flash = new THREE.Mesh(
+      this.blastGeometry,
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    flash.position.copy(point);
+    flash.scale.setScalar(0.3);
+    flash.userData.targetScale = 1.5;
+    this.scene.add(flash);
+    this.blasts.push({ obj: flash, life: 0.4, maxLife: 0.4 });
+
+    const group = new THREE.Group();
+    group.position.copy(point);
+    for (let i = 0; i < 10; i += 1) {
+      const shard = new THREE.Mesh(
+        this.sparkGeometry,
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1 }),
+      );
+      shard.userData.vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 6,
+        Math.random() * 5 + 1.5,
+        (Math.random() - 0.5) * 6,
+      );
+      group.add(shard);
+    }
+    this.scene.add(group);
+    this.sparks.push({ obj: group, life: 0.7, maxLife: 0.7 });
   }
 
   smokeCloud(point: THREE.Vector3, radius: number, durationS: number): void {
@@ -232,6 +270,15 @@ export class Effects {
         (mesh.material as THREE.MeshLambertMaterial).opacity = 0.92 * grow * fade;
       }
     });
+    this.sparks = this.tick(this.sparks, dt, (group, ratio) => {
+      for (const child of group.children) {
+        const mesh = child as THREE.Mesh;
+        const vel = mesh.userData.vel as THREE.Vector3;
+        vel.y -= 14 * dt;
+        mesh.position.addScaledVector(vel, dt);
+        (mesh.material as THREE.MeshBasicMaterial).opacity = ratio;
+      }
+    });
     this.flames = this.tick(this.flames, dt, (group, ratio) => {
       const t = performance.now() / 1000;
       for (const child of group.children) {
@@ -256,7 +303,7 @@ export class Effects {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
-    for (const list of [this.clouds, this.flames]) {
+    for (const list of [this.clouds, this.flames, this.sparks]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
@@ -269,6 +316,7 @@ export class Effects {
     this.puffGeometry.dispose();
     this.cloudGeometry.dispose();
     this.blastGeometry.dispose();
+    this.sparkGeometry.dispose();
   }
 
   private tick<T extends THREE.Object3D>(
@@ -297,7 +345,8 @@ export class Effects {
           node.geometry !== this.decalGeometry &&
           node.geometry !== this.puffGeometry &&
           node.geometry !== this.cloudGeometry &&
-          node.geometry !== this.blastGeometry
+          node.geometry !== this.blastGeometry &&
+          node.geometry !== this.sparkGeometry
         ) {
           node.geometry.dispose();
         }
