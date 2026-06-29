@@ -13,7 +13,6 @@ export interface WeaponDef {
   headshotMultiplier: number;
   rpm: number;
   magazineSize: number;
-  reserveAmmo: number;
   reloadTacticalMs: number;
   reloadEmptyMs: number;
   spreadHipDeg: number;
@@ -68,7 +67,6 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     headshotMultiplier: 1.6,
     rpm: 700,
     magazineSize: 30,
-    reserveAmmo: 120,
     reloadTacticalMs: 1700,
     reloadEmptyMs: 2300,
     spreadHipDeg: 2.2,
@@ -99,7 +97,6 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     headshotMultiplier: 1.4,
     rpm: 900,
     magazineSize: 35,
-    reserveAmmo: 140,
     reloadTacticalMs: 1500,
     reloadEmptyMs: 2000,
     spreadHipDeg: 2.6,
@@ -130,7 +127,6 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     headshotMultiplier: 1.9,
     rpm: 240,
     magazineSize: 12,
-    reserveAmmo: 48,
     reloadTacticalMs: 1900,
     reloadEmptyMs: 2600,
     spreadHipDeg: 3.2,
@@ -161,7 +157,6 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     headshotMultiplier: 1.3,
     rpm: 75,
     magazineSize: 6,
-    reserveAmmo: 30,
     reloadTacticalMs: 2400,
     reloadEmptyMs: 2900,
     spreadHipDeg: 1.6,
@@ -192,7 +187,6 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     headshotMultiplier: 1.7,
     rpm: 650,
     magazineSize: 24,
-    reserveAmmo: 96,
     reloadTacticalMs: 1800,
     reloadEmptyMs: 2400,
     spreadHipDeg: 2.8,
@@ -223,7 +217,6 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     headshotMultiplier: 1.5,
     rpm: 600,
     magazineSize: 75,
-    reserveAmmo: 150,
     reloadTacticalMs: 3600,
     reloadEmptyMs: 4300,
     spreadHipDeg: 3.4,
@@ -254,7 +247,6 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     headshotMultiplier: 1.7,
     rpm: 380,
     magazineSize: 12,
-    reserveAmmo: 60,
     reloadTacticalMs: 1300,
     reloadEmptyMs: 1800,
     spreadHipDeg: 2.4,
@@ -322,7 +314,9 @@ export class Weapon {
   private sinceLastShotMs = 0;
 
   constructor(readonly def: WeaponDef) {
-    this.magazine = new Magazine(def.magazineSize, def.reserveAmmo);
+    // リザーブ弾は全武器共通で無限。リロード操作自体は必須のままだが、
+    // 弾薬切れで撃てなくなることはない(分母は ∞ 表示)
+    this.magazine = new Magazine(def.magazineSize, Infinity);
     this.recoil = new RecoilTracker(def.recoilPattern, def.recoilRecoveryPerS);
     // 取り出した直後は構え時間がかかる
     this.raiseRemainingMs = def.switchMs;
@@ -360,6 +354,16 @@ export class Weapon {
   cancelReload(): void {
     this.reloadingKind = null;
     this.reloadRemainingMs = 0;
+  }
+
+  // リスポーン時などに弾薬と射撃状態を満タン・初期状態へ戻す。
+  // すぐに撃てるよう構え直しは別途 raise() 側で扱う
+  resupply(): void {
+    this.magazine.rounds = this.magazine.capacity;
+    this.cancelReload();
+    this.burstLeft = 0;
+    this.bloomDeg = 0;
+    this.recoil.reset();
   }
 
   currentSpreadRad(ctx: SpreadContext): number {

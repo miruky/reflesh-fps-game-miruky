@@ -1991,6 +1991,144 @@ tr.score-ally td {
   text-align: right;
 }
 
+/* ── 移動状態(ウォールラン / スライド / エアー)と速度計 ── */
+
+.hud-move {
+  position: absolute;
+  left: 50%;
+  bottom: 17%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.hud-move-state {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.36em;
+  text-indent: 0.36em;
+  color: var(--ember-ink);
+  text-shadow:
+    0 0 14px color-mix(in srgb, var(--ember) 65%, transparent),
+    0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+.hud-move.show .hud-move-state {
+  animation: movepulse 0.4s var(--ease-out);
+}
+
+.hud-move-bar {
+  width: 92px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+
+.hud-move-bar div {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--ember-deep), var(--ember-ink));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ember) 60%, transparent);
+  transition: width 0.08s linear;
+}
+
+@keyframes movepulse {
+  0% {
+    transform: scale(1.35);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ── スピードライン(高速移動で画面の縁が締まる)── */
+
+.hud-speedlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s linear;
+  background: radial-gradient(
+    ellipse 62% 62% at 50% 50%,
+    transparent 46%,
+    color-mix(in srgb, var(--ember) 26%, transparent) 100%
+  );
+  mix-blend-mode: screen;
+}
+
+/* OSの「視差効果を減らす」設定時は、速度連動の周辺ティントを出さない */
+@media (prefers-reduced-motion: reduce) {
+  .hud-speedlines {
+    display: none !important;
+  }
+}
+
+/* ── 連続キルのバナー ── */
+
+.hud-banner {
+  position: absolute;
+  left: 50%;
+  /* アナウンス表示(top:24%、最大3行)と重ならない高さに置く */
+  top: 41%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.hud-banner-row {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-indent: 0.18em;
+  color: #fff;
+  text-shadow:
+    0 0 18px color-mix(in srgb, var(--ember) 75%, transparent),
+    0 2px 8px rgba(0, 0, 0, 0.9);
+  animation: bannerin 0.4s var(--ease-out);
+  transition: opacity 0.4s;
+}
+
+.hud-banner-row.banner-out {
+  opacity: 0;
+}
+
+@keyframes bannerin {
+  0% {
+    opacity: 0;
+    transform: scale(0.7) translateY(8px);
+    letter-spacing: 0.5em;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 残弾が僅少のときアモカウンタを脈動させる */
+.hud-ammo-low {
+  animation: ammopulse 0.85s ease-in-out infinite;
+}
+
+@keyframes ammopulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 /* ====================== モーション ====================== */
 
 @keyframes rise {

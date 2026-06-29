@@ -205,6 +205,23 @@ export class SoundKit {
     });
   }
 
+  // スラスト(二段)ジャンプ: ブースターの噴射音
+  thrust(): void {
+    this.noiseBurst({ durationS: 0.2, filterHz: 1400, filterType: 'bandpass', gain: 0.28 });
+    this.tone({ freq: 220, endFreq: 540, durationS: 0.16, type: 'sawtooth', gain: 0.16 });
+  }
+
+  // ウォールラン取り付き: 壁を擦る低い摩擦音
+  wallRun(): void {
+    this.noiseBurst({ durationS: 0.3, filterHz: 700, filterType: 'lowpass', gain: 0.18 });
+  }
+
+  // ウォールジャンプ: 壁を蹴る打撃音
+  wallJump(): void {
+    this.tone({ freq: 320, endFreq: 140, durationS: 0.12, type: 'triangle', gain: 0.26 });
+    this.noiseBurst({ durationS: 0.12, filterHz: 900, filterType: 'bandpass', gain: 0.22 });
+  }
+
   // ピンを抜いてクッキングを始めた合図
   pinPull(): void {
     this.tone({ freq: 1900, durationS: 0.04, type: 'square', gain: 0.12 });

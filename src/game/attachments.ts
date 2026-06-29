@@ -112,11 +112,12 @@ export const ATTACHMENT_DEFS: Record<string, AttachmentDef> = {
     slot: 'mag',
     name: 'クイックマガジン',
     pros: 'リロード時間-25%',
-    cons: '予備弾薬-25%',
+    cons: '装弾数-15%',
     apply: (def) => {
       def.reloadTacticalMs *= 0.75;
       def.reloadEmptyMs *= 0.75;
-      def.reserveAmmo = Math.round(def.reserveAmmo * 0.75);
+      // リザーブ弾は全武器無限のため、装弾数を削ることを実効デメリットとする
+      def.magazineSize = Math.max(1, Math.round(def.magazineSize * 0.85));
     },
   },
 };

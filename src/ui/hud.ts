@@ -1,5 +1,6 @@
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
+import { MOVE_SPEEDS } from '../game/player';
 
 type Project = (world: THREE.Vector3) => { x: number; y: number; behind: boolean };
 
@@ -20,6 +21,8 @@ const PX_PER_DEG = 2.2;
 export class Hud {
   private readonly el: Record<string, HTMLElement> = {};
   private compassMarks: Array<{ bearing: number; el: HTMLElement }> = [];
+  private lastStreak = 0;
+  private lastMoveState = '';
 
   constructor(private readonly root: HTMLElement) {
     root.innerHTML = `
@@ -68,7 +71,7 @@ export class Hud {
         </div>
       </div>
       <div class="hud-bottom-right">
-        <div class="hud-weapon-row"><span>PRIMARY</span><strong class="hud-weapon" data-id="weapon"></strong></div>
+        <div class="hud-weapon-row"><span data-id="weaponslot">PRIMARY</span><strong class="hud-weapon" data-id="weapon"></strong></div>
         <div class="hud-ammo-row">
           <div class="hud-ammo"><span data-id="ammo">30</span><span class="hud-reserve" data-id="reserve">/ 120</span></div>
           <div class="hud-mode" data-id="mode"></div>
@@ -80,6 +83,12 @@ export class Hud {
       <div class="hud-vignette" data-id="vignette"></div>
       <div class="hud-flash" data-id="flash"></div>
       <div class="hud-whiteout" data-id="whiteout"></div>
+      <div class="hud-speedlines" data-id="speedlines"></div>
+      <div class="hud-move" data-id="move" hidden>
+        <span class="hud-move-state" data-id="movestate"></span>
+        <div class="hud-move-bar"><div data-id="speedfill"></div></div>
+      </div>
+      <div class="hud-banner" data-id="banner"></div>
       <div class="hud-death" data-id="death" hidden>
         <div class="hud-death-title">やられた</div>
         <div class="hud-death-sub">リスポーンまで <span data-id="respawn">0.0</span> 秒</div>
@@ -124,6 +133,8 @@ export class Hud {
     if (feed) feed.innerHTML = '';
     const dmg = this.el['dmg'];
     if (dmg) dmg.innerHTML = '';
+    this.lastStreak = 0;
+    this.lastMoveState = '';
   }
 
   update(
@@ -158,6 +169,8 @@ export class Hud {
     this.pushDamageNumbers(snap, project);
     this.pushIncoming(snap);
     this.updateDeath(snap);
+    this.updateMovement(snap);
+    this.updateBanner(snap);
 
     const scoreboard = this.el['scoreboard'];
     if (scoreboard) {
@@ -210,8 +223,10 @@ export class Hud {
 
   private updateAmmo(snap: MatchSnapshot): void {
     this.text('weapon', snap.weaponName);
+    this.text('weaponslot', snap.weaponSlot);
     this.text('ammo', String(snap.ammo));
-    this.text('reserve', `/ ${snap.reserve}`);
+    // リザーブ弾は無限。有限値が来た場合のみ数値を表示する
+    this.text('reserve', Number.isFinite(snap.reserve) ? `/ ${snap.reserve}` : '/ ∞');
     this.text('mode', snap.fireMode);
     const ammoEl = this.el['ammo'];
     if (ammoEl) ammoEl.classList.toggle('hud-ammo-low', snap.ammo <= 5);
@@ -380,6 +395,62 @@ export class Hud {
       killcam.hidden = snap.killcam === null;
       if (snap.killcam !== null) this.text('killcam', `キルカメラ: ${snap.killcam}`);
     }
+  }
+
+  private updateMovement(snap: MatchSnapshot): void {
+    // スピードライン: スプリント速度を超えた量に応じて画面の縁を締める
+    const speedlines = this.el['speedlines'];
+    if (speedlines) {
+      const over = (snap.speed - MOVE_SPEEDS.sprint) / (MOVE_SPEEDS.airMax - MOVE_SPEEDS.sprint);
+      // 画面揺れ軽減(アクセシビリティ)時はスピードラインを出さない
+      speedlines.style.opacity =
+        snap.alive && !snap.reduceMotion ? String(Math.min(0.55, Math.max(0, over) * 0.6)) : '0';
+    }
+
+    const move = this.el['move'];
+    let state = '';
+    if (snap.wallRunning) state = 'WALL RUN';
+    else if (snap.sliding) state = 'SLIDE';
+    else if (snap.airborne) state = 'AIR';
+    if (move) {
+      move.hidden = state === '' || !snap.alive;
+      // 状態が切り替わった瞬間だけラベルを更新してパルスさせる
+      if (state !== this.lastMoveState && state !== '') {
+        this.text('movestate', state);
+        move.classList.remove('show');
+        void move.offsetWidth;
+        move.classList.add('show');
+      }
+      const fill = this.el['speedfill'];
+      if (fill) fill.style.width = `${Math.min(100, (snap.speed / MOVE_SPEEDS.airMax) * 100)}%`;
+    }
+    this.lastMoveState = state;
+  }
+
+  // 連続キルの節目で中央上にバナーを出す
+  private updateBanner(snap: MatchSnapshot): void {
+    const banner = this.el['banner'];
+    if (!banner) return;
+    if (snap.streak > this.lastStreak && snap.streak >= 3) {
+      const labels: Record<number, string> = {
+        3: 'TRIPLE KILL',
+        4: 'MULTI KILL',
+        5: 'RAMPAGE',
+        7: 'UNSTOPPABLE',
+        10: 'GODLIKE',
+      };
+      const label = labels[snap.streak] ?? `KILLSTREAK ×${snap.streak}`;
+      const node = document.createElement('div');
+      node.className = 'hud-banner-row';
+      node.textContent = label;
+      banner.appendChild(node);
+      window.setTimeout(() => {
+        node.classList.add('banner-out');
+        window.setTimeout(() => node.remove(), 400);
+      }, 1400);
+      while (banner.childElementCount > 2) banner.firstElementChild?.remove();
+    }
+    this.lastStreak = snap.streak;
   }
 
   private renderScoreboard(snap: MatchSnapshot): void {

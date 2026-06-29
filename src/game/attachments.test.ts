@@ -35,7 +35,8 @@ describe('applyAttachments', () => {
   it('同一スロットは最初の1つだけ適用する', () => {
     const def = applyAttachments(base, ['extended', 'quick']);
     expect(def.attachmentIds).toEqual(['extended']);
-    expect(def.reserveAmmo).toBe(base.reserveAmmo);
+    // quickはマガジンスロットが埋まっているため適用されず、装弾数はextendedの値のまま
+    expect(def.magazineSize).toBe(Math.round(base.magazineSize * 1.5));
   });
 
   it('未知のIDは無視して適用済み一覧に残さない', () => {

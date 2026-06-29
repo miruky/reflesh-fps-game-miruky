@@ -47,6 +47,15 @@ const DEG = Math.PI / 180;
 const LOOK_BASE = 0.0022;
 const PITCH_LIMIT = (89 * Math.PI) / 180;
 const LEAN_ROLL = 0.2;
+// ウォールラン時の視点ロール量(壁側へ傾ける)
+const WALLRUN_VIEW_ROLL = 0.16;
+// 高速移動でFOVを最大このぶん広げる(度)
+const FOV_SPEED_KICK = 12;
+// トラウマ式カメラシェイク。trauma^2 に比例して各軸を揺らす
+const SHAKE_DECAY = 1.6;
+const SHAKE_PITCH = 0.05;
+const SHAKE_YAW = 0.05;
+const SHAKE_ROLL = 0.07;
 const MELEE_RANGE = 2.2;
 const MELEE_DAMAGE = 75;
 const MELEE_COOLDOWN = 0.8;
@@ -122,6 +131,7 @@ export interface MatchSnapshot {
   ammo: number;
   reserve: number;
   weaponName: string;
+  weaponSlot: string; // 'PRIMARY' / 'SECONDARY'
   fireMode: string;
   reloading: boolean;
   reloadRatio: number;
@@ -134,6 +144,12 @@ export interface MatchSnapshot {
   yaw: number;
   fov: number;
   over: boolean;
+  // 移動状態(HUDの速度計・状態チップ用)
+  speed: number;
+  sliding: boolean;
+  wallRunning: boolean;
+  airborne: boolean;
+  reduceMotion: boolean;
   grenadeName: string;
   grenadeCount: number;
   cookRatio: number; // 0=非クッキング、1=強制投擲直前
@@ -248,6 +264,7 @@ export class Match {
   private damageNumbers: DamageNumber[] = [];
   private incoming: number[] = [];
   private tookDamage = false;
+  private shakeTrauma = 0; // 0..1 カメラシェイクの蓄積
 
   constructor(
     readonly config: MatchConfig,
@@ -526,6 +543,9 @@ export class Match {
       lean: (this.input.isDown('leanright') ? 1 : 0) - (this.input.isDown('leanleft') ? 1 : 0),
     };
     this.player.update(dt, moveInput, weapon.adsProgress, this.sounds);
+    // 移動由来のカメラシェイク(着地・ブースト)
+    if (this.player.landImpact > 6) this.addShake(Math.min(0.5, this.player.landImpact * 0.03));
+    if (this.player.justBoosted) this.addShake(0.12);
 
     this.handleWeaponSwitch();
     this.handleMelee();
@@ -552,6 +572,7 @@ export class Match {
         this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
         this.fireShot(event.spreadRad);
         this.viewModel.fire();
+        this.addShake(0.035);
         if (weapon.def.suppressed) this.sounds.shotSuppressed();
         else this.sounds.shot();
         this.alertBots(weapon.def.suppressed ? ALERT_RADIUS_SUPPRESSED : ALERT_RADIUS);
@@ -602,10 +623,19 @@ export class Match {
       this.lastLookDY = 0;
     }
 
+    this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * SHAKE_DECAY);
     this.syncCamera();
 
     const weapon = this.activeWeapon;
-    const targetFov = this.settings.fov * (1 - (1 - weapon.def.adsFovScale) * weapon.adsProgress);
+    // 速度に応じてFOVを広げ、スピード感を出す。ADSは従来どおり絞る。
+    // 画面揺れ軽減(アクセシビリティ)時は速度由来のFOV変化を無効化する
+    // ADS中はキックを打ち消し、覗き込み倍率を速度に依らず一定に保つ
+    const speedFov =
+      this.player.alive && !this.settings.reduceMotion
+        ? this.player.fovSpeedKick01 * FOV_SPEED_KICK * (1 - weapon.adsProgress)
+        : 0;
+    const targetFov =
+      (this.settings.fov + speedFov) * (1 - (1 - weapon.def.adsFovScale) * weapon.adsProgress);
     if (Math.abs(this.camera.fov - targetFov) > 0.01) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 14);
       this.camera.updateProjectionMatrix();
@@ -660,7 +690,16 @@ export class Match {
     this.camera.position.copy(eye);
     this.camera.rotation.y = this.player.yaw;
     this.camera.rotation.x = this.player.pitch;
-    this.camera.rotation.z = -this.player.lean * LEAN_ROLL;
+    this.camera.rotation.z =
+      -this.player.lean * LEAN_ROLL +
+      (this.settings.reduceMotion ? 0 : this.player.wallRunTilt * WALLRUN_VIEW_ROLL);
+    // トラウマ式カメラシェイク。揺れ軽減設定では無効
+    if (this.shakeTrauma > 0 && !this.settings.reduceMotion) {
+      const t = this.shakeTrauma * this.shakeTrauma;
+      this.camera.rotation.x += (Math.random() * 2 - 1) * t * SHAKE_PITCH;
+      this.camera.rotation.y += (Math.random() * 2 - 1) * t * SHAKE_YAW;
+      this.camera.rotation.z += (Math.random() * 2 - 1) * t * SHAKE_ROLL;
+    }
   }
 
   private handleWeaponSwitch(): void {
@@ -854,6 +893,7 @@ export class Match {
       if (damage > 0 && this.explosionReaches(point, this.player.position)) {
         const died = this.player.takeDamage(damage);
         this.tookDamage = true;
+        this.addShake(Math.min(0.7, damage * 0.01));
         this.incoming.push(this.incomingAngle(point));
         this.sounds.hurt();
         if (died) {
@@ -918,6 +958,7 @@ export class Match {
         if (this.player.alive && this.insidePatch(patch, this.player.position)) {
           const died = this.player.takeDamage(tickDamage);
           this.tookDamage = true;
+          this.addShake(0.06);
           this.incoming.push(this.incomingAngle(patch.pos));
           this.sounds.hurt();
           if (died) {
@@ -961,8 +1002,15 @@ export class Match {
     return Math.atan2(cross, forwardFlat.dot(flat));
   }
 
+  // 射線は yaw/pitch から直接導出する。カメラ姿勢(シェイクやリーンのロール)に
+  // 依存させないことで、カメラシェイク中でも弾はクロスヘアどおりに飛ぶ
   private cameraForward(): THREE.Vector3 {
-    return new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    const cp = Math.cos(this.player.pitch);
+    return new THREE.Vector3(
+      -Math.sin(this.player.yaw) * cp,
+      Math.sin(this.player.pitch),
+      -Math.cos(this.player.yaw) * cp,
+    );
   }
 
   private fireShot(spreadRad: number): void {
@@ -1211,6 +1259,7 @@ export class Match {
       if (bot.team === PLAYER_TEAM) return;
       const died = this.player.takeDamage(damage);
       this.tookDamage = true;
+      this.addShake(0.16);
       this.sounds.hurt();
       this.incoming.push(this.incomingAngle(origin));
       if (died) {
@@ -1265,10 +1314,26 @@ export class Match {
     }
   }
 
+  // カメラシェイクのトラウマを加算する(0..1で頭打ち)
+  private addShake(amount: number): void {
+    this.shakeTrauma = Math.min(1, this.shakeTrauma + amount);
+  }
+
+  private refillGrenades(): void {
+    this.grenadeCounts.frag = GRENADE_SPECS.frag.carry;
+    this.grenadeCounts.smoke = GRENADE_SPECS.smoke.carry;
+    this.grenadeCounts.flash = GRENADE_SPECS.flash.carry;
+    this.grenadeCounts.incendiary = GRENADE_SPECS.incendiary.carry;
+  }
+
   private handleRespawns(): void {
     if (!this.player.alive && this.player.respawnIn <= 0) {
       this.player.respawnAt(this.pickSpawn(this.playerSpawns, this.hostilesOf(PLAYER_TEAM)));
+      // リスポーンでは両武器の弾倉を満タンに補給し、投擲物も初期装備へ戻す
+      for (const weapon of this.weapons) weapon.resupply();
       this.activeWeapon.raise();
+      this.refillGrenades();
+      this.shakeTrauma = 0;
       this.deathPos = null;
       this.killer = null;
       this.killcamTimer = 0;
@@ -1356,6 +1421,7 @@ export class Match {
       ammo: weapon.magazine.rounds,
       reserve: weapon.magazine.reserve,
       weaponName: weapon.def.name,
+      weaponSlot: this.activeIndex === 0 ? 'PRIMARY' : 'SECONDARY',
       fireMode:
         weapon.def.mode === 'auto'
           ? 'フルオート'
@@ -1377,6 +1443,11 @@ export class Match {
       yaw: this.player.yaw,
       fov: this.camera.fov,
       over: this.over,
+      speed: this.player.speed,
+      sliding: this.player.sliding,
+      wallRunning: this.player.wallRunning,
+      airborne: !this.player.grounded && this.player.alive,
+      reduceMotion: this.settings.reduceMotion,
       grenadeName: spec.name,
       grenadeCount: this.grenadeCounts[this.grenadeKind],
       cookRatio: this.cooking && spec.cookable ? Math.min(1, this.cookTimer / cookWindow) : 0,
