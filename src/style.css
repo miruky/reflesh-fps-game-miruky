@@ -3912,3 +3912,81 @@ tr.score-ally td {
 :root.reduce-motion #menu :focus {
   box-shadow: none;
 }
+
+/* ══ R7 ARMORY: 2ペイン(武器リスト | 3Dプレビュー) ══════════════════ */
+.armory-layout {
+  display: grid;
+  grid-template-columns: 1fr minmax(280px, 38%);
+  gap: 18px;
+  align-items: start;
+}
+.armory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 62vh;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.weapon-class-head {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--rule);
+  padding: 4px 0 3px;
+  margin-top: 4px;
+}
+.armory-preview {
+  position: sticky;
+  top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--raise);
+  border: 1px solid var(--rule-strong);
+  border-radius: 10px;
+  padding: 12px;
+}
+.weapon-canvas {
+  width: 100%;
+  height: 210px;
+  display: block;
+  border-radius: 8px;
+  background: radial-gradient(ellipse at 50% 40%, rgba(120, 150, 200, 0.12), transparent 70%);
+  touch-action: none;
+}
+.armory-wname {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.armory-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.armory-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.armory-stats b {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.armory-hint {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin: 2px 0 0;
+}
+@media (max-width: 760px) {
+  .armory-layout {
+    grid-template-columns: 1fr;
+  }
+  .armory-preview {
+    position: static;
+  }
+}

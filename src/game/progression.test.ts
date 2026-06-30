@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CAMPAIGN } from './campaign';
+import { WEAPON_DEFS } from './weapons';
 import {
   applyCampaignMission,
   applyMatch,
@@ -69,6 +70,24 @@ describe('アンロック', () => {
       expect(unlock.level).toBeGreaterThanOrEqual(1);
       expect(unlock.level).toBeLessThanOrEqual(MAX_LEVEL);
     }
+  });
+
+  it('全ウェポンアンロックのIDが武器定義表に存在する', () => {
+    const weaponUnlocks = UNLOCKS.filter((u) => u.kind === 'weapon');
+    // 既存6 + 追加21(主18 + 副3)= 27本
+    expect(weaponUnlocks.length).toBe(27);
+    for (const u of weaponUnlocks) {
+      expect(WEAPON_DEFS[u.id], u.id).toBeDefined();
+    }
+    // ウェポンアンロックのIDは重複しない
+    const ids = weaponUnlocks.map((u) => u.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('レベル24までに最強ボルト(シラユキ)が解放される', () => {
+    const shirayuki = UNLOCKS.find((u) => u.id === 'shirayuki-sniper');
+    expect(shirayuki).toBeDefined();
+    expect(shirayuki!.level).toBeLessThanOrEqual(24);
   });
 });
 

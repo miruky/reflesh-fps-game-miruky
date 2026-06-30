@@ -124,6 +124,8 @@ export const LONGSHOT: Record<WeaponClass, number> = {
   pistol: 30,
   sniper: 0,
   shotgun: Infinity,
+  // 精密射手は遠距離が本領。ARより遠くに閾値を置き「遠射」を特別化
+  marksman: 48,
 };
 
 // バッジ表示しない(killfeed のアイコンのみに降格する)メダル。HUDが参照

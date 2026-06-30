@@ -136,20 +136,43 @@ export interface UnlockDef {
 }
 
 export const UNLOCKS: UnlockDef[] = [
+  // 既存クラス各1本(L1-6)を温存
   { kind: 'weapon', id: 'kaede-ar', name: 'カエデAR', level: 1 },
   { kind: 'weapon', id: 'tsubaki-smg', name: 'ツバキSMG', level: 2 },
   { kind: 'attachment', id: 'reflex', name: 'リフレックスサイト', level: 2 },
   { kind: 'weapon', id: 'hiiragi-sg', name: 'ヒイラギSG', level: 3 },
   { kind: 'attachment', id: 'vertical', name: 'バーティカルグリップ', level: 3 },
   { kind: 'weapon', id: 'yamasemi-dmr', name: 'DSR', level: 4 },
+  { kind: 'weapon', id: 'kawasemi-pistol', name: 'カワセミ', level: 4 },
   { kind: 'attachment', id: 'extended', name: '拡張マガジン', level: 4 },
   { kind: 'weapon', id: 'miyama-br', name: 'ミヤマBR', level: 5 },
   { kind: 'attachment', id: 'suppressor', name: 'サプレッサー', level: 5 },
   { kind: 'weapon', id: 'kumagera-lmg', name: 'クマゲラLMG', level: 6 },
   { kind: 'attachment', id: 'angled', name: 'アングルドグリップ', level: 6 },
+  // 追加18プライマリを L7-L24 へ1本/レベルで配置
+  { kind: 'weapon', id: 'kasasagi-ar', name: 'カササギAR', level: 7 },
   { kind: 'attachment', id: 'compensator', name: 'コンペンセイター', level: 7 },
+  { kind: 'weapon', id: 'ginyanma-ar', name: 'ギンヤンマAR', level: 8 },
   { kind: 'attachment', id: 'telescopic', name: 'テレスコピックサイト', level: 8 },
+  { kind: 'weapon', id: 'hayabusa-smg', name: 'ハヤブサSMG', level: 9 },
   { kind: 'attachment', id: 'quick', name: 'クイックマガジン', level: 9 },
+  { kind: 'weapon', id: 'akatsuki-ar', name: 'アカツキAR', level: 10 },
+  { kind: 'weapon', id: 'taka-revolver', name: 'タカ', level: 10 },
+  { kind: 'weapon', id: 'sasameki-smg', name: 'ササメキSMG', level: 11 },
+  { kind: 'weapon', id: 'kagerou-br', name: 'カゲロウBR', level: 12 },
+  { kind: 'weapon', id: 'shinonome-ar', name: 'シノノメAR', level: 13 },
+  { kind: 'weapon', id: 'mozu-smg', name: 'モズSMG', level: 14 },
+  { kind: 'weapon', id: 'kogarashi', name: 'コガラシ', level: 14 },
+  { kind: 'weapon', id: 'enaga-pdw', name: 'エナガPDW', level: 15 },
+  { kind: 'weapon', id: 'tobikuma-ar', name: 'トビクモAR', level: 16 },
+  { kind: 'weapon', id: 'shirasagi-mk', name: 'シラサギMK', level: 17 },
+  { kind: 'weapon', id: 'fukurou-sg', name: 'フクロウSG', level: 18 },
+  { kind: 'weapon', id: 'tsuchigumo-lmg', name: 'ツチグモLMG', level: 19 },
+  { kind: 'weapon', id: 'hibari-mk', name: 'ヒバリMK', level: 20 },
+  { kind: 'weapon', id: 'raijin-sg', name: 'ライジンSG', level: 21 },
+  { kind: 'weapon', id: 'raitei-lmg', name: 'ライテイLMG', level: 22 },
+  { kind: 'weapon', id: 'raicho-sniper', name: 'ライチョウ', level: 23 },
+  { kind: 'weapon', id: 'shirayuki-sniper', name: 'シラユキ', level: 24 },
 ];
 
 export function unlockLevelOf(kind: 'weapon' | 'attachment', id: string): number {

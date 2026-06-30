@@ -156,6 +156,7 @@ function startMatch(selection: MenuSelection): void {
     difficulty: selection.difficulty,
     durationS: settings.matchLengthS,
     scoreAttack: selection.mode === 'score',
+    secondaryId: selection.secondaryId,
   });
 }
 

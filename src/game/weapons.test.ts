@@ -1,6 +1,36 @@
 import { describe, expect, it } from 'vitest';
 import { BODY, HEAD, LIMB, partMultiplier } from './ballistics';
-import { PRIMARY_IDS, Weapon, WEAPON_DEFS } from './weapons';
+import {
+  computeWeaponBars,
+  PRIMARY_IDS,
+  SECONDARY_IDS,
+  Weapon,
+  WEAPON_DEFS,
+  type SoundProfile,
+  type WeaponClass,
+} from './weapons';
+
+// 不変条件で参照するクラス/音プロファイルの全集合(型定義と同期)
+const WEAPON_CLASSES: WeaponClass[] = [
+  'ar',
+  'smg',
+  'sniper',
+  'shotgun',
+  'br',
+  'lmg',
+  'pistol',
+  'marksman',
+];
+const SOUND_PROFILES: SoundProfile[] = [
+  'ar',
+  'smg',
+  'dmr',
+  'shotgun',
+  'lmg',
+  'pistol',
+  'br',
+  'marksman',
+];
 
 const DEG = Math.PI / 180;
 const CTX = { moveFactor: 0, airborne: false, crouched: false };
@@ -141,14 +171,15 @@ describe('武器定義の整合性', () => {
     }
   });
 
-  it('ショットガンだけが複数ペレットを持つ', () => {
+  it('複数ペレットはショットガンクラスだけが持つ', () => {
     for (const def of Object.values(WEAPON_DEFS)) {
-      if (def.id === 'hiiragi-sg') {
-        expect(def.pellets).toBeGreaterThan(1);
-        expect(def.pelletSpreadDeg).toBeGreaterThan(0);
+      if (def.class === 'shotgun') {
+        expect(def.pellets).toBeGreaterThanOrEqual(1);
       } else {
         expect(def.pellets).toBe(1);
       }
+      // ペレットが複数なら固有拡散が必ず正
+      if (def.pellets >= 2) expect(def.pelletSpreadDeg).toBeGreaterThan(0);
     }
   });
 
@@ -159,7 +190,7 @@ describe('武器定義の整合性', () => {
   });
 
   it('全武器が音プロファイルと拡散抑制/空中拡散を持つ', () => {
-    const profiles = ['ar', 'smg', 'dmr', 'shotgun', 'lmg', 'pistol', 'br'];
+    const profiles = ['ar', 'smg', 'dmr', 'shotgun', 'lmg', 'pistol', 'br', 'marksman'];
     for (const def of Object.values(WEAPON_DEFS)) {
       expect(profiles).toContain(def.soundProfile);
       expect(def.adsMoveSuppression).toBeGreaterThanOrEqual(0);
@@ -168,13 +199,18 @@ describe('武器定義の整合性', () => {
     }
   });
 
-  it('スコープ/エイムアシストはヤマセミDMRだけが持つ', () => {
+  it('スコープ/エイムアシストはスナイパークラスだけが許される', () => {
+    // 既存スナイパーは引き続き両方を持つ
     expect(WEAPON_DEFS['yamasemi-dmr']!.scope).toBe(true);
     expect(WEAPON_DEFS['yamasemi-dmr']!.aimAssist).toBe(true);
     for (const def of Object.values(WEAPON_DEFS)) {
-      if (def.id === 'yamasemi-dmr') continue;
-      expect(def.scope).not.toBe(true);
-      expect(def.aimAssist).not.toBe(true);
+      // scope:true / aimAssist:true は sniper クラスのみ(marksman は false)
+      if (def.scope === true) expect(def.class).toBe('sniper');
+      if (def.aimAssist === true) expect(def.class).toBe('sniper');
+      if (def.class !== 'sniper') {
+        expect(def.scope).not.toBe(true);
+        expect(def.aimAssist).not.toBe(true);
+      }
     }
   });
 
@@ -191,6 +227,91 @@ describe('武器定義の整合性', () => {
     expect(def.name).toBe('DSR');
     expect(def.rpm).toBeLessThanOrEqual(90); // ボルトアクション級の重い連射間隔
     expect(60000 / def.rpm).toBeGreaterThanOrEqual(600); // 1発あたり>=600ms
+  });
+});
+
+describe('拡張ロスターの不変条件', () => {
+  it('レコードのキーと def.id が一致する', () => {
+    for (const [id, def] of Object.entries(WEAPON_DEFS)) {
+      expect(def.id).toBe(id);
+    }
+  });
+
+  it('プライマリ24本・セカンダリ4本である', () => {
+    expect(PRIMARY_IDS.length).toBe(24);
+    expect(SECONDARY_IDS.length).toBe(4);
+    // ID重複なし
+    expect(new Set(PRIMARY_IDS).size).toBe(PRIMARY_IDS.length);
+    expect(new Set(SECONDARY_IDS).size).toBe(SECONDARY_IDS.length);
+  });
+
+  it('PRIMARY/SECONDARYの全IDが定義表に存在しスロットが一致する', () => {
+    for (const id of PRIMARY_IDS) {
+      const def = WEAPON_DEFS[id];
+      expect(def, id).toBeDefined();
+      expect(def!.slot).toBe('primary');
+      expect(def!.id).toBe(id);
+    }
+    for (const id of SECONDARY_IDS) {
+      const def = WEAPON_DEFS[id];
+      expect(def, id).toBeDefined();
+      expect(def!.slot).toBe('secondary');
+      expect(def!.id).toBe(id);
+    }
+  });
+
+  it('全プライマリ定義が PRIMARY_IDS に、全セカンダリが SECONDARY_IDS に含まれる', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      if (def.slot === 'primary') expect(PRIMARY_IDS).toContain(def.id);
+      else expect(SECONDARY_IDS).toContain(def.id);
+    }
+  });
+
+  it('class/soundProfile は型の全集合に含まれる', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      expect(WEAPON_CLASSES, def.id).toContain(def.class);
+      expect(SOUND_PROFILES, def.id).toContain(def.soundProfile);
+    }
+  });
+
+  it('バースト武器は burstCount>=2、それ以外は 1', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      if (def.mode === 'burst') expect(def.burstCount, def.id).toBeGreaterThanOrEqual(2);
+      else expect(def.burstCount, def.id).toBe(1);
+    }
+  });
+
+  it('adsMoveSuppression は 0..1、falloff は start<end', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      expect(def.adsMoveSuppression, def.id).toBeGreaterThanOrEqual(0);
+      expect(def.adsMoveSuppression, def.id).toBeLessThanOrEqual(1);
+      expect(def.falloff.start, def.id).toBeLessThan(def.falloff.end);
+    }
+  });
+
+  it('computeWeaponBars は全6軸が 0..10 に収まる', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      const bars = computeWeaponBars(def);
+      for (const v of Object.values(bars)) {
+        expect(v, def.id).toBeGreaterThanOrEqual(0);
+        expect(v, def.id).toBeLessThanOrEqual(10);
+      }
+    }
+  });
+
+  it('スナイパー以外は素ダメージ<100(ヘッドショット無しの胴即死を回避)', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      if (def.class === 'sniper') continue;
+      expect(def.damage, def.id).toBeLessThan(100);
+    }
+  });
+
+  it('スナイパー/ショットガン以外は1射の合計ダメージ<100(胴即死禁止)', () => {
+    // ショットガンは至近の全弾命中で即死=設計どおり。それ以外のクラスは pellets×damage でも<100
+    for (const def of Object.values(WEAPON_DEFS)) {
+      if (def.class === 'sniper' || def.class === 'shotgun') continue;
+      expect(def.damage * def.pellets, def.id).toBeLessThan(100);
+    }
   });
 });
 

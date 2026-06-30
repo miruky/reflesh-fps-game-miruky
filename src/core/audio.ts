@@ -297,11 +297,21 @@ export class SoundKit {
         this.noiseBurst({ durationS: 0.08, filterHz: 2500, filterType: 'lowpass', gain: 0.46 });
         this.tone({ freq: 150, endFreq: 64, durationS: 0.07, type: 'triangle', gain: 0.4 });
         return;
+      case 'marksman':
+        // 精密射手: ARより重く鋭い単発クラック(DMRほどの余韻は持たない)
+        this.noiseBurst({ durationS: 0.04, filterHz: 3000, filterType: 'bandpass', gain: 0.42 });
+        this.noiseBurst({ durationS: 0.1, filterHz: 1500, filterType: 'lowpass', gain: 0.55 });
+        this.tone({ freq: 120, endFreq: 52, durationS: 0.1, type: 'triangle', gain: 0.5 });
+        return;
       case 'ar':
-      default:
         this.noiseBurst({ durationS: 0.09, filterHz: 2400, filterType: 'lowpass', gain: 0.5 });
         this.tone({ freq: 130, endFreq: 55, durationS: 0.08, type: 'triangle', gain: 0.45 });
         return;
+      default: {
+        // 新しい SoundProfile を足したら必ず case を増やす(tscが網羅漏れを検出)
+        const _exhaustive: never = profile;
+        return _exhaustive;
+      }
     }
   }
 

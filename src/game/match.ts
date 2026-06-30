@@ -85,7 +85,7 @@ import { Player } from './player';
 import type { MatchSummary } from './progression';
 import { generateStage, type StageDef } from './stage';
 import { teamPalette, type TeamPalette } from './teamcolors';
-import { Weapon, WEAPON_DEFS, type WeaponClass } from './weapons';
+import { Weapon, WEAPON_DEFS, SECONDARY_IDS, type WeaponClass } from './weapons';
 
 // Sky.js のシェーダ uniform。noUncheckedIndexedAccess を避けるための型付きビュー
 interface SkyUniforms {
@@ -446,7 +446,12 @@ export class Match {
 
     const primaryBase = WEAPON_DEFS[config.primaryId] ?? WEAPON_DEFS['kaede-ar']!;
     const primaryDef = applyAttachments(primaryBase, config.attachments);
-    this.weapons = [new Weapon(primaryDef), new Weapon(WEAPON_DEFS['suzume']!)];
+    // 副武器: 指定があり SECONDARY_IDS に含まれていればそれを、無ければ拳銃スズメ
+    const secDef =
+      (config.secondaryId && SECONDARY_IDS.includes(config.secondaryId)
+        ? WEAPON_DEFS[config.secondaryId]
+        : undefined) ?? WEAPON_DEFS['suzume']!;
+    this.weapons = [new Weapon(primaryDef), new Weapon(secDef)];
 
     this.grenadeKind = config.grenade;
     this.grenadeCounts = {

@@ -23,6 +23,7 @@ import {
   type Settings,
 } from '../core/settings';
 import {
+  applyAttachments,
   ATTACHMENT_DEFS,
   ATTACHMENT_SLOTS,
   attachmentsForSlot,
@@ -47,7 +48,15 @@ import {
 import { generateStage } from '../game/stage';
 import { STAGES } from '../game/stages';
 import { TEAM_PALETTES } from '../game/teamcolors';
-import { PRIMARY_IDS, WEAPON_DEFS } from '../game/weapons';
+import { WeaponPreview } from '../render/weapon-preview';
+import {
+  computeWeaponBars,
+  PRIMARY_IDS,
+  SECONDARY_IDS,
+  WEAPON_DEFS,
+  type WeaponClass,
+  type WeaponDef,
+} from '../game/weapons';
 
 export interface MenuSelection {
   stageId: string;
@@ -56,6 +65,7 @@ export interface MenuSelection {
   attachments: string[];
   grenade: GrenadeKind;
   difficulty: Difficulty;
+  secondaryId: string;
 }
 
 export interface MenuCallbacks {
@@ -67,20 +77,37 @@ export interface MenuCallbacks {
   onSettingsChanged: () => void;
 }
 
-interface WeaponBars {
-  power: number;
-  rate: number;
-  control: number;
-}
+// 6軸ステータスバーの表示順とラベル(値は computeWeaponBars で WeaponDef から導出)
+const BAR_AXES: ReadonlyArray<[keyof ReturnType<typeof computeWeaponBars>, string]> = [
+  ['power', '威力'],
+  ['rate', '連射'],
+  ['control', '制御'],
+  ['range', '射程'],
+  ['mobility', '機動'],
+  ['handling', '取回'],
+];
 
-const WEAPON_BARS: Record<string, WeaponBars> = {
-  'kaede-ar': { power: 7, rate: 7, control: 6 },
-  'tsubaki-smg': { power: 5, rate: 9, control: 5 },
-  'yamasemi-dmr': { power: 9, rate: 3, control: 8 },
-  'hiiragi-sg': { power: 9, rate: 2, control: 4 },
-  'miyama-br': { power: 7, rate: 6, control: 7 },
-  'kumagera-lmg': { power: 6, rate: 6, control: 3 },
+// クラスの表示名(ARMORYのグループ見出し)
+const CLASS_LABELS: Record<WeaponClass, string> = {
+  ar: 'アサルトライフル',
+  smg: 'サブマシンガン',
+  marksman: 'マークスマン',
+  sniper: 'スナイパー',
+  shotgun: 'ショットガン',
+  br: 'バトルライフル',
+  lmg: 'ライトマシンガン',
+  pistol: 'ハンドガン',
 };
+const CLASS_ORDER: readonly WeaponClass[] = [
+  'ar',
+  'smg',
+  'br',
+  'marksman',
+  'sniper',
+  'shotgun',
+  'lmg',
+  'pistol',
+];
 
 const GRENADE_DESCS: Record<GrenadeKind, string> = {
   frag: '長押しでクッキング。爆発範囲ダメージ',
@@ -239,7 +266,9 @@ export class Menu {
     attachments: [],
     grenade: 'frag',
     difficulty: 'normal',
+    secondaryId: 'suzume',
   };
+  private weaponPreview: WeaponPreview | null = null; // ARMORYの3Dプレビュー(遅延生成)
   private readonly attachmentBySlot: Record<AttachmentSlot, string | null> = {
     sight: null,
     muzzle: null,
@@ -275,8 +304,11 @@ export class Menu {
       if (saved.stageId && STAGES.some((s) => s.id === saved.stageId)) {
         this.selection.stageId = saved.stageId;
       }
-      if (saved.primaryId && (PRIMARY_IDS as readonly string[]).includes(saved.primaryId)) {
+      if (saved.primaryId && PRIMARY_IDS.includes(saved.primaryId)) {
         this.selection.primaryId = saved.primaryId;
+      }
+      if (saved.secondaryId && SECONDARY_IDS.includes(saved.secondaryId)) {
+        this.selection.secondaryId = saved.secondaryId;
       }
       if (saved.mode && MODE_IDS.includes(saved.mode)) {
         this.selection.mode = saved.mode;
@@ -311,6 +343,7 @@ export class Menu {
     // メニューを隠す瞬間に必ずリバインド捕捉を畳む。捕捉中のまま試合へ復帰すると
     // 最初のパッド入力がリバインドに食われ、設定が静かに書き換わるのを防ぐ
     this.endCapture();
+    this.teardownPreview();
     this.root.hidden = true;
   }
 
@@ -422,6 +455,7 @@ export class Menu {
   }
 
   showMain(): void {
+    this.teardownPreview();
     this.root.hidden = false;
     this.root.innerHTML = `
       <div class="menu-screen menu-main">
@@ -498,19 +532,34 @@ export class Menu {
                 </div>
               </section>
               <section class="mfd-page" data-page="armory" role="tabpanel" id="mfd-panel-armory" aria-labelledby="mfd-tab-armory" hidden>
-                <div class="mfd-cols">
-                  <section class="menu-section">
-                    <h2>メイン武器</h2>
-                    <div class="weapon-list" data-id="weapons"></div>
-                  </section>
-                  <section class="menu-section">
-                    <h2>アタッチメント</h2>
-                    <div class="attach-panel" data-id="attachments"></div>
-                  </section>
-                  <section class="menu-section">
-                    <h2>投擲物</h2>
-                    <div class="grenade-list" data-id="grenades"></div>
-                  </section>
+                <div class="armory-layout">
+                  <div class="armory-list">
+                    <section class="menu-section">
+                      <h2>メイン武器</h2>
+                      <div class="weapon-list" data-id="weapons"></div>
+                    </section>
+                    <section class="menu-section">
+                      <h2>副武器</h2>
+                      <div class="weapon-list" data-id="secondaries"></div>
+                    </section>
+                    <section class="menu-section">
+                      <h2>アタッチメント</h2>
+                      <div class="attach-panel" data-id="attachments"></div>
+                    </section>
+                    <section class="menu-section">
+                      <h2>投擲物</h2>
+                      <div class="grenade-list" data-id="grenades"></div>
+                    </section>
+                  </div>
+                  <aside class="armory-preview">
+                    <canvas class="weapon-canvas" data-id="weapon-canvas"></canvas>
+                    <div class="armory-readout">
+                      <div class="armory-wname" data-id="armory-wname"></div>
+                      <div class="armory-bars" data-id="armory-bars"></div>
+                      <div class="armory-stats" data-id="armory-stats"></div>
+                      <p class="armory-hint">ドラッグで回転・武器をクリックで選択</p>
+                    </div>
+                  </aside>
                 </div>
               </section>
               <section class="mfd-page" data-page="intel" role="tabpanel" id="mfd-panel-intel" aria-labelledby="mfd-tab-intel" hidden>
@@ -550,6 +599,7 @@ export class Menu {
     this.renderStages();
     this.renderModes();
     this.renderWeapons();
+    this.renderSecondaries();
     this.renderAttachments();
     this.renderGrenades();
     this.renderDifficulties();
@@ -629,6 +679,7 @@ export class Menu {
   // ミッション・ブリーフィング。出撃で onStartMission を呼ぶ
   showBriefing(mission: MissionDef): void {
     this.endCapture(); // 画面差し替え前にリバインド捕捉を畳む(孤立リスナ防止)
+    this.teardownPreview();
     this.root.hidden = false;
     const modLabels: Record<string, string> = {
       'one-life': '一機限り',
@@ -675,6 +726,7 @@ export class Menu {
   // ミッション結果。星評価・章解放・次ミッション導線を出す
   showMissionResult(result: MatchResult, progress: CampaignProgress): void {
     this.endCapture();
+    this.teardownPreview();
     this.root.hidden = false;
     const mission = missionById(progress.missionId);
     const won = result.won;
@@ -764,9 +816,42 @@ export class Menu {
       t.setAttribute('aria-selected', String(on));
       t.tabIndex = on ? 0 : -1;
     });
+    // ARMORY表示時のみ3Dプレビューを起動(遅延生成)。他ページでは止める
+    if (page === 'armory') this.mountWeaponPreview();
+    else this.weaponPreview?.suspend();
+  }
+
+  // ARMORYの3D武器プレビューを必要時に生成・再開する
+  private mountWeaponPreview(): void {
+    const canvas = this.root.querySelector<HTMLCanvasElement>('[data-id="weapon-canvas"]');
+    if (!canvas) return;
+    if (!this.weaponPreview) {
+      try {
+        this.weaponPreview = new WeaponPreview(canvas);
+        this.weaponPreview.setReduceMotion(this.prefersReducedMotion);
+      } catch {
+        // WebGLが使えない環境ではプレビュー無し(リスト/ステータスは従来通り出る)
+        this.weaponPreview = null;
+        return;
+      }
+    }
+    this.weaponPreview.start();
+    this.weaponPreview.resume();
+    this.weaponPreview.resize();
+    // 3Dとステータス読み出しを同じ武器へ同期(setWeaponだけだと読み出しが取り残される)
+    this.previewWeapon(this.currentPrimaryDef());
+  }
+
+  // root.innerHTML を差し替える前に必ず呼ぶ。プレビューのGLコンテキストを確実に破棄する
+  private teardownPreview(): void {
+    if (this.weaponPreview) {
+      this.weaponPreview.dispose();
+      this.weaponPreview = null;
+    }
   }
 
   showPause(): void {
+    this.teardownPreview();
     this.root.hidden = false;
     this.root.innerHTML = `
       <div class="menu-screen menu-pause">
@@ -789,6 +874,7 @@ export class Menu {
 
   showResult(result: MatchResult, progress: MatchProgress): void {
     this.endCapture();
+    this.teardownPreview();
     this.root.hidden = false;
     const mvp = result.rows[0];
     const rowsHtml = result.rows
@@ -1016,44 +1102,93 @@ export class Menu {
 
   private renderWeapons(): void {
     const list = this.query('weapons');
+    list.innerHTML = '';
     const level = this.playerLevel();
     // 保存されていた選択がロック中(記録の読み込み直後など)なら初期武器へ戻す
     if (!isUnlocked('weapon', this.selection.primaryId, level)) {
       this.selection.primaryId = 'kaede-ar';
     }
-    for (const id of PRIMARY_IDS) {
-      const def = WEAPON_DEFS[id];
-      if (!def) continue;
-      const bars = WEAPON_BARS[id] ?? { power: 5, rate: 5, control: 5 };
-      const unlocked = isUnlocked('weapon', id, level);
-      const card = document.createElement('button');
-      card.className = unlocked ? 'weapon-card' : 'weapon-card locked';
-      card.dataset.weapon = id;
-      const mode = def.mode === 'auto' ? 'フルオート' : def.mode === 'burst' ? 'バースト' : '単発';
-      const lockNote = unlocked
-        ? ''
-        : `<span class="locked-note">Lv ${unlockLevelOf('weapon', id)} で解放</span>`;
-      card.innerHTML = `
-        <span class="weapon-name">${def.name}</span>
-        <span class="weapon-mode">${mode} / 装弾数 ${def.magazineSize}</span>
-        ${this.bar('火力', bars.power)}
-        ${this.bar('連射', bars.rate)}
-        ${this.bar('制御', bars.control)}
-        ${lockNote}
-      `;
-      if (unlocked) {
-        card.addEventListener('click', () => {
-          this.selection.primaryId = id;
-          this.markSelected(list, 'weapon', id);
-          this.renderBriefing();
-        });
-      } else {
-        card.disabled = true;
-      }
-      list.appendChild(card);
+    // クラス別に見出し付きでグループ化(24武器を読みやすく)
+    for (const cls of CLASS_ORDER) {
+      const ids = PRIMARY_IDS.filter((id) => WEAPON_DEFS[id]?.class === cls);
+      if (ids.length === 0) continue;
+      const head = document.createElement('div');
+      head.className = 'weapon-class-head';
+      head.textContent = CLASS_LABELS[cls];
+      list.appendChild(head);
+      for (const id of ids) list.appendChild(this.weaponCard(id, 'primary'));
     }
-    this.stagger(list);
     this.markSelected(list, 'weapon', this.selection.primaryId);
+    this.previewWeapon(this.currentPrimaryDef());
+  }
+
+  private renderSecondaries(): void {
+    const list = this.query('secondaries');
+    list.innerHTML = '';
+    const level = this.playerLevel();
+    if (!isUnlocked('weapon', this.selection.secondaryId, level)) this.selection.secondaryId = 'suzume';
+    for (const id of SECONDARY_IDS) list.appendChild(this.weaponCard(id, 'secondary'));
+    this.markSelected(list, 'weapon2', this.selection.secondaryId);
+  }
+
+  // 主/副共通の武器カード。クリックで選択し3Dプレビュー+ステータスを更新する
+  private weaponCard(id: string, slot: 'primary' | 'secondary'): HTMLButtonElement {
+    const def = WEAPON_DEFS[id] ?? WEAPON_DEFS['kaede-ar']!;
+    const level = this.playerLevel();
+    const unlocked = isUnlocked('weapon', id, level);
+    const card = document.createElement('button');
+    card.className = unlocked ? 'weapon-card' : 'weapon-card locked';
+    const key = slot === 'primary' ? 'weapon' : 'weapon2';
+    card.dataset[key] = id;
+    const mode =
+      def.mode === 'auto' ? 'フルオート' : def.mode === 'burst' ? `バースト${def.burstCount}` : '単発';
+    const lockNote = unlocked
+      ? ''
+      : `<span class="locked-note">Lv ${unlockLevelOf('weapon', id)} で解放</span>`;
+    card.innerHTML = `<span class="weapon-name">${def.name}</span><span class="weapon-mode">${mode} / 装弾 ${def.magazineSize}</span>${lockNote}`;
+    if (!unlocked) {
+      card.disabled = true;
+      return card;
+    }
+    card.addEventListener('click', () => {
+      if (slot === 'primary') {
+        this.selection.primaryId = id;
+        this.markSelected(this.query('weapons'), 'weapon', id);
+        this.previewWeapon(this.currentPrimaryDef());
+        this.renderBriefing();
+      } else {
+        this.selection.secondaryId = id;
+        this.markSelected(this.query('secondaries'), 'weapon2', id);
+        this.previewWeapon(def);
+      }
+    });
+    return card;
+  }
+
+  // 選択中の主武器(アタッチメント適用済み)
+  private currentPrimaryDef(): WeaponDef {
+    const base = WEAPON_DEFS[this.selection.primaryId] ?? WEAPON_DEFS['kaede-ar']!;
+    return applyAttachments(base, this.selection.attachments);
+  }
+
+  // 3Dプレビューとステータス読み出しを更新する(プレビュー未生成なら読み出しのみ)
+  private previewWeapon(def: WeaponDef): void {
+    this.weaponPreview?.setWeapon(def);
+    this.renderArmoryReadout(def);
+  }
+
+  private renderArmoryReadout(def: WeaponDef): void {
+    const name = this.root.querySelector<HTMLElement>('[data-id="armory-wname"]');
+    const barsEl = this.root.querySelector<HTMLElement>('[data-id="armory-bars"]');
+    const statsEl = this.root.querySelector<HTMLElement>('[data-id="armory-stats"]');
+    if (!name || !barsEl || !statsEl) return;
+    name.textContent = def.name;
+    const bars = computeWeaponBars(def);
+    barsEl.innerHTML = BAR_AXES.map(([k, label]) => this.bar(label, bars[k])).join('');
+    const dps = def.damage * def.pellets;
+    statsEl.innerHTML =
+      `<span>ダメージ <b>${dps}</b></span><span>RPM <b>${def.rpm}</b></span>` +
+      `<span>装弾 <b>${def.magazineSize}</b></span><span>射程 <b>${Math.round(def.falloff.end)}</b>m</span>`;
   }
 
   private bar(label: string, value: number): string {
@@ -1196,6 +1331,8 @@ export class Menu {
             node.classList.toggle('selected', on);
             node.setAttribute('aria-pressed', String(on));
           });
+          // アタッチメント変更を3Dプレビュー/ステータスへ即反映
+          this.previewWeapon(this.currentPrimaryDef());
           this.renderBriefing();
         });
         const active = (this.attachmentBySlot[slot] ?? 'none') === (choice.id ?? 'none');
