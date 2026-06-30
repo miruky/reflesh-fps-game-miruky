@@ -101,7 +101,8 @@ const LOOK_BASE = 0.0022;
 // ゲームパッドのヒップファイア時アシストゲート(マウスはADS時のみ、パッドは常時BO3準拠)
 const HIP_GATE = 0.5;
 // -1..1へクランプ(移動入力のORブレンド用)
-const clampUnit = (v: number): number => (v < -1 ? -1 : v > 1 ? 1 : v);
+const clampUnit = (v: number): number =>
+  !Number.isFinite(v) ? 0 : v < -1 ? -1 : v > 1 ? 1 : v;
 const PITCH_LIMIT = (89 * Math.PI) / 180;
 const LEAN_ROLL = 0.2;
 // ウォールラン時の視点ロール量(壁側へ傾ける)

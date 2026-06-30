@@ -237,6 +237,9 @@ const loop = new GameLoop(
       if (mode === 'playing') input.exitLock();
       else if (mode === 'paused') input.requestLock(renderer.domElement);
     }
+    // メニュー(トップページ含む)をコントローラだけで操作する
+    const nav = input.consumeUiNav();
+    if (mode !== 'playing') menu.handleGamepad(nav);
     if (match) {
       match.frame(dt, mode === 'playing');
       // 動的BGM: プレイ中だけ先読みスケジュール。離脱/ポーズで拍をリセット

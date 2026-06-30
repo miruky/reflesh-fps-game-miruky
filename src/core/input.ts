@@ -62,6 +62,29 @@ interface HapticActuatorLike {
   playEffect?: (type: string, params: Record<string, number>) => Promise<unknown>;
 }
 
+// メニュー(トップページ含む)をコントローラだけで操作するためのUIナビ信号(エッジ/リピート)
+export interface UiNav {
+  up: boolean;
+  down: boolean;
+  left: boolean;
+  right: boolean;
+  confirm: boolean; // ×
+  back: boolean; // ○
+  tabPrev: boolean; // L1
+  tabNext: boolean; // R1
+}
+
+const NO_NAV: UiNav = {
+  up: false,
+  down: false,
+  left: false,
+  right: false,
+  confirm: false,
+  back: false,
+  tabPrev: false,
+  tabNext: false,
+};
+
 export class Input {
   mouseDX = 0;
   mouseDY = 0;
@@ -96,6 +119,14 @@ export class Input {
   private gpPausePressed = false;
   private vibrationEnabled = true; // 設定で切替。false なら vibrate() は無音
   private rebindCb: ((b: GamepadBinding) => void) | null = null;
+
+  // ── UIナビ(メニューのコントローラ操作) ──
+  private readonly navHeld: Record<string, number> = {};
+  private navConfirmPrev = false;
+  private navBackPrev = false;
+  private navTabLPrev = false;
+  private navTabRPrev = false;
+  private uiNav: UiNav = { ...NO_NAV };
 
   attach(target: HTMLElement): void {
     window.addEventListener('keydown', (e) => {
@@ -273,10 +304,16 @@ export class Input {
 
   private primaryGamepad(): Gamepad | null {
     const pads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
+    // 'standard' マッピングを最優先。ただし一部ブラウザ/接続(Bluetoothや一部のFF/Safari)は
+    // DualShock を 'standard' と報告しないことがあるため、無ければ最初の接続パッドを最善努力で
+    // 採用する。DS4/DualSense はスティック/ボタンの並びが標準と一致するため実用上動作する。
+    let fallback: Gamepad | null = null;
     for (const p of pads) {
-      if (p && p.mapping === 'standard') return p;
+      if (!p) continue;
+      if (p.mapping === 'standard') return p;
+      if (!fallback) fallback = p;
     }
-    return null;
+    return fallback;
   }
 
   private bindingActive(gp: Gamepad, b: GamepadBinding): boolean {
@@ -297,6 +334,7 @@ export class Input {
     this.gpPressed.clear();
     this.gpReleased.clear();
     this.gpAdsPressed = false;
+    this.clearUiNav();
   }
 
   // 毎フレーム1回ポーリングして状態を更新する(GameLoop.preTick から呼ぶ)
@@ -323,19 +361,25 @@ export class Input {
           break;
         }
       }
+      this.clearUiNav();
       this.snapshotButtons(gp);
       return;
     }
 
+    // 軸がNaN/非有限を返すドライバがあり、そのままだと moveInput→velY が汚染されて
+    // 「全く動けない」フリーズになる。必ず有限値へ丸める。
+    const fin = (v: number): number => (Number.isFinite(v) ? v : 0);
+    const lax = fin(gp.axes[AX.LX] ?? 0);
+    const lay = fin(gp.axes[AX.LY] ?? 0);
     // 左スティック → 移動(スケール付きradialデッドゾーン + 応答カーブ)
-    const ld = scaledRadialDeadzone(gp.axes[AX.LX] ?? 0, gp.axes[AX.LY] ?? 0, cfg.deadzone);
-    this.gpMoveX = applyCurve(ld.x, cfg.curve, cfg.exp);
-    this.gpMoveZ = -applyCurve(ld.y, cfg.curve, cfg.exp); // 上=前進=+
+    const ld = scaledRadialDeadzone(lax, lay, cfg.deadzone);
+    this.gpMoveX = fin(applyCurve(ld.x, cfg.curve, cfg.exp));
+    this.gpMoveZ = -fin(applyCurve(ld.y, cfg.curve, cfg.exp)); // 上=前進=+
 
     // 右スティック → 視点(符号/感度/反転/ADS減速は match.frame で適用)
-    const rd = scaledRadialDeadzone(gp.axes[AX.RX] ?? 0, gp.axes[AX.RY] ?? 0, cfg.deadzone);
-    const cx = applyCurve(rd.x, cfg.curve, cfg.exp);
-    const cy = applyCurve(rd.y, cfg.curve, cfg.exp);
+    const rd = scaledRadialDeadzone(fin(gp.axes[AX.RX] ?? 0), fin(gp.axes[AX.RY] ?? 0), cfg.deadzone);
+    const cx = fin(applyCurve(rd.x, cfg.curve, cfg.exp));
+    const cy = fin(applyCurve(rd.y, cfg.curve, cfg.exp));
     this.gpLookMag = Math.hypot(cx, cy);
     this.gpYawBase = cx * cfg.sensX * GP_LOOK_RATE * dt;
     this.gpPitchBase = cy * cfg.sensY * GP_LOOK_RATE * dt;
@@ -364,8 +408,72 @@ export class Input {
     this.gpPrevPause = opt;
     if (opt) anyInput = true;
 
+    this.computeUiNav(gp, dt);
     this.snapshotButtons(gp);
     if (anyInput) this.lastDevice = 'gamepad';
+  }
+
+  // メニュー操作用のナビ信号を計算する(D-pad/左スティック=方向, ×=決定, ○=戻る, L1/R1=タブ)。
+  // 方向は初回押下で即発火し、長押しで一定間隔リピートする。
+  private computeUiNav(gp: Gamepad, dt: number): void {
+    const fin = (v: number): number => (Number.isFinite(v) ? v : 0);
+    const lx = fin(gp.axes[AX.LX] ?? 0);
+    const ly = fin(gp.axes[AX.LY] ?? 0);
+    const dz = 0.55;
+    const up = (gp.buttons[GP.DUP]?.pressed ?? false) || ly < -dz;
+    const down = (gp.buttons[GP.DDOWN]?.pressed ?? false) || ly > dz;
+    const left = (gp.buttons[GP.DLEFT]?.pressed ?? false) || lx < -dz;
+    const right = (gp.buttons[GP.DRIGHT]?.pressed ?? false) || lx > dz;
+    const confirm = gp.buttons[GP.CROSS]?.pressed ?? false;
+    const back = gp.buttons[GP.CIRCLE]?.pressed ?? false;
+    const tabPrev = gp.buttons[GP.L1]?.pressed ?? false;
+    const tabNext = gp.buttons[GP.R1]?.pressed ?? false;
+    this.uiNav = {
+      up: this.navStep('up', up, dt),
+      down: this.navStep('down', down, dt),
+      left: this.navStep('left', left, dt),
+      right: this.navStep('right', right, dt),
+      confirm: confirm && !this.navConfirmPrev,
+      back: back && !this.navBackPrev,
+      tabPrev: tabPrev && !this.navTabLPrev,
+      tabNext: tabNext && !this.navTabRPrev,
+    };
+    this.navConfirmPrev = confirm;
+    this.navBackPrev = back;
+    this.navTabLPrev = tabPrev;
+    this.navTabRPrev = tabNext;
+  }
+
+  // 方向入力のエッジ+オートリピート。初回true→DELAY後にRATE間隔でtrue。
+  private navStep(dir: string, held: boolean, dt: number): boolean {
+    const prev = this.navHeld[dir] ?? 0;
+    if (!held) {
+      this.navHeld[dir] = 0;
+      return false;
+    }
+    const now = prev + dt;
+    this.navHeld[dir] = now;
+    if (prev === 0) return true;
+    const DELAY = 0.42;
+    const RATE = 0.12;
+    if (prev < DELAY) return false;
+    return Math.floor((prev - DELAY) / RATE) !== Math.floor((now - DELAY) / RATE);
+  }
+
+  private clearUiNav(): void {
+    this.uiNav = { ...NO_NAV };
+    for (const k of Object.keys(this.navHeld)) this.navHeld[k] = 0;
+    this.navConfirmPrev = false;
+    this.navBackPrev = false;
+    this.navTabLPrev = false;
+    this.navTabRPrev = false;
+  }
+
+  // メニュー側が毎フレーム読む。読み取りで消費して二重発火を防ぐ。
+  consumeUiNav(): UiNav {
+    const n = this.uiNav;
+    this.uiNav = { ...NO_NAV };
+    return n;
   }
 
   private applyPadAction(action: PadAction, active: boolean, prev: boolean): void {

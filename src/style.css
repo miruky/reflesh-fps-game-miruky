@@ -3896,3 +3896,19 @@ tr.score-ally td {
   transform: scaleX(1);
   background: linear-gradient(90deg, #ff3b2f, #ff8a3d);
 }
+
+/* ── コントローラ用フォーカスリング(メニュー全画面) ── */
+#menu button:focus-visible,
+#menu select:focus-visible,
+#menu input:focus-visible,
+#menu [tabindex='0']:focus-visible,
+#menu button:focus,
+#menu select:focus,
+#menu input:focus {
+  outline: 2px solid var(--ember);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ember) 28%, transparent);
+}
+:root.reduce-motion #menu :focus {
+  box-shadow: none;
+}

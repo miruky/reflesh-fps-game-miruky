@@ -7,7 +7,7 @@ import {
   type GamepadBindings,
   type PadAction,
 } from '../core/gamepad';
-import type { Input } from '../core/input';
+import type { Input, UiNav } from '../core/input';
 import { exportProfile, importProfile, saveProfile } from '../core/profile';
 import {
   DEFAULT_SETTINGS,
@@ -312,6 +312,102 @@ export class Menu {
     // 最初のパッド入力がリバインドに食われ、設定が静かに書き換わるのを防ぐ
     this.endCapture();
     this.root.hidden = true;
+  }
+
+  // ── コントローラだけでのメニュー操作(トップページ含む全画面) ──
+  // D-pad/左スティック=フォーカス移動, ×=決定, ○=戻る, L1/R1=MFDタブ切替,
+  // セレクト/スライダーに合わせている時は左右で値を増減する。
+  handleGamepad(nav: UiNav): void {
+    if (this.root.hidden || this.capturingAction) return; // リバインド捕捉中は介入しない
+    const list = this.focusables();
+    if (list.length === 0) return;
+
+    const active = document.activeElement as HTMLElement | null;
+    const idx = active ? list.indexOf(active) : -1;
+    // まだ何も選んでいなければ最初の要素を選ぶだけ(初回の方向入力でハイライト)
+    if (idx < 0) {
+      if (nav.up || nav.down || nav.left || nav.right || nav.confirm) {
+        list[0]?.focus();
+        list[0]?.scrollIntoView({ block: 'nearest' });
+      }
+      return;
+    }
+
+    if (nav.tabPrev || nav.tabNext) {
+      this.cycleMfdPage(nav.tabNext ? 1 : -1);
+      return;
+    }
+
+    // セレクト/スライダーは左右で値を変える(上下はフォーカス移動)
+    const cur = list[idx];
+    if (cur instanceof HTMLSelectElement && (nav.left || nav.right)) {
+      const n = cur.options.length;
+      cur.selectedIndex = Math.max(0, Math.min(n - 1, cur.selectedIndex + (nav.right ? 1 : -1)));
+      cur.dispatchEvent(new Event('change'));
+      return;
+    }
+    if (cur instanceof HTMLInputElement && cur.type === 'range' && (nav.left || nav.right)) {
+      const step = Number(cur.step) || 1;
+      const v = Number(cur.value) + (nav.right ? step : -step);
+      cur.value = String(Math.max(Number(cur.min), Math.min(Number(cur.max), v)));
+      cur.dispatchEvent(new Event('input'));
+      return;
+    }
+
+    if (nav.up || (nav.left && !(cur instanceof HTMLSelectElement))) {
+      this.focusAt(list, idx - 1);
+      return;
+    }
+    if (nav.down || (nav.right && !(cur instanceof HTMLSelectElement))) {
+      this.focusAt(list, idx + 1);
+      return;
+    }
+    if (nav.confirm) {
+      const el = list[idx];
+      if (el instanceof HTMLInputElement && el.type === 'checkbox') el.click();
+      else el?.click();
+      return;
+    }
+    if (nav.back) this.gamepadBack();
+  }
+
+  // 現在の画面で見えている操作可能要素(ボタン/セレクト/入力)
+  private focusables(): HTMLElement[] {
+    return Array.from(
+      this.root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), select, input:not([type="hidden"]), [tabindex="0"]',
+      ),
+    ).filter((el) => el.offsetParent !== null);
+  }
+
+  private focusAt(list: HTMLElement[], i: number): void {
+    const n = list.length;
+    const idx = ((i % n) + n) % n;
+    const el = list[idx];
+    if (el) {
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  private cycleMfdPage(dir: number): void {
+    const tabs = ['campaign', 'deploy', 'armory', 'intel', 'system'];
+    const i = tabs.indexOf(this.activePage);
+    if (i < 0) return; // メインMFD以外(ポーズ/結果)ではタブ切替しない
+    const next = tabs[(i + dir + tabs.length) % tabs.length] ?? 'deploy';
+    this.setMfdPage(next);
+    this.focusables()[0]?.focus({ preventScroll: true });
+  }
+
+  // ○ボタン: 画面ごとの「戻る/再開」相当を押す
+  private gamepadBack(): void {
+    for (const id of ['brief-back', 'to-campaign', 'menu', 'quit', 'resume', 'retry-mission']) {
+      const el = this.root.querySelector<HTMLElement>(`[data-id="${id}"]`);
+      if (el && el.offsetParent !== null) {
+        el.click();
+        return;
+      }
+    }
   }
 
   // リバインド捕捉の後始末を一箇所に集約する。Input側のコールバック解除・
