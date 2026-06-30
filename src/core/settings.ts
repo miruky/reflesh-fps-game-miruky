@@ -29,6 +29,10 @@ export interface Settings {
   reticleColor: string;
   // 画面の揺れ(カメラシェイク)の倍率。0で無効、1で既定
   screenShake: number;
+  // 簡易レーダー(ミニマップ)を表示する。視認済みの敵をスイープで点灯する
+  radarEnabled: boolean;
+  // ストリークのアナウンサー音声(SpeechSynthesis)の音量。0で無音
+  announcerVolume: number;
 }
 
 // UIのアクセント色の選択肢。idはstyle.cssの :root[data-accent='…'] と対応し、
@@ -69,7 +73,11 @@ export const SETTING_BOUNDS = {
   aimAssistStrength: { min: 0, max: 1 },
   adsSensMul: { min: 0.3, max: 1.5 },
   screenShake: { min: 0, max: 1 },
+  announcerVolume: { min: 0, max: 1 },
 } as const;
+
+// 簡易レーダーの検知半径(m)。外周=検知限界。match(方位算出)とHUD(描画スケール)で共有
+export const RADAR_RANGE_M = 55;
 
 // 試合時間の選択肢(秒)。最初の値を既定とする
 export const MATCH_LENGTHS: ReadonlyArray<{ value: number; label: string }> = [
@@ -98,6 +106,8 @@ export const DEFAULT_SETTINGS: Settings = {
   reticleStyle: 'cross',
   reticleColor: 'accent',
   screenShake: 1.0,
+  radarEnabled: true,
+  announcerVolume: 0.65,
 };
 
 const KEY = 'hibana.settings.v1';
@@ -182,6 +192,13 @@ export function sanitizeSettings(raw: Partial<Settings>): Settings {
       b.screenShake.min,
       b.screenShake.max,
       DEFAULT_SETTINGS.screenShake,
+    ),
+    radarEnabled: Boolean(merged.radarEnabled),
+    announcerVolume: clamp(
+      merged.announcerVolume,
+      b.announcerVolume.min,
+      b.announcerVolume.max,
+      DEFAULT_SETTINGS.announcerVolume,
     ),
   };
 }

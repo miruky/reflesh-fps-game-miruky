@@ -1,4 +1,4 @@
-import { RETICLE_COLORS } from '../core/settings';
+import { RADAR_RANGE_M, RETICLE_COLORS } from '../core/settings';
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
 import { MOVE_SPEEDS } from '../game/player';
@@ -37,6 +37,7 @@ export class Hud {
   private lastMoveState = '';
   private lastUltActive = false; // オーバードライブ発動の立ち上がり検出用
   private scopeOn = false; // スコープ表示の立ち上がり検出用
+  private wasSteady = false; // 息止め成立の立ち上がり検出用(集中グリント再発火)
 
   constructor(private readonly root: HTMLElement) {
     root.innerHTML = `
@@ -138,6 +139,18 @@ export class Hud {
         </div>
         <div class="hud-grenade"><span>UTILITY</span><strong data-id="gname"></strong><span class="hud-gcount" data-id="gcount"></span></div>
       </div>
+      <div class="hud-radar" data-id="radar" hidden>
+        <div class="radar-sweep"></div>
+        <svg class="radar-svg" viewBox="-50 -50 100 100" aria-hidden="true">
+          <circle class="radar-ring" r="46"></circle>
+          <circle class="radar-ring radar-ring-inner" r="23"></circle>
+          <line class="radar-ax" x1="0" y1="-46" x2="0" y2="46"></line>
+          <line class="radar-ax" x1="-46" y1="0" x2="46" y2="0"></line>
+          <g data-id="radarblips"></g>
+          <path class="radar-self" d="M0,-5 L4,4 L0,1.5 L-4,4 Z"></path>
+        </svg>
+      </div>
+      <div class="hud-score-toast" data-id="scoretoast"></div>
       <div class="hud-dmg-layer" data-id="dmg"></div>
       <div class="hud-incoming" data-id="incoming"></div>
       <div class="hud-vignette" data-id="vignette"></div>
@@ -172,6 +185,7 @@ export class Hud {
     });
     this.buildCompass();
     this.buildScope();
+    this.buildRadar();
     // スコープの暗い周辺マスクが上のスコア/キルフィードを暗く沈めないよう、
     // スコープを最前(=描画最背面)へ移し、他のHUDがマスクの上に描かれるようにする
     const scopeEl = this.el['scope'];
@@ -233,6 +247,9 @@ export class Hud {
     this.lastMoveState = '';
     this.lastUltActive = false;
     this.scopeOn = false;
+    this.wasSteady = false;
+    const toast = this.el['scoretoast'];
+    if (toast) toast.innerHTML = '';
   }
 
   update(
@@ -266,6 +283,8 @@ export class Hud {
     this.pushFeed(snap);
     this.pushHits(snap);
     this.pushDamageNumbers(snap, project);
+    this.pushScoreEvents(snap);
+    this.updateRadar(snap);
     this.pushIncoming(snap);
     this.updateDeath(snap);
     this.updateMovement(snap);
@@ -342,6 +361,7 @@ export class Hud {
     scope.hidden = !on;
     if (!on) {
       this.scopeOn = false;
+      this.wasSteady = false;
       return;
     }
     scope.style.opacity = String(t);
@@ -368,6 +388,11 @@ export class Hud {
       if (!snap.reduceMotion) this.restartAnimation('scopeglint', 'show');
       this.scopeOn = true;
     }
+    // 息止め成立の瞬間にもグリントを再発火し「集中した」手応えを返す
+    if (snap.scope.steady && !this.wasSteady && !snap.reduceMotion) {
+      this.restartAnimation('scopeglint', 'show');
+    }
+    this.wasSteady = snap.scope.steady;
     this.text('scoperange', snap.rangeM > 0 ? String(Math.round(snap.rangeM)) : '--');
     this.text('scopezoom', snap.zoomX.toFixed(1));
   }
@@ -509,6 +534,16 @@ export class Hud {
     marker.classList.remove('hm-hit', 'hm-head', 'hm-kill', 'hm-snipe', 'show');
     void marker.offsetWidth;
     marker.classList.add(strongest, 'show');
+
+    // キル確定時、画面中心から広がる光輪(省モーション時はスキップ)。
+    // スコープ覗き込み中はクロスヘアが opacity:0 になるため、隠れない #hud 直下へ付ける
+    if ((strongest === 'hm-kill' || strongest === 'hm-snipe') && !snap.reduceMotion) {
+      const ring = document.createElement('span');
+      ring.className =
+        strongest === 'hm-snipe' ? 'hud-kill-ring hud-kill-ring--snipe' : 'hud-kill-ring';
+      this.root.appendChild(ring);
+      window.setTimeout(() => ring.remove(), 220);
+    }
   }
 
   private pushDamageNumbers(snap: MatchSnapshot, project: Project): void {
@@ -530,6 +565,62 @@ export class Hud {
       layer.appendChild(node);
       requestAnimationFrame(() => node.classList.add('rise'));
       window.setTimeout(() => node.remove(), 750);
+    }
+  }
+
+  // スコア獲得トースト(+100 キル等)。即時報酬を可視化する。最大3件・1秒で消える
+  private pushScoreEvents(snap: MatchSnapshot): void {
+    const layer = this.el['scoretoast'];
+    if (!layer || snap.scoreEvents.length === 0) return;
+    for (const ev of snap.scoreEvents) {
+      const row = document.createElement('div');
+      row.className = 'score-toast-row';
+      row.innerHTML = `<b>+${ev.xp}</b><span>${ev.label}</span>`;
+      layer.appendChild(row);
+      requestAnimationFrame(() => row.classList.add('show'));
+      window.setTimeout(() => {
+        row.classList.add('out');
+        window.setTimeout(() => row.remove(), 260);
+      }, 900);
+    }
+    while (layer.childElementCount > 3) layer.firstElementChild?.remove();
+  }
+
+  // レーダーのブリップ(敵マーカー)を上限数だけプールしておく。毎フレーム属性更新のみ
+  private buildRadar(): void {
+    const group = this.el['radarblips'];
+    if (!group) return;
+    for (let i = 0; i < 12; i += 1) {
+      const blip = document.createElementNS(SVG_NS, 'circle');
+      blip.setAttribute('class', 'radar-blip');
+      blip.setAttribute('r', '2.6');
+      blip.setAttribute('cx', '0');
+      blip.setAttribute('cy', '0');
+      (blip as unknown as HTMLElement).style.display = 'none';
+      group.appendChild(blip);
+    }
+  }
+
+  // 視認できている敵を相対方位で円形レーダーに描く。透視防止のため可視判定済みのみ来る
+  private updateRadar(snap: MatchSnapshot): void {
+    const radar = this.el['radar'];
+    const group = this.el['radarblips'];
+    if (!radar || !group) return;
+    const on = snap.radarEnabled && snap.alive;
+    radar.hidden = !on;
+    if (!on) return;
+    const blips = group.children;
+    for (let i = 0; i < blips.length; i += 1) {
+      const blip = blips[i] as unknown as { setAttribute: (k: string, v: string) => void; style: CSSStyleDeclaration };
+      const bearing = snap.enemyBearings[i];
+      if (!bearing) {
+        blip.style.display = 'none';
+        continue;
+      }
+      const rr = Math.min(44, (bearing.dist / RADAR_RANGE_M) * 44);
+      blip.setAttribute('cx', (Math.sin(bearing.angle) * rr).toFixed(1));
+      blip.setAttribute('cy', (-Math.cos(bearing.angle) * rr).toFixed(1));
+      blip.style.display = '';
     }
   }
 

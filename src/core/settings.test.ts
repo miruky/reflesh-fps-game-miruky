@@ -116,6 +116,18 @@ describe('sanitizeSettings', () => {
     expect(DEFAULT_SETTINGS.aimAssist).toBe(true);
   });
 
+  it('レーダー有効は論理値へ変換し、既定はON', () => {
+    expect(dirty({ radarEnabled: 0 }).radarEnabled).toBe(false);
+    expect(dirty({ radarEnabled: 'y' }).radarEnabled).toBe(true);
+    expect(DEFAULT_SETTINGS.radarEnabled).toBe(true);
+  });
+
+  it('アナウンサー音量を範囲へ丸め、非数値は既定へ', () => {
+    expect(dirty({ announcerVolume: 5 }).announcerVolume).toBe(SETTING_BOUNDS.announcerVolume.max);
+    expect(dirty({ announcerVolume: -1 }).announcerVolume).toBe(SETTING_BOUNDS.announcerVolume.min);
+    expect(dirty({ announcerVolume: 'x' }).announcerVolume).toBe(DEFAULT_SETTINGS.announcerVolume);
+  });
+
   it('レティクル形状/色は許可リストのみ受け入れ、それ以外は既定へ', () => {
     for (const style of RETICLE_STYLES) {
       expect(dirty({ reticleStyle: style.id }).reticleStyle).toBe(style.id);

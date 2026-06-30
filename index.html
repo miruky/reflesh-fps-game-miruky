@@ -28,6 +28,8 @@
     <meta name="twitter:image" content="https://miruky.github.io/hibana/og.svg" />
   </head>
   <body>
+    <!-- メニュー背景の宇宙(星野)。メニュー表示中のみ描画し、出撃時は停止・非表示にする -->
+    <canvas id="space-bg" aria-hidden="true" hidden></canvas>
     <div id="app"></div>
     <!-- HUDは毎フレーム更新する視覚オーバーレイ。支援技術には読み上げさせない -->
     <div id="hud" hidden aria-hidden="true"></div>

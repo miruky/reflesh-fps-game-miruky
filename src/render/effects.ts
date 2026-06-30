@@ -18,12 +18,14 @@ export class Effects {
   private clouds: Timed<THREE.Group>[] = [];
   private flames: Timed<THREE.Group>[] = [];
   private sparks: Timed<THREE.Group>[] = [];
+  private flares: Timed<THREE.Mesh>[] = [];
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
   private readonly cloudGeometry = new THREE.SphereGeometry(1, 10, 8);
   private readonly blastGeometry = new THREE.SphereGeometry(1, 12, 10);
   private readonly sparkGeometry = new THREE.BoxGeometry(0.05, 0.05, 0.05);
+  private readonly flareGeometry = new THREE.SphereGeometry(0.13, 10, 8);
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -63,6 +65,21 @@ export class Effects {
     puff.position.copy(point);
     this.scene.add(puff);
     this.puffs.push({ obj: puff, life: 0.16, maxLife: 0.16 });
+  }
+
+  // ヘッドショット専用の金色フレア。通常ヒットの赤パフと差別化した「決まった」手応え
+  headshotFlare(point: THREE.Vector3): void {
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xffe8a0,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const flare = new THREE.Mesh(this.flareGeometry, material);
+    flare.position.copy(point);
+    this.scene.add(flare);
+    this.flares.push({ obj: flare, life: 0.22, maxLife: 0.22 });
   }
 
   explosion(point: THREE.Vector3, radius: number): void {
@@ -279,6 +296,10 @@ export class Effects {
         (mesh.material as THREE.MeshBasicMaterial).opacity = ratio;
       }
     });
+    this.flares = this.tick(this.flares, dt, (flare, ratio) => {
+      flare.scale.setScalar(1 + (1 - ratio) * 1.5);
+      (flare.material as THREE.MeshBasicMaterial).opacity = 0.95 * ratio;
+    });
     this.flames = this.tick(this.flames, dt, (group, ratio) => {
       const t = performance.now() / 1000;
       for (const child of group.children) {
@@ -299,7 +320,7 @@ export class Effects {
 
   clear(): void {
     this.hideTrajectory();
-    for (const list of [this.tracers, this.puffs, this.decals, this.blasts]) {
+    for (const list of [this.tracers, this.puffs, this.decals, this.blasts, this.flares]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
@@ -317,6 +338,7 @@ export class Effects {
     this.cloudGeometry.dispose();
     this.blastGeometry.dispose();
     this.sparkGeometry.dispose();
+    this.flareGeometry.dispose();
   }
 
   private tick<T extends THREE.Object3D>(
@@ -346,7 +368,8 @@ export class Effects {
           node.geometry !== this.puffGeometry &&
           node.geometry !== this.cloudGeometry &&
           node.geometry !== this.blastGeometry &&
-          node.geometry !== this.sparkGeometry
+          node.geometry !== this.sparkGeometry &&
+          node.geometry !== this.flareGeometry
         ) {
           node.geometry.dispose();
         }

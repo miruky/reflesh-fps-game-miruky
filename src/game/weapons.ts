@@ -140,16 +140,16 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'yamasemi-dmr': {
     id: 'yamasemi-dmr',
-    name: 'ヤマセミDMR',
+    name: 'DSR',
     slot: 'primary',
     // DSR系の一撃: 胴・頭はOSK、脚だけ生存。falloffは全域でOSKを維持
     damage: 110,
     headshotMultiplier: 1.9, // 頭=209、脚(0.8)=88で非キル
-    rpm: 240,
-    magazineSize: 12,
+    rpm: 75, // BO2 DSR-50のボルト操作リズム(=800msサイクル)。重い一撃感
+    magazineSize: 7, // BO2 DSR-50(拡張)準拠。リザーブ∞+自動リロードなので過酷にならない
     reloadTacticalMs: 1900,
     reloadEmptyMs: 2600,
-    spreadHipDeg: 3.2, // 腰だめは悪いまま(スナイパーらしさ)
+    spreadHipDeg: 3.6, // 腰だめは悪いまま(noscopeは運ゲー=クイックスコープの価値を際立たせる)
     spreadAdsDeg: 0.02, // 覗けばピンポイント
     bloomPerShotDeg: 0.12,
     bloomMaxDeg: 0.6,
@@ -159,10 +159,13 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.32, // 約3.1倍ズーム
-    adsTimeMs: 320,
+    adsTimeMs: 380, // BO2の重い覗き込み(実測400ms級)へ。0.85スナップで約323ms=QSスイートスポット
     switchMs: 550,
-    recoilPattern: risingPattern(4, 0.5, 0.08), // パンチはあるが素早く収束
-    recoilRecoveryPerS: 9,
+    // 実反動は小さく保つ: fireShotは反動加算後のplayer.pitchで弾道を出すため、ここを
+    // 大きくすると初弾がクロスヘアから上振れする。重い一撃の手応えはviewModelキック・
+    // 画面シェイク(0.12)・ボルト音の演出層で出す。
+    recoilPattern: risingPattern(4, 0.5, 0.08),
+    recoilRecoveryPerS: 7, // やや遅い収束で重量感(視覚のキック側に効く)
     range: 300,
     tracerColor: 0x9bd1ff,
     pellets: 1,

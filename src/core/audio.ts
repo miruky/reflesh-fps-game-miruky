@@ -232,6 +232,40 @@ export class SoundKit {
     });
   }
 
+  // 連続キルのアナウンサー音声。音声ファイルを持たずSpeechSynthesisで読み上げる。
+  // 非対応・無音設定時は合成トーンのジングルにフォールバックする。volは0..1の設定値。
+  announceStreak(label: string, vol: number): void {
+    const volume = Math.max(0, Math.min(1, vol));
+    if (volume <= 0) return;
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+    if (synth && typeof SpeechSynthesisUtterance !== 'undefined') {
+      const u = new SpeechSynthesisUtterance(label);
+      u.pitch = 0.75;
+      u.rate = 1.2;
+      // 全体音量を乗算し、マスターミュート/音量設定が効くようにする(両バス外なので明示)
+      u.volume = volume * this.masterVol;
+      synth.cancel();
+      synth.speak(u);
+      return;
+    }
+    this.streakJingle(volume);
+  }
+
+  // アナウンサー音声が使えない時の上昇ジングル(長三度の3音チェーン)
+  private streakJingle(vol: number): void {
+    const freqs = [1000, 1250, 1562];
+    for (let i = 0; i < freqs.length; i += 1) {
+      this.tone({
+        freq: freqs[i]!,
+        durationS: 0.1,
+        type: 'sine',
+        gain: 0.18 * vol,
+        delayS: i * 0.08,
+        bus: this.uiBus ?? undefined,
+      });
+    }
+  }
+
   // スナイパーで仕留めた時の専用キル音(低い余韻 + 高いピン)
   snipeKill(): void {
     this.tone({
@@ -248,6 +282,57 @@ export class SoundKit {
       type: 'square',
       gain: 0.2,
       delayS: 0.04,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // ボルトアクションの2段操作音(発砲直後に呼ぶ)。ラック(後退)→閉鎖(前進)の「ガチャン」
+  bolt(): void {
+    // ラック: ボルトを引く金属のこすれ + 高めのクリック(+200ms)
+    this.noiseBurst({
+      durationS: 0.06,
+      filterHz: 2600,
+      filterType: 'bandpass',
+      gain: 0.16,
+      delayS: 0.2,
+      bus: this.uiBus ?? undefined,
+    });
+    this.tone({
+      freq: 1500,
+      durationS: 0.03,
+      type: 'square',
+      gain: 0.07,
+      delayS: 0.2,
+      bus: this.uiBus ?? undefined,
+    });
+    // 閉鎖: 薬室にかみ合う重いクランク(+500ms)
+    this.noiseBurst({
+      durationS: 0.05,
+      filterHz: 1200,
+      filterType: 'lowpass',
+      gain: 0.2,
+      delayS: 0.5,
+      bus: this.uiBus ?? undefined,
+    });
+    this.tone({
+      freq: 360,
+      endFreq: 180,
+      durationS: 0.05,
+      type: 'triangle',
+      gain: 0.1,
+      delayS: 0.5,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // スコープ中の非キル胴ヒット専用マーカー音(高く澄んだ「キンッ」)
+  scopeBodyHit(): void {
+    this.tone({
+      freq: 2200,
+      endFreq: 2600,
+      durationS: 0.06,
+      type: 'square',
+      gain: 0.16,
       bus: this.uiBus ?? undefined,
     });
   }

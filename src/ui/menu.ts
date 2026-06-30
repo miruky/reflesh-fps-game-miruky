@@ -127,6 +127,7 @@ export class Menu {
     grip: null,
     mag: null,
   };
+  private activePage = 'deploy'; // 現在表示中のMFDページ
 
   constructor(
     private readonly root: HTMLElement,
@@ -191,76 +192,120 @@ export class Menu {
     this.root.hidden = false;
     this.root.innerHTML = `
       <div class="menu-screen menu-main">
-        <header class="menu-header">
-          <span class="menu-logo">${LOGO_SVG}</span>
-          <div>
-            <h1>hibana</h1>
-            <p class="menu-tagline">Browser tactical simulation</p>
+        <div class="console-bezel">
+          <header class="menu-header telemetry-rail">
+            <span class="sys-lamps" aria-hidden="true">
+              <i data-sys="O2"><b></b>O2</i><i data-sys="PWR"><b></b>PWR</i>
+              <i data-sys="NAV"><b></b>NAV</i><i data-sys="LINK"><b></b>LINK</i>
+            </span>
+            <span class="menu-logo">${LOGO_SVG}</span>
+            <div class="wordmark">
+              <h1>hibana</h1>
+              <p class="menu-tagline">Orbital Dropdeck · 軌道降下管制盤</p>
+            </div>
+            <div class="nav-readout" aria-hidden="true">
+              <span>ALT <b>408</b>KM</span><span>VEL <b>7.62</b>KM·S⁻¹</span><span class="nav-eta">DROP WINDOW <b>T-00:43</b></span>
+            </div>
+          </header>
+          <p class="menu-touchnote">この作品はキーボードとマウスで操作します。スマートフォンやタブレットでは遊べません。PCで開いてください。</p>
+          <section class="deployment-briefing" aria-label="出撃構成">
+            <div class="briefing-heading">
+              <span>Deployment briefing</span>
+              <strong>出撃構成</strong>
+            </div>
+            <dl class="briefing-loadout">
+              <div><dt>Stage</dt><dd data-id="brief-stage"></dd></div>
+              <div><dt>Mode</dt><dd data-id="brief-mode"></dd></div>
+              <div><dt>Primary</dt><dd data-id="brief-weapon"></dd></div>
+              <div><dt>Utility</dt><dd data-id="brief-grenade"></dd></div>
+              <div><dt>Threat</dt><dd data-id="brief-difficulty"></dd></div>
+            </dl>
+            <div class="deploy-lever">
+              <span class="lever-beacon" aria-hidden="true"></span>
+              <button class="menu-start" data-id="start">
+                <span>出撃する</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 12h13m-5-5 5 5-5 5M19 6v12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <span class="lever-eta" aria-hidden="true">降下軌道 LOCKED · 1G</span>
+            </div>
+          </section>
+          <div class="console-body">
+            <nav class="mfd-rail" role="tablist" aria-label="管制ページ">
+              <button class="mfd-tab" type="button" role="tab" data-page="deploy" id="mfd-tab-deploy" aria-controls="mfd-panel-deploy"><b>01</b><span>DEPLOY</span><small>降下管制</small></button>
+              <button class="mfd-tab" type="button" role="tab" data-page="armory" id="mfd-tab-armory" aria-controls="mfd-panel-armory"><b>02</b><span>ARMORY</span><small>兵装</small></button>
+              <button class="mfd-tab" type="button" role="tab" data-page="intel" id="mfd-tab-intel" aria-controls="mfd-panel-intel"><b>03</b><span>INTEL</span><small>戦況</small></button>
+              <button class="mfd-tab" type="button" role="tab" data-page="system" id="mfd-tab-system" aria-controls="mfd-panel-system"><b>04</b><span>SYSTEM</span><small>系統</small></button>
+            </nav>
+            <div class="mfd-deck">
+              <section class="mfd-page" data-page="deploy" role="tabpanel" id="mfd-panel-deploy" aria-labelledby="mfd-tab-deploy">
+                <div class="mfd-hero" aria-hidden="true">
+                  <div class="hero-limb"></div>
+                  <div class="hero-readout"><span>ORBIT <b>412</b>KM</span><span>ATMO <b>1.0</b>G</span><span>LZ <b>SECURE</b></span></div>
+                  <div class="hero-grid"></div>
+                </div>
+                <div class="mfd-cols">
+                  <section class="menu-section">
+                    <h2>降下目標</h2>
+                    <div class="stage-grid" data-id="stages"></div>
+                  </section>
+                  <section class="menu-section">
+                    <h2>交戦規定</h2>
+                    <div class="mode-list" data-id="modes"></div>
+                  </section>
+                  <section class="menu-section">
+                    <h2>脅威レベル</h2>
+                    <div class="difficulty-list" data-id="difficulties"></div>
+                  </section>
+                </div>
+              </section>
+              <section class="mfd-page" data-page="armory" role="tabpanel" id="mfd-panel-armory" aria-labelledby="mfd-tab-armory" hidden>
+                <div class="mfd-cols">
+                  <section class="menu-section">
+                    <h2>メイン武器</h2>
+                    <div class="weapon-list" data-id="weapons"></div>
+                  </section>
+                  <section class="menu-section">
+                    <h2>アタッチメント</h2>
+                    <div class="attach-panel" data-id="attachments"></div>
+                  </section>
+                  <section class="menu-section">
+                    <h2>投擲物</h2>
+                    <div class="grenade-list" data-id="grenades"></div>
+                  </section>
+                </div>
+              </section>
+              <section class="mfd-page" data-page="intel" role="tabpanel" id="mfd-panel-intel" aria-labelledby="mfd-tab-intel" hidden>
+                <div class="mfd-cols">
+                  <section class="menu-section">
+                    <h2>戦績</h2>
+                    <div class="menu-profile" data-id="profile"></div>
+                  </section>
+                  <section class="menu-section">
+                    <h2>任務</h2>
+                    <div class="challenge-list" data-id="challenges"></div>
+                  </section>
+                </div>
+              </section>
+              <section class="mfd-page" data-page="system" role="tabpanel" id="mfd-panel-system" aria-labelledby="mfd-tab-system" hidden>
+                <div class="mfd-cols">
+                  <section class="menu-section">
+                    <h2>設定</h2>
+                    <div data-id="settings"></div>
+                  </section>
+                  <section class="menu-section menu-controls">
+                    <h2>操作</h2>
+                    <div class="controls-grid" data-id="controls"></div>
+                  </section>
+                </div>
+              </section>
+            </div>
           </div>
-          <div class="menu-profile" data-id="profile"></div>
-        </header>
-        <p class="menu-touchnote">この作品はキーボードとマウスで操作します。スマートフォンやタブレットでは遊べません。PCで開いてください。</p>
-        <section class="deployment-briefing" aria-label="出撃構成">
-          <div class="briefing-heading">
-            <span>Deployment briefing</span>
-            <strong>出撃構成</strong>
-          </div>
-          <dl class="briefing-loadout">
-            <div><dt>Stage</dt><dd data-id="brief-stage"></dd></div>
-            <div><dt>Mode</dt><dd data-id="brief-mode"></dd></div>
-            <div><dt>Primary</dt><dd data-id="brief-weapon"></dd></div>
-            <div><dt>Utility</dt><dd data-id="brief-grenade"></dd></div>
-            <div><dt>Threat</dt><dd data-id="brief-difficulty"></dd></div>
-          </dl>
-          <button class="menu-start" data-id="start">
-            <span>出撃する</span>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M5 12h13m-5-5 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
-        </section>
-        <div class="menu-columns">
-          <div class="menu-context">
-            <section class="menu-section">
-              <h2>ステージ</h2>
-              <div class="stage-grid" data-id="stages"></div>
-            </section>
-            <section class="menu-section">
-              <h2>任務</h2>
-              <div class="challenge-list" data-id="challenges"></div>
-            </section>
-            <section class="menu-section">
-              <h2>設定</h2>
-              <div data-id="settings"></div>
-            </section>
-          </div>
-          <div class="menu-side">
-            <section class="menu-section">
-              <h2>モード</h2>
-              <div class="mode-list" data-id="modes"></div>
-            </section>
-            <section class="menu-section">
-              <h2>メイン武器</h2>
-              <div class="weapon-list" data-id="weapons"></div>
-            </section>
-            <section class="menu-section">
-              <h2>アタッチメント</h2>
-              <div class="attach-panel" data-id="attachments"></div>
-            </section>
-            <section class="menu-section">
-              <h2>投擲物</h2>
-              <div class="grenade-list" data-id="grenades"></div>
-            </section>
-            <section class="menu-section">
-              <h2>BOTの腕前</h2>
-              <div class="difficulty-list" data-id="difficulties"></div>
-            </section>
-          </div>
+          <footer class="console-status" aria-hidden="true">
+            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span>hibana // tactical sim</span>
+          </footer>
         </div>
-        <footer class="menu-controls">
-          <h2>操作</h2>
-          <div class="controls-grid" data-id="controls"></div>
-        </footer>
       </div>
     `;
     this.renderProfile();
@@ -274,9 +319,52 @@ export class Menu {
     this.renderSettings(this.query('settings'));
     this.renderControls();
     this.renderBriefing();
+    this.wireMfd();
     this.query('start').addEventListener('click', () => {
       this.saveLoadout();
       this.callbacks.onStart(this.selection);
+    });
+  }
+
+  // MFDのタブ切替を結線する。クリック+矢印キー(roving tabindex)でページを行き来する
+  private wireMfd(): void {
+    const rail = this.root.querySelector<HTMLElement>('.mfd-rail');
+    if (!rail) return;
+    const tabs = Array.from(rail.querySelectorAll<HTMLButtonElement>('.mfd-tab'));
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => this.setMfdPage(tab.dataset.page ?? 'deploy'));
+    });
+    rail.addEventListener('keydown', (e) => {
+      const dir =
+        e.key === 'ArrowRight' || e.key === 'ArrowDown'
+          ? 1
+          : e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+            ? -1
+            : 0;
+      if (dir === 0) return;
+      e.preventDefault();
+      const idx = tabs.findIndex((t) => t.dataset.page === this.activePage);
+      const next = tabs[(idx + dir + tabs.length) % tabs.length];
+      if (next) {
+        this.setMfdPage(next.dataset.page ?? 'deploy');
+        next.focus();
+      }
+    });
+    this.setMfdPage(this.activePage);
+  }
+
+  private setMfdPage(page: string): void {
+    this.activePage = page;
+    this.root.querySelectorAll<HTMLElement>('.mfd-page').forEach((p) => {
+      const on = p.dataset.page === page;
+      p.hidden = !on;
+      p.classList.toggle('active', on);
+    });
+    this.root.querySelectorAll<HTMLButtonElement>('.mfd-tab').forEach((t) => {
+      const on = t.dataset.page === page;
+      t.classList.toggle('selected', on);
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
     });
   }
 
@@ -523,10 +611,12 @@ export class Menu {
   }
 
   private bar(label: string, value: number): string {
+    // 数値も併記し、棒はscaleXで描く(GPU合成・リフローなし)
     return `
       <span class="stat-row">
         <span class="stat-label">${label}</span>
-        <span class="stat-bar"><i style="width:${value * 10}%"></i></span>
+        <span class="stat-bar"><i style="transform:scaleX(${value / 10})"></i></span>
+        <span class="stat-num">${value}</span>
       </span>`;
   }
 
@@ -820,6 +910,12 @@ export class Menu {
       }),
       this.slider('画面の揺れ', 0, 1, 0.05, this.settings.screenShake, (v) => {
         this.settings.screenShake = v;
+      }),
+      this.checkbox('簡易レーダーを表示', this.settings.radarEnabled, (v) => {
+        this.settings.radarEnabled = v;
+      }),
+      this.slider('アナウンサー音量', 0, 1, 0.05, this.settings.announcerVolume, (v) => {
+        this.settings.announcerVolume = v;
       }),
       this.select(
         'レティクル形状',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BREATH_MAX_S, breathStep, lissajousSway } from './scope';
+import { BREATH_MAX_S, breathStep, lissajousSway, SWAY_AMP_DEG, swayAmp } from './scope';
 
 describe('scope 純粋ロジック', () => {
   it('lissajousSwayは振幅以内で確定的、amp<=0で0', () => {
@@ -31,5 +31,11 @@ describe('scope 純粋ロジック', () => {
     let full = BREATH_MAX_S;
     for (let i = 0; i < 100; i += 1) full = breathStep(full, 0.1, false).meter;
     expect(full).toBe(BREATH_MAX_S);
+  });
+
+  it('swayAmpは息切れ(meter=0)で倍化し、残量ありでは等倍、base<=0は0', () => {
+    expect(swayAmp(0, SWAY_AMP_DEG)).toBeCloseTo(SWAY_AMP_DEG * 2, 9);
+    expect(swayAmp(1.2, SWAY_AMP_DEG)).toBe(SWAY_AMP_DEG);
+    expect(swayAmp(0, 0)).toBe(0);
   });
 });

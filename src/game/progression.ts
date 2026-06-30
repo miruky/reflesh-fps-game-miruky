@@ -106,7 +106,7 @@ export const UNLOCKS: UnlockDef[] = [
   { kind: 'attachment', id: 'reflex', name: 'リフレックスサイト', level: 2 },
   { kind: 'weapon', id: 'hiiragi-sg', name: 'ヒイラギSG', level: 3 },
   { kind: 'attachment', id: 'vertical', name: 'バーティカルグリップ', level: 3 },
-  { kind: 'weapon', id: 'yamasemi-dmr', name: 'ヤマセミDMR', level: 4 },
+  { kind: 'weapon', id: 'yamasemi-dmr', name: 'DSR', level: 4 },
   { kind: 'attachment', id: 'extended', name: '拡張マガジン', level: 4 },
   { kind: 'weapon', id: 'miyama-br', name: 'ミヤマBR', level: 5 },
   { kind: 'attachment', id: 'suppressor', name: 'サプレッサー', level: 5 },

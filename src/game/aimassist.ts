@@ -17,6 +17,10 @@ export const DIST_FLOOR = 0.4;
 // 距離減衰(distanceFactor)と併用して遠距離でアイムボット化しないよう控えめにする
 export const BULLET_MAG_CONE_DEG = 0.9;
 export const BULLET_MAG_MAX_DEG = 0.5;
+// スコープ覗き込み中(クイックスコープ成立後)はやや広く強く曲げる。
+// それでも距離減衰込みで「ほぼ当たっている弾」だけを吸い込む量に留める
+export const BULLET_MAG_CONE_SCOPED_DEG = 1.5;
+export const BULLET_MAG_MAX_SCOPED_DEG = 0.8;
 
 export function clamp(x: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, x));
@@ -82,6 +86,14 @@ export function aimAssistDelta(args: AimAssistArgs): { dYaw: number; dPitch: num
   const dYaw = Math.sign(dYawRaw) * Math.min(Math.abs(dYawRaw), maxStep);
   const dPitch = Math.sign(dPitchRaw) * Math.min(Math.abs(dPitchRaw), maxStep);
   return { dYaw, dPitch };
+}
+
+// 覗き込んだ瞬間(scope-in立ち上がり)の1回限りのスナップ補正量(ラジアン)。
+// BO2の「ADS中オートエイム」の正体。誤差の15%だけ・上限1.5°・strength=0で0。
+// 誤差より小さい量しか返さない＝オーバーシュート(エイムボット化)しない。
+export function snapPulse(errorRad: number, strength: number): number {
+  const s = clamp(strength, 0, 1);
+  return Math.min(Math.abs(errorRad) * 0.15, 1.5 * DEG) * s;
 }
 
 // 弾道を何割ターゲットへ寄せるか(0..1)。最大maxBendRadだけ曲げ、近ければ全部寄せる

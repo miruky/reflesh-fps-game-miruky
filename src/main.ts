@@ -11,10 +11,12 @@ import { applyMatch } from './game/progression';
 import { stageById } from './game/stages';
 import { Hud } from './ui/hud';
 import { Menu, type MenuSelection } from './ui/menu';
+import { SpaceBg } from './ui/menu-bg';
 
 const appRoot = document.getElementById('app');
 const hudRoot = document.getElementById('hud');
 const menuRoot = document.getElementById('menu');
+const spaceCanvas = document.getElementById('space-bg') as HTMLCanvasElement | null;
 if (!appRoot || !hudRoot || !menuRoot) throw new Error('マウント先の要素が見つからない');
 
 // WebGLも物理エンジンも無い環境では黒画面で詰まらせず、理由を示して止める。
@@ -64,6 +66,9 @@ input.attach(renderer.domElement);
 
 const hud = new Hud(hudRoot);
 
+// メニュー背景の宇宙(独立レンダラ)。WebGLが使えない環境では生成しない
+const spaceBg = spaceCanvas ? new SpaceBg(spaceCanvas) : null;
+
 // UIスケールはzoomで反映する。投影座標(ダメージ数値など)は
 // ズーム後の座標系で算出するため、HUDへ渡す画面サイズも同じ倍率で割る
 function applyUiScale(): void {
@@ -81,12 +86,23 @@ function applyAccent(): void {
 applyAccent();
 
 // アプリ内の揺れ軽減設定をルートクラスへ反映し、CSSアニメも止める
+// 実効reduceMotion = アプリ内設定 OR OSの prefers-reduced-motion。
+// CSSは@mediaでOSを見るが、JS/WebGL駆動の演出(宇宙背景・被弾クロマ)はここで統合する
+function effectiveReduceMotion(): boolean {
+  return (
+    settings.reduceMotion ||
+    (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+  );
+}
 function applyMotion(): void {
-  document.documentElement.classList.toggle('reduce-motion', settings.reduceMotion);
+  const rm = effectiveReduceMotion();
+  document.documentElement.classList.toggle('reduce-motion', rm);
+  spaceBg?.setReduceMotion(rm);
 }
 applyMotion();
 
 let match: Match | null = null;
+let chromaTimer = 0; // 被弾クロマアベの後始末タイマー(連続被弾で積み重ねない)
 let mode: 'menu' | 'playing' | 'paused' | 'result' = 'menu';
 let lastSelection: MenuSelection | null = null;
 
@@ -106,6 +122,7 @@ function startMatch(selection: MenuSelection): void {
   match = new Match(config, settings, input, sounds, window.innerWidth / window.innerHeight);
   hud.reset();
   hud.show();
+  spaceBg?.stop(); // 出撃中はメニュー背景の宇宙レンダラを止める(RAF/GPU圧迫防止)
   menu.hide();
   mode = 'playing';
   input.requestLock(renderer.domElement);
@@ -125,6 +142,7 @@ const menu = new Menu(menuRoot, settings, profile, {
     match = null;
     hud.hide();
     mode = 'menu';
+    spaceBg?.start(); // メニューへ戻ったら宇宙背景を再開
     menu.showMain();
   },
   onSettingsChanged: () => {
@@ -134,6 +152,9 @@ const menu = new Menu(menuRoot, settings, profile, {
     applyMotion();
   },
 });
+
+// 初回はメニュー表示なので宇宙背景を起動する
+spaceBg?.start();
 
 input.onLockChange((locked) => {
   if (!locked && mode === 'playing' && match && !match.over) {
@@ -171,6 +192,17 @@ const loop = new GameLoop(
           (world) => match!.projectToScreen(world, uiW, uiH),
           input.isDown('scoreboard'),
         );
+        // 被弾時の一瞬のクロマアベ(色相シフト)。競技性に配慮し省モーション時はスキップ
+        if (snap.tookDamage && !effectiveReduceMotion()) {
+          const el = renderer.domElement;
+          el.style.transition = 'filter 0.15s';
+          el.style.filter = 'saturate(1.8) hue-rotate(8deg)';
+          if (chromaTimer) clearTimeout(chromaTimer);
+          chromaTimer = window.setTimeout(() => {
+            el.style.filter = 'none';
+            chromaTimer = 0;
+          }, 150);
+        }
         if (match.over) {
           mode = 'result';
           input.exitLock();

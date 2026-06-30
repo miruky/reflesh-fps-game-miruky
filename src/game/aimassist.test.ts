@@ -5,8 +5,13 @@ import {
   aimAssistDelta,
   angleFactor,
   bulletBendFraction,
+  BULLET_MAG_CONE_DEG,
+  BULLET_MAG_CONE_SCOPED_DEG,
+  BULLET_MAG_MAX_DEG,
+  BULLET_MAG_MAX_SCOPED_DEG,
   distanceFactor,
   slowdownFactor,
+  snapPulse,
 } from './aimassist';
 
 const DEG = Math.PI / 180;
@@ -86,5 +91,23 @@ describe('aimassist 純粋ロジック', () => {
     expect(adsSensScale(78, 0.32, 1.0, 0)).toBe(1);
     expect(adsSensScale(78, 0.32, 1.0, 1)).toBeCloseTo(0.27, 2);
     expect(adsSensScale(78, 0.32, 1.5, 1)).toBeGreaterThan(adsSensScale(78, 0.32, 1.0, 1));
+  });
+
+  it('snapPulseは誤差の15%・上限1.5°、強度0で0、決して誤差を超えない', () => {
+    // 小さな誤差では誤差の15%
+    expect(snapPulse(2 * DEG, 1)).toBeCloseTo(2 * DEG * 0.15, 9);
+    // 大きな誤差では1.5°で頭打ち
+    expect(snapPulse(40 * DEG, 1)).toBeCloseTo(1.5 * DEG, 9);
+    // 強度0で完全停止
+    expect(snapPulse(5 * DEG, 0)).toBe(0);
+    // どんな誤差でも誤差自体を超えない(=オーバーシュート/エイムボット化しない)
+    for (let e = 0.1; e < 30; e += 0.7) {
+      expect(snapPulse(e * DEG, 1)).toBeLessThanOrEqual(e * DEG + 1e-9);
+    }
+  });
+
+  it('スコープ用バレットマグネティズム定数は通常より広く強い', () => {
+    expect(BULLET_MAG_CONE_SCOPED_DEG).toBeGreaterThanOrEqual(BULLET_MAG_CONE_DEG);
+    expect(BULLET_MAG_MAX_SCOPED_DEG).toBeGreaterThanOrEqual(BULLET_MAG_MAX_DEG);
   });
 });

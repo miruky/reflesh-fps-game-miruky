@@ -184,6 +184,14 @@ describe('武器定義の整合性', () => {
     expect(def.damage * partMultiplier(HEAD, def.headshotMultiplier)).toBeGreaterThanOrEqual(100);
     expect(def.damage * partMultiplier(LIMB, def.headshotMultiplier)).toBeLessThan(100);
   });
+
+  it('DSRは表示名がDSRで、ボルトのリズム(低RPM)を持つ', () => {
+    const def = WEAPON_DEFS['yamasemi-dmr']!;
+    expect(def.id).toBe('yamasemi-dmr'); // 内部IDは不変
+    expect(def.name).toBe('DSR');
+    expect(def.rpm).toBeLessThanOrEqual(90); // ボルトアクション級の重い連射間隔
+    expect(60000 / def.rpm).toBeGreaterThanOrEqual(600); // 1発あたり>=600ms
+  });
 });
 
 describe('スコープ精度', () => {

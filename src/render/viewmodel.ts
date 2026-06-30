@@ -22,6 +22,13 @@ export class ViewModel {
   private kickRot = 0;
   private flashTimer = 0;
   private bobPhase = 0;
+  // 着地インパルス(着地の瞬間に銃が沈んで戻る)。タイマー方式で固定step発火・可変dt減衰
+  private landBobTimer = 0;
+  private landBobStrength = 0;
+  // ボルト閉鎖の二段演出。発砲キックの後、わずかに逆回転して落ち着く
+  private counterKickTimer = 0;
+  // スプリント中に銃を下げる量(滑らかに追従)。raiseRatioとは独立した加算項
+  private sprintLower = 0;
 
   constructor(camera: THREE.Camera) {
     camera.add(this.root);
@@ -190,10 +197,18 @@ export class ViewModel {
   }
 
   fire(scoped = false): void {
-    // スコープ武器はボルト排莢のように大きく後退・跳ね上げる
-    this.kickZ = Math.min(scoped ? 0.14 : 0.08, this.kickZ + (scoped ? 0.12 : 0.045));
-    this.kickRot = Math.min(scoped ? 0.26 : 0.18, this.kickRot + (scoped ? 0.16 : 0.09));
-    this.flashTimer = 0.045;
+    // スコープ武器はボルト排莢のように大きく後退・跳ね上げる(BO2 DSRの重い一撃)
+    this.kickZ = Math.min(scoped ? 0.2 : 0.08, this.kickZ + (scoped ? 0.18 : 0.045));
+    this.kickRot = Math.min(scoped ? 0.34 : 0.18, this.kickRot + (scoped ? 0.22 : 0.09));
+    this.flashTimer = scoped ? 0.03 : 0.045;
+    // スコープ武器のみ、約180ms後にボルト閉鎖の小さな揺り戻しを入れる
+    if (scoped) this.counterKickTimer = 0.18;
+  }
+
+  // 着地の瞬間に呼ぶ。強さ(0..1)に応じて銃が一度沈んで戻る
+  applyLandBob(strength: number): void {
+    this.landBobTimer = 0.28;
+    this.landBobStrength = THREE.MathUtils.clamp(strength, 0, 1);
   }
 
   muzzleWorldPosition(out: THREE.Vector3): THREE.Vector3 {
@@ -230,6 +245,7 @@ export class ViewModel {
       motionScale: number; // 画面揺れ軽減で1未満になる
       alive: boolean; // 死亡中は銃を隠す
       scopeReveal01: number; // スコープ覗き込み度。1に近いほど銃を引っ込めて隠す
+      sprinting?: boolean; // スプリント中は銃を下げる(戦闘遷移コストの可視化)
     },
   ): void {
     const ads = state.adsProgress;
@@ -252,24 +268,48 @@ export class ViewModel {
     const bobX = Math.sin(this.bobPhase) * bobAmp;
     const bobY = Math.abs(Math.cos(this.bobPhase)) * bobAmp;
 
-    this.kickZ = Math.max(0, this.kickZ - dt * 0.5);
-    this.kickRot = Math.max(0, this.kickRot - dt * 1.6);
+    // やや遅い回復で「重い一撃」の余韻を残す
+    this.kickZ = Math.max(0, this.kickZ - dt * 0.35);
+    this.kickRot = Math.max(0, this.kickRot - dt * 1.0);
     this.flashTimer -= dt;
     this.flashMesh.visible = this.flashTimer > 0;
-    this.flashLight.intensity = this.flashTimer > 0 ? 2.5 : 0;
+    this.flashLight.intensity = this.flashTimer > 0 ? 4.0 : 0;
     if (this.flashTimer > 0) {
       this.flashMesh.rotation.z = Math.random() * Math.PI;
+    }
+
+    // 着地インパルス: 0.28sかけて一度沈んで戻る半周期サイン
+    let landDip = 0;
+    if (this.landBobTimer > 0) {
+      const phase = 1 - this.landBobTimer / 0.28;
+      landDip = Math.sin(phase * Math.PI) * 0.07 * this.landBobStrength * state.motionScale;
+      this.landBobTimer = Math.max(0, this.landBobTimer - dt);
+    }
+    // スプリント時の銃下げ。target -0.08 へ滑らかに追従(覗き込み中は無効)
+    const sprintTarget = state.sprinting && ads < 0.2 ? -0.08 : 0;
+    this.sprintLower += (sprintTarget - this.sprintLower) * Math.min(1, dt * 8);
+    // ボルト閉鎖の揺り戻し(発砲から約180ms、終盤に逆回転)
+    let counterKick = 0;
+    if (this.counterKickTimer > 0) {
+      this.counterKickTimer = Math.max(0, this.counterKickTimer - dt);
+      counterKick = -Math.sin((1 - this.counterKickTimer / 0.18) * Math.PI) * 0.04;
     }
 
     const pos = new THREE.Vector3().lerpVectors(HIP_POSITION, ADS_POSITION, ads);
     pos.x += this.swayX + bobX;
     // スコープを覗き込むほど銃を下げ、完全に覗いたらDOMスコープのため非表示にする
-    pos.y += this.swayY + bobY + LOWERED_OFFSET * state.raiseRatio - 0.55 * state.scopeReveal01;
+    pos.y +=
+      this.swayY +
+      bobY +
+      LOWERED_OFFSET * state.raiseRatio -
+      0.55 * state.scopeReveal01 -
+      landDip +
+      this.sprintLower;
     pos.z += this.kickZ;
     this.root.position.copy(pos);
     this.root.visible = state.alive && state.scopeReveal01 < 0.95;
 
-    let rotX = this.kickRot * 0.6 + state.raiseRatio * -0.5;
+    let rotX = this.kickRot * 0.6 + counterKick + state.raiseRatio * -0.5;
     let rotZ = 0;
     if (state.reloadRatio !== null) {
       const wave = Math.sin(state.reloadRatio * Math.PI);

@@ -136,7 +136,6 @@ button {
 /* 主要ブロックは中央寄せの版面に収める */
 .menu-header,
 .deployment-briefing,
-.menu-columns,
 .menu-controls {
   max-width: var(--shell);
   margin-inline: auto;
@@ -308,20 +307,6 @@ button {
   flex: 1;
   height: 1px;
   background: var(--rule);
-}
-
-.menu-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(360px, 0.82fr);
-  gap: clamp(34px, 4vw, 58px);
-  align-items: start;
-}
-
-@media (max-width: 980px) {
-  .menu-columns {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
 }
 
 /* ── ステージ(視覚タイル。罫線のみ・影なし)── */
@@ -543,13 +528,21 @@ button {
 /* 武器のステータスバー */
 .stat-row {
   display: grid;
-  grid-template-columns: 40px 1fr;
+  grid-template-columns: 40px 1fr 18px;
   align-items: center;
   gap: 12px;
   font-size: 10.5px;
   letter-spacing: 0.08em;
   color: var(--ink-faint);
   margin-top: 3px;
+}
+
+.stat-num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--ink-soft);
+  text-align: right;
 }
 
 .stat-bar {
@@ -561,8 +554,10 @@ button {
 .stat-bar i {
   display: block;
   height: 100%;
+  width: 100%;
+  transform-origin: left center;
   background: linear-gradient(90deg, var(--ember-deep), var(--ember));
-  transition: width 0.5s var(--ease-out);
+  transition: transform 0.5s var(--ease-out);
 }
 
 /* 投擲物の所持数 */
@@ -2630,13 +2625,13 @@ tr.score-ally td {
   animation: rise 0.55s var(--ease) both;
 }
 
-.menu-columns > div > .menu-section:nth-child(1) {
+.mfd-cols > .menu-section:nth-child(1) {
   animation-delay: 0.04s;
 }
-.menu-columns > div > .menu-section:nth-child(2) {
+.mfd-cols > .menu-section:nth-child(2) {
   animation-delay: 0.1s;
 }
-.menu-columns > div > .menu-section:nth-child(3) {
+.mfd-cols > .menu-section:nth-child(3) {
   animation-delay: 0.16s;
 }
 
@@ -2787,4 +2782,545 @@ tr.score-ally td {
   animation-duration: 0.01ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
+}
+
+/* ====================================================================
+   R4: ORBITAL DROPDECK — 宇宙背景のAAA管制盤メニュー + 追加HUD
+   二色ルール: ホログラム/計器=--signal(固定) / 行動喚起=--ember(data-accent連動)
+   ==================================================================== */
+
+:root {
+  --space: #05070b;
+  --nebula-warm: color-mix(in srgb, var(--ember) 16%, transparent);
+  --nebula-cold: color-mix(in srgb, var(--signal) 18%, transparent);
+  --glass-panel: color-mix(in srgb, var(--base-2) 80%, transparent);
+  --hud-condensed: 'Bahnschrift', 'DIN Alternate', 'Roboto Condensed', var(--sans);
+}
+
+/* 宇宙背景キャンバス: #app の前面・#menu の背面 */
+#space-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  display: block;
+}
+
+/* メインメニューだけ地色を透過させ、背後の星野を見せる(ポーズ/リザルトは従来どおり) */
+.menu-screen.menu-main {
+  background: transparent;
+}
+
+/* 星雲(暖色/寒色)を星野の上に薄く重ねる */
+.menu-main::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 22% 28%, var(--nebula-cold), transparent 70%),
+    radial-gradient(55% 45% at 80% 72%, var(--nebula-warm), transparent 72%),
+    radial-gradient(40% 40% at 60% 18%, rgba(96, 60, 180, 0.18), transparent 70%);
+  filter: blur(60px);
+  opacity: 0.8;
+}
+
+/* 奥へ消える艦の甲板グリッド(透視) */
+.menu-main::after {
+  content: '';
+  position: fixed;
+  left: -20%;
+  right: -20%;
+  bottom: -10%;
+  height: 52%;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--signal) 26%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--signal) 26%, transparent) 1px, transparent 1px);
+  background-size: 64px 64px;
+  transform: perspective(700px) rotateX(64deg);
+  transform-origin: bottom center;
+  mask-image: linear-gradient(to top, #000 0%, transparent 78%);
+  -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 78%);
+  opacity: 0.5;
+}
+
+/* ── 計器ベゼル枠 ── */
+.console-bezel {
+  position: relative;
+  max-width: var(--shell);
+  margin-inline: auto;
+  padding: clamp(16px, 2.4vw, 30px);
+  border: 1px solid var(--rule-strong);
+  background: linear-gradient(rgba(6, 10, 14, 0.36), rgba(6, 10, 14, 0.52));
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px));
+}
+
+/* 四隅のLブラケット(対角2隅をシアンで強調) */
+.console-bezel::before,
+.console-bezel::after {
+  content: '';
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--signal);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.console-bezel::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+}
+.console-bezel::after {
+  right: -1px;
+  bottom: -1px;
+  border-left: none;
+  border-top: none;
+}
+
+/* ── テレメトリ・レール(ヘッダー)── */
+.menu-main .menu-header.telemetry-rail {
+  max-width: none;
+  margin: 0 0 14px;
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 20px;
+  padding-bottom: 16px;
+}
+
+.sys-lamps {
+  display: flex;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--ink-faint);
+}
+.sys-lamps i {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-style: normal;
+}
+.sys-lamps b {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 6px var(--signal);
+}
+
+.wordmark h1 {
+  font-size: clamp(30px, 4.4vw, 50px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 0.94;
+}
+
+.nav-readout {
+  justify-self: end;
+  display: flex;
+  gap: 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+.nav-readout b {
+  color: var(--signal);
+  font-variant-numeric: tabular-nums;
+}
+.nav-readout .nav-eta b {
+  color: var(--ember);
+}
+
+/* ── 出撃レバー(briefing内) ── */
+.deploy-lever {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.lever-beacon {
+  position: absolute;
+  top: -9px;
+  right: 6px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: conic-gradient(var(--warn), transparent 55%, var(--warn));
+  opacity: 0.85;
+}
+.lever-eta {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* ── 管制ボディ + MFDレール ── */
+.console-body {
+  margin-top: 6px;
+}
+
+.mfd-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0;
+}
+
+/* INTELページのカードでは旧サイドバー用の縦罫線/インデントを打ち消す */
+.menu-main .menu-profile {
+  margin-left: 0;
+  min-width: 0;
+  padding-left: 0;
+  border-left: none;
+}
+.mfd-tab {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-auto-rows: auto;
+  align-items: baseline;
+  column-gap: 8px;
+  padding: 10px 16px 12px;
+  color: var(--ink-faint);
+  border-bottom: 2px solid transparent;
+  transition:
+    color 0.18s var(--ease),
+    border-color 0.18s var(--ease),
+    background-color 0.18s var(--ease);
+}
+.mfd-tab b {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--signal);
+  opacity: 0.7;
+}
+.mfd-tab span {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+}
+.mfd-tab small {
+  grid-column: 2;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--ink-faint);
+  text-transform: none;
+}
+.mfd-tab:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--signal) 6%, transparent);
+}
+.mfd-tab.selected {
+  color: var(--ink);
+  border-bottom-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 8%, transparent);
+}
+.mfd-tab.selected b {
+  color: var(--ember);
+  opacity: 1;
+}
+
+.mfd-page[hidden] {
+  display: none;
+}
+.mfd-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: clamp(16px, 2vw, 30px);
+  align-items: start;
+}
+
+/* ── DEPLOYページのヒーロー(惑星リムのホログラム) ── */
+.mfd-hero {
+  position: relative;
+  height: clamp(120px, 18vh, 200px);
+  margin-bottom: 18px;
+  border: 1px solid var(--rule);
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 50% 130%, color-mix(in srgb, var(--signal) 22%, transparent), transparent 60%),
+    linear-gradient(180deg, rgba(8, 12, 18, 0.2), rgba(8, 12, 18, 0.55));
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+.hero-limb {
+  position: absolute;
+  left: 50%;
+  bottom: -120%;
+  width: 200%;
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 8%, color-mix(in srgb, var(--signal) 55%, #fff) 0 1%, color-mix(in srgb, var(--signal) 30%, transparent) 1.4%, transparent 3%);
+  box-shadow: 0 0 60px color-mix(in srgb, var(--signal) 40%, transparent);
+}
+.hero-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--signal) 16%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--signal) 16%, transparent) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(70% 60% at 50% 40%, #000, transparent 75%);
+  -webkit-mask-image: radial-gradient(70% 60% at 50% 40%, #000, transparent 75%);
+  opacity: 0.5;
+}
+.hero-readout {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  display: flex;
+  gap: 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--ink-soft);
+}
+.hero-readout b {
+  color: var(--signal);
+}
+
+/* ── コンソール下端のステータスバー ── */
+.console-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 6px var(--signal);
+}
+.status-fill {
+  flex: 1;
+  height: 1px;
+  background: repeating-linear-gradient(90deg, var(--rule) 0 6px, transparent 6px 12px);
+}
+
+/* MFD内ではセクションの入場アニメは個別カードに任せ、二重化を避ける */
+.menu-main .mfd-page .menu-section {
+  animation: none;
+}
+
+/* ── 追加HUD: 簡易レーダー ── */
+.hud-radar {
+  position: fixed;
+  top: 50%;
+  right: 18px;
+  transform: translateY(-50%);
+  width: 118px;
+  height: 118px;
+  pointer-events: none;
+}
+.radar-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.radar-ring {
+  fill: rgba(7, 11, 16, 0.55);
+  stroke: var(--signal);
+  stroke-opacity: 0.5;
+  stroke-width: 1;
+}
+.radar-ring-inner {
+  fill: none;
+  stroke-opacity: 0.22;
+}
+.radar-ax {
+  stroke: var(--signal);
+  stroke-opacity: 0.2;
+  stroke-width: 0.6;
+}
+.radar-self {
+  fill: var(--ink);
+}
+.radar-blip {
+  fill: var(--enemy);
+  filter: drop-shadow(0 0 2px var(--enemy));
+}
+.radar-sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--signal) 42%, transparent),
+    transparent 70deg
+  );
+  mix-blend-mode: screen;
+}
+
+/* ── 追加HUD: スコア獲得トースト ── */
+.hud-score-toast {
+  position: fixed;
+  left: 50%;
+  top: 56%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+  z-index: 6;
+}
+.score-toast-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.18s var(--ease-out),
+    transform 0.18s var(--ease-out);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.score-toast-row.show {
+  opacity: 1;
+  transform: none;
+}
+.score-toast-row.out {
+  opacity: 0;
+  transform: translateY(-10px);
+  transition-duration: 0.26s;
+}
+.score-toast-row b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffd54a;
+}
+.score-toast-row span {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+}
+
+/* ── 追加HUD: キル確定リング(クロスヘア中心) ── */
+.hud-kill-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: 0;
+  border: 2px solid #ffe066;
+  border-radius: 50%;
+  pointer-events: none;
+  /* 既定は不可視。アニメ適用時(no-preference)はkeyframeがopacityを上書きする。
+     OS=reduce等でアニメが走らない場合は静止リングが残らない */
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.4);
+}
+.hud-kill-ring--snipe {
+  border-color: #dff0ff;
+  width: 60px;
+  height: 60px;
+}
+
+/* ── モーション(省モーション時は下のreduceブロックで停止) ── */
+@media (prefers-reduced-motion: no-preference) {
+  .sys-lamps b {
+    animation: lamp-pulse 2.6s ease-in-out infinite;
+  }
+  .lever-beacon {
+    animation: beacon-spin 2.4s linear infinite;
+  }
+  .deploy-lever:hover .lever-beacon,
+  .deploy-lever:focus-within .lever-beacon {
+    animation-duration: 0.9s;
+  }
+  .status-dot {
+    animation: lamp-pulse 2s ease-in-out infinite;
+  }
+  .hero-limb {
+    animation: limb-breathe 5s ease-in-out infinite;
+  }
+  .radar-sweep {
+    animation: radar-sweep 2.8s linear infinite;
+  }
+  .hud-kill-ring {
+    animation: kill-ring 0.2s var(--ease-out) forwards;
+  }
+}
+
+@keyframes lamp-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes beacon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes limb-breathe {
+  0%,
+  100% {
+    filter: brightness(0.9);
+  }
+  50% {
+    filter: brightness(1.2);
+  }
+}
+@keyframes radar-sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes kill-ring {
+  0% {
+    opacity: 0.8;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(2.4);
+  }
+}
+
+/* ── レスポンシブ ── */
+@media (max-width: 980px) {
+  .menu-main .menu-header.telemetry-rail {
+    grid-template-columns: auto 1fr;
+    row-gap: 12px;
+  }
+  .nav-readout {
+    grid-column: 1 / -1;
+    justify-self: start;
+    flex-wrap: wrap;
+  }
+  .sys-lamps {
+    grid-column: 1 / -1;
+  }
+  .hud-radar {
+    width: 96px;
+    height: 96px;
+  }
 }
