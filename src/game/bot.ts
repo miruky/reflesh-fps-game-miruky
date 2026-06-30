@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { Rand } from '../core/rng';
+import { applyGravityStep } from './player';
 
 // 胴体カプセルは首までの高さに留め、頭の判定球をカプセルの外に出す。
 // 全身を覆うカプセルにすると水平レイが常に胴体へ先に当たり、
@@ -11,7 +12,8 @@ const CENTER_TO_FEET = BODY_HALF + BODY_RADIUS;
 const HEAD_OFFSET = 0.88;
 const HEAD_RADIUS = 0.22;
 const MOVE_SPEED = 3.4;
-const GRAVITY = 18;
+// BOTの初期HP。プレイヤー武器の one-shot(満タン即死)メダル判定の参照元
+export const BOT_MAX_HP = 100;
 
 // カプセル中心からこの高さより下への着弾は脚部扱い
 export const HIP_OFFSET_Y = -0.1;
@@ -138,7 +140,7 @@ export class Bot {
     const glow = new THREE.MeshStandardMaterial({
       color: 0x0d0f13,
       emissive: c.clone(),
-      emissiveIntensity: 1.15,
+      emissiveIntensity: 0.9, // AgX+Bloom前提で白飛びを抑える(バイザー)
       roughness: 0.3,
     });
     const gun = new THREE.MeshStandardMaterial({ color: 0x202227, roughness: 0.5 });
@@ -233,7 +235,7 @@ export class Bot {
     this.blind = Math.max(0, this.blind - dt);
     if (this.hitFlash > 0 && this.armorMat) {
       this.hitFlash = Math.max(0, this.hitFlash - dt);
-      this.armorMat.emissiveIntensity = (this.hitFlash / 0.12) * 0.9;
+      this.armorMat.emissiveIntensity = (this.hitFlash / 0.12) * 0.7;
     }
     if (this.flinch > 0) this.flinch = Math.max(0, this.flinch - dt);
     const engaged = ctx.targetEye !== null;
@@ -279,7 +281,7 @@ export class Bot {
       wishZ = f.z * MOVE_SPEED * 0.7;
     }
 
-    this.velY -= GRAVITY * dt;
+    this.velY = applyGravityStep(this.velY, 1, dt);
     const movement = { x: wishX * dt, y: this.velY * dt, z: wishZ * dt };
     this.controller.computeColliderMovement(this.bodyCollider, movement);
     const moved = this.controller.computedMovement();

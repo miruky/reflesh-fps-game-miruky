@@ -12,6 +12,17 @@ export interface StagePalette {
   ambientIntensity: number;
   fogDensity: number;
   emissiveAccent: boolean;
+  // ── リアル化(R5): 大気散乱/露出/Bloom。全optionalで既存パレットは無改変のままコンパイルできる ──
+  turbidity?: number; // 大気の濁り(Sky.js)。小=澄む / 大=霞む
+  rayleigh?: number; // 青散乱の強さ。夕焼けは高め
+  mieCoefficient?: number; // 太陽周りのハロ
+  mieDirectionalG?: number; // ハロの指向性
+  elevation?: number; // 太陽高度(度)。0未満で夜/屋内フォールバック
+  azimuth?: number; // 太陽方位(度)
+  exposure?: number; // toneMappingExposure 上書き
+  environmentIntensity?: number; // 空から焼くIBL(環境反射)の強さ
+  bloomStrength?: number; // ステージ別のBloom強度上書き
+  bloomThreshold?: number; // Bloomがかかる輝度しきい値の上書き
 }
 
 export interface StageDef {

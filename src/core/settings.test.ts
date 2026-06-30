@@ -128,6 +128,50 @@ describe('sanitizeSettings', () => {
     expect(dirty({ announcerVolume: 'x' }).announcerVolume).toBe(DEFAULT_SETTINGS.announcerVolume);
   });
 
+  it('画質ティアは low/medium/high のみ受け入れ、既定は medium', () => {
+    expect(DEFAULT_SETTINGS.graphicsQuality).toBe('medium');
+    expect(dirty({ graphicsQuality: 'high' }).graphicsQuality).toBe('high');
+    expect(dirty({ graphicsQuality: 'ultra' }).graphicsQuality).toBe('medium');
+    expect(dirty({ graphicsQuality: 5 }).graphicsQuality).toBe('medium');
+  });
+
+  it('ゲームパッド数値は範囲へ丸める', () => {
+    expect(dirty({ gamepadSensX: 99 }).gamepadSensX).toBe(SETTING_BOUNDS.gamepadSensX.max);
+    expect(dirty({ gamepadSensY: 0 }).gamepadSensY).toBe(SETTING_BOUNDS.gamepadSensY.min);
+    expect(dirty({ gamepadDeadzone: 1 }).gamepadDeadzone).toBe(SETTING_BOUNDS.gamepadDeadzone.max);
+    expect(dirty({ gamepadResponseExp: 0.1 }).gamepadResponseExp).toBe(
+      SETTING_BOUNDS.gamepadResponseExp.min,
+    );
+  });
+
+  it('ゲームパッドの応答カーブ/反転/振動を正規化する', () => {
+    expect(dirty({ gamepadResponseCurve: 'spiral' }).gamepadResponseCurve).toBe(
+      DEFAULT_SETTINGS.gamepadResponseCurve,
+    );
+    expect(dirty({ gamepadResponseCurve: 'dynamic' }).gamepadResponseCurve).toBe('dynamic');
+    expect(dirty({ gamepadInvertY: 1 }).gamepadInvertY).toBe(true);
+    expect(dirty({ gamepadVibration: 0 }).gamepadVibration).toBe(false);
+  });
+
+  it('未知の配置は default、プリセット時は既定バインドを採用する', () => {
+    expect(dirty({ gamepadLayout: 'banana' }).gamepadLayout).toBe('default');
+    const tactical = dirty({ gamepadLayout: 'tactical' });
+    expect(tactical.gamepadLayout).toBe('tactical');
+    // tactical はしゃがみが R3(index 11)
+    expect(tactical.gamepadBindings.crouch).toEqual([{ kind: 'button', index: 11 }]);
+  });
+
+  it('custom配置は渡されたバインドを検証して保持する', () => {
+    const custom = dirty({
+      gamepadLayout: 'custom',
+      gamepadBindings: { jump: [{ kind: 'button', index: 3 }] },
+    });
+    expect(custom.gamepadLayout).toBe('custom');
+    expect(custom.gamepadBindings.jump).toEqual([{ kind: 'button', index: 3 }]);
+    // 欠落キーは既定で補完される(全キー存在)
+    expect(custom.gamepadBindings.fire.length).toBeGreaterThan(0);
+  });
+
   it('レティクル形状/色は許可リストのみ受け入れ、それ以外は既定へ', () => {
     for (const style of RETICLE_STYLES) {
       expect(dirty({ reticleStyle: style.id }).reticleStyle).toBe(style.id);

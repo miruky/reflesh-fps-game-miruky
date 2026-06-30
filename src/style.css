@@ -722,6 +722,102 @@ button {
   color: var(--ink);
 }
 
+/* ── 設定の補足注記 / ゲームパッド小見出し ── */
+.setting-note {
+  margin: 6px 2px 2px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+
+.settings-subhead {
+  margin: 18px 2px 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule-strong);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.gamepad-settings {
+  display: flex;
+  flex-direction: column;
+}
+
+/* リバインド表: アクション名 / 現在のグリフ / 変更ボタン */
+.rebind-table {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+}
+
+.rebind-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 2px;
+  font-size: 12.5px;
+  border-top: 1px solid var(--rule);
+}
+
+.rebind-name {
+  color: var(--ink-soft);
+}
+
+.rebind-glyph {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  min-width: 56px;
+  text-align: right;
+}
+
+.rebind-btn {
+  font: inherit;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  background: var(--raise);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition:
+    border-color 0.18s var(--ease),
+    color 0.18s var(--ease);
+}
+
+.rebind-btn:hover {
+  border-color: var(--ink-faint);
+  color: var(--ink);
+}
+
+.rebind-btn.capturing {
+  color: var(--ember);
+  border-color: var(--ember);
+  animation: rebind-pulse 1s var(--ease) infinite;
+}
+
+.rebind-note {
+  color: var(--ember-ink, var(--ink-soft));
+}
+
+@keyframes rebind-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+:root.reduce-motion .rebind-btn.capturing {
+  animation: none;
+}
+
 /* ── 出撃ボタンと控えめなボタン ── */
 
 .menu-start {
@@ -3322,5 +3418,191 @@ tr.score-ally td {
   .hud-radar {
     width: 96px;
     height: 96px;
+  }
+}
+
+/* ═══ R5 メダル/フィード実績 ═════════════════════════════════════ */
+:root {
+  --medal-white: #eef2f6;
+  --medal-blue: #4ea8ff;
+  --medal-orange: #ff9a3c;
+  --medal-red: #ff5a3c;
+  --medal-gold: #ffcf4d;
+  --medal-cyan: #19e6ff;
+  --medal-violet: #b07cff;
+  --medal-plat: #dbe8ff;
+}
+
+/* 初取得=中央のバッジ解放カード */
+.hud-badge-stack {
+  position: absolute;
+  left: 50%;
+  top: 28%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+  z-index: 40;
+}
+.hud-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.hud-badge.show {
+  animation:
+    badge-flip 0.7s cubic-bezier(0.2, 0.9, 0.2, 1) forwards,
+    badge-shine 1.1s ease-out 0.28s;
+}
+.hud-badge.out {
+  animation: badge-fade 0.5s ease forwards;
+}
+.badge-svg {
+  width: 100px;
+  height: 100px;
+  display: block;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.55));
+}
+.badge-name {
+  margin-top: 6px;
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 19px;
+  letter-spacing: 0.08em;
+  color: #fff;
+  text-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.85),
+    0 0 14px currentColor;
+}
+.badge-tag {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.36em;
+  color: currentColor;
+  opacity: 0.85;
+}
+
+/* 2回目以降=左側に達成名を大きく */
+.hud-medal-stack {
+  position: absolute;
+  left: 4%;
+  top: 36%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 39;
+}
+.hud-medal {
+  opacity: 0;
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 30px;
+  letter-spacing: 0.05em;
+  color: currentColor; /* inlineでメダル色を設定 */
+  text-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.85),
+    0 0 18px currentColor;
+  white-space: nowrap;
+}
+.hud-medal span {
+  color: #fff;
+}
+.hud-medal i {
+  font-style: normal;
+  color: currentColor;
+  margin-left: 8px;
+}
+.hud-medal.show {
+  animation: medal-pop 0.24s cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
+}
+.hud-medal.out {
+  animation: medal-fade 0.4s ease forwards;
+}
+
+@keyframes badge-flip {
+  0% {
+    opacity: 0;
+    transform: perspective(600px) rotateY(180deg) scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: perspective(600px) rotateY(-12deg) scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(600px) rotateY(0) scale(1);
+  }
+}
+@keyframes badge-shine {
+  0% {
+    filter: drop-shadow(0 0 0 currentColor) brightness(1);
+  }
+  40% {
+    filter: drop-shadow(0 0 20px currentColor) brightness(1.55);
+  }
+  100% {
+    filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.55)) brightness(1);
+  }
+}
+@keyframes badge-fade {
+  to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+  }
+}
+@keyframes medal-pop {
+  0% {
+    opacity: 0;
+    transform: translateX(-14px) scale(0.65);
+  }
+  70% {
+    opacity: 1;
+    transform: translateX(0) scale(1.07);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+@keyframes medal-fade {
+  to {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+}
+
+/* killfeed の種別ボーダー */
+.hud-feed-row[data-kind='hs'] {
+  border-left: 3px solid var(--medal-orange);
+  padding-left: 6px;
+}
+.hud-feed-row[data-kind='melee'] {
+  border-left: 3px solid var(--medal-red);
+  padding-left: 6px;
+}
+
+/* 省モーション(設定 or OS): フリップ/グリッチ/ポップを単純フェードへ縮退 */
+@keyframes medal-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+:root.reduce-motion .hud-badge.show,
+:root.reduce-motion .hud-medal.show {
+  animation: medal-appear 0.2s ease forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hud-badge.show,
+  .hud-medal.show {
+    animation: medal-appear 0.2s ease forwards;
   }
 }

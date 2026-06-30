@@ -2,10 +2,11 @@ import './style.css';
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { SoundKit } from './core/audio';
+import { gamepadCfg } from './core/gamepad';
 import { Input } from './core/input';
 import { GameLoop } from './core/loop';
 import { loadProfile, saveProfile } from './core/profile';
-import { loadSettings } from './core/settings';
+import { loadSettings, resolveGraphicsTier } from './core/settings';
 import { Match, type MatchConfig } from './game/match';
 import { applyMatch } from './game/progression';
 import { stageById } from './game/stages';
@@ -50,19 +51,29 @@ try {
   throw new Error('物理エンジンを初期化できない');
 }
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-appRoot.appendChild(renderer.domElement);
-
 const settings = loadSettings();
 const profile = loadProfile();
+
+// 画質ティアを起動時に確定。low(=WebGL1含む)は EffectComposer を作らず素のMSAAを使う。
+const hasWebGL2 = Boolean(document.createElement('canvas').getContext('webgl2'));
+const graphicsTier = resolveGraphicsTier(settings.graphicsQuality, hasWebGL2);
+
+const renderer = new THREE.WebGLRenderer({ antialias: graphicsTier === 'low' });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphicsTier === 'high' ? 2 : 1.5));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// AgX(ACESより ember/neon の色相を保つ)+ 線形→sRGB の物理ベース出力
+renderer.toneMapping = THREE.AgXToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+appRoot.appendChild(renderer.domElement);
 const sounds = new SoundKit();
 sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi);
 const input = new Input();
 input.attach(renderer.domElement);
+input.setGamepadBindings(settings.gamepadBindings);
+input.setVibration(settings.gamepadVibration);
 
 const hud = new Hud(hudRoot);
 
@@ -119,7 +130,15 @@ function startMatch(selection: MenuSelection): void {
     difficulty: selection.difficulty,
     durationS: settings.matchLengthS,
   };
-  match = new Match(config, settings, input, sounds, window.innerWidth / window.innerHeight);
+  match = new Match(
+    config,
+    settings,
+    input,
+    sounds,
+    window.innerWidth / window.innerHeight,
+    renderer,
+    new Set<string>(profile.unlockedMedals),
+  );
   hud.reset();
   hud.show();
   spaceBg?.stop(); // 出撃中はメニュー背景の宇宙レンダラを止める(RAF/GPU圧迫防止)
@@ -150,8 +169,10 @@ const menu = new Menu(menuRoot, settings, profile, {
     applyUiScale();
     applyAccent();
     applyMotion();
+    input.setGamepadBindings(settings.gamepadBindings);
+    input.setVibration(settings.gamepadVibration);
   },
-});
+}, input);
 
 // 初回はメニュー表示なので宇宙背景を起動する
 spaceBg?.start();
@@ -168,10 +189,7 @@ input.onLockChange((locked) => {
 
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
-  if (match) {
-    match.camera.aspect = window.innerWidth / window.innerHeight;
-    match.camera.updateProjectionMatrix();
-  }
+  if (match) match.resize(window.innerWidth, window.innerHeight);
 });
 
 const loop = new GameLoop(
@@ -179,6 +197,12 @@ const loop = new GameLoop(
     if (mode === 'playing' && match) match.update(dt);
   },
   (dt) => {
+    // Options(ゲームパッド)で一時停止/再開。pointer lock のジェスチャ制約で
+    // 再開はベストエフォート(失敗時はクリックで再開できる)
+    if (input.consumePausePressed()) {
+      if (mode === 'playing') input.exitLock();
+      else if (mode === 'paused') input.requestLock(renderer.domElement);
+    }
     if (match) {
       match.frame(dt, mode === 'playing');
       if (mode === 'playing') {
@@ -213,9 +237,10 @@ const loop = new GameLoop(
           menu.showResult(result, progress);
         }
       }
-      renderer.render(match.scene, match.camera);
+      match.render();
     }
     input.endFrame();
   },
+  (dt) => input.pollGamepad(dt, gamepadCfg(settings)),
 );
 loop.start();

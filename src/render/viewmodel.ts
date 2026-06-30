@@ -65,9 +65,22 @@ export class ViewModel {
 
   private buildGun(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.Object3D } {
     const gun = new THREE.Group();
-    const dark = new THREE.MeshStandardMaterial({ color: 0x2e3138, roughness: 0.45 });
-    const darker = new THREE.MeshStandardMaterial({ color: 0x1d1f24, roughness: 0.5 });
-    const accent = new THREE.MeshStandardMaterial({ color: def.tracerColor, roughness: 0.35 });
+    // 銃はカメラ近接(near 0.05)でワールドIBLの反射方向がズレるため envMapIntensity を抑える
+    const dark = new THREE.MeshStandardMaterial({
+      color: 0x2e3138,
+      roughness: 0.45,
+      envMapIntensity: 0.3,
+    });
+    const darker = new THREE.MeshStandardMaterial({
+      color: 0x1d1f24,
+      roughness: 0.5,
+      envMapIntensity: 0.3,
+    });
+    const accent = new THREE.MeshStandardMaterial({
+      color: def.tracerColor,
+      roughness: 0.35,
+      envMapIntensity: 0.3,
+    });
 
     const long =
       def.id === 'yamasemi-dmr'

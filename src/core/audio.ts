@@ -266,6 +266,66 @@ export class SoundKit {
     }
   }
 
+  // メダル取得スティング(WebAudioのみ・synth.cancelを呼ばないので announceStreak と共存する)。
+  // level 1..4(bronze/silver/gold/platinum)でピッチ段数が増え、4は低音の余韻を重ねる。
+  announceMedal(level: number, vol: number): void {
+    const volume = Math.max(0, Math.min(1, vol));
+    if (volume <= 0) return;
+    const ladders: Record<number, number[]> = {
+      1: [660, 880],
+      2: [660, 880, 1047],
+      3: [660, 880, 1047, 1319],
+      4: [660, 880, 1047, 1319],
+    };
+    const seq = ladders[level] ?? ladders[2]!;
+    for (let i = 0; i < seq.length; i += 1) {
+      this.tone({
+        freq: seq[i]!,
+        durationS: 0.07,
+        type: 'sine',
+        gain: 0.4 * volume,
+        delayS: i * 0.075,
+        bus: this.uiBus ?? undefined,
+      });
+    }
+    if (level >= 4) {
+      this.tone({
+        freq: 90,
+        endFreq: 60,
+        durationS: 0.6,
+        type: 'sine',
+        gain: 0.35 * volume,
+        delayS: 0.05,
+        bus: this.uiBus ?? undefined,
+      });
+    }
+  }
+
+  // メダル初解放のファンファーレ(上昇4音)+ 名称読み上げ。読み上げは cancel せずキューに積む。
+  announceUnlock(name: string, vol: number): void {
+    const volume = Math.max(0, Math.min(1, vol));
+    if (volume <= 0) return;
+    const fanfare = [523, 659, 784, 1047];
+    for (let i = 0; i < fanfare.length; i += 1) {
+      this.tone({
+        freq: fanfare[i]!,
+        durationS: 0.12,
+        type: 'triangle',
+        gain: 0.32 * volume,
+        delayS: i * 0.09,
+        bus: this.uiBus ?? undefined,
+      });
+    }
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+    if (synth && typeof SpeechSynthesisUtterance !== 'undefined') {
+      const u = new SpeechSynthesisUtterance(name);
+      u.pitch = 0.7;
+      u.rate = 1.0;
+      u.volume = volume * this.masterVol;
+      synth.speak(u); // cancelしない(進行中の発話を消さずキューへ)
+    }
+  }
+
   // スナイパーで仕留めた時の専用キル音(低い余韻 + 高いピン)
   snipeKill(): void {
     this.tone({

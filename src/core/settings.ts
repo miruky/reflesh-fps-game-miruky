@@ -1,3 +1,23 @@
+import {
+  GP_LAYOUTS,
+  PRESETS,
+  sanitizeGamepadBindings,
+  type GamepadBindings,
+  type GamepadLayoutId,
+} from './gamepad';
+
+// 画質ティア。low は EffectComposer を作らず素のレンダラ(WebGL1自動フォールバック先)
+export type GraphicsQuality = 'low' | 'medium' | 'high';
+export const GRAPHICS_QUALITIES: readonly GraphicsQuality[] = ['low', 'medium', 'high'];
+
+// 実効画質ティア。WebGL2非対応環境は EffectComposer/HalfFloat RT が不安定なため low へ落とす。
+// main.ts(レンダラ生成)と Match(Composer構築)が同じ結論に至るための単一の関数。
+export function resolveGraphicsTier(quality: GraphicsQuality, hasWebGL2: boolean): GraphicsQuality {
+  return hasWebGL2 ? quality : 'low';
+}
+const GAMEPAD_CURVES = ['linear', 'exponential', 'dynamic'] as const;
+export type GamepadResponseCurve = (typeof GAMEPAD_CURVES)[number];
+
 export interface Settings {
   sensitivity: number;
   fov: number;
@@ -33,6 +53,18 @@ export interface Settings {
   radarEnabled: boolean;
   // ストリークのアナウンサー音声(SpeechSynthesis)の音量。0で無音
   announcerVolume: number;
+  // ── R5 リアル化: 画質ティア(low/medium/high) ──
+  graphicsQuality: GraphicsQuality;
+  // ── R5 ゲームパッド(PS4 DualShock 等) ──
+  gamepadSensX: number; // 横感度
+  gamepadSensY: number; // 縦感度
+  gamepadDeadzone: number; // スティックのデッドゾーン
+  gamepadResponseExp: number; // 応答カーブの指数
+  gamepadResponseCurve: GamepadResponseCurve;
+  gamepadInvertY: boolean; // ゲームパッドのY軸反転(マウスとは独立)
+  gamepadVibration: boolean; // 振動(対応環境のみ)
+  gamepadLayout: GamepadLayoutId; // プリセット or custom
+  gamepadBindings: GamepadBindings; // 実バインド(custom時のみ独自値)
 }
 
 // UIのアクセント色の選択肢。idはstyle.cssの :root[data-accent='…'] と対応し、
@@ -74,6 +106,10 @@ export const SETTING_BOUNDS = {
   adsSensMul: { min: 0.3, max: 1.5 },
   screenShake: { min: 0, max: 1 },
   announcerVolume: { min: 0, max: 1 },
+  gamepadSensX: { min: 0.2, max: 5 },
+  gamepadSensY: { min: 0.2, max: 5 },
+  gamepadDeadzone: { min: 0.05, max: 0.3 },
+  gamepadResponseExp: { min: 1.0, max: 2.5 },
 } as const;
 
 // 簡易レーダーの検知半径(m)。外周=検知限界。match(方位算出)とHUD(描画スケール)で共有
@@ -108,6 +144,16 @@ export const DEFAULT_SETTINGS: Settings = {
   screenShake: 1.0,
   radarEnabled: true,
   announcerVolume: 0.65,
+  graphicsQuality: 'medium',
+  gamepadSensX: 2.5,
+  gamepadSensY: 2.0,
+  gamepadDeadzone: 0.1,
+  gamepadResponseExp: 1.5,
+  gamepadResponseCurve: 'exponential',
+  gamepadInvertY: false,
+  gamepadVibration: true,
+  gamepadLayout: 'default',
+  gamepadBindings: PRESETS.default,
 };
 
 const KEY = 'hibana.settings.v1';
@@ -139,6 +185,9 @@ function nearestMatchLength(value: unknown): number {
 export function sanitizeSettings(raw: Partial<Settings>): Settings {
   const merged = { ...DEFAULT_SETTINGS, ...raw };
   const b = SETTING_BOUNDS;
+  const layout: GamepadLayoutId = GP_LAYOUTS.some((l) => l.id === merged.gamepadLayout)
+    ? merged.gamepadLayout
+    : DEFAULT_SETTINGS.gamepadLayout;
   return {
     sensitivity: clamp(
       merged.sensitivity,
@@ -200,6 +249,41 @@ export function sanitizeSettings(raw: Partial<Settings>): Settings {
       b.announcerVolume.max,
       DEFAULT_SETTINGS.announcerVolume,
     ),
+    graphicsQuality: GRAPHICS_QUALITIES.includes(merged.graphicsQuality)
+      ? merged.graphicsQuality
+      : DEFAULT_SETTINGS.graphicsQuality,
+    gamepadSensX: clamp(
+      merged.gamepadSensX,
+      b.gamepadSensX.min,
+      b.gamepadSensX.max,
+      DEFAULT_SETTINGS.gamepadSensX,
+    ),
+    gamepadSensY: clamp(
+      merged.gamepadSensY,
+      b.gamepadSensY.min,
+      b.gamepadSensY.max,
+      DEFAULT_SETTINGS.gamepadSensY,
+    ),
+    gamepadDeadzone: clamp(
+      merged.gamepadDeadzone,
+      b.gamepadDeadzone.min,
+      b.gamepadDeadzone.max,
+      DEFAULT_SETTINGS.gamepadDeadzone,
+    ),
+    gamepadResponseExp: clamp(
+      merged.gamepadResponseExp,
+      b.gamepadResponseExp.min,
+      b.gamepadResponseExp.max,
+      DEFAULT_SETTINGS.gamepadResponseExp,
+    ),
+    gamepadResponseCurve: GAMEPAD_CURVES.includes(merged.gamepadResponseCurve)
+      ? merged.gamepadResponseCurve
+      : DEFAULT_SETTINGS.gamepadResponseCurve,
+    gamepadInvertY: Boolean(merged.gamepadInvertY),
+    gamepadVibration: Boolean(merged.gamepadVibration),
+    gamepadLayout: layout,
+    gamepadBindings:
+      layout === 'custom' ? sanitizeGamepadBindings(merged.gamepadBindings) : PRESETS[layout],
   };
 }
 

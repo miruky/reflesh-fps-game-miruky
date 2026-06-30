@@ -6,6 +6,8 @@ export type FireMode = 'auto' | 'semi' | 'burst';
 export type WeaponSlot = 'primary' | 'secondary';
 // 発砲音の合成プロファイル。audio.tsのSHOT_PROFILESと対応する
 export type SoundProfile = 'ar' | 'smg' | 'dmr' | 'shotgun' | 'lmg' | 'pistol' | 'br';
+// 武器カテゴリ。メダル判定(LONGSHOT閾値・距離系)とエイムアシストの分岐に使う
+export type WeaponClass = 'ar' | 'smg' | 'sniper' | 'shotgun' | 'br' | 'lmg' | 'pistol';
 
 export interface WeaponDef {
   id: string;
@@ -49,6 +51,8 @@ export interface WeaponDef {
   aimAssist?: boolean;
   // 発砲音の合成プロファイル
   soundProfile: SoundProfile;
+  // 武器カテゴリ(メダル/エイムアシスト用)
+  class: WeaponClass;
   // ADS時に動的拡散(ブルーム/移動/空中)を打ち消す割合(0..1)。
   // スナイパーは高くして覗けばほぼ無拡散、自動火器は低めに留める
   adsMoveSuppression: number;
@@ -102,6 +106,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pelletSpreadDeg: 0,
     penetrationM: 0.35,
     soundProfile: 'ar',
+    class: 'ar',
     adsMoveSuppression: 0.35,
     airSpreadDeg: 2.2,
   },
@@ -135,6 +140,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pelletSpreadDeg: 0,
     penetrationM: 0.15,
     soundProfile: 'smg',
+    class: 'smg',
     adsMoveSuppression: 0.3,
     airSpreadDeg: 1.6,
   },
@@ -174,6 +180,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     scope: true,
     aimAssist: true,
     soundProfile: 'dmr',
+    class: 'sniper',
     adsMoveSuppression: 0.95,
     airSpreadDeg: 2.2,
   },
@@ -207,6 +214,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pelletSpreadDeg: 2.6,
     penetrationM: 0,
     soundProfile: 'shotgun',
+    class: 'shotgun',
     adsMoveSuppression: 0.25,
     airSpreadDeg: 2.0,
   },
@@ -240,6 +248,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pelletSpreadDeg: 0,
     penetrationM: 0.4,
     soundProfile: 'br',
+    class: 'br',
     adsMoveSuppression: 0.45,
     airSpreadDeg: 2.0,
   },
@@ -273,6 +282,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pelletSpreadDeg: 0,
     penetrationM: 0.8,
     soundProfile: 'lmg',
+    class: 'lmg',
     adsMoveSuppression: 0.2,
     airSpreadDeg: 3.0,
   },
@@ -306,6 +316,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pelletSpreadDeg: 0,
     penetrationM: 0.1,
     soundProfile: 'pistol',
+    class: 'pistol',
     adsMoveSuppression: 0.45,
     airSpreadDeg: 1.8,
   },

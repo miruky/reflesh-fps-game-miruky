@@ -29,6 +29,10 @@ export interface Profile {
   completedChallenges: string[];
   // 表示名ごとのキル数(武器・投擲物・近接)
   weaponKills: Record<string, number>;
+  // 初取得済みメダルID(初回バッジ解放の判定に使う)
+  unlockedMedals: string[];
+  // メダルIDごとの累計取得回数
+  medalCounts: Record<string, number>;
 }
 
 export interface MatchSummary {
@@ -42,6 +46,12 @@ export interface MatchSummary {
   captures: number;
   bestStreak: number;
   weaponKills: Record<string, number>;
+  // この試合で初解放したメダルID
+  unlockedMedals: string[];
+  // この試合で取得したメダルIDごとの回数
+  medalCounts: Record<string, number>;
+  // この試合のメダルXP合計
+  medalXp: number;
 }
 
 export function emptyProfile(): Profile {
@@ -66,6 +76,8 @@ export function emptyProfile(): Profile {
     },
     completedChallenges: [],
     weaponKills: {},
+    unlockedMedals: [],
+    medalCounts: {},
   };
 }
 
@@ -287,6 +299,13 @@ export function applyMatch(profile: Profile, summary: MatchSummary): MatchProgre
   for (const [name, count] of Object.entries(summary.weaponKills)) {
     profile.weaponKills[name] = (profile.weaponKills[name] ?? 0) + count;
   }
+  // メダル: 初解放IDの重複なしマージ + 取得回数の加算マージ
+  for (const id of summary.unlockedMedals) {
+    if (!profile.unlockedMedals.includes(id)) profile.unlockedMedals.push(id);
+  }
+  for (const [id, count] of Object.entries(summary.medalCounts)) {
+    profile.medalCounts[id] = (profile.medalCounts[id] ?? 0) + count;
+  }
 
   // 自己ベストの更新。更新したものは結果画面で知らせる
   const records = profile.records;
@@ -315,6 +334,8 @@ export function applyMatch(profile: Profile, summary: MatchSummary): MatchProgre
   if (summary.captures > 0) {
     xpBreakdown.push({ label: `拠点制圧 x${summary.captures}`, xp: summary.captures * 150 });
   }
+  // メダルXPは試合中のトーストとは別に、リザルトで1行だけ計上する(二重計上回避)
+  if (summary.medalXp > 0) xpBreakdown.push({ label: 'メダル', xp: summary.medalXp });
 
   const completed: ChallengeDef[] = [];
   for (const challenge of CHALLENGES) {

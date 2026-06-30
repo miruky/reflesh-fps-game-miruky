@@ -1,12 +1,25 @@
 import { easeOutCubic } from '../core/easing';
+import {
+  GP_LAYOUTS,
+  PRESETS,
+  glyphFor,
+  type GamepadBinding,
+  type GamepadBindings,
+  type PadAction,
+} from '../core/gamepad';
+import type { Input } from '../core/input';
 import { exportProfile, importProfile, saveProfile } from '../core/profile';
 import {
   DEFAULT_SETTINGS,
+  GRAPHICS_QUALITIES,
   MATCH_LENGTHS,
   RETICLE_COLORS,
   RETICLE_STYLES,
+  SETTING_BOUNDS,
   UI_ACCENTS,
   saveSettings,
+  type GamepadResponseCurve,
+  type GraphicsQuality,
   type Settings,
 } from '../core/settings';
 import {
@@ -102,7 +115,48 @@ const CONTROLS: Array<[string, string]> = [
   ['息止め(スコープ)', 'Shift(覗き込み中に揺れを止める)'],
   ['スコアボード', 'Tab'],
   ['ポーズ', 'Esc'],
+  ['ゲームパッド', 'PS4等に対応 / 下の「設定」で配置変更'],
+  ['ポーズ(パッド)', 'OPTIONS'],
 ];
+
+// リバインド表に出すパッドアクションの順序と日本語名。weapon1/weapon2(数字直選択)は
+// キーボード専用なので割愛。fire/ads はトリガー、それ以外はボタン既定。
+const PAD_ACTION_ROWS: ReadonlyArray<[PadAction, string]> = [
+  ['fire', '射撃'],
+  ['ads', 'ADS(覗き込み)'],
+  ['jump', 'ジャンプ'],
+  ['crouch', 'しゃがみ / スライド'],
+  ['sprint', 'スプリント'],
+  ['reload', 'リロード'],
+  ['melee', '近接攻撃'],
+  ['weaponswitch', '武器切替'],
+  ['grenade', 'グレネード'],
+  ['grenadeswitch', '投擲物切替'],
+  ['ultimate', 'アルティメット'],
+  ['holdBreath', '息止め'],
+  ['leanleft', '左リーン'],
+  ['leanright', '右リーン'],
+  ['scoreboard', 'スコアボード'],
+];
+
+const GRAPHICS_LABELS: Record<GraphicsQuality, string> = {
+  low: '低(軽量・ポスト処理なし)',
+  medium: '中(既定)',
+  high: '高(高負荷・高解像度)',
+};
+
+const CURVE_LABELS: Record<GamepadResponseCurve, string> = {
+  linear: 'リニア(等速)',
+  exponential: '指数(中央が精密)',
+  dynamic: 'ダイナミック(精密+機敏)',
+};
+
+// バインドの深いコピー。プリセットは共有オブジェクトなので、カスタム編集前に必ず複製する
+function cloneBindings(b: GamepadBindings): GamepadBindings {
+  const out = {} as GamepadBindings;
+  for (const key of Object.keys(b) as PadAction[]) out[key] = b[key].map((x) => ({ ...x }));
+  return out;
+}
 
 const LOGO_SVG = `
 <svg viewBox="0 0 64 64" width="56" height="56" role="img" aria-label="hibanaのロゴ">
@@ -128,12 +182,16 @@ export class Menu {
     mag: null,
   };
   private activePage = 'deploy'; // 現在表示中のMFDページ
+  private capturingAction: PadAction | null = null; // リバインド捕捉中のアクション
+  private bindNote = ''; // 競合解消などの通知文(リバインド表の下に表示)
+  private captureCleanup: (() => void) | null = null; // 捕捉中の keydown リスナ等の後始末
 
   constructor(
     private readonly root: HTMLElement,
     private readonly settings: Settings,
     private readonly profile: Profile,
     private readonly callbacks: MenuCallbacks,
+    private readonly input: Input,
   ) {
     this.loadLoadout();
     this.showMain();
@@ -185,7 +243,21 @@ export class Menu {
   }
 
   hide(): void {
+    // メニューを隠す瞬間に必ずリバインド捕捉を畳む。捕捉中のまま試合へ復帰すると
+    // 最初のパッド入力がリバインドに食われ、設定が静かに書き換わるのを防ぐ
+    this.endCapture();
     this.root.hidden = true;
+  }
+
+  // リバインド捕捉の後始末を一箇所に集約する。Input側のコールバック解除・
+  // keydownリスナ除去・捕捉状態クリアを冪等に行う
+  private endCapture(): void {
+    this.input.cancelCapture();
+    if (this.captureCleanup) {
+      this.captureCleanup();
+      this.captureCleanup = null;
+    }
+    this.capturingAction = null;
   }
 
   showMain(): void {
@@ -843,6 +915,8 @@ export class Menu {
 
   private renderSettings(container: HTMLElement): void {
     container.className = 'settings-panel';
+    // 画面差し替えで捕捉中だったリバインドは無効化する(コールバック・keydownリスナを残さない)
+    this.endCapture();
     container.innerHTML = '';
     container.append(
       this.slider('マウス感度', 0.2, 3, 0.05, this.settings.sensitivity, (v) => {
@@ -935,18 +1009,227 @@ export class Menu {
       ),
     );
 
+    // 画質ティア(再読み込みで完全反映)。レンダラ/ポスト処理は起動時に確定するため注記を添える
+    const gfx = this.select(
+      '画質',
+      GRAPHICS_QUALITIES.map((q) => ({ value: q, label: GRAPHICS_LABELS[q] })),
+      this.settings.graphicsQuality,
+      (v) => {
+        this.settings.graphicsQuality = v as GraphicsQuality;
+      },
+    );
+    const gfxNote = document.createElement('p');
+    gfxNote.className = 'setting-note';
+    gfxNote.textContent = '※ 画質の変更はページの再読み込みで完全に反映されます';
+    container.append(gfx, gfxNote);
+
+    // ゲームパッド設定一式(感度/デッドゾーン/応答カーブ/反転/振動/プリセット/リバインド)
+    container.appendChild(this.buildGamepadSettings());
+
     // 設定を既定へ戻すボタン
     const reset = document.createElement('button');
     reset.type = 'button';
     reset.className = 'setting-reset';
     reset.textContent = '設定を既定に戻す';
     reset.addEventListener('click', () => {
+      this.endCapture();
+      this.bindNote = '';
       Object.assign(this.settings, DEFAULT_SETTINGS);
       saveSettings(this.settings);
       this.callbacks.onSettingsChanged();
       this.renderSettings(container);
     });
     container.appendChild(reset);
+  }
+
+  // ── ゲームパッド設定セクション ────────────────────────────────────
+  private buildGamepadSettings(): HTMLElement {
+    const sb = SETTING_BOUNDS;
+    const b = {
+      sensX: sb.gamepadSensX,
+      sensY: sb.gamepadSensY,
+      deadzone: sb.gamepadDeadzone,
+      exp: sb.gamepadResponseExp,
+    };
+    const section = document.createElement('section');
+    section.className = 'gamepad-settings';
+    const heading = document.createElement('h3');
+    heading.className = 'settings-subhead';
+    heading.textContent = 'ゲームパッド';
+    section.appendChild(heading);
+    const intro = document.createElement('p');
+    intro.className = 'setting-note';
+    intro.textContent =
+      'PS4 DualShock などの標準ゲームパッドに対応。既定はBO3標準配置。OPTIONSで一時停止。';
+    section.appendChild(intro);
+
+    section.append(
+      this.slider('横感度', b.sensX.min, b.sensX.max, 0.1, this.settings.gamepadSensX, (v) => {
+        this.settings.gamepadSensX = v;
+      }),
+      this.slider('縦感度', b.sensY.min, b.sensY.max, 0.1, this.settings.gamepadSensY, (v) => {
+        this.settings.gamepadSensY = v;
+      }),
+      this.slider(
+        'デッドゾーン',
+        b.deadzone.min,
+        b.deadzone.max,
+        0.01,
+        this.settings.gamepadDeadzone,
+        (v) => {
+          this.settings.gamepadDeadzone = v;
+        },
+      ),
+      this.slider(
+        '応答カーブ指数',
+        b.exp.min,
+        b.exp.max,
+        0.05,
+        this.settings.gamepadResponseExp,
+        (v) => {
+          this.settings.gamepadResponseExp = v;
+        },
+      ),
+      this.select(
+        '応答カーブ',
+        (Object.keys(CURVE_LABELS) as GamepadResponseCurve[]).map((c) => ({
+          value: c,
+          label: CURVE_LABELS[c],
+        })),
+        this.settings.gamepadResponseCurve,
+        (v) => {
+          this.settings.gamepadResponseCurve = v as GamepadResponseCurve;
+        },
+      ),
+      this.checkbox('Y軸を反転する(パッド)', this.settings.gamepadInvertY, (v) => {
+        this.settings.gamepadInvertY = v;
+      }),
+      this.checkbox('振動(対応環境のみ)', this.settings.gamepadVibration, (v) => {
+        this.settings.gamepadVibration = v;
+      }),
+    );
+
+    // プリセット選択。binding表と相互参照するため手組みする
+    const layoutRow = document.createElement('label');
+    layoutRow.className = 'setting-row';
+    const layoutText = document.createElement('span');
+    layoutText.textContent = '配置プリセット';
+    const layoutSelect = document.createElement('select');
+    for (const layout of GP_LAYOUTS) {
+      const opt = document.createElement('option');
+      opt.value = layout.id;
+      opt.textContent = layout.name;
+      layoutSelect.appendChild(opt);
+    }
+    layoutSelect.value = this.settings.gamepadLayout;
+    layoutRow.append(layoutText, layoutSelect);
+    section.appendChild(layoutRow);
+
+    const host = document.createElement('div');
+    host.className = 'rebind-table';
+    section.appendChild(host);
+
+    layoutSelect.addEventListener('change', () => {
+      const id = layoutSelect.value as (typeof GP_LAYOUTS)[number]['id'];
+      this.settings.gamepadLayout = id;
+      // プリセットへ切替: そのプリセットを複製して実バインドへ反映。customは現状維持(複製)
+      this.settings.gamepadBindings =
+        id === 'custom'
+          ? cloneBindings(this.settings.gamepadBindings)
+          : cloneBindings(PRESETS[id]);
+      this.bindNote = '';
+      saveSettings(this.settings);
+      this.callbacks.onSettingsChanged();
+      this.renderGamepadBindings(host, layoutSelect);
+    });
+
+    this.renderGamepadBindings(host, layoutSelect);
+    return section;
+  }
+
+  // リバインド表を(再)描画する。各行=アクション名+現在のグリフ+「変更」ボタン
+  private renderGamepadBindings(host: HTMLElement, layoutSelect: HTMLSelectElement): void {
+    host.innerHTML = '';
+    for (const [action, label] of PAD_ACTION_ROWS) {
+      const row = document.createElement('div');
+      row.className = 'rebind-row';
+      const name = document.createElement('span');
+      name.className = 'rebind-name';
+      name.textContent = label;
+      const glyphs = document.createElement('span');
+      glyphs.className = 'rebind-glyph';
+      const binds = this.settings.gamepadBindings[action];
+      glyphs.textContent = binds.length > 0 ? binds.map(glyphFor).join(' / ') : '(なし)';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'rebind-btn';
+      const capturing = this.capturingAction === action;
+      btn.textContent = capturing ? '…ボタンを押す(Escで取消)' : '変更';
+      if (capturing) btn.classList.add('capturing');
+      btn.addEventListener('click', () => this.startCapture(action, host, layoutSelect));
+      row.append(name, glyphs, btn);
+      host.appendChild(row);
+    }
+    if (this.bindNote) {
+      const note = document.createElement('p');
+      note.className = 'setting-note rebind-note';
+      note.textContent = this.bindNote;
+      host.appendChild(note);
+    }
+  }
+
+  // 次に押されたパッドボタンを当該アクションへ割り当てる。プリセット中ならcustomへ移行する
+  private startCapture(
+    action: PadAction,
+    host: HTMLElement,
+    layoutSelect: HTMLSelectElement,
+  ): void {
+    // 別の捕捉が走っていたら確実に畳む(前回の keydown リスナも除去)
+    this.endCapture();
+    // プリセットは共有オブジェクト。編集前にcustomへ移行して複製する
+    if (this.settings.gamepadLayout !== 'custom') {
+      this.settings.gamepadLayout = 'custom';
+      this.settings.gamepadBindings = cloneBindings(this.settings.gamepadBindings);
+      layoutSelect.value = 'custom';
+    }
+    this.capturingAction = action;
+    this.bindNote = '';
+
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      this.endCapture();
+      this.renderGamepadBindings(host, layoutSelect);
+    };
+    document.addEventListener('keydown', onKey, true);
+    // endCapture から呼ばれる後始末(Input側コールバック解除は endCapture が担う)
+    this.captureCleanup = () => document.removeEventListener('keydown', onKey, true);
+    this.renderGamepadBindings(host, layoutSelect);
+
+    this.input.captureNextButton((binding) => {
+      this.endCapture();
+      this.assignBinding(action, binding);
+      saveSettings(this.settings);
+      this.callbacks.onSettingsChanged();
+      this.renderGamepadBindings(host, layoutSelect);
+    });
+  }
+
+  // 物理ボタンは1アクションに対応させる。重複は他アクションから外し、通知文に残す
+  private assignBinding(action: PadAction, binding: GamepadBinding): void {
+    const bindings = this.settings.gamepadBindings;
+    const moved: string[] = [];
+    for (const [other, label] of PAD_ACTION_ROWS) {
+      if (other === action) continue;
+      if (bindings[other].some((x) => x.index === binding.index)) {
+        bindings[other] = bindings[other].filter((x) => x.index !== binding.index);
+        moved.push(label);
+      }
+    }
+    bindings[action] = [binding];
+    this.bindNote = moved.length
+      ? `${glyphFor(binding)} を「${moved.join('、')}」から移動しました`
+      : '';
   }
 
   private slider(

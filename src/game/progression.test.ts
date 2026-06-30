@@ -24,6 +24,9 @@ function summary(overrides: Partial<MatchSummary> = {}): MatchSummary {
     captures: 0,
     bestStreak: 0,
     weaponKills: {},
+    unlockedMedals: [],
+    medalCounts: {},
+    medalXp: 0,
     ...overrides,
   };
 }

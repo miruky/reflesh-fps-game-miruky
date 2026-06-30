@@ -2,6 +2,7 @@ import { RADAR_RANGE_M, RETICLE_COLORS } from '../core/settings';
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
 import { MOVE_SPEEDS } from '../game/player';
+import { SUPPRESS_BADGE, starPoints, type MedalEvent } from '../game/medals';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -15,6 +16,30 @@ function reticleColorValue(id: string): string {
 }
 
 type Project = (world: THREE.Vector3) => { x: number; y: number; behind: boolean };
+
+// 正多角形(頂点を真上に向ける)のSVG points文字列。バッジの六角/八角に使う
+function ngonPoints(cx: number, cy: number, n: number, r: number): string {
+  const pts: string[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const a = (2 * Math.PI * i) / n - Math.PI / 2;
+    pts.push(`${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`);
+  }
+  return pts.join(' ');
+}
+
+// バッジ中央のアイコン(階級ごと)。crosshair/chevron/star/bolt
+function badgeIcon(tier: MedalEvent['tier']): string {
+  if (tier === 'bronze') {
+    return '<circle cx="60" cy="60" r="15"/><line x1="60" y1="37" x2="60" y2="83"/><line x1="37" y1="60" x2="83" y2="60"/>';
+  }
+  if (tier === 'silver') {
+    return '<polyline points="44,66 60,52 76,66"/><polyline points="44,80 60,66 76,80"/>';
+  }
+  if (tier === 'gold') {
+    return `<polygon points="${starPoints(60, 60, 5, 17, 7)}" fill="#fff" stroke="none"/>`;
+  }
+  return '<polyline points="65,36 49,62 60,62 55,84 75,56 64,56 65,36"/>';
+}
 
 const DIRECTIONS: Array<[number, string]> = [
   [0, '北'],
@@ -38,6 +63,7 @@ export class Hud {
   private lastUltActive = false; // オーバードライブ発動の立ち上がり検出用
   private scopeOn = false; // スコープ表示の立ち上がり検出用
   private wasSteady = false; // 息止め成立の立ち上がり検出用(集中グリント再発火)
+  private badgeSeq = 0; // バッジSVGの一意ID用カウンタ(gradient/filterのid衝突回避)
 
   constructor(private readonly root: HTMLElement) {
     root.innerHTML = `
@@ -163,6 +189,8 @@ export class Hud {
         <div class="hud-move-bar"><div data-id="speedfill"></div></div>
       </div>
       <div class="hud-banner" data-id="banner"></div>
+      <div class="hud-medal-stack" data-id="medalstack"></div>
+      <div class="hud-badge-stack" data-id="badgestack"></div>
       <div class="hud-ult" data-id="ult">
         <div class="hud-ult-bar"><div data-id="ultfill"></div></div>
         <span class="hud-ult-label" data-id="ultlabel">ULT</span>
@@ -250,6 +278,10 @@ export class Hud {
     this.wasSteady = false;
     const toast = this.el['scoretoast'];
     if (toast) toast.innerHTML = '';
+    const badges = this.el['badgestack'];
+    if (badges) badges.innerHTML = '';
+    const medalStack = this.el['medalstack'];
+    if (medalStack) medalStack.innerHTML = '';
   }
 
   update(
@@ -284,6 +316,7 @@ export class Hud {
     this.pushHits(snap);
     this.pushDamageNumbers(snap, project);
     this.pushScoreEvents(snap);
+    this.pushMedals(snap);
     this.updateRadar(snap);
     this.pushIncoming(snap);
     this.updateDeath(snap);
@@ -502,6 +535,7 @@ export class Hud {
     for (const entry of snap.feed) {
       const row = document.createElement('div');
       row.className = 'hud-feed-row';
+      row.dataset.kind = entry.headshot ? 'hs' : entry.weapon === '近接' ? 'melee' : '';
       const killer = document.createElement('span');
       killer.className = entry.killer === 'あなた' ? 'feed-you' : 'feed-name';
       killer.textContent = entry.killer;
@@ -584,6 +618,73 @@ export class Hud {
       }, 900);
     }
     while (layer.childElementCount > 3) layer.firstElementChild?.remove();
+  }
+
+  // メダル表示: 初取得=中央のバッジ解放カード / 2回目以降=左の大文字。HSは抑止(フィードのみ)
+  private pushMedals(snap: MatchSnapshot): void {
+    for (const m of snap.medals) {
+      if (SUPPRESS_BADGE.has(m.id)) continue;
+      if (m.firstUnlock) this.pushBadge(m);
+      else this.pushMedalText(m);
+    }
+  }
+
+  private pushBadge(m: MedalEvent): void {
+    const stack = this.el['badgestack'];
+    if (!stack) return;
+    const card = document.createElement('div');
+    card.className = 'hud-badge';
+    card.style.color = m.color; // SVGの currentColor / アクセントに使う
+    card.innerHTML = `${this.makeBadgeSvg(m)}<div class="badge-name">${m.name}</div><div class="badge-tag">実績解放</div>`;
+    stack.appendChild(card);
+    requestAnimationFrame(() => card.classList.add('show'));
+    window.setTimeout(() => {
+      card.classList.add('out');
+      window.setTimeout(() => card.remove(), 500);
+    }, 3200);
+    while (stack.childElementCount > 2) stack.firstElementChild?.remove();
+  }
+
+  private pushMedalText(m: MedalEvent): void {
+    const stack = this.el['medalstack'];
+    if (!stack) return;
+    const row = document.createElement('div');
+    row.className = 'hud-medal';
+    row.style.color = m.color;
+    const combo = m.combo >= 2 ? `<i>×${m.combo}</i>` : '';
+    row.innerHTML = `<span>${m.name}</span>${combo}`;
+    stack.appendChild(row);
+    requestAnimationFrame(() => row.classList.add('show'));
+    window.setTimeout(() => {
+      row.classList.add('out');
+      window.setTimeout(() => row.remove(), 400);
+    }, 1800);
+    while (stack.childElementCount > 4) stack.firstElementChild?.remove();
+  }
+
+  // 階級ごとに形の違うエンブレムをSVGで生成(盾/六角/星/八角 + 金属グラデ + グロー + 中央アイコン)
+  private makeBadgeSvg(m: MedalEvent): string {
+    const id = `bdg${this.badgeSeq++}`;
+    const shape =
+      m.tier === 'bronze'
+        ? '<path d="M60 8 L106 24 V62 C106 90 86 106 60 116 C34 106 14 90 14 62 V24 Z"/>'
+        : m.tier === 'gold'
+          ? `<polygon points="${starPoints(60, 60, 5, 52, 23)}"/>`
+          : `<polygon points="${ngonPoints(60, 60, m.tier === 'silver' ? 6 : 8, 52)}"/>`;
+    return `<svg viewBox="0 0 120 120" class="badge-svg" aria-hidden="true">
+      <defs>
+        <radialGradient id="${id}g" cx="50%" cy="36%" r="68%">
+          <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+          <stop offset="0.4" stop-color="currentColor" stop-opacity="0.92"/>
+          <stop offset="1" stop-color="#080a0e" stop-opacity="0.96"/>
+        </radialGradient>
+        <filter id="${id}f" x="-40%" y="-40%" width="180%" height="180%">
+          <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="currentColor" flood-opacity="0.9"/>
+        </filter>
+      </defs>
+      <g filter="url(#${id}f)" fill="url(#${id}g)" stroke="currentColor" stroke-width="3" stroke-linejoin="round">${shape}</g>
+      <g class="badge-icon" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">${badgeIcon(m.tier)}</g>
+    </svg>`;
   }
 
   // レーダーのブリップ(敵マーカー)を上限数だけプールしておく。毎フレーム属性更新のみ

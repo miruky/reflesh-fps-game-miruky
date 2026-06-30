@@ -11,6 +11,9 @@ export class GameLoop {
   constructor(
     private readonly update: (dt: number) => void,
     private readonly render: (dt: number) => void,
+    // 固定更新ドレインの前に毎フレーム1回だけ走る(ゲームパッドのポーリング用)。
+    // ボタンの立ち上がりを同フレームの update に確実に届けるため。
+    private readonly preTick?: (dt: number) => void,
   ) {}
 
   start(): void {
@@ -30,6 +33,7 @@ export class GameLoop {
     const frame = Math.min(0.25, (now - this.last) / 1000);
     this.last = now;
     this.accumulator += frame;
+    this.preTick?.(frame);
     while (this.accumulator >= this.fixedDt) {
       this.update(this.fixedDt);
       this.accumulator -= this.fixedDt;

@@ -10,6 +10,8 @@ import {
   BULLET_MAG_MAX_DEG,
   BULLET_MAG_MAX_SCOPED_DEG,
   distanceFactor,
+  RAA_FOLLOW,
+  rotationalAssist,
   slowdownFactor,
   snapPulse,
 } from './aimassist';
@@ -109,5 +111,22 @@ describe('aimassist 純粋ロジック', () => {
   it('スコープ用バレットマグネティズム定数は通常より広く強い', () => {
     expect(BULLET_MAG_CONE_SCOPED_DEG).toBeGreaterThanOrEqual(BULLET_MAG_CONE_DEG);
     expect(BULLET_MAG_MAX_SCOPED_DEG).toBeGreaterThanOrEqual(BULLET_MAG_MAX_DEG);
+  });
+
+  it('rotationalAssist: デッドゾーン以下のスティックでは作動しない', () => {
+    expect(rotationalAssist(1.0, 0.05, 1, 1 / 60, 0.1)).toBe(0);
+  });
+
+  it('rotationalAssist: スティックを倒すと対象角速度の一定割合を返す', () => {
+    const dt = 1 / 60;
+    const out = rotationalAssist(2.0, 0.8, 1, dt, 0.1);
+    expect(out).toBeCloseTo(2.0 * RAA_FOLLOW * 1 * dt, 6);
+    expect(out).toBeGreaterThan(0);
+  });
+
+  it('rotationalAssist: strengthは0..1にクランプされる', () => {
+    const dt = 1 / 60;
+    expect(rotationalAssist(1.0, 1, 5, dt, 0.1)).toBeCloseTo(1.0 * RAA_FOLLOW * 1 * dt, 6);
+    expect(rotationalAssist(1.0, 1, -1, dt, 0.1)).toBe(0);
   });
 });

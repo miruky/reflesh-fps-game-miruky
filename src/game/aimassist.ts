@@ -116,3 +116,19 @@ export function adsSensScale(
   const full = (Math.tan(adsFov / 2) / Math.tan(baseFov / 2)) * mul;
   return 1 + (full - 1) * clamp(progress, 0, 1);
 }
+
+// ── ゲームパッド: 回転エイムアシスト(RAA)─────────────────────────
+// スティックを倒している間だけ、ターゲットの画面横角速度の一定割合をカメラに追従させる。
+// 静止狙撃中(stickMag<=deadzone)は一切干渉しない。中心吸着(magnetism)とは別の層。
+export const RAA_FOLLOW = 0.7; // ターゲット角速度の追従率(0.65-0.80)
+
+export function rotationalAssist(
+  targetYawRateRad: number,
+  stickMag: number,
+  strength: number,
+  dt: number,
+  deadzone: number,
+): number {
+  if (stickMag <= deadzone) return 0;
+  return targetYawRateRad * RAA_FOLLOW * clamp(strength, 0, 1) * dt;
+}

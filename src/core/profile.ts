@@ -48,6 +48,17 @@ export function parseProfile(raw: string): Profile {
     }
   }
 
+  if (Array.isArray(source.unlockedMedals)) {
+    base.unlockedMedals = source.unlockedMedals.filter((id): id is string => typeof id === 'string');
+  }
+
+  if (typeof source.medalCounts === 'object' && source.medalCounts !== null) {
+    for (const [id, count] of Object.entries(source.medalCounts as Record<string, unknown>)) {
+      const value = num(count, 0);
+      if (value > 0) base.medalCounts[id] = value;
+    }
+  }
+
   return base;
 }
 

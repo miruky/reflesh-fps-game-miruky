@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { SoundKit } from '../core/audio';
 import { Input } from '../core/input';
 import { mulberry32, type Rand } from '../core/rng';
-import { RADAR_RANGE_M, type Settings } from '../core/settings';
+import { RADAR_RANGE_M, resolveGraphicsTier, type GraphicsQuality, type Settings } from '../core/settings';
 import { Effects } from '../render/effects';
 import { ViewModel } from '../render/viewmodel';
 import {
@@ -16,6 +16,7 @@ import {
   BULLET_MAG_CONE_SCOPED_DEG,
   BULLET_MAG_MAX_SCOPED_DEG,
   distanceFactor,
+  rotationalAssist,
   slowdownFactor,
   snapPulse,
   wrapAngle,
@@ -31,7 +32,20 @@ import {
 } from './ballistics';
 import { breathStep, BREATH_MAX_S, lissajousSway, swayAmp, SWAY_AMP_DEG } from './scope';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { Bot, BOT_NAMES, DIFFICULTY, HIP_OFFSET_Y, type Difficulty } from './bot';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { Bot, BOT_MAX_HP, BOT_NAMES, DIFFICULTY, HIP_OFFSET_Y, type Difficulty } from './bot';
+import {
+  MedalTracker,
+  medalRank,
+  type KillCtx,
+  type MedalEvent,
+  type MedalTier,
+} from './medals';
 import {
   explosionDamage,
   flashIntensity,
@@ -57,10 +71,23 @@ import { Player } from './player';
 import type { MatchSummary } from './progression';
 import { generateStage, type StageDef } from './stage';
 import { teamPalette, type TeamPalette } from './teamcolors';
-import { Weapon, WEAPON_DEFS } from './weapons';
+import { Weapon, WEAPON_DEFS, type WeaponClass } from './weapons';
+
+// Sky.js のシェーダ uniform。noUncheckedIndexedAccess を避けるための型付きビュー
+interface SkyUniforms {
+  turbidity: { value: number };
+  rayleigh: { value: number };
+  mieCoefficient: { value: number };
+  mieDirectionalG: { value: number };
+  sunPosition: { value: THREE.Vector3 };
+}
 
 const DEG = Math.PI / 180;
 const LOOK_BASE = 0.0022;
+// ゲームパッドのヒップファイア時アシストゲート(マウスはADS時のみ、パッドは常時BO3準拠)
+const HIP_GATE = 0.5;
+// -1..1へクランプ(移動入力のORブレンド用)
+const clampUnit = (v: number): number => (v < -1 ? -1 : v > 1 ? 1 : v);
 const PITCH_LIMIT = (89 * Math.PI) / 180;
 const LEAN_ROLL = 0.2;
 // ウォールラン時の視点ロール量(壁側へ傾ける)
@@ -83,6 +110,9 @@ const OVERDRIVE_RESIST = 0.5;
 const SLAM_RADIUS = 8;
 const SLAM_DAMAGE = 220;
 const PLAYER_FEET_OFFSET = 0.95; // カプセル中心から足元まで(CAPSULE_HALF+CAPSULE_RADIUS)
+// 本体中心がこのYを下回ったら「床を抜けた」とみなし救済する。床下面は-2(厚化後)、
+// 正規地形は Y>=0 のみ。-8 は足元≈-9mで誤検出余地ゼロ(無限落下の構造的封じ込め)
+const VOID_Y = -8;
 const MELEE_RANGE = 2.2;
 const MELEE_DAMAGE = 75;
 const MELEE_COOLDOWN = 0.8;
@@ -211,6 +241,7 @@ export interface MatchSnapshot {
   scoreboard: ScoreRow[];
   scoreEvents: Array<{ label: string; xp: number }>; // スコア獲得トースト(キル/HS/制圧)
   enemyBearings: Array<{ angle: number; dist: number }>; // レーダー用: 自機yaw基準の相対角と水平距離
+  medals: MedalEvent[]; // この描画フレームで取得したメダル(初回=バッジ/以降=大文字)
 }
 
 interface RayHitLike {
@@ -315,6 +346,8 @@ export class Match {
   private aimAssistTargetDir: THREE.Vector3 | null = null; // 弾道補正用の対象方向(無ければnull)
   private aimAssistTargetAngle = 0; // 照準と対象のなす角(rad)
   private aimAssistTargetDist = 0; // 対象までの距離(m)
+  private raaPrevTarget: Bot | null = null; // 回転エイムアシストの前フレーム対象
+  private raaPrevBearing = 0; // 同・前フレームの対象方位(yaw)
   private scopeSway = { x: 0, y: 0 }; // レティクル視差用の揺れ(度、100%)
   private breathMeter = BREATH_MAX_S; // 息止めの残量(秒)
   private breathSteady = false; // 息止めが効いている
@@ -325,6 +358,15 @@ export class Match {
   private snapPulseDone = false; // 覗き込み時のスナップ補正を撃ったか(1回限り制御)
   private hitFreezeS = 0; // ヒットストップの残り秒(ビューモデル/FXのみ凍結)
   private scoreEvents: Array<{ label: string; xp: number }> = []; // スコア獲得トースト(消費型)
+  private readonly tracker: MedalTracker; // メダル検出(純ロジック)
+  private medals: MedalEvent[] = []; // メダル取得イベント(消費型)
+  private medalXpTotal = 0; // 試合中のメダルXP累計(リザルトで1回だけ計上)
+  private lastAdsStartMs = 0; // ADS開始時刻(クイックスコープ判定)
+  private lastAlive = true; // プレイヤー生存の前フレーム値(死亡の立ち下がり検出)
+  // ── リアル化(描画) ──
+  private composer: EffectComposer | null = null; // medium/high のみ(low は素のレンダラ)
+  private envRT: THREE.WebGLRenderTarget | null = null; // 空から焼いたIBL(per-Matchで解放)
+  private readonly sunDir = new THREE.Vector3(); // 太陽方向の単一の真実(空/日光/影を駆動)
 
   constructor(
     readonly config: MatchConfig,
@@ -332,7 +374,10 @@ export class Match {
     private readonly input: Input,
     private readonly sounds: SoundKit,
     aspect: number,
+    private readonly renderer: THREE.WebGLRenderer,
+    knownMedals: Set<string>,
   ) {
+    this.tracker = new MedalTracker(knownMedals);
     this.timeLeft = config.durationS;
     this.colors = teamPalette(settings.teamPaletteId);
     this.rand = mulberry32(Date.now() % 0xffffffff);
@@ -394,6 +439,28 @@ export class Match {
     this.viewModel = new ViewModel(this.camera);
     this.viewModel.setWeapon(this.activeWeapon.def);
     this.activeWeapon.raise();
+
+    this.buildComposer(resolveGraphicsTier(settings.graphicsQuality, renderer.capabilities.isWebGL2));
+  }
+
+  // ポストプロセス: medium/high のみ Render→Bloom→SMAA→Output の最小4パス。
+  // low(WebGL1含む)は composer を作らず render() が素のレンダラへフォールバックする。
+  private buildComposer(tier: GraphicsQuality): void {
+    if (tier === 'low') return;
+    const p = this.config.stage.palette;
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const composer = new EffectComposer(this.renderer);
+    composer.addPass(new RenderPass(this.scene, this.camera));
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(size.x, size.y),
+      p.bloomStrength ?? 0.5, // strength: 真の発光体だけ拾う控えめな値
+      0.4, // radius
+      p.bloomThreshold ?? 0.85, // threshold
+    );
+    composer.addPass(bloom);
+    composer.addPass(new SMAAPass(size.x, size.y));
+    composer.addPass(new OutputPass()); // AgX+exposure+sRGB を renderer から自動適用
+    this.composer = composer;
   }
 
   get activeWeapon(): Weapon {
@@ -402,27 +469,57 @@ export class Match {
 
   private buildStageScene(boxes: ReturnType<typeof generateStage>['boxes']): void {
     const palette = this.config.stage.palette;
-    this.scene.background = new THREE.Color(palette.sky);
+    const size = this.config.stage.size;
+    // Sky.js を可視背景にするため background は使わない
+    this.scene.background = null;
     this.scene.fog = new THREE.FogExp2(palette.fog, palette.fogDensity);
 
-    const hemi = new THREE.HemisphereLight(palette.sky, palette.floor, palette.ambientIntensity);
+    // 太陽方向の単一の真実(空・日光・影カメラ・フォグの暖寒を1本のベクトルが駆動)
+    const elevation = palette.elevation ?? 35;
+    const azimuth = palette.azimuth ?? 170;
+    this.sunDir.setFromSphericalCoords(
+      1,
+      THREE.MathUtils.degToRad(90 - elevation),
+      THREE.MathUtils.degToRad(azimuth),
+    );
+
+    // IBL(scene.environment)と二重になるため Hemi は控えめに
+    const hemi = new THREE.HemisphereLight(
+      palette.sky,
+      palette.floor,
+      palette.ambientIntensity * 0.55,
+    );
     this.scene.add(hemi);
-    const size = this.config.stage.size;
     const sun = new THREE.DirectionalLight(palette.lightColor, palette.lightIntensity);
-    sun.position.set(size * 0.5, size * 0.7, size * 0.3);
+    sun.position.copy(this.sunDir).multiplyScalar(size); // 見える太陽と影方向を一致させる
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    const half = size / 2 + 8;
+    sun.shadow.bias = -0.0005; // シャドウアクネ除去
+    sun.shadow.normalBias = 0.02; // ピーターパン(浮き影)防止
+    sun.shadow.radius = 2; // PCFカーネル拡大(ほぼ0コストで柔らかく)
+    const half = size / 2 + 4;
     sun.shadow.camera.left = -half;
     sun.shadow.camera.right = half;
     sun.shadow.camera.top = half;
     sun.shadow.camera.bottom = -half;
-    sun.shadow.camera.far = size * 2;
+    sun.shadow.camera.far = size * 1.5;
     this.scene.add(sun);
 
+    // 逆光フィル(影を落とさない=追加コストほぼ0。シルエットの締まりを出す)
+    const fill = new THREE.DirectionalLight(
+      new THREE.Color(palette.floor),
+      palette.lightIntensity * 0.12,
+    );
+    fill.position
+      .copy(this.sunDir)
+      .multiplyScalar(-size)
+      .setY(size * 0.3);
+    this.scene.add(fill);
+
     const floorBody = this.physics.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    // 当たり判定の上面は Y=0 のまま、下面を -2 へ倍化して高速落下のトンネリングを物理的に封じる
     const floorCollider = this.physics.createCollider(
-      RAPIER.ColliderDesc.cuboid(size / 2 + 1, 0.5, size / 2 + 1).setTranslation(0, -0.5, 0),
+      RAPIER.ColliderDesc.cuboid(size / 2 + 1, 1.0, size / 2 + 1).setTranslation(0, -1, 0),
       floorBody,
     );
     this.tags.set(floorCollider.handle, { kind: 'world' });
@@ -445,12 +542,14 @@ export class Match {
       if (!material) {
         material = new THREE.MeshStandardMaterial({
           color: spec.color,
-          roughness: 0.85,
+          roughness: 0.72, // IBL投入で空の照り返しを拾えるよう少し滑らかに
+          metalness: 0.0,
           vertexColors: true,
         });
         if (spec.emissive) {
           material.emissive = new THREE.Color(spec.color);
-          material.emissiveIntensity = 0.9;
+          material.emissiveIntensity = 0.7; // AgX+Bloom前提で白飛びを抑える
+          material.envMapIntensity = 0.35; // 自発光体はIBLに打ち消されないよう抑制
         }
         materials.set(key, material);
       }
@@ -774,13 +873,15 @@ export class Match {
     );
     addMerged(
       metalParts,
-      new THREE.MeshStandardMaterial({ metalness: 0.8, roughness: 0.3, vertexColors: true }),
+      // metalness 0.8 だと頂点カラー(アルベド)で金属diffuseが黒く沈むため 0.6 に。IBLで空を映す
+      new THREE.MeshStandardMaterial({ metalness: 0.6, roughness: 0.3, vertexColors: true }),
     );
     if (accentParts.length > 0) {
       const accentMat = new THREE.MeshStandardMaterial({ roughness: 0.5, vertexColors: true });
       if (palette.emissiveAccent) {
         accentMat.emissive = new THREE.Color(palette.accent);
-        accentMat.emissiveIntensity = 1.4;
+        accentMat.emissiveIntensity = 0.9; // AgX+Bloom前提
+        accentMat.envMapIntensity = 0.35;
       }
       addMerged(accentParts, accentMat);
     }
@@ -842,32 +943,45 @@ export class Match {
   // 当たり判定を持たない装飾。グラデ天球・床グリッド・外周ライトバー・
   // 四隅ビーコンでアリーナに空気感を足す。フェアネスには影響しない。
   private buildAtmosphere(palette: StageDef['palette'], size: number): void {
-    // グラデーション天球(フォグの影響を切り、地平はフォグ色へ馴染ませる)
-    const skyGeo = new THREE.SphereGeometry(size * 1.6, 24, 16);
-    const top = new THREE.Color(palette.sky);
-    const bottom = new THREE.Color(palette.fog);
-    const colors: number[] = [];
-    const pos = skyGeo.getAttribute('position') as THREE.BufferAttribute;
-    const v = new THREE.Vector3();
-    for (let i = 0; i < pos.count; i += 1) {
-      v.fromBufferAttribute(pos, i).normalize();
-      const t = THREE.MathUtils.clamp(v.y * 0.5 + 0.5, 0, 1);
-      const col = bottom.clone().lerp(top, Math.pow(t, 0.8));
-      colors.push(col.r, col.g, col.b);
-    }
-    skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    const sky = new THREE.Mesh(
-      skyGeo,
-      new THREE.MeshBasicMaterial({
-        vertexColors: true,
-        side: THREE.BackSide,
-        fog: false,
-        depthWrite: false,
-        depthTest: false,
-      }),
-    );
-    sky.renderOrder = -1;
+    const elevation = palette.elevation ?? 35;
+    const turbidity = palette.turbidity ?? 6;
+    const rayleigh = palette.rayleigh ?? 2;
+    const mieCoefficient = palette.mieCoefficient ?? 0.005;
+    const mieDirectionalG = palette.mieDirectionalG ?? 0.8;
+    const applySky = (sky: Sky): void => {
+      const u = sky.material.uniforms as unknown as SkyUniforms;
+      u.turbidity.value = turbidity;
+      u.rayleigh.value = rayleigh;
+      u.mieCoefficient.value = mieCoefficient;
+      u.mieDirectionalG.value = mieDirectionalG;
+      u.sunPosition.value.copy(this.sunDir);
+    };
+
+    // ── プロシージャル大気(Sky.js, 大気散乱)を可視背景にする ──
+    const sky = new Sky();
+    sky.scale.setScalar(Math.max(10000, size * 40));
+    applySky(sky);
     this.scene.add(sky);
+
+    // ステージ別の露出(明暗の演出)
+    this.renderer.toneMappingExposure = palette.exposure ?? 1.0;
+
+    // ── 空から環境マップ(IBL)を1回だけ焼く=金属が空を映り込み、最大の質感UPになる ──
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const envScene = new THREE.Scene();
+    const envSky = new Sky();
+    envSky.scale.setScalar(10000);
+    applySky(envSky);
+    envScene.add(envSky);
+    this.envRT = pmrem.fromScene(envScene, 0, 0.1, 1000);
+    this.scene.environment = this.envRT.texture;
+    this.scene.environmentIntensity = palette.environmentIntensity ?? (elevation < 6 ? 0.4 : 0.85);
+    envSky.geometry.dispose();
+    (envSky.material as THREE.Material).dispose();
+    pmrem.dispose();
+
+    // フォグ色を空の地平側へ寄せ、空とフォグの境目を目立たなくする
+    if (this.scene.fog) (this.scene.fog as THREE.FogExp2).color.lerp(new THREE.Color(palette.sky), 0.35);
 
     // 床のグリッド(アクセント色の薄い線)で平坦さを解消する
     const grid = new THREE.GridHelper(
@@ -892,8 +1006,9 @@ export class Match {
     const accentGlow = new THREE.MeshStandardMaterial({
       color: palette.accent,
       emissive: new THREE.Color(palette.accent),
-      emissiveIntensity: 1.25,
+      emissiveIntensity: 0.9, // AgX+Bloom前提
       roughness: 0.4,
+      envMapIntensity: 0.35,
     });
     const half = size / 2;
     const barTop = Math.max(5, this.config.stage.maxHeight + 2.5) - 0.4;
@@ -1029,6 +1144,7 @@ export class Match {
   update(dt: number): void {
     if (this.over) return;
     this.elapsed += dt;
+    this.tracker.tick(dt);
     this.timeLeft -= dt;
     if (this.timeLeft <= 0) {
       this.timeLeft = 0;
@@ -1064,9 +1180,14 @@ export class Match {
     // wasPressedは消費型なので1回だけ読む
     const crouchPressed = this.input.wasPressed('crouch');
     if (this.settings.crouchToggle && crouchPressed) this.crouchLatch = !this.crouchLatch;
+    // キーのデジタル±1とゲームパッドのアナログ量をORブレンド(-1..1へクランプ)
     const moveInput = {
-      x: (this.input.isDown('right') ? 1 : 0) - (this.input.isDown('left') ? 1 : 0),
-      z: (this.input.isDown('forward') ? 1 : 0) - (this.input.isDown('back') ? 1 : 0),
+      x: clampUnit(
+        this.input.gpMoveX + (this.input.isDown('right') ? 1 : 0) - (this.input.isDown('left') ? 1 : 0),
+      ),
+      z: clampUnit(
+        this.input.gpMoveZ + (this.input.isDown('forward') ? 1 : 0) - (this.input.isDown('back') ? 1 : 0),
+      ),
       jumpPressed: this.input.wasPressed('jump'),
       crouch: this.settings.crouchToggle ? this.crouchLatch : this.input.isDown('crouch'),
       crouchPressed,
@@ -1150,6 +1271,8 @@ export class Match {
     // scope-inの立ち上がりでレンズ音
     const scopeProg = weapon.def.scope ? weapon.adsProgress : 0;
     if (this.prevScopeProgress < 0.5 && scopeProg >= 0.5) this.sounds.scopeIn();
+    // 覗き込み開始時刻を記録(クイックスコープ=覗いてすぐ撃つ、の判定に使う)
+    if (this.prevScopeProgress <= 0.02 && scopeProg > 0.02) this.lastAdsStartMs = performance.now();
     this.prevScopeProgress = scopeProg;
 
     this.updateGrenades(dt);
@@ -1163,6 +1286,12 @@ export class Match {
     this.physics.step();
     this.syncCamera();
     this.handleRespawns();
+
+    // プレイヤー死亡の立ち下がりでメダル連続系をリセット(復讐対象=直近のkiller)
+    if (this.lastAlive && !this.player.alive) {
+      this.tracker.onPlayerDeath(this.killer?.name ?? null);
+    }
+    this.lastAlive = this.player.alive;
 
     // 先取スコア到達で試合終了
     if (this.scores.winner() !== null) this.over = true;
@@ -1187,30 +1316,53 @@ export class Match {
       // 強い入力(フリック/対象切替)中は弱め、決してハードロックしない
       this.aimAssistEngaged = false;
       this.aimAssistTargetDir = null;
+      // ゲームパッド時は全武器・ヒップでもアシスト(BO3準拠)。マウスはスコープ武器のADS時のみ
+      const gp = this.input.lastDevice === 'gamepad';
       const assistActive =
         this.settings.aimAssist &&
-        weapon.def.aimAssist === true &&
-        weapon.adsProgress > 0.5 &&
-        this.player.alive;
+        this.player.alive &&
+        ((weapon.def.aimAssist === true && weapon.adsProgress > 0.5) || gp);
       const target = assistActive ? this.aimAssistTarget(weapon.def.range) : null;
-      // スローダウンと吸着の両方を同じadsGateで滑らかに立ち上げる(0.5境界での段差防止)
+      // スローダウンと吸着の両方を同じgateで滑らかに立ち上げる(0.5境界での段差防止)
       const adsGate = THREE.MathUtils.smoothstep(weapon.adsProgress, 0.5, 1);
+      const gate = Math.max(adsGate, gp ? HIP_GATE : 0);
+      let slow = 1;
       if (target) {
-        k *= slowdownFactor(
+        slow = slowdownFactor(
           target.angle,
           ACQUIRE_CONE_DEG * DEG,
-          0.5 * this.settings.aimAssistStrength * adsGate,
+          0.5 * this.settings.aimAssistStrength * gate,
         );
       }
+      k *= slow;
 
+      // マウス
       this.player.yaw -= this.input.mouseDX * k;
       // ピッチはアシスト適用後に一度だけクランプする
       let pitch = this.player.pitch + pitchDir * this.input.mouseDY * k;
+      // ゲームパッド(感度は独立。ADS減速slowとadsScaleのみ共有)
+      const gpK = adsScale * slow;
+      const gpPitchDir = this.settings.gamepadInvertY ? 1 : -1;
+      this.player.yaw -= this.input.gpYawBase * gpK;
+      pitch += gpPitchDir * this.input.gpPitchBase * gpK;
+
+      // 回転エイムアシスト用: 対象の方位変化(角速度)を算出
+      let targetYawRate = 0;
+      if (target) {
+        if (this.raaPrevTarget === target.bot) {
+          targetYawRate = wrapAngle(target.yaw - this.raaPrevBearing) / Math.max(dt, 1e-4);
+        }
+        this.raaPrevTarget = target.bot;
+        this.raaPrevBearing = target.yaw;
+      } else {
+        this.raaPrevTarget = null;
+      }
 
       if (target) {
-        const inputMag = Math.hypot(this.input.mouseDX, this.input.mouseDY);
+        const inputMag =
+          Math.hypot(this.input.mouseDX, this.input.mouseDY) + this.input.gpLookMag * 40;
         const inputDamp = THREE.MathUtils.clamp(1 - inputMag / 40, 0.15, 1);
-        const strength = this.settings.aimAssistStrength * adsGate * inputDamp;
+        const strength = this.settings.aimAssistStrength * gate * inputDamp;
         const delta = aimAssistDelta({
           curYaw: this.player.yaw,
           curPitch: pitch,
@@ -1224,6 +1376,16 @@ export class Match {
         });
         this.player.yaw += delta.dYaw;
         pitch += delta.dPitch;
+        // 回転アシスト(スティックを倒している間だけ、対象の横移動に追従)
+        if (gp) {
+          this.player.yaw += rotationalAssist(
+            targetYawRate,
+            this.input.gpLookMag,
+            this.settings.aimAssistStrength * gate,
+            dt,
+            this.settings.gamepadDeadzone,
+          );
+        }
         this.aimAssistEngaged = true;
         this.aimAssistTargetDir = target.dir;
         this.aimAssistTargetAngle = target.angle;
@@ -1555,6 +1717,7 @@ export class Match {
       if (damage > 0 && this.explosionReaches(point, this.player.position)) {
         const died = this.player.takeDamage(damage);
         this.tookDamage = true;
+        this.haptic(110, 0.5, 0.55);
         this.addShake(Math.min(0.7, damage * 0.01));
         this.addUltCharge(damage * ULT_ON_DAMAGE_PER_HP);
         this.incoming.push(this.incomingAngle(point));
@@ -1621,6 +1784,7 @@ export class Match {
         if (this.player.alive && this.insidePatch(patch, this.player.position)) {
           const died = this.player.takeDamage(tickDamage);
           this.tookDamage = true;
+          this.haptic(70, 0.35, 0.3); // 燃焼ダメージは弱く連続的に
           this.addShake(0.06);
           this.addUltCharge(tickDamage * ULT_ON_DAMAGE_PER_HP);
           this.incoming.push(this.incomingAngle(patch.pos));
@@ -1677,9 +1841,15 @@ export class Match {
     );
   }
 
+  // ゲームパッド使用時のみ触覚フィードバック。input.vibrate は設定offで自動的に無音
+  private haptic(durationMs: number, weak: number, strong: number): void {
+    if (this.input.lastDevice === 'gamepad') this.input.vibrate(durationMs, weak, strong);
+  }
+
   private fireShot(spreadRad: number): void {
     if (!this.player.alive) return;
     this.player.shotsFired += 1;
+    this.haptic(55, 0.15, 0.4); // 発砲のリコイル振動(トリガー1引きにつき1回)
     const weapon = this.activeWeapon;
     const origin = this.player.eyePosition;
     // スコープ覗き込み中は銃が引っ込んで隠れるため、トレーサーは視線基点から出す
@@ -1720,18 +1890,30 @@ export class Match {
       this.tracePellet(origin, dir, muzzle, results);
     }
 
+    let kills = 0;
     for (const [bot, result] of results) {
       this.player.shotsHit += 1;
       if (result.headshot) this.player.headshots += 1;
-      this.applyBotDamage(
-        bot,
-        result.damage,
-        result.point,
-        result.headshot,
-        weapon.def.name,
-        true,
-        weapon.def.scope === true,
-      );
+      if (
+        this.applyBotDamage(
+          bot,
+          result.damage,
+          result.point,
+          result.headshot,
+          weapon.def.name,
+          true,
+          weapon.def.scope === true,
+          weapon.def.class,
+        )
+      ) {
+        kills += 1;
+      }
+    }
+    // 1トリガーで2体以上 = コラテラル(ショットガンのペレット拡散でのみ成立)
+    if (kills >= 2) {
+      const out: MedalEvent[] = [];
+      this.tracker.onCollateral(kills, out);
+      this.emitMedals(out);
     }
   }
 
@@ -1809,6 +1991,7 @@ export class Match {
     }
   }
 
+  // 戻り値: このダメージでBOTが倒れたか(コラテラル集計に使う)
   private applyBotDamage(
     bot: Bot,
     damage: number,
@@ -1817,7 +2000,10 @@ export class Match {
     weaponName: string,
     grantUlt = true,
     scopeKill = false,
-  ): void {
+    srcClass: WeaponClass | null = null,
+  ): boolean {
+    // takeDamage前の満タン判定(one-shotメダル用)
+    const fullHp = bot.hp >= BOT_MAX_HP;
     const died = bot.takeDamage(damage);
     this.effects.hitPuff(point);
     // ヘッドショットは専用の金色フレアと微カメラキックで差別化
@@ -1835,6 +2021,7 @@ export class Match {
       kind: died ? 'kill' : headshot ? 'head' : 'body',
     });
     if (died) {
+      this.haptic(150, 0.5, 0.75); // キル確定の手応え
       this.player.kills += 1;
       this.player.streak += 1;
       this.bestStreak = Math.max(this.bestStreak, this.player.streak);
@@ -1857,12 +2044,61 @@ export class Match {
       if (callout) this.sounds.announceStreak(callout, this.settings.announcerVolume);
       this.botDeathFx(bot);
       if (grantUlt) this.addUltCharge(ULT_ON_KILL);
+
+      // ── メダル検出(銃キルのみ scope/距離系を有効化。grenade/melee/slam は srcClass=null)──
+      const isGun = srcClass !== null;
+      const toBot = this.player.position.clone().sub(bot.position).setY(0);
+      const fromBehind = toBot.dot(bot.facing()) < -0.3;
+      const ctx: KillCtx = {
+        victimName: bot.name,
+        headshot,
+        weaponName,
+        weaponClass: srcClass ?? 'shotgun', // 非銃キルは shotgun 扱い=LONGSHOT無効
+        scopeWeapon: isGun && this.activeWeapon.def.scope === true,
+        adsProgress: isGun ? this.activeWeapon.adsProgress : 0,
+        adsAgeMs: performance.now() - this.lastAdsStartMs,
+        distM: this.player.eyePosition.distanceTo(bot.position),
+        victimFullHp: fullHp,
+        bulletsThisShot: this.activeWeapon.def.pellets,
+        fromBehind,
+        grounded: this.player.grounded,
+        sliding: this.player.sliding,
+        wallRunning: this.player.wallRunning,
+        ultActive: this.ultActive > 0,
+        streak: this.player.streak,
+      };
+      const out: MedalEvent[] = [];
+      this.tracker.onKill(ctx, out);
+      this.emitMedals(out);
     } else {
       this.hits.push(headshot ? 'head' : 'hit');
       const scoped = this.activeWeapon.def.scope === true && this.activeWeapon.adsProgress > 0.5;
       if (headshot) this.sounds.headshot();
       else if (scoped) this.sounds.scopeBodyHit();
       else this.sounds.hit(1 + THREE.MathUtils.clamp((damage - 12) / 90, 0, 0.45));
+    }
+    return died;
+  }
+
+  // メダルイベントを消費: HUD用に積み、XP累計・スコアトースト・アナウンサーを処理する
+  private emitMedals(events: MedalEvent[]): void {
+    if (events.length === 0) return;
+    const tierLevel: Record<MedalTier, number> = { bronze: 1, silver: 2, gold: 3, platinum: 4 };
+    let top: MedalEvent | null = null;
+    for (const m of events) {
+      this.medals.push(m);
+      // ヘッドショットはフィードのアイコン専用。XP(headshots×25で別計上)もトーストも
+      // アナウンスも対象外にする(headshotはここでは積まない=二重計上を避ける)
+      if (m.id === 'headshot') continue;
+      this.medalXpTotal += m.xp;
+      this.scoreEvents.push({ label: m.name, xp: m.xp });
+      if (!top || medalRank(m.id) > medalRank(top.id)) top = m;
+    }
+    if (top) {
+      const vol = this.settings.announcerVolume;
+      // 初解放はファンファーレ+読み上げ、以降はWebAudioスティングのみ(announceStreakと非衝突)
+      if (top.firstUnlock) this.sounds.announceUnlock(top.name, vol);
+      else this.sounds.announceMedal(tierLevel[top.tier], vol);
     }
   }
 
@@ -1938,11 +2174,24 @@ export class Match {
   // 索敵円錐・射程・スモーク・遮蔽をすべて満たすものだけを返す
   private aimAssistTarget(
     maxRange: number,
-  ): { dir: THREE.Vector3; yaw: number; pitch: number; angle: number; dist: number } | null {
+  ): {
+    dir: THREE.Vector3;
+    yaw: number;
+    pitch: number;
+    angle: number;
+    dist: number;
+    bot: Bot;
+  } | null {
     const eye = this.player.eyePosition;
     const forward = this.cameraForward();
-    let best: { dir: THREE.Vector3; yaw: number; pitch: number; angle: number; dist: number } | null =
-      null;
+    let best: {
+      dir: THREE.Vector3;
+      yaw: number;
+      pitch: number;
+      angle: number;
+      dist: number;
+      bot: Bot;
+    } | null = null;
     let bestAngle = ACQUIRE_CONE_DEG * DEG;
     for (const bot of this.bots) {
       if (!bot.alive || bot.team === PLAYER_TEAM) continue;
@@ -1963,6 +2212,7 @@ export class Match {
         pitch: Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1)),
         angle,
         dist,
+        bot,
       };
     }
     return best;
@@ -2030,6 +2280,7 @@ export class Match {
       if (bot.team === PLAYER_TEAM) return;
       const died = this.player.takeDamage(damage);
       this.tookDamage = true;
+      this.haptic(110, 0.5, 0.55);
       this.addShake(0.16);
       this.addUltCharge(damage * ULT_ON_DAMAGE_PER_HP);
       this.sounds.hurt();
@@ -2060,6 +2311,7 @@ export class Match {
           weapon: 'ボットAR',
           headshot: false,
         });
+        this.tracker.onFeed(false); // 他者のキルは自分の連続フィード(QuadFeed)を分断する
         this.botDeathFx(tag.bot);
       }
     }
@@ -2178,6 +2430,21 @@ export class Match {
   }
 
   private handleRespawns(): void {
+    // ── 奈落セーフティネット(無限落下の構造的封じ込め)──
+    // 床抜けはレベル設計でなくエンジン由来のアーティファクトなので、K/D・ストリークを
+    // 罰さず非致死で安全スポーンへ再配置する。物理ステップ後の最新座標で判定する。
+    if (this.player.alive && this.player.position.y < VOID_Y) {
+      this.player.respawnAt(this.pickSpawn(this.playerSpawns, this.hostilesOf(PLAYER_TEAM)));
+      for (const weapon of this.weapons) weapon.resupply();
+      this.refillGrenades();
+    }
+    for (const bot of this.bots) {
+      if (bot.alive && bot.position.y < VOID_Y) {
+        const spawns = bot.team === PLAYER_TEAM ? this.playerSpawns : this.botSpawns;
+        bot.respawnAt(this.pickSpawn(spawns, this.hostilesOf(bot.team)));
+      }
+    }
+
     if (!this.player.alive && this.player.respawnIn <= 0) {
       this.player.respawnAt(this.pickSpawn(this.playerSpawns, this.hostilesOf(PLAYER_TEAM)));
       // リスポーンでは両武器の弾倉を満タンに補給し、投擲物も初期装備へ戻す
@@ -2339,6 +2606,7 @@ export class Match {
       scoreEvents: this.scoreEvents,
       // レーダー無効時はLoSレイキャストを省く(HUDも空配列で参照しない)
       enemyBearings: this.settings.radarEnabled ? this.computeEnemyBearings() : [],
+      medals: this.medals,
     };
     this.feed = [];
     this.hits = [];
@@ -2347,6 +2615,7 @@ export class Match {
     this.tookDamage = false;
     this.announcements = [];
     this.scoreEvents = [];
+    this.medals = [];
     return snapshot;
   }
 
@@ -2419,6 +2688,19 @@ export class Match {
     return rows.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
   }
 
+  // 描画。composer(medium/high)があればそれ、無ければ素のレンダラ。
+  render(): void {
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
+  }
+
+  // リサイズ。アスペクト更新は必須。composerがあればパスの解像度も合わせる
+  resize(width: number, height: number): void {
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+    this.composer?.setSize(width, height);
+  }
+
   result(): MatchResult {
     const rows = this.scoreboard();
     const won = this.modeDef.teamBased
@@ -2444,6 +2726,9 @@ export class Match {
         captures: this.playerCaptures,
         bestStreak: this.bestStreak,
         weaponKills: { ...this.playerWeaponKills },
+        unlockedMedals: [...this.tracker.newlyUnlocked],
+        medalCounts: { ...this.tracker.counts },
+        medalXp: this.medalXpTotal,
       },
     };
   }
@@ -2470,6 +2755,17 @@ export class Match {
     }
     this.thrown = [];
     this.grenadeGeometry.dispose();
+    // ポストプロセスとIBLを解放(scene.traverseの前。怠ると再戦ごとにVRAMリーク)
+    if (this.composer) {
+      for (const pass of this.composer.passes) pass.dispose?.();
+      this.composer.dispose();
+      this.composer = null;
+    }
+    if (this.envRT) {
+      this.envRT.dispose();
+      this.envRT = null;
+    }
+    this.scene.environment = null;
     // 再戦のたびにGPUメモリが積み上がらないよう、シーン内の
     // ジオメトリとマテリアルを明示的に解放する(共有分の二重disposeは無害)
     this.scene.traverse((obj) => {
@@ -2481,6 +2777,12 @@ export class Match {
         } else {
           material.dispose();
         }
+        // InstancedMeshのinstanceMatrixはgeometry.dispose()では解放されないため明示的に
+        if (obj instanceof THREE.InstancedMesh) obj.dispose();
+      } else if (obj instanceof THREE.Light) {
+        // DirectionalLightの影マップ(2048²のRT)はLightShadow.dispose()でのみ解放される
+        const light = obj as THREE.Light & { shadow?: { dispose?: () => void } };
+        light.shadow?.dispose?.();
       }
     });
     this.physics.free();
