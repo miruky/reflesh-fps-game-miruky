@@ -132,9 +132,20 @@ export class Player {
   private mantleTimer = 0;
   private readonly mantleFrom = new THREE.Vector3();
   private readonly mantleTo = new THREE.Vector3();
+  // ミッション・モディファイアで上書きする個体設定(既定は従来定数)
+  private readonly regenDelay: number;
+  private readonly regenPerS: number;
+  private readonly gravityScale: number;
 
-  constructor(world: RAPIER.World, spawn: THREE.Vector3) {
+  constructor(
+    world: RAPIER.World,
+    spawn: THREE.Vector3,
+    opts?: { regenDelay?: number; regenPerS?: number; gravityScale?: number },
+  ) {
     this.world = world;
+    this.regenDelay = opts?.regenDelay ?? REGEN_DELAY;
+    this.regenPerS = opts?.regenPerS ?? REGEN_PER_SECOND;
+    this.gravityScale = opts?.gravityScale ?? 1;
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
       spawn.x,
       spawn.y + CENTER_TO_FEET,
@@ -265,18 +276,34 @@ export class Player {
     } else if (this.wallRunning) {
       // 速度は updateWallRun で設定済み
     } else if (this.grounded) {
-      let speed = this.crouching ? CROUCH_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED;
-      speed *= 1 - (1 - ADS_SPEED_FACTOR) * adsProgress;
-      speed *= this.speedMul;
+      // バニーホップ: 着地と同時にジャンプを入力(/直前バッファ)していて十分速ければ、
+      // その接地フレームの摩擦(approach)を飛ばして水平運動量を保つ。タイミング技なので
+      // 再ジャンプしない通常着地では下のapproach+クランプで自然に減速する
+      const bhop = (input.jumpPressed || this.jumpBuffered > 0) && this.speed > WALK_SPEED;
+      if (bhop) {
+        // 摩擦スキップ(velをそのまま持ち越し)。直後のジャンプ処理で打ち上がる
+      } else {
+        let speed = this.crouching ? CROUCH_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED;
+        speed *= 1 - (1 - ADS_SPEED_FACTOR) * adsProgress;
+        speed *= this.speedMul;
 
-      const wish = new THREE.Vector3()
-        .addScaledVector(forward, input.z)
-        .addScaledVector(right, input.x);
-      if (wish.lengthSq() > 1) wish.normalize();
-      wish.multiplyScalar(speed);
+        const wish = new THREE.Vector3()
+          .addScaledVector(forward, input.z)
+          .addScaledVector(right, input.x);
+        if (wish.lengthSq() > 1) wish.normalize();
+        wish.multiplyScalar(speed);
 
-      this.vel.x = approach(this.vel.x, wish.x, GROUND_ACCEL * dt);
-      this.vel.z = approach(this.vel.z, wish.z, GROUND_ACCEL * dt);
+        this.vel.x = approach(this.vel.x, wish.x, GROUND_ACCEL * dt);
+        this.vel.z = approach(this.vel.z, wish.z, GROUND_ACCEL * dt);
+        // 地上水平クランプ: スライドキャンセル/ホップ連係で無限加速しないための安全弁
+        const sp = Math.hypot(this.vel.x, this.vel.z);
+        const groundMax = SPRINT_SPEED * 1.3;
+        if (sp > groundMax) {
+          const f = groundMax / sp;
+          this.vel.x *= f;
+          this.vel.z *= f;
+        }
+      }
     } else {
       // 空中: 運動量を保つ射影式エアアクセル + ソフト上限
       const wishX = forward.x * input.z + right.x * input.x;
@@ -339,7 +366,12 @@ export class Player {
     }
 
     // ── 重力(終端速度でクランプし、奈落落下時の床抜けを防ぐ)──
-    this.velY = applyGravityStep(this.velY, this.wallRunning ? WALLRUN_GRAVITY : 1, dt);
+    // gravityScale はモディファイア(低重力ミッション等)で全体を弱める
+    this.velY = applyGravityStep(
+      this.velY,
+      (this.wallRunning ? WALLRUN_GRAVITY : 1) * this.gravityScale,
+      dt,
+    );
 
     const movement = {
       x: this.vel.x * dt,
@@ -387,14 +419,16 @@ export class Player {
     if (Math.abs(this.wallRunTilt) < 0.01 && tiltTarget === 0) this.wallRunTilt = 0;
 
     this.sinceDamage += dt;
-    if (this.sinceDamage > REGEN_DELAY && this.hp < this.maxHp) {
-      this.hp = Math.min(this.maxHp, this.hp + REGEN_PER_SECOND * dt);
+    if (this.regenPerS > 0 && this.sinceDamage > this.regenDelay && this.hp < this.maxHp) {
+      this.hp = Math.min(this.maxHp, this.hp + this.regenPerS * dt);
     }
   }
 
-  private endSlide(): void {
+  // スライド終了。十分に速ければクールダウン0で即連係可(スライドキャンセル・チェーン)。
+  // force=true は死亡/マントル等の確実な終了で、通常クールダウンを課す。
+  endSlide(force = false): void {
     this.sliding = false;
-    this.slideCooldown = SLIDE_COOLDOWN;
+    this.slideCooldown = !force && this.speed > SLIDE_BOOST * 0.85 ? 0 : SLIDE_COOLDOWN;
   }
 
   // ウォールランの開始・継続・終了。継続中は壁沿いの速度を設定する

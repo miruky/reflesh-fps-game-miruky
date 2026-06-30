@@ -1,5 +1,8 @@
 // XP・レベル・アンロック・チャレンジ・ランクの計算。保存形式はprofile.tsが扱う
 
+import { CAMPAIGN, missionById, type ModifierId } from './campaign';
+import type { Difficulty } from './bot';
+
 export interface CareerStats {
   matches: number;
   wins: number;
@@ -21,6 +24,19 @@ export interface PersonalRecords {
   currentWinStreak: number;
 }
 
+// ── R6 キャンペーン進行 ──
+export interface MissionBest {
+  bestTimeS: number;
+  stars: number; // 0..3。表示時に parTimeS から再計算もできる
+  difficulty: Difficulty;
+}
+
+export interface CampaignState {
+  clearedMissions: string[];
+  unlockedChapters: string[]; // 既定 ['ch1']
+  missionBests: Record<string, MissionBest>;
+}
+
 export interface Profile {
   xp: number;
   rating: number;
@@ -33,6 +49,10 @@ export interface Profile {
   unlockedMedals: string[];
   // メダルIDごとの累計取得回数
   medalCounts: Record<string, number>;
+  // キャンペーン進行(章/ミッション解放・クリア・自己ベスト)
+  campaign: CampaignState;
+  // スコアアタックの自己ベスト(curatedステージidのみ・件数キャップ)
+  scoreRecords: Record<string, number>;
 }
 
 export interface MatchSummary {
@@ -78,6 +98,9 @@ export function emptyProfile(): Profile {
     weaponKills: {},
     unlockedMedals: [],
     medalCounts: {},
+    // 第1章のみ最初から解放(全既存セーブも第1章から開始でき、softlock回避)
+    campaign: { clearedMissions: [], unlockedChapters: ['ch1'], missionBests: {} },
+    scoreRecords: {},
   };
 }
 
@@ -286,6 +309,16 @@ export interface MatchProgress {
 
 // 試合結果をプロフィールへ反映する。profileはその場で更新される
 export function applyMatch(profile: Profile, summary: MatchSummary): MatchProgress {
+  return accumulateMatch(profile, summary, { rated: summary.rated, trackWinStreak: true });
+}
+
+// applyMatch / applyCampaignMission の共通の積算。rating と連勝記録の扱いだけ呼び側で切り替える
+// (キャンペーンは競技レート・PvP連勝記録を汚染しない)
+function accumulateMatch(
+  profile: Profile,
+  summary: MatchSummary,
+  opts: { rated: boolean; trackWinStreak: boolean },
+): MatchProgress {
   const stats = profile.stats;
   stats.matches += 1;
   if (summary.won) stats.wins += 1;
@@ -314,14 +347,16 @@ export function applyMatch(profile: Profile, summary: MatchSummary): MatchProgre
     records.mostKills = summary.kills;
     if (summary.kills > 0) newRecords.push(`1試合最多キル ${summary.kills}`);
   }
-  if (summary.won) {
-    records.currentWinStreak += 1;
-    if (records.currentWinStreak > records.bestWinStreak) {
-      records.bestWinStreak = records.currentWinStreak;
-      if (records.currentWinStreak >= 2) newRecords.push(`連勝 ${records.currentWinStreak}`);
+  if (opts.trackWinStreak) {
+    if (summary.won) {
+      records.currentWinStreak += 1;
+      if (records.currentWinStreak > records.bestWinStreak) {
+        records.bestWinStreak = records.currentWinStreak;
+        if (records.currentWinStreak >= 2) newRecords.push(`連勝 ${records.currentWinStreak}`);
+      }
+    } else {
+      records.currentWinStreak = 0;
     }
-  } else {
-    records.currentWinStreak = 0;
   }
 
   const xpBreakdown: XpEntry[] = [];
@@ -357,7 +392,7 @@ export function applyMatch(profile: Profile, summary: MatchSummary): MatchProgre
   );
 
   const ratingBefore = profile.rating;
-  if (summary.rated) {
+  if (opts.rated) {
     profile.rating = Math.max(0, profile.rating + (summary.won ? RATING_WIN : RATING_LOSS));
   }
 
@@ -374,4 +409,131 @@ export function applyMatch(profile: Profile, summary: MatchSummary): MatchProgre
     rankAfter: rankFromRating(profile.rating),
     newRecords,
   };
+}
+
+// ── キャンペーンの進行ロジック ──────────────────────────────────
+
+export interface MissionSummary extends MatchSummary {
+  missionId: string;
+  chapterId: string;
+  missionWon: boolean;
+  timeS: number;
+  objectiveMet: boolean;
+  modifiers: ModifierId[];
+}
+
+export interface CampaignProgress extends MatchProgress {
+  missionId: string;
+  firstClear: boolean;
+  stars: number;
+  chapterUnlocked: string | null;
+  missionBest: MissionBest | null;
+}
+
+// 星評価: 勝利=1★、par以内で+1★、モディファイア有りで+1★(最大3)。敗北は0。
+export function starRate(timeS: number, parTimeS: number, modCount: number): number {
+  let s = 1;
+  if (timeS <= parTimeS) s += 1;
+  if (modCount > 0) s += 1;
+  return Math.min(3, s);
+}
+
+// 章の全6ミッションがクリア済みか
+export function chapterCleared(profile: Profile, chapterId: string): boolean {
+  const ch = CAMPAIGN.find((c) => c.id === chapterId);
+  if (!ch) return false;
+  return ch.missions.every((m) => profile.campaign.clearedMissions.includes(m.id));
+}
+
+// 次章のID(無ければnull)
+export function nextChapterId(chapterId: string): string | null {
+  const i = CAMPAIGN.findIndex((c) => c.id === chapterId);
+  if (i < 0 || i + 1 >= CAMPAIGN.length) return null;
+  return CAMPAIGN[i + 1]!.id;
+}
+
+// ミッションが選択可能か: 所属章が解放済み かつ (先頭 or 直前ミッションがクリア済み)
+export function isMissionUnlocked(profile: Profile, missionId: string): boolean {
+  const m = missionById(missionId);
+  if (!m) return false;
+  if (!profile.campaign.unlockedChapters.includes(m.chapterId)) return false;
+  if (m.index === 0) return true;
+  const ch = CAMPAIGN.find((c) => c.id === m.chapterId);
+  const prev = ch?.missions[m.index - 1];
+  return prev ? profile.campaign.clearedMissions.includes(prev.id) : true;
+}
+
+const SCORE_RECORD_CAP = 64; // localStorage肥大化を防ぐ件数上限
+
+// スコアアタックの自己ベスト更新。新記録なら true。curatedステージのみ呼ぶ想定。
+export function applyScoreRecord(profile: Profile, key: string, kills: number): boolean {
+  if (!Number.isFinite(kills) || kills <= 0) return false;
+  const prev = profile.scoreRecords[key] ?? 0;
+  if (kills <= prev) return false;
+  // 上限超過時は最小値の記録を1件落として枠を空ける。ただし新記録が最小値以下なら
+  // 既存のより高い記録を低い値で潰してしまうので、追い出さず保存も諦める
+  const keys = Object.keys(profile.scoreRecords);
+  if (prev === 0 && keys.length >= SCORE_RECORD_CAP) {
+    let minKey = keys[0]!;
+    for (const k of keys) if ((profile.scoreRecords[k] ?? 0) < (profile.scoreRecords[minKey] ?? 0)) minKey = k;
+    if (kills <= (profile.scoreRecords[minKey] ?? 0)) return false;
+    delete profile.scoreRecords[minKey];
+  }
+  profile.scoreRecords[key] = kills;
+  return true;
+}
+
+// ミッション結果をプロフィールへ反映。XP/stats/メダルは共通積算、加えてクリア記録・
+// 星・章解放・初制圧ボーナスを処理する。競技レート/PvP連勝は汚染しない。
+export function applyCampaignMission(profile: Profile, summary: MissionSummary): CampaignProgress {
+  const base = accumulateMatch(profile, summary, { rated: false, trackWinStreak: false });
+  const camp = profile.campaign;
+  const mission = missionById(summary.missionId);
+  const firstClear = summary.missionWon && !camp.clearedMissions.includes(summary.missionId);
+  const par = mission?.parTimeS ?? summary.timeS;
+  // 生存/防衛は「規定時間を耐え抜く=成功」なので、par比較に通すと常に時間オーバーで
+  // 時間★が取れない。クリア時間をparにクランプして時間★を成立させる
+  const kind = mission?.objective.kind;
+  const survival = kind === 'survive' || kind === 'defend';
+  const effTime = survival ? Math.min(summary.timeS, par) : summary.timeS;
+  const stars = summary.missionWon ? starRate(effTime, par, summary.modifiers.length) : 0;
+
+  if (summary.missionWon && !camp.clearedMissions.includes(summary.missionId)) {
+    camp.clearedMissions.push(summary.missionId);
+  }
+  let missionBest: MissionBest | null = camp.missionBests[summary.missionId] ?? null;
+  if (summary.missionWon) {
+    const better =
+      !missionBest || stars > missionBest.stars || summary.timeS < missionBest.bestTimeS;
+    if (better) {
+      missionBest = {
+        bestTimeS: missionBest ? Math.min(missionBest.bestTimeS, summary.timeS) : summary.timeS,
+        stars: missionBest ? Math.max(missionBest.stars, stars) : stars,
+        difficulty: missionById(summary.missionId)?.difficulty ?? 'normal',
+      };
+      camp.missionBests[summary.missionId] = missionBest;
+    }
+  }
+
+  let chapterUnlocked: string | null = null;
+  if (summary.missionWon && chapterCleared(profile, summary.chapterId)) {
+    const next = nextChapterId(summary.chapterId);
+    if (next && !camp.unlockedChapters.includes(next)) {
+      camp.unlockedChapters.push(next);
+      chapterUnlocked = next;
+    }
+  }
+
+  if (firstClear) {
+    base.xpBreakdown.push({ label: '初制圧ボーナス', xp: 800 });
+    profile.xp += 800;
+    base.xpTotal += 800;
+    base.levelAfter = levelFromXp(profile.xp);
+    // ボーナスでレベルが上がった分の解放も結果画面に出す(取りこぼし防止)
+    base.newUnlocks = UNLOCKS.filter(
+      (u) => u.level > base.levelBefore.level && u.level <= base.levelAfter.level,
+    );
+  }
+
+  return { ...base, missionId: summary.missionId, firstClear, stars, chapterUnlocked, missionBest };
 }

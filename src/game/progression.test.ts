@@ -1,15 +1,22 @@
 import { describe, expect, it } from 'vitest';
+import { CAMPAIGN } from './campaign';
 import {
+  applyCampaignMission,
   applyMatch,
+  applyScoreRecord,
+  chapterCleared,
   CHALLENGES,
   emptyProfile,
+  isMissionUnlocked,
   isUnlocked,
   levelFromXp,
   MAX_LEVEL,
   rankFromRating,
+  starRate,
   UNLOCKS,
   xpToNext,
   type MatchSummary,
+  type MissionSummary,
 } from './progression';
 
 function summary(overrides: Partial<MatchSummary> = {}): MatchSummary {
@@ -161,6 +168,118 @@ describe('rankFromRating', () => {
   it('しきい値ちょうどで昇格する', () => {
     expect(rankFromRating(1050).name).toBe('伍長');
     expect(rankFromRating(2000).name).toBe('将官');
+  });
+});
+
+function missionSummary(
+  missionId: string,
+  chapterId: string,
+  won: boolean,
+  timeS: number,
+  overrides: Partial<MissionSummary> = {},
+): MissionSummary {
+  return {
+    ...summary({ won, rated: false }),
+    missionId,
+    chapterId,
+    missionWon: won,
+    timeS,
+    objectiveMet: won,
+    modifiers: [],
+    ...overrides,
+  };
+}
+
+describe('starRate', () => {
+  it('勝利=1★、par以内で+1★、モディファイア有りで+1★(最大3)', () => {
+    expect(starRate(50, 100, 1)).toBe(3);
+    expect(starRate(50, 100, 0)).toBe(2);
+    expect(starRate(150, 100, 0)).toBe(1);
+    expect(starRate(150, 100, 2)).toBe(2);
+    expect(starRate(50, 100, 5)).toBe(3); // 上限3
+  });
+});
+
+describe('applyScoreRecord', () => {
+  it('初回は新記録、下回ると更新しない', () => {
+    const p = emptyProfile();
+    expect(applyScoreRecord(p, 'score:s1', 12)).toBe(true);
+    expect(p.scoreRecords['score:s1']).toBe(12);
+    expect(applyScoreRecord(p, 'score:s1', 8)).toBe(false);
+    expect(p.scoreRecords['score:s1']).toBe(12);
+    expect(applyScoreRecord(p, 'score:s1', 20)).toBe(true);
+    expect(p.scoreRecords['score:s1']).toBe(20);
+  });
+  it('0以下や非有限は記録しない', () => {
+    const p = emptyProfile();
+    expect(applyScoreRecord(p, 'k', 0)).toBe(false);
+    expect(applyScoreRecord(p, 'k', Number.NaN)).toBe(false);
+    expect(Object.keys(p.scoreRecords)).toHaveLength(0);
+  });
+});
+
+describe('キャンペーン進行', () => {
+  const ch1 = CAMPAIGN[0]!;
+  const m1 = ch1.missions[0]!;
+  const m2 = ch1.missions[1]!;
+
+  it('新規プロフィールはch1の第1ミッションのみ解放', () => {
+    const p = emptyProfile();
+    expect(isMissionUnlocked(p, m1.id)).toBe(true);
+    expect(isMissionUnlocked(p, m2.id)).toBe(false);
+    expect(isMissionUnlocked(p, CAMPAIGN[1]!.missions[0]!.id)).toBe(false);
+  });
+
+  it('初クリアで記録追加+初制圧ボーナス、再クリアは重複なし', () => {
+    const p = emptyProfile();
+    const first = applyCampaignMission(p, missionSummary(m1.id, ch1.id, true, 40));
+    expect(first.firstClear).toBe(true);
+    expect(p.campaign.clearedMissions).toContain(m1.id);
+    expect(first.xpBreakdown.some((e) => e.label === '初制圧ボーナス')).toBe(true);
+    expect(isMissionUnlocked(p, m2.id)).toBe(true); // 次が解放
+    const again = applyCampaignMission(p, missionSummary(m1.id, ch1.id, true, 40));
+    expect(again.firstClear).toBe(false);
+    expect(p.campaign.clearedMissions.filter((x) => x === m1.id)).toHaveLength(1);
+  });
+
+  it('章を全クリアすると次章が解放される', () => {
+    const p = emptyProfile();
+    for (const m of ch1.missions) {
+      applyCampaignMission(p, missionSummary(m.id, ch1.id, true, 30));
+    }
+    expect(chapterCleared(p, ch1.id)).toBe(true);
+    expect(p.campaign.unlockedChapters).toContain(CAMPAIGN[1]!.id);
+  });
+
+  it('キャンペーンはPvP連勝記録・レートを汚染しない', () => {
+    const p = emptyProfile();
+    p.records.currentWinStreak = 3;
+    const ratingBefore = p.rating;
+    applyCampaignMission(p, missionSummary(m1.id, ch1.id, true, 30));
+    expect(p.records.currentWinStreak).toBe(3); // 不変
+    expect(p.rating).toBe(ratingBefore); // 不変
+  });
+
+  it('敗北は星0でクリア扱いにならない', () => {
+    const p = emptyProfile();
+    const r = applyCampaignMission(p, missionSummary(m1.id, ch1.id, false, 200));
+    expect(r.stars).toBe(0);
+    expect(p.campaign.clearedMissions).not.toContain(m1.id);
+  });
+
+  it('生存/防衛ミッションは規定時間を超えても時間★が成立する(2★以上)', () => {
+    const survive = CAMPAIGN.flatMap((c) => c.missions).find((m) => m.objective.kind === 'survive');
+    expect(survive).toBeTruthy();
+    if (!survive) return;
+    const p = emptyProfile();
+    // 生存はクリア時間=生存時間でpar超過になりがち。それでも時間★が出る(>=2)
+    const r = applyCampaignMission(
+      p,
+      missionSummary(survive.id, survive.chapterId, true, survive.parTimeS + 60, {
+        modifiers: [],
+      }),
+    );
+    expect(r.stars).toBeGreaterThanOrEqual(2);
   });
 });
 

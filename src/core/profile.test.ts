@@ -37,4 +37,56 @@ describe('parseProfile', () => {
     expect(restored.completedChallenges).toEqual(['ok']);
     expect(restored.weaponKills).toEqual({ 近接: 2 });
   });
+
+  it('campaign/scoreRecordsが往復で保存復元される', () => {
+    const profile = emptyProfile();
+    profile.campaign.clearedMissions.push('c1m1-cold-boot');
+    profile.campaign.unlockedChapters.push('ch2');
+    profile.campaign.missionBests['c1m1-cold-boot'] = {
+      bestTimeS: 42.5,
+      stars: 3,
+      difficulty: 'normal',
+    };
+    profile.scoreRecords['score:kunren'] = 18;
+    const restored = parseProfile(serializeProfile(profile));
+    expect(restored).toEqual(profile);
+  });
+
+  it('campaign欠落の旧セーブはch1解放の既定で補完される', () => {
+    const restored = parseProfile(JSON.stringify({ xp: 100 }));
+    expect(restored.campaign.unlockedChapters).toEqual(['ch1']);
+    expect(restored.campaign.clearedMissions).toEqual([]);
+    expect(restored.scoreRecords).toEqual({});
+    expect(restored.xp).toBe(100);
+  });
+
+  it('不正なcampaign/scoreRecordsは安全に弾く(ch1は常に残す)', () => {
+    const restored = parseProfile(
+      JSON.stringify({
+        campaign: {
+          clearedMissions: ['ok', 5, null],
+          unlockedChapters: ['ch3'], // ch1欠落 → 補完される
+          missionBests: {
+            good: { bestTimeS: 10, stars: 2, difficulty: 'hard' },
+            badStars: { bestTimeS: 10, stars: 99, difficulty: 'easy' }, // クランプ
+            badDiff: { bestTimeS: 10, stars: 1, difficulty: 'wat' }, // 破棄
+            badTime: { bestTimeS: -1, stars: 1, difficulty: 'easy' }, // 破棄
+          },
+        },
+        scoreRecords: { a: 5, b: -3, c: 'x' },
+      }),
+    );
+    expect(restored.campaign.clearedMissions).toEqual(['ok']);
+    expect(restored.campaign.unlockedChapters).toContain('ch1');
+    expect(restored.campaign.unlockedChapters).toContain('ch3');
+    expect(restored.campaign.missionBests['good']).toEqual({
+      bestTimeS: 10,
+      stars: 2,
+      difficulty: 'hard',
+    });
+    expect(restored.campaign.missionBests['badStars']?.stars).toBe(3);
+    expect(restored.campaign.missionBests['badDiff']).toBeUndefined();
+    expect(restored.campaign.missionBests['badTime']).toBeUndefined();
+    expect(restored.scoreRecords).toEqual({ a: 5 });
+  });
 });

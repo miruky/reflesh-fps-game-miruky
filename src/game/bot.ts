@@ -12,13 +12,16 @@ const CENTER_TO_FEET = BODY_HALF + BODY_RADIUS;
 const HEAD_OFFSET = 0.88;
 const HEAD_RADIUS = 0.22;
 const MOVE_SPEED = 3.4;
-// BOTの初期HP。プレイヤー武器の one-shot(満タン即死)メダル判定の参照元
+// BOTの既定HP。プレイヤー武器の one-shot(満タン即死)メダル判定の基準値であり、
+// 各 BotTuning.maxHp の既定でもある(実際の判定はインスタンスの bot.maxHp を見る)
 export const BOT_MAX_HP = 100;
 
 // カプセル中心からこの高さより下への着弾は脚部扱い
 export const HIP_OFFSET_Y = -0.1;
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
+// 敵の階層。normal=通常兵、elite=精鋭(高HP/俊敏)、boss=章末の超強敵
+export type BotTier = 'normal' | 'elite' | 'boss';
 
 export interface BotTuning {
   spreadDeg: number;
@@ -26,13 +29,49 @@ export interface BotTuning {
   damage: number;
   burstPauseMin: number;
   burstPauseMax: number;
+  // ── R6: 階層/個体差 ──
+  maxHp: number;
+  moveSpeedMul: number; // 基準移動速度への倍率
+  scale: number; // 見た目スケール(当たり判定との乖離を避けるため原則1)
+  headOffset: number; // 頭コライダー/頭位置の高さ
+  viewDistM: number; // 索敵可能距離(m)
 }
 
 export const DIFFICULTY: Record<Difficulty, BotTuning> = {
-  easy: { spreadDeg: 5.5, reactionS: 0.6, damage: 8, burstPauseMin: 1.0, burstPauseMax: 1.6 },
-  normal: { spreadDeg: 3.2, reactionS: 0.38, damage: 11, burstPauseMin: 0.7, burstPauseMax: 1.2 },
-  hard: { spreadDeg: 1.9, reactionS: 0.22, damage: 14, burstPauseMin: 0.5, burstPauseMax: 0.9 },
+  easy: { spreadDeg: 5.5, reactionS: 0.6, damage: 8, burstPauseMin: 1.0, burstPauseMax: 1.6, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 55 },
+  normal: { spreadDeg: 3.2, reactionS: 0.38, damage: 11, burstPauseMin: 0.7, burstPauseMax: 1.2, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 60 },
+  hard: { spreadDeg: 1.9, reactionS: 0.22, damage: 14, burstPauseMin: 0.5, burstPauseMax: 0.9, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 68 },
 };
+
+// 階層ごとの上書き差分。base(難度)へスプレッドして合成する。
+// scale は hitreg(当たり判定とのズレ)回避のため拡大せず、威圧は色/発光で表現する。
+export const ELITE_TUNING: Partial<BotTuning> = {
+  maxHp: 180,
+  moveSpeedMul: 1.15,
+  reactionS: 0.2,
+  spreadDeg: 1.8,
+  damage: 15,
+  viewDistM: 75,
+};
+export const BOSS_TUNING: Partial<BotTuning> = {
+  maxHp: 900,
+  moveSpeedMul: 0.92,
+  reactionS: 0.16,
+  spreadDeg: 1.5,
+  damage: 18,
+  scale: 1,
+  viewDistM: 90,
+  burstPauseMin: 0.35,
+  burstPauseMax: 0.7,
+};
+
+// 難度×階層から実効 BotTuning を合成する(単一の真実)。base配列を破壊しない新オブジェクト。
+export function tuningFor(tier: BotTier, difficulty: Difficulty): BotTuning {
+  const base = DIFFICULTY[difficulty];
+  if (tier === 'boss') return { ...base, ...BOSS_TUNING };
+  if (tier === 'elite') return { ...base, ...ELITE_TUNING };
+  return { ...base };
+}
 
 export const BOT_NAMES = [
   'アサギ',
@@ -60,6 +99,9 @@ export class Bot {
   readonly bodyCollider: RAPIER.Collider;
   readonly headCollider: RAPIER.Collider;
   readonly group = new THREE.Group();
+  readonly maxHp: number;
+  readonly tuning: BotTuning;
+  readonly tier: BotTier;
 
   hp = 100;
   alive = true;
@@ -92,14 +134,25 @@ export class Bot {
   private hitFlash = 0; // 被弾時に装甲を一瞬発光させる残り時間
   private flinch = 0; // 被弾時に一瞬のけぞる残り時間
   private armorMat: THREE.MeshStandardMaterial | null = null;
+  private tierGlowBase = 0; // 階層由来の常時発光量(被弾発光の戻り先)
+  private readonly moveSpeed: number;
+  private readonly headOff: number;
 
   constructor(
     world: RAPIER.World,
     readonly name: string,
     spawn: THREE.Vector3,
     color: number,
+    tuning: BotTuning,
     readonly team: number = 1,
+    tier: BotTier = 'normal',
   ) {
+    this.tuning = tuning;
+    this.tier = tier;
+    this.maxHp = tuning.maxHp;
+    this.hp = tuning.maxHp;
+    this.moveSpeed = MOVE_SPEED * tuning.moveSpeedMul;
+    this.headOff = tuning.headOffset;
     const desc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
       spawn.x,
       spawn.y + CENTER_TO_FEET,
@@ -111,28 +164,33 @@ export class Bot {
       this.body,
     );
     this.headCollider = world.createCollider(
-      RAPIER.ColliderDesc.ball(HEAD_RADIUS).setTranslation(0, HEAD_OFFSET, 0),
+      RAPIER.ColliderDesc.ball(HEAD_RADIUS).setTranslation(0, this.headOff, 0),
       this.body,
     );
     this.controller = world.createCharacterController(0.05);
     this.controller.enableAutostep(0.4, 0.3, true);
     this.controller.enableSnapToGround(0.4);
 
-    this.buildMesh(color);
+    this.buildMesh(color, tier);
+    // 当たり判定は固定のまま、見た目だけ階層スケール(原則1.0なので無害)
+    if (tuning.scale !== 1) this.group.scale.setScalar(tuning.scale);
   }
 
   // チーム色の装甲・暗い下地・発光バイザーで構成したヒューマノイド兵士。
   // 当たり判定(胴カプセル+頭球)は別管理なので見た目は自由に組める。
-  private buildMesh(color: number): void {
+  private buildMesh(color: number, tier: BotTier): void {
     const c = new THREE.Color(color);
+    // 強敵は常時わずかに発光する装甲で威圧する(scaleを使わずに格を表現)
+    const tierGlow = tier === 'boss' ? 0.55 : tier === 'elite' ? 0.28 : 0;
     const armor = new THREE.MeshStandardMaterial({
       color: c,
-      roughness: 0.55,
-      metalness: 0.12,
+      roughness: tier === 'normal' ? 0.55 : 0.42,
+      metalness: tier === 'normal' ? 0.12 : 0.32,
       emissive: c.clone(),
-      emissiveIntensity: 0,
+      emissiveIntensity: tierGlow,
     });
     this.armorMat = armor;
+    this.tierGlowBase = tierGlow;
     const dark = new THREE.MeshStandardMaterial({
       color: c.clone().multiplyScalar(0.42),
       roughness: 0.6,
@@ -210,7 +268,7 @@ export class Bot {
 
   headPosition(): THREE.Vector3 {
     const p = this.position;
-    p.y += HEAD_OFFSET;
+    p.y += this.headOff;
     return p;
   }
 
@@ -235,7 +293,7 @@ export class Bot {
     this.blind = Math.max(0, this.blind - dt);
     if (this.hitFlash > 0 && this.armorMat) {
       this.hitFlash = Math.max(0, this.hitFlash - dt);
-      this.armorMat.emissiveIntensity = (this.hitFlash / 0.12) * 0.7;
+      this.armorMat.emissiveIntensity = this.tierGlowBase + (this.hitFlash / 0.12) * 0.7;
     }
     if (this.flinch > 0) this.flinch = Math.max(0, this.flinch - dt);
     const engaged = ctx.targetEye !== null;
@@ -257,8 +315,8 @@ export class Bot {
       const side = new THREE.Vector3(-toTarget.z, 0, toTarget.x).multiplyScalar(this.strafeSign);
       // 9〜20mの交戦距離を保つ
       const approach = dist > 20 ? 1 : dist < 9 ? -1 : 0;
-      wishX = (side.x * 0.8 + toTarget.x * approach) * MOVE_SPEED;
-      wishZ = (side.z * 0.8 + toTarget.z * approach) * MOVE_SPEED;
+      wishX = (side.x * 0.8 + toTarget.x * approach) * this.moveSpeed;
+      wishZ = (side.z * 0.8 + toTarget.z * approach) * this.moveSpeed;
     } else if (ctx.objective && this.position.distanceTo(ctx.objective) > 3) {
       // 拠点へ向かう。直進しすぎないよう周期的に揺らす
       const toObjective = ctx.objective.clone().sub(this.position).setY(0).normalize();
@@ -268,8 +326,8 @@ export class Bot {
         this.headingTimer = 0.8 + ctx.rand() * 1.2;
       }
       const f = this.facing();
-      wishX = f.x * MOVE_SPEED * 0.85;
-      wishZ = f.z * MOVE_SPEED * 0.85;
+      wishX = f.x * this.moveSpeed * 0.85;
+      wishZ = f.z * this.moveSpeed * 0.85;
     } else {
       this.headingTimer -= dt;
       if (this.headingTimer <= 0) {
@@ -277,8 +335,8 @@ export class Bot {
         this.headingTimer = 2 + ctx.rand() * 3;
       }
       const f = this.facing();
-      wishX = f.x * MOVE_SPEED * 0.7;
-      wishZ = f.z * MOVE_SPEED * 0.7;
+      wishX = f.x * this.moveSpeed * 0.7;
+      wishZ = f.z * this.moveSpeed * 0.7;
     }
 
     this.velY = applyGravityStep(this.velY, 1, dt);
@@ -305,7 +363,7 @@ export class Bot {
 
     // 歩行アニメ: 実移動量から歩調(位相)と振幅を進める
     const step = Math.hypot(moved.x, moved.z);
-    const targetAmp = Math.min(1, step / Math.max(1e-4, MOVE_SPEED * dt));
+    const targetAmp = Math.min(1, step / Math.max(1e-4, this.moveSpeed * dt));
     this.walkAmp += (targetAmp - this.walkAmp) * Math.min(1, dt * 8);
     this.walkPhase += step * 9;
 
@@ -399,7 +457,7 @@ export class Bot {
   }
 
   respawnAt(spawn: THREE.Vector3): void {
-    this.hp = 100;
+    this.hp = this.maxHp;
     this.alive = true;
     this.velY = 0;
     this.alert = 0;
@@ -411,7 +469,7 @@ export class Bot {
     this.rig.rotation.x = 0;
     this.hitFlash = 0;
     this.flinch = 0;
-    if (this.armorMat) this.armorMat.emissiveIntensity = 0;
+    if (this.armorMat) this.armorMat.emissiveIntensity = this.tierGlowBase;
     this.bodyCollider.setEnabled(true);
     this.headCollider.setEnabled(true);
     this.body.setTranslation({ x: spawn.x, y: spawn.y + CENTER_TO_FEET, z: spawn.z }, true);

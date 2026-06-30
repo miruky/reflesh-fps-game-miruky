@@ -8,7 +8,7 @@ const DEG = Math.PI / 180;
 export const ACQUIRE_CONE_DEG = 6.0;
 export const FULL_CONE_DEG = 1.2;
 // 吸着の最大角速度(度/秒)。これ以上は決して動かさない
-export const MAX_PULL_DEG_PER_S = 30;
+export const MAX_PULL_DEG_PER_S = 24;
 // 距離減衰: この距離まで満額、DIST_FLOOR_MでDIST_FLOORまで線形に落ちる
 export const DIST_FULL_M = 40;
 export const DIST_FLOOR_M = 140;
@@ -131,4 +131,71 @@ export function rotationalAssist(
 ): number {
   if (stickMag <= deadzone) return 0;
   return targetYawRateRad * RAA_FOLLOW * clamp(strength, 0, 1) * dt;
+}
+
+// ── 最近接部位エイムアシスト ─────────────────────────────────────
+// 敵1体につき頭/胸/腰/脚の複数候補点を生成し、照準(forward)に角度的に最も近い点を
+// 選べるようランク付けする純関数。可視判定は match.ts 側に残すので、ここでは幾何のみ。
+
+export interface Vec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export type AimPart = 'head' | 'chest' | 'waist' | 'limb';
+
+// 敵の中心(bot.position)からの高さオフセット dy。
+// biasDeg は選択時の角度前倒し量(度)。head のみ近接タイ時に頭を選ばせる +0.4°。
+export interface PartOffset {
+  part: AimPart;
+  dy: number;
+  biasDeg?: number;
+}
+
+export const AIM_PARTS: readonly PartOffset[] = [
+  { part: 'head', dy: 0.88, biasDeg: 0.4 },
+  { part: 'chest', dy: 0.15 },
+  { part: 'waist', dy: -0.1 },
+  { part: 'limb', dy: -0.5 },
+];
+
+// 部位ごとの磁力スケール。脚ほど弱く、胴がもっとも強い。
+export const PART_PULL_SCALE: Record<AimPart, number> = {
+  head: 0.9,
+  chest: 1.0,
+  waist: 0.8,
+  limb: 0.6,
+};
+
+// 各候補点について、視点(eye)→点 の方向 dir・照準との角度 angle・距離 dist を求め、
+// 選択用の実効角(eff = angle - biasDeg)で昇順ソートして返す。
+// angle は引き寄せ用の真の角度、eff はソート専用で戻り値には含めない。
+export function rankAimPoints(
+  eye: Vec3,
+  forward: Vec3,
+  base: Vec3,
+  parts: readonly PartOffset[],
+  maxRangeM: number,
+): Array<{ part: AimPart; point: Vec3; dir: Vec3; angle: number; dist: number }> {
+  const scored: Array<{
+    item: { part: AimPart; point: Vec3; dir: Vec3; angle: number; dist: number };
+    eff: number;
+  }> = [];
+  for (const p of parts) {
+    const point: Vec3 = { x: base.x, y: base.y + p.dy, z: base.z };
+    const tx = point.x - eye.x;
+    const ty = point.y - eye.y;
+    const tz = point.z - eye.z;
+    const dist = Math.hypot(tx, ty, tz);
+    if (dist > maxRangeM || dist < 1e-3) continue;
+    const inv = 1 / dist;
+    const dir: Vec3 = { x: tx * inv, y: ty * inv, z: tz * inv };
+    const d = clamp(forward.x * dir.x + forward.y * dir.y + forward.z * dir.z, -1, 1);
+    const angle = Math.acos(d); // 真の角度(引き寄せ用)
+    const eff = angle - (p.biasDeg ?? 0) * DEG; // 選択用(head のみ前倒し)
+    scored.push({ item: { part: p.part, point, dir, angle, dist }, eff });
+  }
+  scored.sort((a, b) => a.eff - b.eff); // 角度昇順(head 微優先)
+  return scored.map((s) => s.item);
 }

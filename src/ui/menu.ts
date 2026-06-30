@@ -32,15 +32,19 @@ import type { Difficulty } from '../game/bot';
 import { GRENADE_KINDS, GRENADE_SPECS, type GrenadeKind } from '../game/grenades';
 import type { MatchResult } from '../game/match';
 import { MODE_DEFS, MODE_IDS, type GameMode } from '../game/modes';
+import { CAMPAIGN, missionById, nextMissionId, type MissionDef } from '../game/campaign';
 import {
   CHALLENGES,
+  isMissionUnlocked,
   isUnlocked,
   levelFromXp,
   rankFromRating,
   unlockLevelOf,
+  type CampaignProgress,
   type MatchProgress,
   type Profile,
 } from '../game/progression';
+import { generateStage } from '../game/stage';
 import { STAGES } from '../game/stages';
 import { TEAM_PALETTES } from '../game/teamcolors';
 import { PRIMARY_IDS, WEAPON_DEFS } from '../game/weapons';
@@ -56,6 +60,7 @@ export interface MenuSelection {
 
 export interface MenuCallbacks {
   onStart: (selection: MenuSelection) => void;
+  onStartMission: (missionId: string) => void;
   onResume: () => void;
   onRestart: () => void;
   onQuit: () => void;
@@ -157,6 +162,66 @@ function cloneBindings(b: GamepadBindings): GamepadBindings {
   for (const key of Object.keys(b) as PadAction[]) out[key] = b[key].map((x) => ({ ...x }));
   return out;
 }
+
+// ── ステージプレビュー: generateStage() の実BoxSpecを等角投影して本物のサムネを描く ──
+const ISO = { CX: 80, CY: 34, SX: 38, SY: 20, H: 3.4, VH: 92 } as const;
+
+// 床平面の正規化座標(nx,nz∈[-1,1])とスクリーン高さ hScreen をSVG座標へ等角投影
+function projectIso(nx: number, nz: number, hScreen: number): { x: number; y: number } {
+  const x = ISO.CX + (nx - nz) * ISO.SX;
+  let y = ISO.CY + (nx + nz) * ISO.SY - hScreen;
+  if (y < 2) y = 2;
+  else if (y > ISO.VH - 2) y = ISO.VH - 2;
+  return { x, y };
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h[0]! + h[0]! + h[1]! + h[1]! + h[2]! + h[2]!;
+  const n = Number.parseInt(h, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// HSLの明度を dL だけシフトした #rrggbb を返す(立体の陰影づけ用)
+function shadeHex(hex: string, dL: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  const d = max - min;
+  let hue = 0;
+  let s = 0;
+  if (d > 1e-6) {
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === rn) hue = (gn - bn) / d + (gn < bn ? 6 : 0);
+    else if (max === gn) hue = (bn - rn) / d + 2;
+    else hue = (rn - gn) / d + 4;
+    hue /= 6;
+  }
+  const nl = Math.min(1, Math.max(0, l + dL));
+  const q = nl < 0.5 ? nl * (1 + s) : nl + s - nl * s;
+  const p = 2 * nl - q;
+  const hue2rgb = (t: number): number => {
+    let tt = t;
+    if (tt < 0) tt += 1;
+    if (tt > 1) tt -= 1;
+    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+    if (tt < 1 / 2) return q;
+    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+    return p;
+  };
+  const to2 = (v: number): string =>
+    Math.round((s === 0 ? nl : v) * 255)
+      .toString(16)
+      .padStart(2, '0');
+  return '#' + to2(hue2rgb(hue + 1 / 3)) + to2(hue2rgb(hue)) + to2(hue2rgb(hue - 1 / 3));
+}
+
+// id→SVG文字列のメモ化(generateStageは決定論)。LRU上限でlocalStorage非依存に肥大を防ぐ
+const stageSvgCache = new Map<string, string>();
 
 const LOGO_SVG = `
 <svg viewBox="0 0 64 64" width="56" height="56" role="img" aria-label="hibanaのロゴ">
@@ -305,12 +370,16 @@ export class Menu {
           </section>
           <div class="console-body">
             <nav class="mfd-rail" role="tablist" aria-label="管制ページ">
+              <button class="mfd-tab mfd-tab-campaign" type="button" role="tab" data-page="campaign" id="mfd-tab-campaign" aria-controls="mfd-panel-campaign"><b>★</b><span>CAMPAIGN</span><small>戦役</small></button>
               <button class="mfd-tab" type="button" role="tab" data-page="deploy" id="mfd-tab-deploy" aria-controls="mfd-panel-deploy"><b>01</b><span>DEPLOY</span><small>降下管制</small></button>
               <button class="mfd-tab" type="button" role="tab" data-page="armory" id="mfd-tab-armory" aria-controls="mfd-panel-armory"><b>02</b><span>ARMORY</span><small>兵装</small></button>
               <button class="mfd-tab" type="button" role="tab" data-page="intel" id="mfd-tab-intel" aria-controls="mfd-panel-intel"><b>03</b><span>INTEL</span><small>戦況</small></button>
               <button class="mfd-tab" type="button" role="tab" data-page="system" id="mfd-tab-system" aria-controls="mfd-panel-system"><b>04</b><span>SYSTEM</span><small>系統</small></button>
             </nav>
             <div class="mfd-deck">
+              <section class="mfd-page" data-page="campaign" role="tabpanel" id="mfd-panel-campaign" aria-labelledby="mfd-tab-campaign" hidden>
+                <div class="campaign-screen" data-id="campaign"></div>
+              </section>
               <section class="mfd-page" data-page="deploy" role="tabpanel" id="mfd-panel-deploy" aria-labelledby="mfd-tab-deploy">
                 <div class="mfd-hero" aria-hidden="true">
                   <div class="hero-limb"></div>
@@ -390,11 +459,172 @@ export class Menu {
     this.renderDifficulties();
     this.renderSettings(this.query('settings'));
     this.renderControls();
+    this.renderCampaign();
     this.renderBriefing();
     this.wireMfd();
     this.query('start').addEventListener('click', () => {
       this.saveLoadout();
       this.callbacks.onStart(this.selection);
+    });
+  }
+
+  // ── キャンペーン(戦役)画面 ────────────────────────────────────
+  private renderCampaign(): void {
+    const host = this.query('campaign');
+    const camp = this.profile.campaign;
+    const totalStars = Object.values(camp.missionBests).reduce((s, b) => s + b.stars, 0);
+    const cleared = camp.clearedMissions.length;
+    host.innerHTML = `
+      <div class="campaign-head">
+        <div class="campaign-title"><strong>軌道に灯る火種</strong><span>CINDER 鎮圧作戦</span></div>
+        <div class="campaign-stat">制圧 <b>${cleared}</b>/48 ・ ★<b>${totalStars}</b>/144</div>
+      </div>
+      <div class="chapter-list" data-id="chapter-list"></div>
+    `;
+    const list = host.querySelector<HTMLElement>('[data-id="chapter-list"]');
+    if (!list) return;
+    for (const chapter of CAMPAIGN) {
+      const unlocked = this.profile.campaign.unlockedChapters.includes(chapter.id);
+      const chClear = chapter.missions.filter((m) => camp.clearedMissions.includes(m.id)).length;
+      const card = document.createElement('div');
+      card.className = unlocked ? 'chapter-card' : 'chapter-card locked';
+      const head = document.createElement('div');
+      head.className = 'chapter-card-head';
+      head.innerHTML = `
+        <span class="chapter-no">${chapter.title}</span>
+        <span class="chapter-sub">${unlocked ? chapter.subtitle : '機密 — 前章の制圧で解放'}</span>
+        <span class="chapter-prog">${chClear}/${chapter.missions.length}</span>
+      `;
+      card.appendChild(head);
+      if (unlocked) {
+        const grid = document.createElement('div');
+        grid.className = 'mission-grid';
+        for (const mission of chapter.missions) {
+          grid.appendChild(this.missionChip(mission));
+        }
+        card.appendChild(grid);
+      }
+      list.appendChild(card);
+    }
+  }
+
+  private missionChip(mission: MissionDef): HTMLElement {
+    const camp = this.profile.campaign;
+    const unlocked = isMissionUnlocked(this.profile, mission.id);
+    const best = camp.missionBests[mission.id];
+    const stars = best ? best.stars : 0;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = unlocked ? 'mission-chip' : 'mission-chip locked';
+    btn.disabled = !unlocked;
+    const starHtml = unlocked
+      ? `<span class="mission-stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</span>`
+      : '<span class="mission-lock">🔒</span>';
+    btn.innerHTML = `
+      <span class="mission-idx">${mission.chapterId.toUpperCase()}-${mission.index + 1}</span>
+      <span class="mission-name">${mission.title}</span>
+      <span class="mission-sub">${mission.subtitle}</span>
+      ${starHtml}
+    `;
+    if (unlocked) btn.addEventListener('click', () => this.showBriefing(mission));
+    return btn;
+  }
+
+  // ミッション・ブリーフィング。出撃で onStartMission を呼ぶ
+  showBriefing(mission: MissionDef): void {
+    this.endCapture(); // 画面差し替え前にリバインド捕捉を畳む(孤立リスナ防止)
+    this.root.hidden = false;
+    const modLabels: Record<string, string> = {
+      'one-life': '一機限り',
+      'low-gravity': '低重力',
+      'no-regen': '自然回復なし',
+      'dense-fog': '濃霧',
+      'elite-swarm': '精鋭過多',
+    };
+    const mods = mission.modifiers.map((m) => modLabels[m] ?? m).join(' / ') || 'なし';
+    const briefLines = mission.brief.map((b) => `<p>${b}</p>`).join('');
+    const intel = mission.intel?.length
+      ? `<div class="brief-intel"><h3>インテル</h3>${mission.intel.map((i) => `<p>${i}</p>`).join('')}</div>`
+      : '';
+    this.root.innerHTML = `
+      <div class="menu-screen menu-briefing">
+        <div class="brief-panel" role="dialog" aria-modal="true" aria-label="ミッションブリーフィング">
+          <p class="brief-chapter">${mission.chapterId.toUpperCase()}-${mission.index + 1}</p>
+          <h1>${mission.title}</h1>
+          <p class="brief-subtitle">${mission.subtitle}</p>
+          <div class="brief-body">${briefLines}</div>
+          <dl class="brief-meta">
+            <div><dt>目的</dt><dd>${mission.objective.label}</dd></div>
+            <div><dt>支給</dt><dd>${WEAPON_DEFS[mission.primaryId]?.name ?? mission.primaryId}</dd></div>
+            <div><dt>特殊条件</dt><dd>${mods}</dd></div>
+          </dl>
+          ${intel}
+          <div class="brief-buttons">
+            <button class="menu-start" data-id="deploy-mission"><span>出撃する</span></button>
+            <button class="menu-quiet" data-id="brief-back">戦役へ戻る</button>
+          </div>
+        </div>
+      </div>
+    `;
+    this.query('deploy-mission').addEventListener('click', () => {
+      this.callbacks.onStartMission(mission.id);
+    });
+    this.query('brief-back').addEventListener('click', () => {
+      this.showMain();
+      this.setMfdPage('campaign');
+    });
+    this.query('deploy-mission').focus({ preventScroll: true });
+  }
+
+  // ミッション結果。星評価・章解放・次ミッション導線を出す
+  showMissionResult(result: MatchResult, progress: CampaignProgress): void {
+    this.endCapture();
+    this.root.hidden = false;
+    const mission = missionById(progress.missionId);
+    const won = result.won;
+    const stars = progress.stars;
+    const starHtml = won
+      ? `<div class="result-stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</div>`
+      : '';
+    const unlockNote = progress.chapterUnlocked
+      ? `<p class="result-chapter-unlock">新章解放: ${CAMPAIGN.find((c) => c.id === progress.chapterUnlocked)?.title ?? ''}</p>`
+      : '';
+    const firstNote = progress.firstClear ? '<p class="result-firstclear">初制圧ボーナス +800 XP</p>' : '';
+    const nextId = mission && won ? nextMissionId(mission.id) : null;
+    const nextUnlocked = nextId ? isMissionUnlocked(this.profile, nextId) : false;
+    const nextBtn =
+      nextId && nextUnlocked
+        ? '<button class="menu-start" data-id="next-mission">次のミッション</button>'
+        : '';
+    this.root.innerHTML = `
+      <div class="menu-screen menu-result${won ? ' result-won' : ''}">
+        <div class="result-panel" role="dialog" aria-modal="true" aria-label="ミッション結果">
+          <p class="result-mode">${mission?.title ?? 'ミッション'}</p>
+          <h1>${won ? 'ミッション達成' : 'ミッション失敗'}</h1>
+          ${starHtml}
+          ${unlockNote}
+          ${firstNote}
+          <p class="result-stats">自己ベスト ${Math.floor(progress.missionBest?.bestTimeS ?? 0)}s / 命中率 ${(result.accuracy * 100).toFixed(1)}% / ヘッドショット ${result.headshots}</p>
+          ${this.progressHtml(progress)}
+          <div class="result-buttons">
+            ${nextBtn}
+            <button class="menu-quiet" data-id="retry-mission">もう一度</button>
+            <button class="menu-quiet" data-id="to-campaign">戦役へ戻る</button>
+          </div>
+        </div>
+      </div>
+    `;
+    this.countUp(this.query('xptotal'), progress.xpTotal);
+    if (nextId && nextUnlocked) {
+      this.query('next-mission').addEventListener('click', () => this.callbacks.onStartMission(nextId));
+    }
+    this.query('retry-mission').addEventListener('click', () => this.callbacks.onRestart());
+    this.query('to-campaign').addEventListener('click', () => {
+      this.showMain();
+      this.setMfdPage('campaign');
+    });
+    (this.query(nextId && nextUnlocked ? 'next-mission' : 'to-campaign')).focus({
+      preventScroll: true,
     });
   }
 
@@ -462,6 +692,7 @@ export class Menu {
   }
 
   showResult(result: MatchResult, progress: MatchProgress): void {
+    this.endCapture();
     this.root.hidden = false;
     const mvp = result.rows[0];
     const rowsHtml = result.rows
@@ -590,13 +821,13 @@ export class Menu {
 
   private renderStages(): void {
     const grid = this.query('stages');
-    STAGES.forEach((stage, index) => {
+    STAGES.forEach((stage) => {
       const card = document.createElement('button');
       card.className = 'stage-card';
       card.dataset.stage = stage.id;
       const palette = stage.palette;
       card.innerHTML = `
-        <span class="stage-preview">${this.stagePreview(stage, index)}</span>
+        <span class="stage-preview">${this.stagePreview(stage)}</span>
         <span class="stage-card-body">
           <span class="stage-swatch" aria-hidden="true">
             <i style="background:${palette.floor}"></i><i style="background:${palette.wall}"></i>
@@ -604,7 +835,7 @@ export class Menu {
           </span>
           <span class="stage-name">${stage.name}</span>
           <span class="stage-sub">${stage.subtitle}</span>
-          <span class="stage-meta">${stage.size}m 四方 / BOT ${stage.botCount}体 / Seed ${stage.seed}</span>
+          <span class="stage-meta">${stage.size}m 四方 / BOT ${stage.botCount}体 / 障害物 ${stage.obstacleCount}</span>
         </span>
       `;
       card.addEventListener('click', () => {
@@ -618,26 +849,73 @@ export class Menu {
     this.markSelected(grid, 'stage', this.selection.stageId);
   }
 
-  private stagePreview(stage: (typeof STAGES)[number], index: number): string {
+  // 実レイアウト(generateStageのBoxSpec)を等角投影した本物のミニチュア。
+  // 外周壁を除外し、奥→手前のpainter順で各箱を上面/右面/左面の3polygonで立体描画する。
+  private stagePreview(stage: (typeof STAGES)[number]): string {
+    const cached = stageSvgCache.get(stage.id);
+    if (cached !== undefined) return cached;
     const palette = stage.palette;
-    const blocks = Array.from({ length: 5 }, (_, blockIndex) => {
-      const x = 13 + blockIndex * 27;
-      const y = 35 + ((stage.seed + blockIndex * 11) % 30);
-      const width = 12 + ((stage.seed + blockIndex * 7) % 13);
-      const height = 10 + ((stage.seed + blockIndex * 5) % 18);
-      return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="1" fill="${blockIndex % 2 === 0 ? palette.wall : palette.obstacle}" opacity="${0.68 + blockIndex * 0.05}"/>`;
-    }).join('');
-    const routeY = 28 + ((stage.seed * 3) % 42);
-    return `
-      <svg viewBox="0 0 160 92" role="img" aria-label="${stage.name}の戦域プレビュー">
-        <title>${stage.name}の戦域プレビュー</title>
-        <rect width="160" height="92" fill="${palette.sky}"/>
-        <path d="M0 29 34 18l32 12 30-17 64 21v58H0Z" fill="${palette.floor}"/>
-        <g>${blocks}</g>
-        <path d="M8 ${routeY} C42 ${routeY - 18}, 78 ${routeY + 20}, 151 ${routeY - 7}" fill="none" stroke="${palette.accent}" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="${index % 2 === 0 ? '1 7' : '8 5'}"/>
-        <circle cx="${24 + ((stage.seed * 2) % 104)}" cy="${24 + (stage.seed % 48)}" r="4" fill="${palette.accent}"/>
-        <path d="M12 12h28M12 17h18" stroke="${palette.lightColor}" stroke-width="2" opacity=".72"/>
-      </svg>`;
+    const half = stage.size / 2;
+    const boxes = generateStage(stage).boxes;
+    // 外周壁は w または d が size+2 になる。両辺が size 以内の箱だけ=障害物
+    const obst = boxes.filter((b) => b.w <= stage.size && b.d <= stage.size);
+    obst.sort((a, b) => a.x + a.z - (b.x + b.z));
+
+    const corners: Array<[number, number]> = [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ];
+    const floorPts = corners
+      .map(([u, v]) => {
+        const p = projectIso(u, v, 0);
+        return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+      })
+      .join(' ');
+
+    const fid = `g${stage.id.replace(/[^a-z0-9]/gi, '')}`;
+    const pp = (pts: Array<{ x: number; y: number }>): string =>
+      pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+    let polys = '';
+    let anyGlow = false;
+    for (const b of obst) {
+      const nx = b.x / half;
+      const nz = b.z / half;
+      const hw = b.w / 2 / half;
+      const hd = b.d / 2 / half;
+      const hTop = b.h * ISO.H;
+      const t0 = projectIso(nx - hw, nz - hd, hTop);
+      const t1 = projectIso(nx + hw, nz - hd, hTop);
+      const t2 = projectIso(nx + hw, nz + hd, hTop);
+      const t3 = projectIso(nx - hw, nz + hd, hTop);
+      const bR = projectIso(nx + hw, nz + hd, 0);
+      const bF = projectIso(nx + hw, nz - hd, 0);
+      const bL = projectIso(nx - hw, nz + hd, 0);
+      const glow = b.emissive ? ` filter="url(#${fid})"` : '';
+      if (b.emissive) anyGlow = true;
+      // 右面(暗め基準) / 左面(さらに暗) / 上面(明るめ)で陰影をつける
+      polys +=
+        `<polygon points="${pp([t1, t2, bR, bF])}" fill="${b.color}"${glow}/>` +
+        `<polygon points="${pp([t2, t3, bL, bR])}" fill="${shadeHex(b.color, -0.22)}"${glow}/>` +
+        `<polygon points="${pp([t0, t1, t2, t3])}" fill="${shadeHex(b.color, 0.18)}"${glow}/>`;
+    }
+    const defs = anyGlow
+      ? `<defs><filter id="${fid}" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="1.6"/><feComponentTransfer><feFuncA type="linear" slope="1.6"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`
+      : '';
+    const svg =
+      `<svg viewBox="0 0 160 92" role="img" aria-label="${stage.name}の戦域プレビュー">` +
+      `<title>${stage.name}の戦域</title>${defs}` +
+      `<rect width="160" height="92" fill="${palette.sky}"/>` +
+      `<polygon points="${floorPts}" fill="${palette.floor}" opacity="0.85"/>` +
+      `${polys}</svg>`;
+
+    if (stageSvgCache.size >= 64) {
+      const oldest = stageSvgCache.keys().next().value;
+      if (oldest !== undefined) stageSvgCache.delete(oldest);
+    }
+    stageSvgCache.set(stage.id, svg);
+    return svg;
   }
 
   private renderWeapons(): void {
@@ -990,6 +1268,9 @@ export class Menu {
       }),
       this.slider('アナウンサー音量', 0, 1, 0.05, this.settings.announcerVolume, (v) => {
         this.settings.announcerVolume = v;
+      }),
+      this.checkbox('戦闘BGM(動的)', this.settings.musicEnabled, (v) => {
+        this.settings.musicEnabled = v;
       }),
       this.select(
         'レティクル形状',

@@ -7,8 +7,10 @@ import { Input } from './core/input';
 import { GameLoop } from './core/loop';
 import { loadProfile, saveProfile } from './core/profile';
 import { loadSettings, resolveGraphicsTier } from './core/settings';
+import { missionById } from './game/campaign';
 import { Match, type MatchConfig } from './game/match';
-import { applyMatch } from './game/progression';
+import { applyCampaignMission, applyMatch, applyScoreRecord } from './game/progression';
+import { stageDefFromId } from './game/biomes';
 import { stageById } from './game/stages';
 import { Hud } from './ui/hud';
 import { Menu, type MenuSelection } from './ui/menu';
@@ -74,6 +76,7 @@ const input = new Input();
 input.attach(renderer.domElement);
 input.setGamepadBindings(settings.gamepadBindings);
 input.setVibration(settings.gamepadVibration);
+sounds.setMusicEnabled(settings.musicEnabled);
 
 const hud = new Hud(hudRoot);
 
@@ -116,20 +119,12 @@ let match: Match | null = null;
 let chromaTimer = 0; // 被弾クロマアベの後始末タイマー(連続被弾で積み重ねない)
 let mode: 'menu' | 'playing' | 'paused' | 'result' = 'menu';
 let lastSelection: MenuSelection | null = null;
+let activeMissionId: string | null = null; // ストーリー進行中のミッションID(なければ通常戦)
 
-function startMatch(selection: MenuSelection): void {
+// 共通の出撃処理。configを組んでMatchを起動しHUD/ロックへ遷移する
+function launch(config: MatchConfig): void {
   sounds.ensure();
-  lastSelection = selection;
   match?.dispose();
-  const config: MatchConfig = {
-    stage: stageById(selection.stageId),
-    mode: selection.mode,
-    primaryId: selection.primaryId,
-    attachments: selection.attachments,
-    grenade: selection.grenade,
-    difficulty: selection.difficulty,
-    durationS: settings.matchLengthS,
-  };
   match = new Match(
     config,
     settings,
@@ -147,14 +142,52 @@ function startMatch(selection: MenuSelection): void {
   input.requestLock(renderer.domElement);
 }
 
+function startMatch(selection: MenuSelection): void {
+  lastSelection = selection;
+  activeMissionId = null;
+  // gen-* のプロシージャルIDも解決できるようフォールバックさせる
+  const stage = stageDefFromId(selection.stageId) ?? stageById(selection.stageId);
+  launch({
+    stage,
+    mode: selection.mode,
+    primaryId: selection.primaryId,
+    attachments: selection.attachments,
+    grenade: selection.grenade,
+    difficulty: selection.difficulty,
+    durationS: settings.matchLengthS,
+    scoreAttack: selection.mode === 'score',
+  });
+}
+
+// ストーリー・ミッションを起動する
+function startMission(missionId: string): void {
+  const mission = missionById(missionId);
+  if (!mission) return;
+  activeMissionId = missionId;
+  lastSelection = null;
+  const stage = stageDefFromId(mission.stageId) ?? stageById(mission.stageId);
+  launch({
+    stage,
+    mode: 'story',
+    primaryId: mission.primaryId,
+    attachments: [],
+    grenade: 'frag',
+    difficulty: mission.difficulty,
+    durationS: mission.durationS,
+    mission,
+  });
+}
+
 const menu = new Menu(menuRoot, settings, profile, {
   onStart: startMatch,
+  onStartMission: startMission,
   onResume: () => {
     sounds.ensure();
     input.requestLock(renderer.domElement);
   },
   onRestart: () => {
-    if (lastSelection) startMatch(lastSelection);
+    if (activeMissionId) startMission(activeMissionId);
+    else if (lastSelection) startMatch(lastSelection);
   },
   onQuit: () => {
     match?.dispose();
@@ -171,6 +204,7 @@ const menu = new Menu(menuRoot, settings, profile, {
     applyMotion();
     input.setGamepadBindings(settings.gamepadBindings);
     input.setVibration(settings.gamepadVibration);
+    sounds.setMusicEnabled(settings.musicEnabled);
   },
 }, input);
 
@@ -205,6 +239,9 @@ const loop = new GameLoop(
     }
     if (match) {
       match.frame(dt, mode === 'playing');
+      // 動的BGM: プレイ中だけ先読みスケジュール。離脱/ポーズで拍をリセット
+      if (mode === 'playing') sounds.tickBgm();
+      else sounds.stopBgm();
       if (mode === 'playing') {
         const snap = match.snapshot();
         const uiW = window.innerWidth / settings.uiScale;
@@ -232,9 +269,27 @@ const loop = new GameLoop(
           input.exitLock();
           hud.hide();
           const result = match.result();
-          const progress = applyMatch(profile, result.summary);
-          saveProfile(profile);
-          menu.showResult(result, progress);
+          if (activeMissionId) {
+            // ストーリー: ミッション進行を反映し、星・章解放つきの結果を出す
+            const ms = match.missionSummary();
+            if (ms) {
+              const cp = applyCampaignMission(profile, ms);
+              saveProfile(profile);
+              menu.showMissionResult(result, cp);
+            } else {
+              menu.showResult(result, applyMatch(profile, result.summary));
+            }
+          } else {
+            const isScore = lastSelection?.mode === 'score';
+            // スコアアタックは自己ベスト用途。競技レートは動かさない(rated=false)
+            const summary = isScore ? { ...result.summary, rated: false } : result.summary;
+            const progress = applyMatch(profile, summary);
+            if (isScore && lastSelection) {
+              applyScoreRecord(profile, `score:${lastSelection.stageId}`, result.summary.kills);
+            }
+            saveProfile(profile);
+            menu.showResult(result, progress);
+          }
         }
       }
       match.render();

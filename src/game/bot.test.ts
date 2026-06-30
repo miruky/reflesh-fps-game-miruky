@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { Bot } from './bot';
+import { Bot, DIFFICULTY } from './bot';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -20,7 +20,7 @@ function makeFixture(): Fixture {
     RAPIER.ColliderDesc.cuboid(50, 0.5, 50).setTranslation(0, -0.5, 0),
     floorBody,
   );
-  const bot = new Bot(world, 'テスト', new THREE.Vector3(0, 0, 0), 0xc84b3c);
+  const bot = new Bot(world, 'テスト', new THREE.Vector3(0, 0, 0), 0xc84b3c, DIFFICULTY.normal);
   world.step();
   return { world, bot, floorBody };
 }

@@ -59,6 +59,48 @@ export function parseProfile(raw: string): Profile {
     }
   }
 
+  // ── キャンペーン進行(壊れた/旧形式の値が来ても安全に正規化) ──
+  if (typeof source.campaign === 'object' && source.campaign !== null) {
+    const camp = source.campaign as Record<string, unknown>;
+    if (Array.isArray(camp.clearedMissions)) {
+      base.campaign.clearedMissions = camp.clearedMissions.filter(
+        (id): id is string => typeof id === 'string',
+      );
+    }
+    if (Array.isArray(camp.unlockedChapters)) {
+      const chapters = camp.unlockedChapters.filter((id): id is string => typeof id === 'string');
+      // 第1章は常に解放(softlock回避)
+      if (!chapters.includes('ch1')) chapters.push('ch1');
+      base.campaign.unlockedChapters = chapters;
+    }
+    if (typeof camp.missionBests === 'object' && camp.missionBests !== null) {
+      const diffs = ['easy', 'normal', 'hard'];
+      for (const [id, raw2] of Object.entries(camp.missionBests as Record<string, unknown>)) {
+        if (typeof raw2 !== 'object' || raw2 === null) continue;
+        const b = raw2 as Record<string, unknown>;
+        const t = b.bestTimeS;
+        const st = b.stars;
+        const df = b.difficulty;
+        if (typeof t !== 'number' || !Number.isFinite(t) || t < 0) continue;
+        if (typeof st !== 'number' || !Number.isFinite(st)) continue;
+        if (typeof df !== 'string' || !diffs.includes(df)) continue;
+        base.campaign.missionBests[id] = {
+          bestTimeS: t,
+          stars: Math.max(0, Math.min(3, Math.round(st))),
+          difficulty: df as 'easy' | 'normal' | 'hard',
+        };
+      }
+    }
+  }
+
+  // ── スコアアタック自己ベスト(正の数のみ採用) ──
+  if (typeof source.scoreRecords === 'object' && source.scoreRecords !== null) {
+    for (const [key, val] of Object.entries(source.scoreRecords as Record<string, unknown>)) {
+      const value = num(val, 0);
+      if (value > 0) base.scoreRecords[key] = value;
+    }
+  }
+
   return base;
 }
 

@@ -124,6 +124,20 @@ export function generateStage(def: StageDef): StageLayout {
     [-edge / 2, 0, edge / 2],
   ];
 
+  // BOTが7体以上のときだけ、内周の円周上に対称ペアで追加スポーンを足す。
+  // botCount<=6 では既存6点のまま(バイト等価)。
+  const baseCount = botSpawns.length; // 6
+  const extra = Math.max(0, def.botCount - baseCount);
+  for (let i = 0; i < extra; i += 1) {
+    const ang = (i / Math.max(1, extra)) * Math.PI * 2 + 0.3;
+    const r = edge * 0.6;
+    botSpawns.push([
+      Math.round((Math.cos(ang) * r) / GRID) * GRID,
+      0,
+      Math.round((Math.sin(ang) * r) / GRID) * GRID,
+    ]);
+  }
+
   // プレイヤー・BOT双方のスポーン地点を障害物から守る
   const spawnGuards: SpawnPoint[] = [...corners, ...botSpawns];
 

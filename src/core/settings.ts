@@ -53,6 +53,8 @@ export interface Settings {
   radarEnabled: boolean;
   // ストリークのアナウンサー音声(SpeechSynthesis)の音量。0で無音
   announcerVolume: number;
+  // 動的BGM(交戦度連動のアダプティブ打楽器)を鳴らすか
+  musicEnabled: boolean;
   // ── R5 リアル化: 画質ティア(low/medium/high) ──
   graphicsQuality: GraphicsQuality;
   // ── R5 ゲームパッド(PS4 DualShock 等) ──
@@ -144,6 +146,7 @@ export const DEFAULT_SETTINGS: Settings = {
   screenShake: 1.0,
   radarEnabled: true,
   announcerVolume: 0.65,
+  musicEnabled: true,
   graphicsQuality: 'medium',
   gamepadSensX: 2.5,
   gamepadSensY: 2.0,
@@ -249,6 +252,7 @@ export function sanitizeSettings(raw: Partial<Settings>): Settings {
       b.announcerVolume.max,
       DEFAULT_SETTINGS.announcerVolume,
     ),
+    musicEnabled: Boolean(merged.musicEnabled),
     graphicsQuality: GRAPHICS_QUALITIES.includes(merged.graphicsQuality)
       ? merged.graphicsQuality
       : DEFAULT_SETTINGS.graphicsQuality,

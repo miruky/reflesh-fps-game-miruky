@@ -1,5 +1,6 @@
 // ゲームモードのルール定義と進行計算。描画・物理に依存しない
-export type GameMode = 'ffa' | 'tdm' | 'dom';
+// 'story'=キャンペーン(目的駆動・scoreTarget無効) / 'score'=スコアアタック(時間内キル数)
+export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score';
 
 export type TeamId = number;
 
@@ -37,9 +38,24 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
     teamBased: true,
     scoreTarget: 150,
   },
+  story: {
+    id: 'story',
+    name: 'ストーリー',
+    desc: 'キャンペーン。目的の達成で勝敗が決まる',
+    teamBased: false,
+    scoreTarget: Infinity, // 先取スコアは無効。勝敗は updateMission が決める
+  },
+  score: {
+    id: 'score',
+    name: 'スコアアタック',
+    desc: '制限時間内のキル数で自己ベストを競う',
+    teamBased: false,
+    scoreTarget: Infinity, // 時間切れまで戦い、最終キル数で記録更新
+  },
 };
 
-export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom'];
+// メニューで選べる対戦モード。'story' は専用UI、'score' はスコアアタックとして選択可
+export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'score'];
 
 const CAPTURE_PER_S = 0.35;
 const DECAY_PER_S = 0.2;

@@ -1,5 +1,96 @@
 import type { SoundProfile } from '../game/weapons';
 
+// ── 人間ライクなアナウンサー音声(③) ─────────────────────────────────
+// アセット禁止のため SpeechSynthesis を使うが、OS既定のロボット声任せをやめ、
+// 端末ローカルの高品位音声を選び、コール内容ごとに自然なプロソディを与える。
+// 声選定/テキスト正規化/プロソディは副作用ゼロの純関数に切り出してテスト可能にする。
+
+// SpeechSynthesisVoice を構造的に受ける最小形(テスト用に組み立てやすく)
+export interface VoiceLike {
+  name: string;
+  lang: string;
+  localService: boolean;
+  default?: boolean;
+}
+
+export interface Prosody {
+  pitch: number;
+  rate: number;
+}
+
+// 人間ぽい既知良声(macOS/Windows同梱の自然合成)を加点する名前パターン
+const KNOWN_GOOD =
+  /siri|samantha|alex|enhanced|premium|natural|aria|jenny|guy|daniel|allison|ava|tom|serena|karen|moira/i;
+// espeak/compact等のロボット声、google/*online*等のクラウド声(静的制約に反する)を減点
+const ROBOTIC_OR_CLOUD = /espeak|compact|google|online|robosoft|android|festival/i;
+
+// 声の良さを採点する。加点: 既知良声+50 / 端末ローカル+40 / en-US+20・en-*+10。
+// 減点: 英語以外-30 / ロボット・クラウド-60。
+export function scoreVoice(v: VoiceLike): number {
+  let s = 0;
+  if (KNOWN_GOOD.test(v.name)) s += 50;
+  if (v.localService) s += 40;
+  if (v.lang === 'en-US') s += 20;
+  else if (v.lang.startsWith('en')) s += 10;
+  else s -= 30;
+  if (ROBOTIC_OR_CLOUD.test(v.name)) s -= 60;
+  return s;
+}
+
+// 最高得点の声を返す。同点は先勝ち(安定)。空なら null。
+// ジェネリクスで元の SpeechSynthesisVoice 参照をそのまま返せるようにする。
+export function pickBestVoice<T extends VoiceLike>(voices: ReadonlyArray<T>): T | null {
+  let best: T | null = null;
+  let bestScore = -Infinity;
+  for (const v of voices) {
+    const sc = scoreVoice(v);
+    if (sc > bestScore) {
+      bestScore = sc;
+      best = v;
+    }
+  }
+  return best;
+}
+
+// 読み上げテキストの正規化。既知ラベルは語間カンマで“間”を作り、未知は小文字化。
+const TTS_OVERRIDE: Record<string, string> = {
+  'DOUBLE KILL': 'double, kill',
+  'TRIPLE KILL': 'triple, kill',
+  'MULTI KILL': 'multi, kill',
+  'KILL CHAIN': 'kill, chain',
+  'POINT BLANK': 'point, blank',
+  GODLIKE: 'god, like',
+  RAMPAGE: 'rampage',
+  UNSTOPPABLE: 'unstoppable',
+};
+export function normalizeTts(label: string, emphasize: boolean): string {
+  const override = TTS_OVERRIDE[label];
+  if (override !== undefined) return override;
+  const lower = label.toLowerCase();
+  // emphasizeでも既にカンマを含むものはそのまま。未知ラベルは素直に小文字読み
+  return emphasize ? lower : lower;
+}
+
+// コール内容ごとの基準ピッチ/レート(ジッタ無し・テスト可能)
+const STREAK_PROSODY: Record<string, Prosody> = {
+  'DOUBLE KILL': { pitch: 0.95, rate: 1.22 },
+  'TRIPLE KILL': { pitch: 0.92, rate: 1.2 },
+  'MULTI KILL': { pitch: 0.9, rate: 1.25 },
+  RAMPAGE: { pitch: 0.85, rate: 1.3 },
+  UNSTOPPABLE: { pitch: 0.78, rate: 1.12 },
+  GODLIKE: { pitch: 0.66, rate: 0.95 },
+};
+export function prosodyBase(label: string): Prosody {
+  return STREAK_PROSODY[label] ?? { pitch: 0.78, rate: 1.05 };
+}
+// 基準に毎回±数%の微ジッタを乗せて機械反復感を消す。pitch∈[0,2]/rate∈[0.1,10]にクランプ。
+export function prosodyFor(label: string): Prosody {
+  const b = prosodyBase(label);
+  const pitch = Math.min(2, Math.max(0, b.pitch + (Math.random() - 0.5) * 0.06));
+  const rate = Math.min(10, Math.max(0.1, b.rate + (Math.random() - 0.5) * 0.08));
+  return { pitch, rate };
+}
+
 // 音声アセットを一切持たず、Web Audio APIで全効果音を合成する。
 // AudioContextはブラウザの自動再生制限のため最初の操作時に生成する。
 export class SoundKit {
@@ -14,9 +105,21 @@ export class SoundKit {
   private sfxVol = 0.8;
   private uiVol = 0.6;
 
+  // 選定済みアナウンサー音声(端末ローカルの高品位声)。無ければ読み上げせずジングルへ
+  private announcerVoice: SpeechSynthesisVoice | null = null;
+  private voiceListenerBound = false;
+
+  // ── 動的BGM(combat-heat連動のアダプティブ打楽器。音源ファイル不要) ──
+  private bgmBus: GainNode | null = null;
+  private combatHeat = 0; // 0(静)..1(交戦)
+  private musicEnabled = true;
+  private nextBeatTime = 0; // look-aheadスケジューラの次拍時刻(ctx基準)
+  private beatIndex = 0;
+
   ensure(): void {
     if (this.ctx) {
       if (this.ctx.state === 'suspended') void this.ctx.resume();
+      this.bindVoices();
       return;
     }
     this.ctx = new AudioContext();
@@ -39,11 +142,64 @@ export class SoundKit {
     this.uiBus = this.ctx.createGain();
     this.uiBus.gain.value = this.uiVol;
     this.uiBus.connect(this.master);
+    // BGMは控えめなミックスでマスターへ。索敵キュー(SFX)を潰さないよう低め
+    this.bgmBus = this.ctx.createGain();
+    this.bgmBus.gain.value = 0.5;
+    this.bgmBus.connect(this.master);
 
     const len = this.ctx.sampleRate;
     this.noiseBuffer = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = this.noiseBuffer.getChannelData(0);
     for (let i = 0; i < len; i += 1) data[i] = Math.random() * 2 - 1;
+
+    this.bindVoices();
+  }
+
+  // 端末ローカルの高品位音声を選んでキャッシュする。Chromeは初回getVoices()が空のため
+  // voiceschanged で再選定する(リスナは一度だけ登録)。クラウド声は静的制約で除外。
+  private bindVoices(): void {
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+    if (!synth || typeof synth.getVoices !== 'function') return;
+    const pick = (): void => {
+      const local = synth.getVoices().filter((v) => v.localService === true);
+      const best = pickBestVoice(local);
+      if (best) this.announcerVoice = best;
+    };
+    pick();
+    if (!this.voiceListenerBound && typeof synth.addEventListener === 'function') {
+      this.voiceListenerBound = true;
+      synth.addEventListener('voiceschanged', pick);
+    }
+  }
+
+  // アナウンサー発話の共通経路。良いローカル声が無ければ読み上げず(ロボット声を避ける)、
+  // fallbackJingle 指定時のみ合成ジングルへ退避する。
+  private speakAnnounce(
+    label: string,
+    vol: number,
+    opts: { cancel?: boolean; delayMs?: number; emphasize?: boolean; fallbackJingle?: boolean } = {},
+  ): void {
+    const volume = Math.max(0, Math.min(1, vol));
+    if (volume <= 0) return;
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+    if (!synth || typeof SpeechSynthesisUtterance === 'undefined' || !this.announcerVoice) {
+      if (opts.fallbackJingle) this.streakJingle(volume);
+      return;
+    }
+    const u = new SpeechSynthesisUtterance(normalizeTts(label, opts.emphasize ?? false));
+    u.lang = 'en-US';
+    u.voice = this.announcerVoice;
+    const { pitch, rate } = prosodyFor(label);
+    u.pitch = pitch;
+    u.rate = rate;
+    u.volume = volume * this.masterVol;
+    if (opts.cancel) synth.cancel();
+    if (opts.delayMs) {
+      const delay = opts.delayMs;
+      setTimeout(() => synth.speak(u), delay);
+    } else {
+      synth.speak(u);
+    }
   }
 
   setVolumes(master: number, sfx: number, ui: number): void {
@@ -235,20 +391,8 @@ export class SoundKit {
   // 連続キルのアナウンサー音声。音声ファイルを持たずSpeechSynthesisで読み上げる。
   // 非対応・無音設定時は合成トーンのジングルにフォールバックする。volは0..1の設定値。
   announceStreak(label: string, vol: number): void {
-    const volume = Math.max(0, Math.min(1, vol));
-    if (volume <= 0) return;
-    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
-    if (synth && typeof SpeechSynthesisUtterance !== 'undefined') {
-      const u = new SpeechSynthesisUtterance(label);
-      u.pitch = 0.75;
-      u.rate = 1.2;
-      // 全体音量を乗算し、マスターミュート/音量設定が効くようにする(両バス外なので明示)
-      u.volume = volume * this.masterVol;
-      synth.cancel();
-      synth.speak(u);
-      return;
-    }
-    this.streakJingle(volume);
+    // 良い声があれば人間ライクに読み上げ、無ければ上昇ジングルへ退避する
+    this.speakAnnounce(label, vol, { cancel: true, emphasize: true, fallbackJingle: true });
   }
 
   // アナウンサー音声が使えない時の上昇ジングル(長三度の3音チェーン)
@@ -263,6 +407,71 @@ export class SoundKit {
         delayS: i * 0.08,
         bus: this.uiBus ?? undefined,
       });
+    }
+  }
+
+  // ── 動的BGM ──
+  setMusicEnabled(enabled: boolean): void {
+    this.musicEnabled = enabled;
+    if (!enabled) this.stopBgm();
+  }
+
+  setCombatHeat(v: number): void {
+    this.combatHeat = Math.max(0, Math.min(1, v));
+  }
+
+  // 試合終了/離脱時に拍カウンタをリセット(再開時のノード洪水を防ぐ)
+  stopBgm(): void {
+    this.nextBeatTime = 0;
+    this.beatIndex = 0;
+  }
+
+  // 描画フレームごとに呼ぶ look-ahead スケジューラ。combat-heat で BPM と密度が上がる。
+  tickBgm(): void {
+    if (!this.ctx || !this.bgmBus || !this.musicEnabled) return;
+    const now = this.ctx.currentTime;
+    // 初回/取り残し時は現在時刻へ寄せ直す(過去拍の取り戻しによるノード洪水を防ぐ)
+    if (this.nextBeatTime === 0 || this.nextBeatTime < now) this.nextBeatTime = now + 0.1;
+    const bpm = 82 + this.combatHeat * 58; // 82(静)→140(交戦)
+    const beatDur = 60 / bpm;
+    let made = 0;
+    while (this.nextBeatTime < now + 0.2 && made < 8) {
+      const delay = this.nextBeatTime - now;
+      // キック(全拍)
+      this.tone({
+        freq: 58,
+        endFreq: 30,
+        durationS: 0.12,
+        type: 'sine',
+        gain: 0.06,
+        delayS: delay,
+        bus: this.bgmBus,
+      });
+      // スネア(裏拍・交戦度連動)
+      if (this.beatIndex % 2 === 1 && this.combatHeat > 0.05) {
+        this.noiseBurst({
+          durationS: 0.05,
+          filterHz: 1500,
+          filterType: 'bandpass',
+          gain: 0.22 * this.combatHeat,
+          delayS: delay,
+          bus: this.bgmBus,
+        });
+      }
+      // 8拍ごとの旋律ピン(高交戦時のみ)
+      if (this.beatIndex % 8 === 0 && this.combatHeat > 0.4) {
+        this.tone({
+          freq: 330,
+          durationS: 0.2,
+          type: 'triangle',
+          gain: 0.05 * this.combatHeat,
+          delayS: delay,
+          bus: this.bgmBus,
+        });
+      }
+      this.nextBeatTime += beatDur;
+      this.beatIndex += 1;
+      made += 1;
     }
   }
 
@@ -316,14 +525,8 @@ export class SoundKit {
         bus: this.uiBus ?? undefined,
       });
     }
-    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
-    if (synth && typeof SpeechSynthesisUtterance !== 'undefined') {
-      const u = new SpeechSynthesisUtterance(name);
-      u.pitch = 0.7;
-      u.rate = 1.0;
-      u.volume = volume * this.masterVol;
-      synth.speak(u); // cancelしない(進行中の発話を消さずキューへ)
-    }
+    // 名称読み上げは cancel せずキューへ。良いローカル声が無ければファンファーレのみ。
+    this.speakAnnounce(name, volume, { cancel: false, delayMs: 360 });
   }
 
   // スナイパーで仕留めた時の専用キル音(低い余韻 + 高いピン)

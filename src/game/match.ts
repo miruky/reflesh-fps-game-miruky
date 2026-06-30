@@ -10,16 +10,20 @@ import {
   ACQUIRE_CONE_DEG,
   adsSensScale,
   aimAssistDelta,
+  AIM_PARTS,
   bulletBendFraction,
   BULLET_MAG_CONE_DEG,
   BULLET_MAG_MAX_DEG,
   BULLET_MAG_CONE_SCOPED_DEG,
   BULLET_MAG_MAX_SCOPED_DEG,
   distanceFactor,
+  PART_PULL_SCALE,
+  rankAimPoints,
   rotationalAssist,
   slowdownFactor,
   snapPulse,
   wrapAngle,
+  type AimPart,
 } from './aimassist';
 import { applyAttachments } from './attachments';
 import {
@@ -38,7 +42,17 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
-import { Bot, BOT_MAX_HP, BOT_NAMES, DIFFICULTY, HIP_OFFSET_Y, type Difficulty } from './bot';
+import {
+  Bot,
+  BOT_NAMES,
+  HIP_OFFSET_Y,
+  tuningFor,
+  type BotTier,
+  type BotTuning,
+  type Difficulty,
+} from './bot';
+import type { EnemyWaveDef, MissionDef } from './campaign';
+import type { MissionSummary } from './progression';
 import {
   MedalTracker,
   medalRank,
@@ -138,6 +152,12 @@ export interface MatchConfig {
   grenade: GrenadeKind;
   difficulty: Difficulty;
   durationS: number;
+  // ── R6 ストーリー/拡張(すべて任意。未指定なら従来の対戦として動く) ──
+  mission?: MissionDef; // 注入するとストーリーモードとして目的/波/勝敗で進行する
+  perks?: string[]; // パーク(将来拡張)
+  wildcard?: 'gunfighter' | 'tactician' | null; // ワイルドカード
+  secondaryId?: string; // 副武器の上書き
+  scoreAttack?: boolean; // スコアアタック(自己ベスト記録)
 }
 
 export interface FeedEntry {
@@ -150,7 +170,7 @@ export interface FeedEntry {
 export interface DamageNumber {
   amount: number;
   world: THREE.Vector3;
-  kind: 'body' | 'head' | 'kill'; // 色・大きさの段階分け
+  kind: 'body' | 'head' | 'kill' | 'limb'; // 色・大きさの段階分け
 }
 
 export interface ScoreRow {
@@ -234,8 +254,16 @@ export interface MatchSnapshot {
   spectating: boolean;
   killcam: string | null; // キルカメラ中に映している相手の名前
   feed: FeedEntry[];
-  hits: Array<'hit' | 'head' | 'kill' | 'snipe'>;
+  hits: Array<'hit' | 'head' | 'kill' | 'snipe' | 'limb'>;
+  hitExpandRad: number; // ヒットマーカーの一時拡大量(連続ヒットで広がる)
   damageNumbers: DamageNumber[];
+  // ── R6 ストーリー(非ストーリーでは undefined) ──
+  missionId?: string;
+  objectiveText?: string; // 現在の目的の文言
+  objectiveProgress01?: number; // 目的の進捗 0..1
+  waveIndex?: number; // 現在の波(1始まり)
+  waveTotal?: number; // 総波数
+  bossHp01?: number; // ボスの残りHP割合(0..1)。ボス不在なら undefined
   incoming: number[]; // 被弾方向(カメラ基準の角度rad)
   tookDamage: boolean;
   scoreboard: ScoreRow[];
@@ -333,8 +361,21 @@ export class Match {
   private readonly grenadeGeometry = new THREE.SphereGeometry(0.09, 10, 8);
 
   private feed: FeedEntry[] = [];
-  private hits: Array<'hit' | 'head' | 'kill' | 'snipe'> = [];
+  private hits: Array<'hit' | 'head' | 'kill' | 'snipe' | 'limb'> = [];
+  private hitExpand = 0; // ヒットマーカー拡大の減衰値
   private damageNumbers: DamageNumber[] = [];
+
+  // ── R6 ストーリーモード状態(mission が無ければ未使用) ──
+  private readonly mission: MissionDef | null;
+  private missionOutcome: 'pending' | 'won' | 'lost' = 'pending';
+  private missionTimeS = 0; // ミッション経過秒(クリアタイム算定用)
+  private readonly modifierSet: ReadonlySet<string>;
+  private pendingWaves: EnemyWaveDef[] = [];
+  private waveIndex = 0; // 出現済みの波数
+  private missionKills = 0; // 敵撃破数(eliminate-count用)
+  private waveSpawnCursor = 0; // 波スポーン地点の巡回カーソル
+  private readonly exfilPos = new THREE.Vector3(); // extract目的の脱出地点
+  private exfilTimer = 0; // 脱出地点滞在秒
   private incoming: number[] = [];
   private tookDamage = false;
   private shakeTrauma = 0; // 0..1 カメラシェイクの蓄積
@@ -342,6 +383,7 @@ export class Match {
   private ultActive = 0; // オーバードライブの残り秒数
   private ultReadyNotified = false; // 準備完了音を鳴らし終えたか(立ち上がり検出用)
   // エイムアシスト/スコープの状態
+  private readonly _aimScratch = new THREE.Vector3(); // 可視判定の候補点に使い回す(GC節約)
   private aimAssistEngaged = false;
   private aimAssistTargetDir: THREE.Vector3 | null = null; // 弾道補正用の対象方向(無ければnull)
   private aimAssistTargetAngle = 0; // 照準と対象のなす角(rad)
@@ -379,6 +421,8 @@ export class Match {
   ) {
     this.tracker = new MedalTracker(knownMedals);
     this.timeLeft = config.durationS;
+    this.mission = config.mission ?? null;
+    this.modifierSet = new Set(config.mission?.modifiers ?? []);
     this.colors = teamPalette(settings.teamPaletteId);
     this.rand = mulberry32(Date.now() % 0xffffffff);
     this.physics = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -392,7 +436,11 @@ export class Match {
     this.buildStageScene(layout.boxes);
 
     const spawn = this.playerSpawns[0] ?? new THREE.Vector3();
-    this.player = new Player(this.physics, spawn);
+    // モディファイアをプレイヤーの個体設定へ反映(低重力/HP自然回復なし)
+    const playerOpts: { regenPerS?: number; gravityScale?: number } = {};
+    if (this.modifierSet.has('no-regen')) playerOpts.regenPerS = 0;
+    if (this.modifierSet.has('low-gravity')) playerOpts.gravityScale = 0.55;
+    this.player = new Player(this.physics, spawn, playerOpts);
     this.tags.set(this.player.collider.handle, { kind: 'player' });
 
     const primaryBase = WEAPON_DEFS[config.primaryId] ?? WEAPON_DEFS['kaede-ar']!;
@@ -410,26 +458,27 @@ export class Match {
     this.modeDef = MODE_DEFS[config.mode];
     this.scores = new ScoreBoard(this.modeDef.scoreTarget);
 
-    // チーム戦は人数の少ない側にプレイヤーが入る
-    const botCount = config.stage.botCount;
-    const allyCount = this.modeDef.teamBased ? Math.floor((botCount - 1) / 2) : 0;
-    for (let i = 0; i < botCount; i += 1) {
-      const name = BOT_NAMES[i % BOT_NAMES.length] ?? `BOT-${i}`;
-      const team = this.modeDef.teamBased ? (i < allyCount ? PLAYER_TEAM : ENEMY_TEAM) : i + 1;
-      const isAlly = team === PLAYER_TEAM;
-      const spawnList = isAlly ? this.playerSpawns : this.botSpawns;
-      const botSpawn = spawnList[(i + (isAlly ? 1 : 0)) % spawnList.length] ?? new THREE.Vector3();
-      const bot = new Bot(
-        this.physics,
-        name,
-        botSpawn,
-        isAlly ? this.colors.ally : this.colors.enemy,
-        team,
-      );
-      this.tags.set(bot.bodyCollider.handle, { kind: 'bot', bot, part: 'body' });
-      this.tags.set(bot.headCollider.handle, { kind: 'bot', bot, part: 'head' });
-      this.scene.add(bot.group);
-      this.bots.push(bot);
+    if (this.mission) {
+      this.setupMission(this.mission);
+    } else {
+      // 通常対戦: チーム戦は人数の少ない側にプレイヤーが入る
+      const botCount = config.stage.botCount;
+      const allyCount = this.modeDef.teamBased ? Math.floor((botCount - 1) / 2) : 0;
+      for (let i = 0; i < botCount; i += 1) {
+        const name = BOT_NAMES[i % BOT_NAMES.length] ?? `BOT-${i}`;
+        const team = this.modeDef.teamBased ? (i < allyCount ? PLAYER_TEAM : ENEMY_TEAM) : i + 1;
+        const isAlly = team === PLAYER_TEAM;
+        const spawnList = isAlly ? this.playerSpawns : this.botSpawns;
+        const botSpawn = spawnList[(i + (isAlly ? 1 : 0)) % spawnList.length] ?? new THREE.Vector3();
+        this.spawnBot(
+          name,
+          botSpawn,
+          isAlly ? this.colors.ally : this.colors.enemy,
+          team,
+          tuningFor('normal', config.difficulty),
+          'normal',
+        );
+      }
     }
 
     this.domination = config.mode === 'dom' ? new DominationState(['A', 'B', 'C']) : null;
@@ -1148,6 +1197,11 @@ export class Match {
     this.timeLeft -= dt;
     if (this.timeLeft <= 0) {
       this.timeLeft = 0;
+      // ミッションは時間到達で勝敗確定: survive/defend は勝利、その他の目的は時間切れ=失敗
+      if (this.mission && this.missionOutcome === 'pending') {
+        const k = this.mission.objective.kind;
+        this.missionOutcome = k === 'survive' || k === 'defend' ? 'won' : 'lost';
+      }
       this.over = true;
       return;
     }
@@ -1293,8 +1347,20 @@ export class Match {
     }
     this.lastAlive = this.player.alive;
 
-    // 先取スコア到達で試合終了
-    if (this.scores.winner() !== null) this.over = true;
+    if (this.mission) {
+      // ミッションは目的達成/失敗で終了(先取スコアは無効)
+      this.updateMission(dt);
+      if (this.missionOutcome !== 'pending') this.over = true;
+    } else if (this.scores.winner() !== null) {
+      // 先取スコア到達で試合終了
+      this.over = true;
+    }
+
+    // 動的BGMの交戦度: 視認交戦+被弾トラウマ+低HPで高まる
+    let heat = this.aimAssistEngaged ? 0.4 : 0;
+    heat += Math.min(1, this.shakeTrauma) * 0.3;
+    heat += Math.min(1, 1 - this.player.hp / this.player.maxHp) * 0.3;
+    this.sounds.setCombatHeat(Math.min(1, heat));
   }
 
   // 描画フレームごとの処理。視点操作はフレームレートに追従させる
@@ -1362,7 +1428,9 @@ export class Match {
         const inputMag =
           Math.hypot(this.input.mouseDX, this.input.mouseDY) + this.input.gpLookMag * 40;
         const inputDamp = THREE.MathUtils.clamp(1 - inputMag / 40, 0.15, 1);
-        const strength = this.settings.aimAssistStrength * gate * inputDamp;
+        // 部位別プル係数: 頭/脚への引き込みは弱め(head0.9/chest1.0/waist0.8/limb0.6)
+        const strength =
+          this.settings.aimAssistStrength * gate * inputDamp * PART_PULL_SCALE[target.part];
         const delta = aimAssistDelta({
           curYaw: this.player.yaw,
           curPitch: pitch,
@@ -1387,18 +1455,37 @@ export class Match {
           );
         }
         this.aimAssistEngaged = true;
-        this.aimAssistTargetDir = target.dir;
-        this.aimAssistTargetAngle = target.angle;
-        this.aimAssistTargetDist = target.dist;
-        // 覗き込み直後の窓(0.4s以内)で対象が索敵円錐内なら、1回だけスナップ補正。
-        // 誤差の最大15%・上限1.5°なので決して行き過ぎない=エイムボット化しない
+        // 弾道補正/スナップは頭ではなく胸(中心質量)に固定する。磁力による自動
+        // ヘッドショット化を防ぎ、頭はあくまで“狙えば寄る”ソフトプルの範疇に留める
+        const eyeNow = this.player.eyePosition;
+        const bp = target.bot.position;
+        const chest = this._aimScratch.set(
+          bp.x - eyeNow.x,
+          bp.y + 0.15 - eyeNow.y,
+          bp.z - eyeNow.z,
+        );
+        const chestDist = chest.length();
+        const chestDir =
+          chestDist > 1e-4 ? chest.clone().multiplyScalar(1 / chestDist) : target.dir.clone();
+        this.aimAssistTargetDir = chestDir;
+        this.aimAssistTargetAngle = Math.acos(
+          THREE.MathUtils.clamp(this.cameraForward().dot(chestDir), -1, 1),
+        );
+        this.aimAssistTargetDist = chestDist;
+        // スコープ覗き込み直後の窓(0.4s以内)で対象が索敵円錐内なら、1回だけスナップ補正(胸へ)。
+        // スコープADS時に限定することで、非スコープ武器/ゲームパッドの腰だめで毎フレーム
+        // 発火して胴ロック化する不具合を防ぐ(クイックスコープ専用)。
         if (
+          weapon.def.scope === true &&
+          weapon.adsProgress > 0.5 &&
           !this.snapPulseDone &&
           this.adsEntryElapsed < 0.4 &&
           target.angle < ACQUIRE_CONE_DEG * DEG
         ) {
-          const dYaw = wrapAngle(target.yaw - this.player.yaw);
-          const dPitch = target.pitch - pitch;
+          const chestYaw = Math.atan2(-chestDir.x, -chestDir.z);
+          const chestPitch = Math.asin(THREE.MathUtils.clamp(chestDir.y, -1, 1));
+          const dYaw = wrapAngle(chestYaw - this.player.yaw);
+          const dPitch = chestPitch - pitch;
           const err = Math.hypot(dYaw, dPitch);
           if (err > 1e-6) {
             const f = snapPulse(err, this.settings.aimAssistStrength) / err;
@@ -2003,7 +2090,7 @@ export class Match {
     srcClass: WeaponClass | null = null,
   ): boolean {
     // takeDamage前の満タン判定(one-shotメダル用)
-    const fullHp = bot.hp >= BOT_MAX_HP;
+    const fullHp = bot.hp >= bot.maxHp;
     const died = bot.takeDamage(damage);
     this.effects.hitPuff(point);
     // ヘッドショットは専用の金色フレアと微カメラキックで差別化
@@ -2024,6 +2111,7 @@ export class Match {
       this.haptic(150, 0.5, 0.75); // キル確定の手応え
       this.player.kills += 1;
       this.player.streak += 1;
+      if (this.mission && bot.team === ENEMY_TEAM) this.missionKills += 1;
       this.bestStreak = Math.max(this.bestStreak, this.player.streak);
       this.playerWeaponKills[weaponName] = (this.playerWeaponKills[weaponName] ?? 0) + 1;
       this.addKillScore(PLAYER_TEAM);
@@ -2111,13 +2199,12 @@ export class Match {
   }
 
   private updateBots(dt: number): void {
-    const tuning = DIFFICULTY[this.config.difficulty];
     for (const bot of this.bots) {
       const targetEye = bot.alive && bot.blind <= 0 ? this.findTargetFor(bot) : null;
       bot.update(dt, {
         targetEye,
         objective: bot.alive ? this.objectiveFor(bot) : null,
-        tuning,
+        tuning: bot.tuning,
         rand: this.rand,
         onShoot: (origin, dir) => this.botShoot(bot, origin, dir),
       });
@@ -2128,7 +2215,7 @@ export class Match {
   private findTargetFor(bot: Bot): THREE.Vector3 | null {
     const head = bot.headPosition();
     let best: THREE.Vector3 | null = null;
-    let bestDist = BOT_VIEW_DISTANCE;
+    let bestDist = bot.tuning.viewDistM;
 
     if (this.player.alive && bot.team !== PLAYER_TEAM) {
       const eye = this.player.eyePosition;
@@ -2172,6 +2259,8 @@ export class Match {
 
   // エイムアシスト対象: 視認できる敵のうち、照準に最も近い(なす角が最小の)1体。
   // 索敵円錐・射程・スモーク・遮蔽をすべて満たすものだけを返す
+  // 敵ごとに頭/胸/腰/脚の複数候補点を生成し、照準に角度的に最も近い「可視」部位へ吸着する。
+  // 胴中心固定の旧方式を廃し、狙った部位(頭含む)に寄るのでヘッドショットが取りやすい。
   private aimAssistTarget(
     maxRange: number,
   ): {
@@ -2181,6 +2270,7 @@ export class Match {
     angle: number;
     dist: number;
     bot: Bot;
+    part: AimPart;
   } | null {
     const eye = this.player.eyePosition;
     const forward = this.cameraForward();
@@ -2191,29 +2281,33 @@ export class Match {
       angle: number;
       dist: number;
       bot: Bot;
+      part: AimPart;
     } | null = null;
     let bestAngle = ACQUIRE_CONE_DEG * DEG;
     for (const bot of this.bots) {
       if (!bot.alive || bot.team === PLAYER_TEAM) continue;
-      const aim = bot.position;
-      aim.y += 0.15; // 胸元を狙う(positionはカプセル中心の新規ベクトルなので加算可)
-      const to = aim.clone().sub(eye);
-      const dist = to.length();
-      if (dist > maxRange || dist < 0.001) continue;
-      const dir = to.multiplyScalar(1 / dist);
-      const angle = Math.acos(THREE.MathUtils.clamp(forward.dot(dir), -1, 1));
-      if (angle >= bestAngle) continue;
-      if (this.smokeBlocks(eye, aim)) continue;
-      if (!this.playerCanSee(eye, aim, bot)) continue;
-      bestAngle = angle;
-      best = {
-        dir,
-        yaw: Math.atan2(-dir.x, -dir.z),
-        pitch: Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1)),
-        angle,
-        dist,
-        bot,
-      };
+      const base = bot.position; // カプセル中心(新規ベクトル)
+      // 角度の近い順に並んだ候補を、可視が取れるまで走査する=最近接の可視部位
+      const ranked = rankAimPoints(eye, forward, base, AIM_PARTS, maxRange);
+      for (const cand of ranked) {
+        // rankedはeff(角度-頭バイアス)順なのでangleは単調でない。より近い部位を
+        // 取り逃さないよう、円錐外の候補はbreakせずcontinueでスキップする
+        if (cand.angle >= bestAngle) continue;
+        const pt = this._aimScratch.set(cand.point.x, cand.point.y, cand.point.z);
+        if (this.smokeBlocks(eye, pt)) continue;
+        if (!this.playerCanSee(eye, pt, bot)) continue;
+        bestAngle = cand.angle;
+        best = {
+          dir: new THREE.Vector3(cand.dir.x, cand.dir.y, cand.dir.z),
+          yaw: Math.atan2(-cand.dir.x, -cand.dir.z),
+          pitch: Math.asin(THREE.MathUtils.clamp(cand.dir.y, -1, 1)),
+          angle: cand.angle,
+          dist: cand.dist,
+          bot,
+          part: cand.part,
+        };
+        break; // このbotの最近接“可視”部位が確定
+      }
     }
     return best;
   }
@@ -2256,11 +2350,13 @@ export class Match {
   }
 
   private botShoot(bot: Bot, origin: THREE.Vector3, dir: THREE.Vector3): void {
-    const tuning = DIFFICULTY[this.config.difficulty];
-    const hit = this.castRay(origin, dir, BOT_VIEW_DISTANCE, bot.body);
+    const tuning = bot.tuning;
+    // 射程は索敵距離に合わせる(elite/bossが遠距離で見えても弾が届かない不整合を解消)
+    const range = Math.max(BOT_VIEW_DISTANCE, tuning.viewDistM);
+    const hit = this.castRay(origin, dir, range, bot.body);
     const end = hit
       ? origin.clone().addScaledVector(dir, hitToi(hit))
-      : origin.clone().addScaledVector(dir, BOT_VIEW_DISTANCE);
+      : origin.clone().addScaledVector(dir, range);
     this.effects.tracer(
       origin,
       end,
@@ -2456,12 +2552,198 @@ export class Match {
       this.killer = null;
       this.killcamTimer = 0;
     }
-    for (const bot of this.bots) {
-      if (!bot.alive && bot.respawnIn <= 0) {
-        const spawns = bot.team === PLAYER_TEAM ? this.playerSpawns : this.botSpawns;
-        bot.respawnAt(this.pickSpawn(spawns, this.hostilesOf(bot.team)));
+    // ストーリーでは敵を復活させない(撃破で波が確実に減る)
+    if (!this.mission) {
+      for (const bot of this.bots) {
+        if (!bot.alive && bot.respawnIn <= 0) {
+          const spawns = bot.team === PLAYER_TEAM ? this.playerSpawns : this.botSpawns;
+          bot.respawnAt(this.pickSpawn(spawns, this.hostilesOf(bot.team)));
+        }
       }
     }
+  }
+
+  // ── R6 キャンペーン: 敵生成・波・目的進行 ───────────────────────
+  // Bot生成の3点セット(コライダーtag登録+scene追加+配列push)を共有する
+  private spawnBot(
+    name: string,
+    spawn: THREE.Vector3,
+    color: number,
+    team: number,
+    tuning: BotTuning,
+    tier: BotTier,
+  ): Bot {
+    const bot = new Bot(this.physics, name, spawn, color, tuning, team, tier);
+    this.tags.set(bot.bodyCollider.handle, { kind: 'bot', bot, part: 'body' });
+    this.tags.set(bot.headCollider.handle, { kind: 'bot', bot, part: 'head' });
+    this.scene.add(bot.group);
+    this.bots.push(bot);
+    return bot;
+  }
+
+  private aliveEnemyCount(): number {
+    let n = 0;
+    for (const b of this.bots) if (b.alive && b.team === ENEMY_TEAM) n += 1;
+    return n;
+  }
+
+  // ミッション開始時の準備: 濃霧・脱出地点・第1波
+  private setupMission(mission: MissionDef): void {
+    if (this.modifierSet.has('dense-fog') && this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.density = Math.min(0.12, this.scene.fog.density * 2.6 + 0.012);
+    }
+    // 脱出地点(extract用): プレイヤー初期位置から最も遠い隅
+    const start = this.playerSpawns[0] ?? new THREE.Vector3();
+    let far = start;
+    let farD = -Infinity;
+    for (const c of [...this.playerSpawns, ...this.botSpawns]) {
+      const d = c.distanceTo(start);
+      if (d > farD) {
+        farD = d;
+        far = c;
+      }
+    }
+    this.exfilPos.copy(far);
+    // 脱出ミッションは到達地点を発光ビーコンで可視化する(目的地が分からない問題の解消)
+    if (mission.objective.kind === 'extract') {
+      const beacon = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.7, 0.7, 14, 14, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: 0x35ffa0,
+          transparent: true,
+          opacity: 0.32,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      beacon.position.set(this.exfilPos.x, 7, this.exfilPos.z);
+      this.scene.add(beacon);
+    }
+    this.pendingWaves = mission.waves.slice();
+    this.advanceWaves();
+  }
+
+  // trigger を解釈して出せる波を出す。start=即時 / timer=delayS到達 / wave-clear=敵全滅。
+  // start波は連続して全部出し、時限/殲滅波は1tickにつき1波だけ出す。
+  private advanceWaves(): void {
+    while (this.pendingWaves.length > 0) {
+      const wave = this.pendingWaves[0]!;
+      let ready: boolean;
+      if (wave.trigger === 'start') ready = true;
+      else if (wave.trigger === 'timer') ready = this.missionTimeS >= (wave.delayS ?? 0);
+      else ready = this.aliveEnemyCount() === 0; // 'wave-clear'
+      if (!ready) break;
+      this.pendingWaves.shift();
+      this.spawnWave(wave);
+      this.waveIndex += 1;
+      if (wave.announce) this.announcements.push(wave.announce);
+      if (wave.trigger !== 'start') break;
+    }
+  }
+
+  private spawnWave(wave: EnemyWaveDef): void {
+    const swarm = this.modifierSet.has('elite-swarm');
+    let n = 0;
+    for (const group of wave.enemies) {
+      // elite-swarm: 通常兵を精鋭に格上げして圧を上げる
+      const tier: BotTier = swarm && group.tier === 'normal' ? 'elite' : group.tier;
+      for (let i = 0; i < group.count; i += 1) {
+        const cursor = this.waveSpawnCursor;
+        const baseSpawn = this.botSpawns[cursor % this.botSpawns.length] ?? new THREE.Vector3();
+        // スポーン点数を超えたら同座標重なりを避けてリング状にずらす
+        const wrap = Math.floor(cursor / this.botSpawns.length);
+        const spawn =
+          wrap > 0
+            ? new THREE.Vector3(
+                baseSpawn.x + Math.cos(cursor * 1.7) * 2.5 * wrap,
+                baseSpawn.y,
+                baseSpawn.z + Math.sin(cursor * 1.7) * 2.5 * wrap,
+              )
+            : baseSpawn;
+        this.waveSpawnCursor += 1;
+        const name =
+          tier === 'boss'
+            ? (this.mission?.objective.bossName ?? 'BOSS')
+            : (BOT_NAMES[n % BOT_NAMES.length] ?? `EN-${n}`);
+        this.spawnBot(name, spawn, this.colors.enemy, ENEMY_TEAM, tuningFor(tier, group.difficulty), tier);
+        n += 1;
+      }
+    }
+  }
+
+  // 目的の進行・勝敗判定(update の先取スコア判定の代わりに呼ぶ)
+  private updateMission(dt: number): void {
+    const m = this.mission;
+    if (!m || this.missionOutcome !== 'pending') return;
+    this.missionTimeS += dt;
+    if (this.modifierSet.has('one-life') && !this.player.alive) {
+      this.missionOutcome = 'lost';
+      return;
+    }
+    this.advanceWaves();
+    const obj = m.objective;
+    const allClear = this.aliveEnemyCount() === 0 && this.pendingWaves.length === 0;
+    switch (obj.kind) {
+      case 'eliminate-all':
+        if (allClear) this.missionOutcome = 'won';
+        break;
+      case 'eliminate-count':
+        if (this.missionKills >= (obj.count ?? 1)) this.missionOutcome = 'won';
+        break;
+      case 'assassinate':
+        if (this.pendingWaves.length === 0 && !this.bots.some((b) => b.alive && b.tier === 'boss')) {
+          this.missionOutcome = 'won';
+        }
+        break;
+      case 'survive':
+      case 'defend':
+        if (this.missionTimeS >= (obj.surviveS ?? m.durationS)) this.missionOutcome = 'won';
+        break;
+      case 'extract': {
+        const near = this.player.alive && this.player.position.distanceTo(this.exfilPos) < 4;
+        this.exfilTimer = near ? this.exfilTimer + dt : 0;
+        if (this.exfilTimer >= 3) this.missionOutcome = 'won';
+        break;
+      }
+    }
+  }
+
+  // 目的の表示文言と進捗(HUD用)
+  private objectiveText(): string {
+    const m = this.mission;
+    if (!m) return '';
+    const obj = m.objective;
+    if (obj.kind === 'eliminate-count') return `${obj.label} (${this.missionKills}/${obj.count ?? 0})`;
+    if (obj.kind === 'survive' || obj.kind === 'defend') {
+      const left = Math.max(0, Math.ceil((obj.surviveS ?? m.durationS) - this.missionTimeS));
+      return `${obj.label} (残り${left}s)`;
+    }
+    if (obj.kind === 'extract' && this.exfilTimer > 0) return `${obj.label} (確保 ${this.exfilTimer.toFixed(1)}s/3s)`;
+    return obj.label;
+  }
+
+  private objectiveProgress01(): number {
+    const m = this.mission;
+    if (!m) return 0;
+    const obj = m.objective;
+    if (obj.kind === 'eliminate-count' && obj.count) return Math.min(1, this.missionKills / obj.count);
+    if (obj.kind === 'survive' || obj.kind === 'defend') {
+      return Math.min(1, this.missionTimeS / (obj.surviveS ?? m.durationS));
+    }
+    if (obj.kind === 'extract') return Math.min(1, this.exfilTimer / 3);
+    if (obj.kind === 'assassinate') {
+      const boss = this.bots.find((b) => b.tier === 'boss');
+      return boss ? 1 - boss.hp / boss.maxHp : this.missionOutcome === 'won' ? 1 : 0;
+    }
+    // eliminate-all: 倒した割合(おおまかな指標)
+    const totalSpawned = this.bots.length;
+    const dead = this.bots.filter((b) => !b.alive).length;
+    return totalSpawned > 0 ? dead / totalSpawned : 0;
+  }
+
+  private bossHp01(): number | undefined {
+    const boss = this.bots.find((b) => b.tier === 'boss' && b.alive);
+    return boss ? boss.hp / boss.maxHp : undefined;
   }
 
   // 指定チームから見た敵対エンティティの現在位置一覧
@@ -2599,6 +2881,7 @@ export class Match {
         !this.player.alive && this.killcamTimer > 0 && this.killer?.alive ? this.killer.name : null,
       feed: this.feed,
       hits: this.hits,
+      hitExpandRad: this.hitExpand,
       damageNumbers: this.damageNumbers,
       incoming: this.incoming,
       tookDamage: this.tookDamage,
@@ -2607,6 +2890,13 @@ export class Match {
       // レーダー無効時はLoSレイキャストを省く(HUDも空配列で参照しない)
       enemyBearings: this.settings.radarEnabled ? this.computeEnemyBearings() : [],
       medals: this.medals,
+      // ── R6 ストーリー(非ストーリーでは undefined) ──
+      missionId: this.mission?.id,
+      objectiveText: this.mission ? this.objectiveText() : undefined,
+      objectiveProgress01: this.mission ? this.objectiveProgress01() : undefined,
+      waveIndex: this.mission ? this.waveIndex : undefined,
+      waveTotal: this.mission ? this.mission.waves.length : undefined,
+      bossHp01: this.mission ? this.bossHp01() : undefined,
     };
     this.feed = [];
     this.hits = [];
@@ -2701,11 +2991,35 @@ export class Match {
     this.composer?.setSize(width, height);
   }
 
+  get missionWon(): boolean {
+    return this.missionOutcome === 'won';
+  }
+
+  // ストーリー時のミッション要約(applyCampaignMission へ渡す)。非ストーリーは null。
+  missionSummary(): MissionSummary | null {
+    if (!this.mission) return null;
+    const base = this.result().summary;
+    const won = this.missionOutcome === 'won';
+    return {
+      ...base,
+      rated: false,
+      won,
+      missionId: this.mission.id,
+      chapterId: this.mission.chapterId,
+      missionWon: won,
+      timeS: this.missionTimeS,
+      objectiveMet: won,
+      modifiers: this.mission.modifiers,
+    };
+  }
+
   result(): MatchResult {
     const rows = this.scoreboard();
-    const won = this.modeDef.teamBased
-      ? this.scores.get(PLAYER_TEAM) > this.scores.get(ENEMY_TEAM)
-      : (rows[0]?.isPlayer ?? false);
+    const won = this.mission
+      ? this.missionOutcome === 'won'
+      : this.modeDef.teamBased
+        ? this.scores.get(PLAYER_TEAM) > this.scores.get(ENEMY_TEAM)
+        : (rows[0]?.isPlayer ?? false);
     return {
       rows,
       won,

@@ -79,12 +79,21 @@ export class Hud {
         <div class="hud-compass"><div class="hud-compass-strip" data-id="compass"></div><div class="hud-compass-needle"></div></div>
         <div class="hud-timer"><small>TIME</small><strong data-id="timer">5:00</strong></div>
         <div class="hud-objective">
-          <div class="hud-teamscore">
+          <div class="hud-teamscore" data-id="teamscore">
             <span class="ts-mine" data-id="scoremine">0</span>
             <span class="ts-target" data-id="scoretarget"></span>
             <span class="ts-enemy" data-id="scoreenemy">0</span>
           </div>
           <div class="hud-zones" data-id="zones" hidden></div>
+          <div class="hud-mission" data-id="mission" hidden>
+            <div class="hud-mission-obj" data-id="obj-text"></div>
+            <div class="hud-mission-bar"><i data-id="obj-bar"></i></div>
+            <div class="hud-mission-wave" data-id="obj-wave"></div>
+          </div>
+          <div class="hud-boss" data-id="boss" hidden>
+            <div class="hud-boss-name" data-id="boss-name">BOSS</div>
+            <div class="hud-boss-bar"><i data-id="boss-bar"></i></div>
+          </div>
         </div>
       </div>
       <div class="hud-announce" data-id="announce"></div>
@@ -447,9 +456,35 @@ export class Hud {
   }
 
   private updateObjective(snap: MatchSnapshot): void {
+    const isMission = snap.missionId !== undefined;
+    // ストーリーは先取スコアを隠し、目的・進捗・波・ボスHPを出す
+    const teamscore = this.el['teamscore'];
+    if (teamscore) teamscore.hidden = isMission;
     this.text('scoremine', String(snap.scoreMine));
     this.text('scoreenemy', String(snap.scoreEnemy));
-    this.text('scoretarget', `先取 ${snap.scoreTarget}`);
+    // 先取ラベルは有限のときだけ('先取 Infinity'の壊れ表示を防ぐ)
+    this.text('scoretarget', Number.isFinite(snap.scoreTarget) ? `先取 ${snap.scoreTarget}` : '');
+
+    const mission = this.el['mission'];
+    if (mission) {
+      mission.hidden = !isMission;
+      if (isMission) {
+        this.text('obj-text', snap.objectiveText ?? '');
+        const bar = this.el['obj-bar'];
+        if (bar) bar.style.transform = `scaleX(${Math.max(0, Math.min(1, snap.objectiveProgress01 ?? 0))})`;
+        const total = snap.waveTotal ?? 0;
+        this.text('obj-wave', total > 1 ? `WAVE ${snap.waveIndex ?? 0}/${total}` : '');
+      }
+    }
+    const boss = this.el['boss'];
+    if (boss) {
+      const showBoss = isMission && snap.bossHp01 !== undefined;
+      boss.hidden = !showBoss;
+      if (showBoss) {
+        const bb = this.el['boss-bar'];
+        if (bb) bb.style.transform = `scaleX(${Math.max(0, Math.min(1, snap.bossHp01 ?? 0))})`;
+      }
+    }
 
     const zones = this.el['zones'];
     if (zones) {
