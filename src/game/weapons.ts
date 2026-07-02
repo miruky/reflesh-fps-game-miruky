@@ -229,8 +229,8 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.32, // 約3.1倍ズーム
-    adsTimeMs: 380, // BO2の重い覗き込み(実測400ms級)へ。0.85スナップで約323ms=QSスイートスポット
-    switchMs: 550,
+    adsTimeMs: 330, // R8.2: 体感の重さを軽減。0.85スナップで約280ms=BO2のQSテンポ
+    switchMs: 480, // 持ち替えも軽く(重さは一撃の反動/音で表現する)
     // 実反動は小さく保つ: fireShotは反動加算後のplayer.pitchで弾道を出すため、ここを
     // 大きくすると初弾がクロスヘアから上振れする。重い一撃の手応えはviewModelキック・
     // 画面シェイク(0.12)・ボルト音の演出層で出す。

@@ -983,23 +983,30 @@ export class ViewModel {
     // ゲームプレイ(スプレッド/QS判定)は線形adsのままなので挙動は不変
     const adsVis = 1 - Math.pow(1 - ads, 5);
     const pos = new THREE.Vector3().lerpVectors(HIP_POSITION, ADS_POSITION, adsVis);
-    pos.x += this.swayX + bobX;
-    // BO2 DSR: 正面からではなく「右腰だめから横滑り」で構える。
-    // easeOutQuintでXが一瞬で中央へ寄ってしまうため、スコープ武器は横(X)の収束を
-    // 遅らせて右に残し(+0.16)、ads 0.3→0.78 で遅れて中央へスライドインさせる
+    // BO2 DSR: 所作を「順序化」する。同時進行だとZラッシュが支配して正面から
+    // 迫って見えるため、(1)右で構える→(2)右から中央へ横スイープ→(3)中央到達後に
+    // スコープが目へ飛び込む→(4)ブラックアウト、の順に時間帯を分ける
     let scopeSlide = 0;
     if (state.scopeWeapon) {
-      scopeSlide = 1 - THREE.MathUtils.smoothstep(ads, 0.3, 0.78);
-      pos.x += 0.16 * scopeSlide;
-      pos.y -= 0.03 * scopeSlide; // 腰だめ側はわずかに低く担ぐ
-      // スコープイン: ads 0.28→0.50→0.72 の鐘型カーブでスコープが目へ飛び込み、
-      // わずかに前傾(バレルティルト)。BO2 DSRの「レンズが迫る」瞬間を再現
+      // X/Yはquintを使わず専用カーブ: 開始位置は腰だめよりさらに右(+0.12)で
+      // ads 10〜68% をかけて中央へスイープ(それまで銃は明確に画面右にいる)
+      const sweep = THREE.MathUtils.smoothstep(ads, 0.1, 0.68);
+      scopeSlide = 1 - sweep;
+      pos.x = THREE.MathUtils.lerp(HIP_POSITION.x + 0.12, ADS_POSITION.x, sweep);
+      pos.y = THREE.MathUtils.lerp(
+        HIP_POSITION.y - 0.02,
+        ADS_POSITION.y,
+        THREE.MathUtils.smoothstep(ads, 0.12, 0.7),
+      );
+      // Z ラッシュは中央到達後(58→74%がピーク)に発火: スコープが目へ飛び込み、
+      // そのまま 70-90% のブラックアウト→スコープ画面へ繋がる
       const bell =
-        THREE.MathUtils.smoothstep(ads, 0.28, 0.5) *
-        (1 - THREE.MathUtils.smoothstep(ads, 0.5, 0.72));
-      pos.z -= 0.18 * bell;
-      pos.y += 0.045 * bell;
+        THREE.MathUtils.smoothstep(ads, 0.58, 0.74) *
+        (1 - THREE.MathUtils.smoothstep(ads, 0.74, 0.9));
+      pos.z -= 0.2 * bell;
+      pos.y += 0.05 * bell;
     }
+    pos.x += this.swayX + bobX;
     // スコープを覗き込むほど銃を下げ、完全に覗いたらDOMスコープのため非表示にする
     pos.y +=
       this.swayY +

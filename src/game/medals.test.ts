@@ -201,6 +201,51 @@ describe('QuadFeed と Collateral', () => {
     expect(quads).toBe(2);
   });
 
+  it('3連続キル(1.4秒以内)で TRIPLE FEED', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk(), out);
+    t.tick(0.5);
+    t.onKill(mk(), out);
+    t.tick(0.5);
+    t.onKill(mk(), out);
+    expect(ids(out)).toContain('triple-feed');
+  });
+
+  it('4連フィードが全てヘッドショットなら QHSF(混在なら出ない)', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 4; i += 1) t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).toContain('quad-feed');
+    expect(ids(out)).toContain('qhsf');
+
+    const t2 = new MedalTracker(new Set());
+    const out2: MedalEvent[] = [];
+    t2.onKill(mk({ headshot: true }), out2);
+    t2.onKill(mk(), out2); // 1発だけ胴
+    t2.onKill(mk({ headshot: true }), out2);
+    t2.onKill(mk({ headshot: true }), out2);
+    expect(ids(out2)).toContain('quad-feed');
+    expect(ids(out2)).not.toContain('qhsf');
+  });
+
+  it('5連続キル(3秒以内)で MEGA FEED、分断でリセット', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      t.onKill(mk(), out);
+      t.tick(0.4);
+    }
+    expect(ids(out)).toContain('mega-feed');
+
+    const t2 = new MedalTracker(new Set());
+    const out2: MedalEvent[] = [];
+    for (let i = 0; i < 4; i += 1) t2.onKill(mk(), out2);
+    t2.onFeed(false); // 分断
+    t2.onKill(mk(), out2);
+    expect(ids(out2)).not.toContain('mega-feed');
+  });
+
   it('Collateral は2体以上で発火、1体では出ない', () => {
     const t = new MedalTracker(new Set());
     const out: MedalEvent[] = [];

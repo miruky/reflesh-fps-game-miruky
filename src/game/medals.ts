@@ -27,7 +27,10 @@ export type MedalId =
   | 'point-blank'
   | 'collateral'
   | 'revenge'
+  | 'triple-feed'
   | 'quad-feed'
+  | 'mega-feed'
+  | 'qhsf'
   | 'one-shot'
   | 'kaboom'
   | 'scorched'
@@ -100,7 +103,12 @@ const MEDALS: Record<MedalId, MedalDef> = {
   'point-blank': { name: 'POINT BLANK', tier: 'bronze', color: 'var(--medal-red)', xp: 75 },
   collateral: { name: 'COLLATERAL', tier: 'bronze', color: 'var(--medal-orange)', xp: 100 },
   revenge: { name: 'REVENGE', tier: 'bronze', color: 'var(--medal-red)', xp: 75 },
+  // ── フィーダー御用達(killfeed連続系)──
+  'triple-feed': { name: 'TRIPLE FEED', tier: 'bronze', color: 'var(--medal-orange)', xp: 150 },
   'quad-feed': { name: 'QUAD FEED', tier: 'bronze', color: 'var(--medal-gold)', xp: 250 },
+  'mega-feed': { name: 'MEGA FEED', tier: 'gold', color: 'var(--medal-gold)', xp: 400 },
+  // Quad HeadShot Feed: 4連フィードが全てヘッドショット。フィーダーの王冠
+  qhsf: { name: 'QHSF', tier: 'platinum', color: 'var(--medal-plat)', xp: 500 },
   'one-shot': { name: 'ONE SHOT ONE KILL', tier: 'bronze', color: 'var(--medal-gold)', xp: 150 },
   kaboom: { name: 'KABOOM', tier: 'bronze', color: 'var(--medal-orange)', xp: 100 },
   scorched: { name: 'SCORCHED', tier: 'bronze', color: 'var(--medal-orange)', xp: 100 },
@@ -134,8 +142,11 @@ export const SUPPRESS_BADGE: ReadonlySet<MedalId> = new Set<MedalId>(['headshot'
 // アナウンサー音声の読み上げ優先度(大きいほど優先)。1キルで複数取得時に最上位を1件だけ読む
 export function medalRank(id: MedalId): number {
   if (id === 'nuclear') return 100;
+  if (id === 'qhsf') return 96; // フィーダーの王冠はQUAD FEEDより優先して読む
+  if (id === 'mega-feed') return 92;
   if (id === 'quad-feed') return 90;
   if (id === 'kill-chain') return 85;
+  if (id === 'triple-feed') return 62;
   if (MEDALS[id].tier === 'gold') return 80; // killstreak
   if (id === 'ronin') return 70;
   // 連続キル(silver)
@@ -202,9 +213,12 @@ export class MedalTracker {
   private now = 0; // 秒。tick(dt)で進む
   private chain = 0; // 連続キル数(ローリング窓)
   private chainExpire = 0;
-  // 自分のキルが他者キル/死で分断されず連続した時刻列(QuadFeedのローリング窓判定用)
+  // 自分のキルが他者キル/死で分断されず連続した時刻列(フィード系のローリング窓判定用)
   private feedTimes: number[] = [];
+  private feedHeads: boolean[] = []; // 同・各キルがヘッドショットか(QHSF判定用)
   private feedQuadBase = 0; // 直近にQuadFeedを出した位置(再武装の基点)
+  private feedTriBase = 0; // 同・TripleFeed
+  private feedMegaBase = 0; // 同・MegaFeed
   private revengeTarget: string | null = null;
 
   constructor(known: Set<string>) {
@@ -248,13 +262,25 @@ export class MedalTracker {
     if (streakMedal) this.emit(streakMedal, out, ctx.streak);
     if (ctx.streak === 30) this.emit('nuclear', out, ctx.streak);
 
-    // ── QuadFeed(分断されない連続キルのうち、直近4キルが2秒以内)──
-    // 先頭固定でなくローリング窓で判定し、4キルごとに再武装して取りこぼし/単発化を防ぐ
+    // ── フィード系(分断されない連続キルのローリング窓判定+個別再武装)──
+    // TRIPLE FEED: 直近3キルが1.4秒以内 / QUAD FEED: 直近4キルが2秒以内 /
+    // QHSF: QuadFeedの4連が全てヘッドショット(フィーダーの王冠) /
+    // MEGA FEED: 直近5キルが3秒以内
     this.feedTimes.push(this.now);
+    this.feedHeads.push(ctx.headshot);
     const ft = this.feedTimes;
+    if (ft.length - this.feedTriBase >= 3 && this.now - ft[ft.length - 3]! <= 1.4) {
+      this.emit('triple-feed', out, 3);
+      this.feedTriBase = ft.length;
+    }
     if (ft.length - this.feedQuadBase >= 4 && this.now - ft[ft.length - 4]! <= 2.0) {
       this.emit('quad-feed', out, 4);
       this.feedQuadBase = ft.length;
+      if (this.feedHeads.slice(-4).every(Boolean)) this.emit('qhsf', out, 4);
+    }
+    if (ft.length - this.feedMegaBase >= 5 && this.now - ft[ft.length - 5]! <= 3.0) {
+      this.emit('mega-feed', out, 5);
+      this.feedMegaBase = ft.length;
     }
 
     // ── 状況・戦果 ──
@@ -295,16 +321,20 @@ export class MedalTracker {
   // プレイヤー死亡: 連続系を全リセットし、復讐対象を記録する
   onPlayerDeath(killerName: string | null): void {
     this.chain = 0;
-    this.feedTimes = [];
-    this.feedQuadBase = 0;
+    this.resetFeed();
     this.revengeTarget = killerName;
   }
 
   // killfeed への追加通知。他者のキルは自分の連続フィードを分断する
   onFeed(killerIsPlayer: boolean): void {
-    if (!killerIsPlayer) {
-      this.feedTimes = [];
-      this.feedQuadBase = 0;
-    }
+    if (!killerIsPlayer) this.resetFeed();
+  }
+
+  private resetFeed(): void {
+    this.feedTimes = [];
+    this.feedHeads = [];
+    this.feedQuadBase = 0;
+    this.feedTriBase = 0;
+    this.feedMegaBase = 0;
   }
 }
