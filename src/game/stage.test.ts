@@ -34,9 +34,34 @@ describe('generateStage', () => {
     }
   });
 
-  it('ステージは10個あり、idが重複しない', () => {
-    expect(STAGES).toHaveLength(10);
-    expect(new Set(STAGES.map((s) => s.id)).size).toBe(10);
+  it('ステージは20個あり、idが重複しない', () => {
+    expect(STAGES).toHaveLength(20);
+    expect(new Set(STAGES.map((s) => s.id)).size).toBe(20);
+  });
+
+  it('seedが重複しない(レイアウトの独自性を保証)', () => {
+    expect(new Set(STAGES.map((s) => s.seed)).size).toBe(STAGES.length);
+  });
+
+  it('パレットの全色が #rrggbb 形式', () => {
+    const hex = /^#[0-9a-f]{6}$/;
+    for (const def of STAGES) {
+      const { sky, fog, floor, wall, obstacle, accent, lightColor } = def.palette;
+      for (const color of [sky, fog, floor, wall, obstacle, accent, lightColor]) {
+        expect(color, `${def.id}: ${color}`).toMatch(hex);
+      }
+    }
+  });
+
+  it('日差しが安全域に収まる(elevation 12〜62 / exposure 0.85〜1.15 / fogDensity>0)', () => {
+    for (const def of STAGES) {
+      const { elevation, exposure, fogDensity } = def.palette;
+      expect(elevation, `${def.id}: elevation`).toBeGreaterThanOrEqual(12);
+      expect(elevation, `${def.id}: elevation`).toBeLessThanOrEqual(62);
+      expect(exposure, `${def.id}: exposure`).toBeGreaterThanOrEqual(0.85);
+      expect(exposure, `${def.id}: exposure`).toBeLessThanOrEqual(1.15);
+      expect(fogDensity, `${def.id}: fogDensity`).toBeGreaterThan(0);
+    }
   });
 
   it('プレイヤー・BOTどちらのスポーン地点付近にも障害物を置かない', () => {

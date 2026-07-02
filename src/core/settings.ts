@@ -139,7 +139,8 @@ export const DEFAULT_SETTINGS: Settings = {
   teamPaletteId: 'standard',
   matchLengthS: 300,
   aimAssist: true,
-  aimAssistStrength: 0.6,
+  // R8: BO2実機相当の自然な効きへ(スローダウン主体・吸着微量)
+  aimAssistStrength: 0.45,
   adsSensMul: 1.0,
   reticleStyle: 'cross',
   reticleColor: 'accent',

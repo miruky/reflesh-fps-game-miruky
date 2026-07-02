@@ -132,6 +132,8 @@ export class Player {
   private mantleTimer = 0;
   private readonly mantleFrom = new THREE.Vector3();
   private readonly mantleTo = new THREE.Vector3();
+  private diving = false; // ダイブスラム降下中(ジャンプで解除=スラム不発)
+  private diveLanded = false; // ダイブのまま着地した(matchが消費してスラム発火)
   // ミッション・モディファイアで上書きする個体設定(既定は従来定数)
   private readonly regenDelay: number;
   private readonly regenPerS: number;
@@ -317,6 +319,9 @@ export class Player {
     this.jumpBuffered = input.jumpPressed ? JUMP_BUFFER : Math.max(0, this.jumpBuffered - dt);
     if (this.grounded) this.airJumpsLeft = AIR_JUMPS;
 
+    // ジャンプ系の入力はダイブを解除する(降下をキャンセルした場合スラムは不発=無コスト連打防止)
+    if (input.jumpPressed) this.diving = false;
+
     if (this.wallRunning && input.jumpPressed) {
       // ウォールジャンプ: 壁を蹴って斜め上へ離脱し、スラストも回復
       this.velY = WALLJUMP_UP;
@@ -389,7 +394,12 @@ export class Player {
     if (this.velY > 0 && moved.y < movement.y * 0.5) this.velY = 0;
 
     if (!wasGrounded && this.grounded) {
-      if (fallSpeed > FALL_DAMAGE_THRESHOLD) {
+      if (this.diving) {
+        // ダイブスラムの着地: 技としての着地なので自傷落下ダメージは免除。
+        // 衝撃波の発火は match が consumeDiveLanded() で読む
+        this.diving = false;
+        this.diveLanded = true;
+      } else if (fallSpeed > FALL_DAMAGE_THRESHOLD) {
         this.takeDamage((fallSpeed - FALL_DAMAGE_THRESHOLD) * FALL_DAMAGE_MULT);
       }
       if (fallSpeed > 6) this.landImpact = fallSpeed;
@@ -422,6 +432,25 @@ export class Player {
     if (this.regenPerS > 0 && this.sinceDamage > this.regenDelay && this.hp < this.maxHp) {
       this.hp = Math.min(this.maxHp, this.hp + this.regenPerS * dt);
     }
+  }
+
+  // ダイブスラム(素手技): 空中から終端速度で急降下する。着地判定・衝撃波はmatch側。
+  // MAX_FALL_SPEEDに揃えることで床抜け安全性(1フレーム変位<=床半厚)を保つ。
+  // 戻り値=降下を開始したか。降下中フラグはジャンプでキャンセルされ(=スラム不発)、
+  // 着地で diveLanded に変換される(matchが consumeDiveLanded で1回だけ読む)
+  forceDive(): boolean {
+    if (!this.alive || this.grounded || this.mantling) return false;
+    this.endWallRun(0);
+    this.velY = -MAX_FALL_SPEED;
+    this.diving = true;
+    return true;
+  }
+
+  // ダイブ着地の消費読み取り(スラム発火はこの1回のみ)
+  consumeDiveLanded(): boolean {
+    const v = this.diveLanded;
+    this.diveLanded = false;
+    return v;
   }
 
   // スライド終了。十分に速ければクールダウン0で即連係可(スライドキャンセル・チェーン)。
@@ -634,6 +663,8 @@ export class Player {
     this.lean = 0;
     this.landImpact = 0;
     this.justBoosted = false;
+    this.diving = false;
+    this.diveLanded = false;
     this.speedMul = 1;
     this.damageResist = 0;
     // 死亡時の姿勢(スライド/しゃがみ)を持ち越して視点が湧き直後に

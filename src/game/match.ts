@@ -11,15 +11,20 @@ import {
   adsSensScale,
   aimAssistDelta,
   AIM_PARTS,
+  DRONE_AIM_PARTS,
+  TANK_AIM_PARTS,
+  TURRET_AIM_PARTS,
   bulletBendFraction,
   BULLET_MAG_CONE_DEG,
   BULLET_MAG_MAX_DEG,
   BULLET_MAG_CONE_SCOPED_DEG,
   BULLET_MAG_MAX_SCOPED_DEG,
+  CLASS_AA_MUL,
   distanceFactor,
+  MOUSE_AA_SCALE,
   PART_PULL_SCALE,
   rankAimPoints,
-  rotationalAssist,
+  SLOWDOWN_CONE_DEG,
   slowdownFactor,
   snapPulse,
   wrapAngle,
@@ -46,7 +51,9 @@ import {
   Bot,
   BOT_NAMES,
   HIP_OFFSET_Y,
+  KIND_TUNING,
   tuningFor,
+  type BotKind,
   type BotTier,
   type BotTuning,
   type Difficulty,
@@ -99,7 +106,7 @@ interface SkyUniforms {
 const DEG = Math.PI / 180;
 const LOOK_BASE = 0.0022;
 // ゲームパッドのヒップファイア時アシストゲート(マウスはADS時のみ、パッドは常時BO3準拠)
-const HIP_GATE = 0.5;
+const HIP_GATE = 0.4;
 // -1..1へクランプ(移動入力のORブレンド用)
 const clampUnit = (v: number): number =>
   !Number.isFinite(v) ? 0 : v < -1 ? -1 : v > 1 ? 1 : v;
@@ -133,6 +140,10 @@ const MELEE_DAMAGE = 75;
 const MELEE_COOLDOWN = 0.8;
 const BOT_VIEW_DISTANCE = 60;
 const BOT_VIEW_CONE_COS = Math.cos((75 * Math.PI) / 180);
+// 警戒中の拡張視野(半角95度)。全周検知は廃止し、警戒は「音源へ振り向く」調査行動で表現
+const BOT_ALERT_CONE_COS = Math.cos((95 * Math.PI) / 180);
+// スプリント/スライドの足音が聞こえる距離。しゃがみ/歩きは無音=背後忍び寄りが可能
+const FOOTSTEP_HEAR_DIST = 8;
 const BOT_FALLOFF = { start: 14, end: 40, minFactor: 0.6 };
 const PLAYER_NAME = 'あなた';
 const ZONE_RADIUS = 3.5;
@@ -351,6 +362,13 @@ export class Match {
   private playerCaptures = 0;
   private readonly playerWeaponKills: Record<string, number> = {};
 
+  // ── 素手(武器なし)の格闘状態 ──
+  private punchStep = 0; // ラッシュコンボの段(0..3)
+  private punchWindowS = 0; // コンボ継続の残り秒。切れたら1段目へ戻る
+  private slamPending = false; // ダイブスラム降下中(着地で衝撃波)
+  private slamStartY = 0; // 降下開始高さ(ダメージスケール用)
+  private slamCooldownS = 0; // ダイブスラムの再発動クールダウン(連打支配の防止)
+
   private grenadeKind: GrenadeKind;
   private readonly grenadeCounts: Record<GrenadeKind, number>;
   private cooking = false;
@@ -389,8 +407,6 @@ export class Match {
   private aimAssistTargetDir: THREE.Vector3 | null = null; // 弾道補正用の対象方向(無ければnull)
   private aimAssistTargetAngle = 0; // 照準と対象のなす角(rad)
   private aimAssistTargetDist = 0; // 対象までの距離(m)
-  private raaPrevTarget: Bot | null = null; // 回転エイムアシストの前フレーム対象
-  private raaPrevBearing = 0; // 同・前フレームの対象方位(yaw)
   private scopeSway = { x: 0, y: 0 }; // レティクル視差用の揺れ(度、100%)
   private breathMeter = BREATH_MAX_S; // 息止めの残量(秒)
   private breathSteady = false; // 息止めが効いている
@@ -1239,7 +1255,12 @@ export class Match {
     // しゃがみ: ホールドまたはトグル(アクセシビリティ設定)。
     // wasPressedは消費型なので1回だけ読む
     const crouchPressed = this.input.wasPressed('crouch');
-    if (this.settings.crouchToggle && crouchPressed) this.crouchLatch = !this.crouchLatch;
+    // 素手で空中の「しゃがみ」はダイブスラム入力なので、しゃがみトグルを反転させない
+    // (着地後に意図せずしゃがみ固定になる干渉を防ぐ)
+    const slamIntent = weapon.def.id === 'fists' && !this.player.grounded;
+    if (this.settings.crouchToggle && crouchPressed && !slamIntent) {
+      this.crouchLatch = !this.crouchLatch;
+    }
     // キーのデジタル±1とゲームパッドのアナログ量をORブレンド(-1..1へクランプ)
     const moveInput = {
       x: clampUnit(
@@ -1266,6 +1287,34 @@ export class Match {
     this.handleMelee();
     this.handleGrenadeInput(dt);
 
+    // ── 素手(武器なし)の技: コンボ窓の減衰と、空中しゃがみ→ダイブスラム ──
+    this.punchWindowS = Math.max(0, this.punchWindowS - dt);
+    this.slamCooldownS = Math.max(0, this.slamCooldownS - dt);
+    const fists = weapon.def.id === 'fists';
+    if (
+      fists &&
+      crouchPressed &&
+      !this.player.grounded &&
+      !this.slamPending &&
+      this.slamCooldownS <= 0 &&
+      this.player.alive &&
+      this.player.forceDive() // 実際に降下を開始できた時だけ装填
+    ) {
+      this.slamPending = true;
+      this.slamStartY = this.player.position.y;
+      this.sounds.punchWhoosh(); // 降下開始の風切り
+    }
+    // 着地はplayer側のdiveLandedを1回だけ消費。ジャンプでキャンセルした降下・
+    // 奈落リスポーン・死亡では発火しない(接地/死亡で装填だけ静かに解除)
+    const dived = this.player.consumeDiveLanded();
+    if (this.slamPending && (dived || this.player.grounded || !this.player.alive)) {
+      if (dived && this.player.alive && this.activeWeapon.def.id === 'fists') {
+        this.doDiveSlam();
+        this.slamCooldownS = 2.5;
+      }
+      this.slamPending = false;
+    }
+
     const sprintBlocksFire = this.player.sprinting;
     const events = weapon.update(
       dt * 1000,
@@ -1284,6 +1333,11 @@ export class Match {
     );
     for (const event of events) {
       if (event.type === 'fired') {
+        // 素手: 弾を出さずパンチへ差し替える(3段ラッシュ/スライドキック)
+        if (weapon.def.id === 'fists') {
+          this.doPunch();
+          continue;
+        }
         // RecoilStepの規約はyaw正=右。rotation.yは正で左回りなので符号を反転する
         this.player.yaw -= event.recoil.yaw;
         this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
@@ -1328,9 +1382,10 @@ export class Match {
     const amp = this.adsEntryElapsed < 0.37 ? 0 : swayAmp(this.breathMeter, base);
     this.scopeSway = lissajousSway(this.elapsed, amp);
     if (this.breathSteady && !wasSteady) this.sounds.holdBreath();
-    // scope-inの立ち上がりでレンズ音
+    // scope-inの2段オーディオ: 50%で構え上げ、85%でレンズを目へ押し当てるスナップ音
     const scopeProg = weapon.def.scope ? weapon.adsProgress : 0;
     if (this.prevScopeProgress < 0.5 && scopeProg >= 0.5) this.sounds.scopeIn();
+    if (this.prevScopeProgress < 0.85 && scopeProg >= 0.85) this.sounds.lensSnap();
     // 覗き込み開始時刻を記録(クイックスコープ=覗いてすぐ撃つ、の判定に使う)
     if (this.prevScopeProgress <= 0.02 && scopeProg > 0.02) this.lastAdsStartMs = performance.now();
     this.prevScopeProgress = scopeProg;
@@ -1384,27 +1439,29 @@ export class Match {
       // 既定はマウスを上へ動かすと上を向く。invertYで上下を入れ替える
       const pitchDir = this.settings.invertY ? 1 : -1;
 
-      // エイムアシスト: スコープ覗き込み中、視認できる最寄りの敵へ微吸着する。
-      // 強い入力(フリック/対象切替)中は弱め、決してハードロックしない
+      // エイムアシスト(R8: BO2準拠)。全武器適用・スローダウン主体・吸着は微量。
+      // 「先にブレーキ(広円錐10°)、中心で微引き(狭円錐5°)」の2段構え。RAAは廃止。
       this.aimAssistEngaged = false;
       this.aimAssistTargetDir = null;
-      // ゲームパッド時は全武器・ヒップでもアシスト(BO3準拠)。マウスはスコープ武器のADS時のみ
       const gp = this.input.lastDevice === 'gamepad';
       const assistActive =
-        this.settings.aimAssist &&
-        this.player.alive &&
-        ((weapon.def.aimAssist === true && weapon.adsProgress > 0.5) || gp);
+        this.settings.aimAssist && this.player.alive && (weapon.adsProgress > 0.5 || gp);
       const target = assistActive ? this.aimAssistTarget(weapon.def.range) : null;
       // スローダウンと吸着の両方を同じgateで滑らかに立ち上げる(0.5境界での段差防止)
       const adsGate = THREE.MathUtils.smoothstep(weapon.adsProgress, 0.5, 1);
       const gate = Math.max(adsGate, gp ? HIP_GATE : 0);
+      // クラス別倍率(拡散武器ほど弱い)とデバイス倍率(マウスは弱い摩擦だけ)
+      const classMul = CLASS_AA_MUL[weapon.def.class];
+      const deviceMul = gp ? 1 : MOUSE_AA_SCALE;
       let slow = 1;
       if (target) {
-        slow = slowdownFactor(
-          target.angle,
-          ACQUIRE_CONE_DEG * DEG,
-          0.5 * this.settings.aimAssistStrength * gate,
-        );
+        // ヒップ(パッド非ADS)は控えめ、ADSでしっかり粘る(BO2の当て感)。
+        // ヒップにはclassMulを重ねない(乗算3段で体感ゼロ化していたのを是正)
+        const hip = gp && weapon.adsProgress < 0.3;
+        const maxSlow = hip
+          ? 0.45 * this.settings.aimAssistStrength * gate * deviceMul
+          : 0.6 * this.settings.aimAssistStrength * gate * classMul * deviceMul;
+        slow = slowdownFactor(target.angle, SLOWDOWN_CONE_DEG * DEG, maxSlow);
       }
       k *= slow;
 
@@ -1418,25 +1475,19 @@ export class Match {
       this.player.yaw -= this.input.gpYawBase * gpK;
       pitch += gpPitchDir * this.input.gpPitchBase * gpK;
 
-      // 回転エイムアシスト用: 対象の方位変化(角速度)を算出
-      let targetYawRate = 0;
-      if (target) {
-        if (this.raaPrevTarget === target.bot) {
-          targetYawRate = wrapAngle(target.yaw - this.raaPrevBearing) / Math.max(dt, 1e-4);
-        }
-        this.raaPrevTarget = target.bot;
-        this.raaPrevBearing = target.yaw;
-      } else {
-        this.raaPrevTarget = null;
-      }
-
-      if (target) {
+      // 微プルは狭円錐(5°)内のみ。フリック中(強い入力)はアシスト完全カット(break-free)
+      if (target && target.angle < ACQUIRE_CONE_DEG * DEG) {
         const inputMag =
           Math.hypot(this.input.mouseDX, this.input.mouseDY) + this.input.gpLookMag * 40;
-        const inputDamp = THREE.MathUtils.clamp(1 - inputMag / 40, 0.15, 1);
+        const inputDamp = THREE.MathUtils.clamp(1 - inputMag / 40, 0, 1);
         // 部位別プル係数: 頭/脚への引き込みは弱め(head0.9/chest1.0/waist0.8/limb0.6)
         const strength =
-          this.settings.aimAssistStrength * gate * inputDamp * PART_PULL_SCALE[target.part];
+          this.settings.aimAssistStrength *
+          gate *
+          inputDamp *
+          PART_PULL_SCALE[target.part] *
+          classMul *
+          deviceMul;
         const delta = aimAssistDelta({
           curYaw: this.player.yaw,
           curPitch: pitch,
@@ -1450,16 +1501,6 @@ export class Match {
         });
         this.player.yaw += delta.dYaw;
         pitch += delta.dPitch;
-        // 回転アシスト(スティックを倒している間だけ、対象の横移動に追従)
-        if (gp) {
-          this.player.yaw += rotationalAssist(
-            targetYawRate,
-            this.input.gpLookMag,
-            this.settings.aimAssistStrength * gate,
-            dt,
-            this.settings.gamepadDeadzone,
-          );
-        }
         this.aimAssistEngaged = true;
         // 弾道補正/スナップは頭ではなく胸(中心質量)に固定する。磁力による自動
         // ヘッドショット化を防ぎ、頭はあくまで“狙えば寄る”ソフトプルの範疇に留める
@@ -1543,8 +1584,9 @@ export class Match {
 
     // 観戦カメラをゆっくり回す。銃の表示はviewModel側でscopeReveal/aliveから決める
     this.orbitAngle += dt * 0.5;
+    // 銃を長く見せてから鋭くスコープへ切り替える(BO2: レンズが迫ってからブラックアウト)
     const scopeReveal = weapon.def.scope
-      ? THREE.MathUtils.smoothstep(weapon.adsProgress, 0.55, 0.9)
+      ? THREE.MathUtils.smoothstep(weapon.adsProgress, 0.7, 0.9)
       : 0;
 
     // レンジファインダー: 照準中心レイで、見ている地点までの距離を測る
@@ -1577,6 +1619,7 @@ export class Match {
       alive: this.player.alive,
       scopeReveal01: scopeReveal,
       sprinting: this.player.sprinting && this.player.grounded,
+      scopeWeapon: weapon.def.scope === true,
     });
     this.effects.update(vmDt);
   }
@@ -2038,7 +2081,9 @@ export class Match {
         if (tag.bot.team === PLAYER_TEAM) return;
         const distance = traveled + hitToi(hit);
         let part: HitPart = tag.part;
-        if (part === 'body') {
+        // 高さによる部位再分類は人型のみ。戦車/ドローン等は車体下部が「脚」扱いで
+        // 減衰しないようbody満額を維持する(弱点=headコライダーは別枠で成立)
+        if (part === 'body' && tag.bot.kind === 'humanoid') {
           part = partFromHitHeight(end.y - tag.bot.position.y, HIP_OFFSET_Y);
         }
         const base = damageAtDistance(weapon.def.damage, distance, weapon.def.falloff);
@@ -2205,7 +2250,20 @@ export class Match {
   }
 
   private updateBots(dt: number): void {
+    // 足音: スプリント/スライド中のプレイヤーが至近にいると敵が振り向く。
+    // 歩き/しゃがみは無音なので、静かに近づけば背後を取れる
+    const noisy = this.player.alive && (this.player.sprinting || this.player.sliding);
+    const playerPos = this.player.position;
     for (const bot of this.bots) {
+      if (
+        noisy &&
+        bot.alive &&
+        bot.team !== PLAYER_TEAM &&
+        bot.position.distanceTo(playerPos) < FOOTSTEP_HEAR_DIST
+      ) {
+        bot.alert = Math.max(bot.alert, 1.5);
+        bot.alertPos = playerPos.clone();
+      }
       const targetEye = bot.alive && bot.blind <= 0 ? this.findTargetFor(bot) : null;
       bot.update(dt, {
         targetEye,
@@ -2254,7 +2312,11 @@ export class Match {
     const toTarget = eye.clone().sub(head);
     const distance = toTarget.length();
     const dirNorm = toTarget.normalize();
-    const inCone = bot.alert > 0 || bot.facing().dot(dirNorm) > BOT_VIEW_CONE_COS;
+    // 視野: 被弾直後(pain)のみ全周。警戒中は少し広がるが千里眼にはしない。
+    // 背後からの静かな接近は「見えない」を貫き、自然なステルスを成立させる
+    const inCone =
+      bot.pain > 0 ||
+      bot.facing().dot(dirNorm) > (bot.alert > 0 ? BOT_ALERT_CONE_COS : BOT_VIEW_CONE_COS);
     if (!inCone) return false;
     const hit = this.castRay(head, dirNorm, distance - 0.2, bot.body);
     if (hit === null) return true;
@@ -2289,12 +2351,21 @@ export class Match {
       bot: Bot;
       part: AimPart;
     } | null = null;
-    let bestAngle = ACQUIRE_CONE_DEG * DEG;
+    // 索敵はスローダウン用の広円錐(10°)まで。微プルは呼び出し側が5°で別途ゲートする
+    let bestAngle = SLOWDOWN_CONE_DEG * DEG;
     for (const bot of this.bots) {
       if (!bot.alive || bot.team === PLAYER_TEAM) continue;
       const base = bot.position; // カプセル中心(新規ベクトル)
-      // 角度の近い順に並んだ候補を、可視が取れるまで走査する=最近接の可視部位
-      const ranked = rankAimPoints(eye, forward, base, AIM_PARTS, maxRange);
+      // 機体種に合った部位候補で、角度の近い順に可視が取れるまで走査=最近接の可視部位
+      const parts =
+        bot.kind === 'drone'
+          ? DRONE_AIM_PARTS
+          : bot.kind === 'tank'
+            ? TANK_AIM_PARTS
+            : bot.kind === 'turret'
+              ? TURRET_AIM_PARTS
+              : AIM_PARTS;
+      const ranked = rankAimPoints(eye, forward, base, parts, maxRange);
       for (const cand of ranked) {
         // rankedはeff(角度-頭バイアス)順なのでangleは単調でない。より近い部位を
         // 取り逃さないよう、円錐外の候補はbreakせずcontinueでスキップする
@@ -2377,6 +2448,30 @@ export class Match {
     const tag = this.tags.get(hit.collider.handle);
     const damage = damageAtDistance(tuning.damage, hitToi(hit), BOT_FALLOFF);
 
+    // 戦車の主砲: 着弾点で炸裂し、直撃しなくても至近のプレイヤーへスプラッシュが入る
+    if (bot.kind === 'tank' && bot.team !== PLAYER_TEAM) {
+      this.effects.explosion(end, 1.5);
+      const boom = this.panAndDistance(end);
+      this.sounds.explosion(boom.pan, boom.distance);
+      const splashD = this.player.alive ? this.player.position.distanceTo(end) : Infinity;
+      if (splashD < 3.2 && tag?.kind !== 'player') {
+        const died = this.player.takeDamage(14);
+        this.tookDamage = true;
+        this.addShake(0.25);
+        this.addUltCharge(14 * ULT_ON_DAMAGE_PER_HP);
+        this.incoming.push(this.incomingAngle(end));
+        this.sounds.hurt();
+        // スプラッシュ死も直撃と同じ死亡処理(キルカメラ/死亡音/フィード/キル加算)
+        if (died) {
+          bot.kills += 1;
+          this.addKillScore(bot.team);
+          this.feed.push({ killer: bot.name, victim: PLAYER_NAME, weapon: '戦車砲', headshot: false });
+          this.sounds.death();
+          this.notePlayerDeath(bot);
+        }
+      }
+    }
+
     if (tag?.kind === 'player' && this.player.alive) {
       // 味方の流れ弾はダメージにしない
       if (bot.team === PLAYER_TEAM) return;
@@ -2432,11 +2527,13 @@ export class Match {
     this.killcamTimer = killer ? KILLCAM_S : 0;
   }
 
+  // 銃声を「聞かせる」。全周検知にはせず、音源方向への警戒(調査行動)を与える
   private alertBots(radius: number): void {
     const pos = this.player.position;
     for (const bot of this.bots) {
       if (bot.alive && bot.team !== PLAYER_TEAM && bot.position.distanceTo(pos) < radius) {
         bot.alert = 4;
+        bot.alertPos = pos.clone();
       }
     }
   }
@@ -2495,6 +2592,82 @@ export class Match {
     if (!this.ultReadyNotified && this.ultCharge >= 1 && this.ultActive <= 0) {
       this.sounds.ultReady();
       this.ultReadyNotified = true;
+    }
+  }
+
+  // ── 素手(武器なし)の技 ────────────────────────────────────────
+  // ラッシュコンボ: 45→63→90(3段目は重い)。スライド中は一撃90のスライドキック。
+  private doPunch(): void {
+    if (!this.player.alive) return;
+    // コンボ進行(0.55s窓)。スライドキックは常に最終段扱い
+    this.punchStep = this.player.sliding ? 3 : this.punchWindowS > 0 ? Math.min(this.punchStep + 1, 3) : 1;
+    this.punchWindowS = 0.55;
+    const dmg = this.punchStep >= 3 ? 90 : this.punchStep === 2 ? 63 : 45;
+
+    this.sounds.punchWhoosh();
+    this.viewModel.fire(false, false); // 拳の突き出しアニメ(マズルフラッシュは出さない)
+    this.addShake(this.punchStep >= 3 ? 0.08 : 0.03);
+    // 静かな攻撃: 銃声アラートは出さず、至近の敵だけが気づく
+    this.alertBots(5);
+
+    // 前方コーン(60度)内の最近傍の敵に命中。リーチは機体の大きさで補正
+    // (戦車は車体が巨大なので中心距離では密着しても届かないため)
+    const eye = this.player.eyePosition;
+    const fwd = this.cameraForward();
+    let best: Bot | null = null;
+    let bestGap = Infinity;
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const reach = 2.6 + (bot.kind === 'tank' ? 2.2 : bot.kind === 'turret' ? 0.5 : 0);
+      const to = bot.position.sub(eye);
+      const dist = to.length();
+      const gap = dist - reach;
+      if (gap > 0 || gap > bestGap) continue;
+      to.normalize();
+      if (fwd.dot(to) < 0.5) continue;
+      // 遮蔽判定: 薄い壁・コンテナ越しに殴れないようにする(handleMeleeと同じ流儀)
+      const hit = this.castRay(eye, to, dist - 0.1, this.player.body);
+      if (hit) {
+        const tag = this.tags.get(hit.collider.handle);
+        if (!(tag?.kind === 'bot' && tag.bot === bot)) continue;
+      }
+      bestGap = gap;
+      best = bot;
+    }
+    if (best) {
+      const point = best.position;
+      point.y += 0.3;
+      this.sounds.punchHit(this.punchStep);
+      this.haptic(70, 0.4, 0.5);
+      // weaponName '近接' で既存の近接メダル/チャレンジ経路に乗る
+      this.applyBotDamage(best, dmg, point, false, '近接');
+    }
+  }
+
+  // ダイブスラム: 空中でしゃがみ→終端速度で急降下し、着地の衝撃波で周囲にダメージ
+  private doDiveSlam(): void {
+    const center = this.player.position;
+    const fallH = Math.max(0, this.slamStartY - center.y);
+    // その場ホップの即死化を防ぐ: 低空(1.5m未満)は威力35%に減衰。高く飛ぶほど痛い
+    const heightMul = fallH < 1.5 ? 0.35 : 1;
+    const dmg = Math.min(300, (110 + fallH * 25) * heightMul);
+    const radius = 6;
+    const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
+    this.effects.explosion(ground, radius * 0.55);
+    this.sounds.groundPound();
+    this.addShake(0.65);
+    this.haptic(220, 0.8, 1.0);
+    // 轟音: 銃声同等に周囲へ響く(無音のAoEにしない)
+    this.alertBots(18);
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const dist = bot.position.distanceTo(center);
+      if (dist > radius) continue;
+      // グレネード/アルトと同じ遮蔽規約: 壁越しには効かない
+      if (!this.explosionReaches(center, bot.position)) continue;
+      const scaled = dmg * (1 - (dist / radius) * 0.5); // 中心ほど痛い
+      // アルティメット同様、スラムキルでのアルト自己充填はしない
+      this.applyBotDamage(bot, scaled, bot.position, false, 'ダイブスラム', false);
     }
   }
 
@@ -2578,18 +2751,33 @@ export class Match {
     team: number,
     tuning: BotTuning,
     tier: BotTier,
+    kind: BotKind = 'humanoid',
   ): Bot {
-    const bot = new Bot(this.physics, name, spawn, color, tuning, team, tier);
+    // 機体種の個体差(HP/速度/索敵)を合成。tankボス=2200HP等はここで乗る
+    const merged: BotTuning = { ...tuning, ...KIND_TUNING[kind] };
+    if (tier === 'boss') {
+      // ボスは階層HPを下回らない(ドローンボスが60HP化するのを防ぐ)。
+      // 戦車ボスはeasyでは手加減する(初章の理不尽化を防ぐ)
+      merged.maxHp = Math.max(merged.maxHp, tuning.maxHp);
+      if (kind === 'tank' && this.config.difficulty === 'easy') merged.maxHp = 1400;
+    }
+    const bot = new Bot(this.physics, name, spawn, color, merged, team, tier, kind);
     this.tags.set(bot.bodyCollider.handle, { kind: 'bot', bot, part: 'body' });
     this.tags.set(bot.headCollider.handle, { kind: 'bot', bot, part: 'head' });
+    // 追加コライダー(tankの砲塔など)もbody部位として登録する
+    for (const c of bot.extraColliders) this.tags.set(c.handle, { kind: 'bot', bot, part: 'body' });
     this.scene.add(bot.group);
     this.bots.push(bot);
     return bot;
   }
 
+  // 波進行(wave-clear)の生存カウント。常設タレットは「設置物」であり波の構成員では
+  // ないため除外する(遠くの砲台を掃除しないと次波が湧かない詰まりを防ぐ)
   private aliveEnemyCount(): number {
     let n = 0;
-    for (const b of this.bots) if (b.alive && b.team === ENEMY_TEAM) n += 1;
+    for (const b of this.bots) {
+      if (b.alive && b.team === ENEMY_TEAM && b.kind !== 'turret') n += 1;
+    }
     return n;
   }
 
@@ -2624,6 +2812,23 @@ export class Match {
       );
       beacon.position.set(this.exfilPos.x, 7, this.exfilPos.z);
       this.scene.add(beacon);
+    }
+    // 防衛/生存ミッションは固定タレット2基を敵陣側へ据え「守りを崩す」画を作る。
+    // 座標は障害物クリアランス済みのbotSpawnsから選ぶ(箱に埋まって撃破不能を防ぐ)
+    if (mission.objective.kind === 'defend' || mission.objective.kind === 'survive') {
+      const spots = [this.botSpawns[0], this.botSpawns[2]];
+      for (const p of spots) {
+        if (!p) continue;
+        this.spawnBot(
+          'ヤグラ砲台',
+          p,
+          this.colors.enemy,
+          ENEMY_TEAM,
+          tuningFor('elite', mission.difficulty),
+          'elite',
+          'turret',
+        );
+      }
     }
     this.pendingWaves = mission.waves.slice();
     this.advanceWaves();
@@ -2667,11 +2872,37 @@ export class Match {
               )
             : baseSpawn;
         this.waveSpawnCursor += 1;
+        // 機体種: データ指定を優先。ボスの既定は章の物語に合わせる
+        // (機械系の章=戦車、人型の教官/亡霊/砲主=人型、終章CINDERコア=大型ドローン)。
+        // 「第2章以降の通常兵は3体に1体が偵察ドローン」で戦場の画を多様化する
+        let kind: BotKind = group.kind ?? 'humanoid';
+        if (!group.kind) {
+          if (tier === 'boss') {
+            const ch = this.mission?.chapterId ?? '';
+            kind = ch === 'ch8' ? 'drone' : ch === 'ch1' || ch === 'ch3' || ch === 'ch4' ? 'humanoid' : 'tank';
+          } else if (
+            tier === 'normal' &&
+            (this.mission?.chapterId ?? 'ch1') !== 'ch1' &&
+            i % 3 === 2
+          ) {
+            kind = 'drone';
+          }
+        }
         const name =
           tier === 'boss'
             ? (this.mission?.objective.bossName ?? 'BOSS')
-            : (BOT_NAMES[n % BOT_NAMES.length] ?? `EN-${n}`);
-        this.spawnBot(name, spawn, this.colors.enemy, ENEMY_TEAM, tuningFor(tier, group.difficulty), tier);
+            : kind === 'drone'
+              ? `ドローン-${n + 1}`
+              : (BOT_NAMES[n % BOT_NAMES.length] ?? `EN-${n}`);
+        this.spawnBot(
+          name,
+          spawn,
+          this.colors.enemy,
+          ENEMY_TEAM,
+          tuningFor(tier, group.difficulty),
+          tier,
+          kind,
+        );
         n += 1;
       }
     }

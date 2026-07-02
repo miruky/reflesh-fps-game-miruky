@@ -106,6 +106,7 @@ export class Hud {
         <span class="ch-bar ch-r" data-id="chr"></span>
       </div>
       <div class="hud-scope" data-id="scope" hidden>
+        <div class="sc-back"></div>
         <div class="sc-mask"></div>
         <div class="sc-frame">
           <div class="sc-glass"><i class="sc-grid"></i></div>

@@ -29,6 +29,8 @@ export type ViewModelShape =
   | 'machine-pistol'
   | 'dmr'
   | 'sniper-bolt'
+  | 'dsr-bp' // BO2 DSR-50風ブルパップ・スナイパー(大型ブレーキ+ベンチレーテッドシュラウド)
+  | 'fists' // 素手(拳のみ。銃は描かない)
   | 'shotgun-pump'
   | 'shotgun-auto'
   | 'shotgun-double'
@@ -208,6 +210,8 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     id: 'yamasemi-dmr',
     name: 'DSR',
     slot: 'primary',
+    // BO2 DSR-50準拠のブルパップ・シルエット(大型ブレーキ/ベンチレーテッドシュラウド/大型スコープ)
+    shape: 'dsr-bp',
     // DSR系の一撃: 胴・頭はOSK、脚だけ生存。falloffは全域でOSKを維持
     damage: 110,
     headshotMultiplier: 1.9, // 頭=209、脚(0.8)=88で非キル
@@ -1145,6 +1149,46 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     airSpreadDeg: 1.8,
     shape: 'machine-pistol',
   },
+  // ── 素手(武器なし)。おふざけ枠の格闘スタイル ──
+  // 発砲イベントは match が「パンチ」へ差し替える(弾は出ない)。技:
+  // 地上射撃=3段ラッシュコンボ / 空中でしゃがみ=ダイブスラム(衝撃波) / スライド中射撃=スライドキック
+  fists: {
+    id: 'fists',
+    name: '素手',
+    slot: 'primary',
+    damage: 45, // コンボ1段目。2段目x1.4 / 3段目x2 は match 側で乗算
+    headshotMultiplier: 1.2,
+    rpm: 150, // パンチのテンポ
+    magazineSize: 999, // 弾は使わない(表示上も∞感を出す)
+    reloadTacticalMs: 300,
+    reloadEmptyMs: 300,
+    spreadHipDeg: 0,
+    spreadAdsDeg: 0,
+    bloomPerShotDeg: 0,
+    bloomMaxDeg: 0,
+    bloomRecoveryDegPerS: 1,
+    movementSpreadDeg: 0,
+    falloff: { start: 2, end: 3, minFactor: 1 },
+    mode: 'semi',
+    burstCount: 1,
+    adsFovScale: 1.0,
+    adsTimeMs: 120,
+    switchMs: 200,
+    // パンチはmatch側で差し替えられ反動加算が走らないため、反動はゼロにする
+    // (非ゼロだとrecover()だけが働き照準が下へ恒久ドリフトする)
+    recoilPattern: buildRecoil({ steps: 1, pitchDeg: 0, driftDeg: 0 }),
+    recoilRecoveryPerS: 10,
+    range: 3,
+    tracerColor: 0xffe08a,
+    pellets: 1,
+    pelletSpreadDeg: 0,
+    penetrationM: 0,
+    soundProfile: 'pistol', // 未使用(matchがパンチ音へ差し替え)だが型上必須
+    class: 'pistol',
+    adsMoveSuppression: 0.3,
+    airSpreadDeg: 0,
+    shape: 'fists',
+  },
 };
 
 export const PRIMARY_IDS: readonly string[] = [
@@ -1174,6 +1218,8 @@ export const PRIMARY_IDS: readonly string[] = [
   'raijin-sg',
   'tsuchigumo-lmg',
   'raitei-lmg',
+  // おふざけ枠: 武器なし(格闘スタイル)。最初から解放
+  'fists',
 ];
 
 // 副武器ID。match の secondary ルックアップと兵装UIの副武器一覧に使う

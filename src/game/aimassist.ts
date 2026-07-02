@@ -1,26 +1,44 @@
 // エイムアシストの純粋ロジック。THREEやゲーム状態に依存せず、角度・距離・dtだけで
 // 「どれだけ照準を寄せるか」を決める。ハードロックにならないよう全て上限付き。
-// match.ts がスコープ覗き込み中にだけ呼び出す。
+// R8: BO2準拠へ全面調整。本質は「粘着(sticky)であって吸引(sucky)ではない」——
+// スローダウン主体・吸着は微量・全武器適用・回転追従(RAA)は廃止。
+
+import type { WeaponClass } from './weapons';
 
 const DEG = Math.PI / 180;
 
-// 索敵円錐(この外なら一切作用しない)と全効果円錐(この内なら最大)
-export const ACQUIRE_CONE_DEG = 6.0;
+// プル(吸着)専用の狭い円錐と全効果円錐
+export const ACQUIRE_CONE_DEG = 5.0;
 export const FULL_CONE_DEG = 1.2;
-// 吸着の最大角速度(度/秒)。これ以上は決して動かさない
-export const MAX_PULL_DEG_PER_S = 24;
-// 距離減衰: この距離まで満額、DIST_FLOOR_MでDIST_FLOORまで線形に落ちる
-export const DIST_FULL_M = 40;
-export const DIST_FLOOR_M = 140;
-export const DIST_FLOOR = 0.4;
-// 弾道補正(バレットマグネティズム)の円錐と最大曲げ角(度)。
-// 距離減衰(distanceFactor)と併用して遠距離でアイムボット化しないよう控えめにする
-export const BULLET_MAG_CONE_DEG = 0.9;
-export const BULLET_MAG_MAX_DEG = 0.5;
-// スコープ覗き込み中(クイックスコープ成立後)はやや広く強く曲げる。
-// それでも距離減衰込みで「ほぼ当たっている弾」だけを吸い込む量に留める
-export const BULLET_MAG_CONE_SCOPED_DEG = 1.5;
-export const BULLET_MAG_MAX_SCOPED_DEG = 0.8;
+// スローダウン専用の広い円錐。「先にブレーキ、中心で微引き」の2段構え(BO2)
+export const SLOWDOWN_CONE_DEG = 10.0;
+// 吸着の最大角速度(度/秒)。BO2の微弱な引きに合わせて大幅に抑える
+export const MAX_PULL_DEG_PER_S = 10;
+// 距離減衰: 近接戦で効き、遠距離ではほぼ消える(BO2は遠距離を腕で当てるゲーム)
+export const DIST_FULL_M = 25;
+export const DIST_FLOOR_M = 80;
+export const DIST_FLOOR = 0.12;
+// 弾道補正(バレットマグネティズム)。「ほぼ当たっている弾」だけをわずかに救う量へ縮小
+export const BULLET_MAG_CONE_DEG = 0.4;
+export const BULLET_MAG_MAX_DEG = 0.15;
+// スコープ覗き込み中(クイックスコープ成立後)はやや広め。それでも救済の域を出ない
+export const BULLET_MAG_CONE_SCOPED_DEG = 0.6;
+export const BULLET_MAG_MAX_SCOPED_DEG = 0.25;
+
+// クラス別のアシスト倍率(全武器適用の土台)。スナイパーのみ満額、
+// 拡散武器ほど弱く(exhaustive Record: クラス追加時はtscが漏れを検出)
+export const CLASS_AA_MUL: Record<WeaponClass, number> = {
+  ar: 0.65,
+  smg: 0.75,
+  br: 0.65,
+  lmg: 0.55,
+  shotgun: 0.5,
+  pistol: 0.6,
+  marksman: 0.7,
+  sniper: 1.0,
+};
+// マウスはパッドより弱い「摩擦」だけを感じる程度に抑える
+export const MOUSE_AA_SCALE = 0.45;
 
 export function clamp(x: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, x));
@@ -89,11 +107,11 @@ export function aimAssistDelta(args: AimAssistArgs): { dYaw: number; dPitch: num
 }
 
 // 覗き込んだ瞬間(scope-in立ち上がり)の1回限りのスナップ補正量(ラジアン)。
-// BO2の「ADS中オートエイム」の正体。誤差の15%だけ・上限1.5°・strength=0で0。
+// BO2の「ADS中オートエイム」の正体(スコープ専用のQS支援)。誤差の22%・上限2.2°。
 // 誤差より小さい量しか返さない＝オーバーシュート(エイムボット化)しない。
 export function snapPulse(errorRad: number, strength: number): number {
   const s = clamp(strength, 0, 1);
-  return Math.min(Math.abs(errorRad) * 0.15, 1.5 * DEG) * s;
+  return Math.min(Math.abs(errorRad) * 0.22, 2.2 * DEG) * s;
 }
 
 // 弾道を何割ターゲットへ寄せるか(0..1)。最大maxBendRadだけ曲げ、近ければ全部寄せる
@@ -117,21 +135,8 @@ export function adsSensScale(
   return 1 + (full - 1) * clamp(progress, 0, 1);
 }
 
-// ── ゲームパッド: 回転エイムアシスト(RAA)─────────────────────────
-// スティックを倒している間だけ、ターゲットの画面横角速度の一定割合をカメラに追従させる。
-// 静止狙撃中(stickMag<=deadzone)は一切干渉しない。中心吸着(magnetism)とは別の層。
-export const RAA_FOLLOW = 0.7; // ターゲット角速度の追従率(0.65-0.80)
-
-export function rotationalAssist(
-  targetYawRateRad: number,
-  stickMag: number,
-  strength: number,
-  dt: number,
-  deadzone: number,
-): number {
-  if (stickMag <= deadzone) return 0;
-  return targetYawRateRad * RAA_FOLLOW * clamp(strength, 0, 1) * dt;
-}
+// (R8) 回転エイムアシスト(RAA)は廃止した。BO2に回転追従は存在せず(BO3以降の機能)、
+// 「勝手に付いていく」不自然さの主因だったため、スローダウン+微プルの2層のみに戻す。
 
 // ── 最近接部位エイムアシスト ─────────────────────────────────────
 // 敵1体につき頭/胸/腰/脚の複数候補点を生成し、照準(forward)に角度的に最も近い点を
@@ -158,6 +163,22 @@ export const AIM_PARTS: readonly PartOffset[] = [
   { part: 'chest', dy: 0.15 },
   { part: 'waist', dy: -0.1 },
   { part: 'limb', dy: -0.5 },
+];
+
+// 機体種ごとの部位候補(R8)。人型のオフセットを流用するとドローン上空や戦車の
+// 車体外の「何もない空中」へ吸着・減速してしまうため、コライダー実体に合わせる
+export const DRONE_AIM_PARTS: readonly PartOffset[] = [
+  { part: 'head', dy: 0.45, biasDeg: 0.4 }, // 頂部ドーム(弱点)
+  { part: 'chest', dy: 0 }, // 本体コア
+];
+export const TANK_AIM_PARTS: readonly PartOffset[] = [
+  { part: 'head', dy: 1.0 }, // 砲塔まわり
+  { part: 'chest', dy: 0.3 }, // 車体上部
+  { part: 'waist', dy: -0.2 }, // 車体下部
+];
+export const TURRET_AIM_PARTS: readonly PartOffset[] = [
+  { part: 'head', dy: 0.7, biasDeg: 0.4 }, // 索敵アイ(弱点)
+  { part: 'chest', dy: 0 },
 ];
 
 // 部位ごとの磁力スケール。脚ほど弱く、胴がもっとも強い。

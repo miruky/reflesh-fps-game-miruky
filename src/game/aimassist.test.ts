@@ -10,11 +10,14 @@ import {
   BULLET_MAG_CONE_SCOPED_DEG,
   BULLET_MAG_MAX_DEG,
   BULLET_MAG_MAX_SCOPED_DEG,
+  CLASS_AA_MUL,
   distanceFactor,
+  DIST_FLOOR,
+  DIST_FLOOR_M,
+  DIST_FULL_M,
   PART_PULL_SCALE,
-  RAA_FOLLOW,
   rankAimPoints,
-  rotationalAssist,
+  SLOWDOWN_CONE_DEG,
   slowdownFactor,
   snapPulse,
   type Vec3,
@@ -34,13 +37,31 @@ describe('aimassist 純粋ロジック', () => {
     expect(near).toBeGreaterThan(far);
   });
 
-  it('distanceFactorは近距離で1、140mで0.40、最大射程超で0', () => {
+  it('distanceFactorは近距離で1、床距離で床値、最大射程超で0(BO2: 遠距離は腕で当てる)', () => {
     expect(distanceFactor(10, 300)).toBe(1);
-    expect(distanceFactor(40, 300)).toBe(1);
-    expect(distanceFactor(140, 300)).toBeCloseTo(0.4, 5);
-    expect(distanceFactor(90, 300)).toBeGreaterThan(0.4);
-    expect(distanceFactor(90, 300)).toBeLessThan(1);
+    expect(distanceFactor(DIST_FULL_M, 300)).toBe(1);
+    expect(distanceFactor(DIST_FLOOR_M, 300)).toBeCloseTo(DIST_FLOOR, 5);
+    const mid = (DIST_FULL_M + DIST_FLOOR_M) / 2;
+    expect(distanceFactor(mid, 300)).toBeGreaterThan(DIST_FLOOR);
+    expect(distanceFactor(mid, 300)).toBeLessThan(1);
     expect(distanceFactor(400, 300)).toBe(0);
+    // R8: BO2準拠で近接寄り(満額25m/床80m/床値0.12)
+    expect(DIST_FULL_M).toBe(25);
+    expect(DIST_FLOOR_M).toBe(80);
+    expect(DIST_FLOOR).toBeCloseTo(0.12, 5);
+  });
+
+  it('スローダウン円錐はプル円錐より広い(先にブレーキ、中心で微引き)', () => {
+    expect(SLOWDOWN_CONE_DEG).toBeGreaterThan(ACQUIRE_CONE_DEG);
+  });
+
+  it('CLASS_AA_MULはスナイパー満額・拡散武器ほど弱い', () => {
+    expect(CLASS_AA_MUL.sniper).toBe(1.0);
+    expect(CLASS_AA_MUL.shotgun).toBeLessThan(CLASS_AA_MUL.smg);
+    for (const v of Object.values(CLASS_AA_MUL)) {
+      expect(v).toBeGreaterThan(0);
+      expect(v).toBeLessThanOrEqual(1);
+    }
   });
 
   it('slowdownFactorは中心で最大減衰、円錐外で1', () => {
@@ -83,7 +104,7 @@ describe('aimassist 純粋ロジック', () => {
       strength: 1,
       maxRangeM: 300,
     });
-    const maxStep = (24 * DEG) / 60; // MAX_PULL_DEG_PER_S * dt
+    const maxStep = (10 * DEG) / 60; // MAX_PULL_DEG_PER_S(R8: BO2準拠で10°/s) * dt
     expect(Math.abs(d.dYaw)).toBeLessThanOrEqual(maxStep + 1e-9);
   });
 
@@ -99,11 +120,11 @@ describe('aimassist 純粋ロジック', () => {
     expect(adsSensScale(78, 0.32, 1.5, 1)).toBeGreaterThan(adsSensScale(78, 0.32, 1.0, 1));
   });
 
-  it('snapPulseは誤差の15%・上限1.5°、強度0で0、決して誤差を超えない', () => {
-    // 小さな誤差では誤差の15%
-    expect(snapPulse(2 * DEG, 1)).toBeCloseTo(2 * DEG * 0.15, 9);
-    // 大きな誤差では1.5°で頭打ち
-    expect(snapPulse(40 * DEG, 1)).toBeCloseTo(1.5 * DEG, 9);
+  it('snapPulseは誤差の22%・上限2.2°、強度0で0、決して誤差を超えない', () => {
+    // 小さな誤差では誤差の22%(QS支援。スコープ専用)
+    expect(snapPulse(2 * DEG, 1)).toBeCloseTo(2 * DEG * 0.22, 9);
+    // 大きな誤差では2.2°で頭打ち
+    expect(snapPulse(40 * DEG, 1)).toBeCloseTo(2.2 * DEG, 9);
     // 強度0で完全停止
     expect(snapPulse(5 * DEG, 0)).toBe(0);
     // どんな誤差でも誤差自体を超えない(=オーバーシュート/エイムボット化しない)
@@ -112,26 +133,11 @@ describe('aimassist 純粋ロジック', () => {
     }
   });
 
-  it('スコープ用バレットマグネティズム定数は通常より広く強い', () => {
+  it('スコープ用バレットマグネティズム定数は通常より広く強い(それでも救済の域)', () => {
     expect(BULLET_MAG_CONE_SCOPED_DEG).toBeGreaterThanOrEqual(BULLET_MAG_CONE_DEG);
     expect(BULLET_MAG_MAX_SCOPED_DEG).toBeGreaterThanOrEqual(BULLET_MAG_MAX_DEG);
-  });
-
-  it('rotationalAssist: デッドゾーン以下のスティックでは作動しない', () => {
-    expect(rotationalAssist(1.0, 0.05, 1, 1 / 60, 0.1)).toBe(0);
-  });
-
-  it('rotationalAssist: スティックを倒すと対象角速度の一定割合を返す', () => {
-    const dt = 1 / 60;
-    const out = rotationalAssist(2.0, 0.8, 1, dt, 0.1);
-    expect(out).toBeCloseTo(2.0 * RAA_FOLLOW * 1 * dt, 6);
-    expect(out).toBeGreaterThan(0);
-  });
-
-  it('rotationalAssist: strengthは0..1にクランプされる', () => {
-    const dt = 1 / 60;
-    expect(rotationalAssist(1.0, 1, 5, dt, 0.1)).toBeCloseTo(1.0 * RAA_FOLLOW * 1 * dt, 6);
-    expect(rotationalAssist(1.0, 1, -1, dt, 0.1)).toBe(0);
+    // R8: BO2準拠の縮小値(最大曲げは0.25°以下=ほぼ当たっている弾だけを救う)
+    expect(BULLET_MAG_MAX_SCOPED_DEG).toBeLessThanOrEqual(0.25);
   });
 
   // ── 最近接部位エイムアシスト (rankAimPoints) ─────────────────────

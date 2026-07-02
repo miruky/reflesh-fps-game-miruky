@@ -1,7 +1,8 @@
 import type { StageDef } from './stage';
 
-// 10ステージ。パレット・広さ・密度・高低差で性格を変える。
+// 20ステージ。パレット・広さ・密度・高低差で性格を変える。
 // seedを変えない限りレイアウトは不変。
+// 日差しの安全域: elevation 12〜62 / exposure 0.85〜1.15(Sky.jsの地平破綻と白飛び/黒潰れ回避)。
 export const STAGES: StageDef[] = [
   {
     id: 'kunren',
@@ -177,7 +178,7 @@ export const STAGES: StageDef[] = [
       turbidity: 9,
       rayleigh: 3.0,
       mieCoefficient: 0.005,
-      elevation: 8,
+      elevation: 12, // 監査修正: 8°はSky.jsの地平破綻域で「低い太陽なのに眩しい」矛盾が出るため安全域下限12°へ(夕暮れの雰囲気は維持)
       azimuth: 90,
       exposure: 1.05,
       environmentIntensity: 0.6,
@@ -241,7 +242,7 @@ export const STAGES: StageDef[] = [
       elevation: 22,
       azimuth: 160,
       exposure: 0.95,
-      environmentIntensity: 1.0,
+      environmentIntensity: 0.85, // 監査修正: ほぼ白の床(#e8edf2)+ambient1.0にIBL1.0を重ねると白飛び域に入るため既定0.85へ抑制
     },
   },
   {
@@ -268,7 +269,7 @@ export const STAGES: StageDef[] = [
       turbidity: 12,
       rayleigh: 1.0,
       mieCoefficient: 0.01,
-      elevation: 6,
+      elevation: 12, // 監査修正: 6°は地平すれすれで空が破綻し露出1.05と矛盾するため安全域12°へ(turbidity12の濁りで薄暗さは維持)
       azimuth: 270,
       exposure: 1.05,
       environmentIntensity: 0.4,
@@ -298,11 +299,324 @@ export const STAGES: StageDef[] = [
       turbidity: 16,
       rayleigh: 0.6,
       mieCoefficient: 0.02,
-      elevation: 5,
+      elevation: 12, // 監査修正: 5°+露出1.15の「低い太陽なのに眩しい」矛盾を解消。薄暮のネオン市場として安全域12°へ
       azimuth: 270,
-      exposure: 1.15,
+      exposure: 1.1, // 監査修正: 露出も1.15→1.1へ半段下げ、ネオンの滲み(bloomThreshold0.7)は維持
       environmentIntensity: 0.45,
       bloomThreshold: 0.7,
+    },
+  },
+  // ── ここから R8 追加の10ステージ(scratchpad/r8-stages.json 準拠、verdict.fix 反映済み) ──
+  {
+    id: 'okujou',
+    name: '屋上',
+    subtitle: '真昼のヘリポートを奪い合う低遮蔽戦',
+    seed: 101,
+    size: 56,
+    obstacleCount: 20,
+    maxHeight: 2,
+    botCount: 5,
+    palette: {
+      sky: '#86c0ea',
+      // fogはmatch側でskyへ35% lerpされるため事前補正(#a8cfe8を逆算)。lerp後に意図のヘイズ色へ着地する
+      fog: '#b7d7e7',
+      floor: '#4a4e54',
+      wall: '#6d747d',
+      obstacle: '#a2aab2',
+      accent: '#ffd028',
+      lightColor: '#fffaf0',
+      lightIntensity: 1.7,
+      ambientIntensity: 0.9,
+      fogDensity: 0.007, // 全ステージ最低=高所の澄んだ空気
+      emissiveAccent: false,
+      turbidity: 2,
+      rayleigh: 1.2,
+      mieCoefficient: 0.003,
+      elevation: 62, // 全ステージ最高の中天。影が短く落下縁の視認を妨げない
+      azimuth: 190,
+      exposure: 0.95,
+      environmentIntensity: 0.95,
+    },
+  },
+  {
+    id: 'saisekiba',
+    name: '採石場',
+    subtitle: '段丘の高低差を制する立体戦',
+    seed: 107,
+    size: 64,
+    obstacleCount: 22,
+    maxHeight: 4.5,
+    botCount: 5,
+    palette: {
+      sky: '#bcd2da',
+      fog: '#d9c39c', // 粉塵の暖色霞(lerp後は乾いたベージュへ)
+      floor: '#c4a06a',
+      wall: '#9c6b3d',
+      obstacle: '#5f6871',
+      accent: '#ffd23f',
+      lightColor: '#ffe9c2',
+      lightIntensity: 1.55,
+      ambientIntensity: 0.85,
+      fogDensity: 0.012,
+      emissiveAccent: false,
+      // verdict.fix: 澄んだ青空だと粉塵設定と矛盾+kunren/nakaniwaと被るため、白茶の粉塵ドームへ(4→7, 1.4→1.1, 0.006→0.008)
+      turbidity: 7,
+      rayleigh: 1.1,
+      mieCoefficient: 0.008,
+      elevation: 38,
+      azimuth: 225,
+      exposure: 0.98, // 明るい床#c4a06aの白飛び防止に1.0未満
+      environmentIntensity: 0.8,
+    },
+  },
+  {
+    id: 'chikurin',
+    name: '竹林',
+    subtitle: '木漏れ日の竹柱に紛れる忍び合い',
+    seed: 113,
+    size: 52,
+    obstacleCount: 32,
+    maxHeight: 5,
+    botCount: 4,
+    palette: {
+      sky: '#c4ddb8',
+      fog: '#b5cfa3', // 全ステージ唯一の緑fog(苔緑もや)
+      floor: '#5a7a4e',
+      wall: '#4e5f42',
+      obstacle: '#96ad5a',
+      accent: '#c94f36',
+      lightColor: '#fff2cf',
+      lightIntensity: 1.5,
+      ambientIntensity: 0.85,
+      fogDensity: 0.018,
+      emissiveAccent: false,
+      // verdict.fix: 青ドームだと緑fogと継ぎ目が出るため、kairou式の白霞地平へ脱色(3→7, 1.6→1.0, 0.004→0.006)
+      turbidity: 7,
+      rayleigh: 1.0,
+      mieCoefficient: 0.006,
+      elevation: 44,
+      azimuth: 135,
+      exposure: 0.95,
+      environmentIntensity: 0.8,
+    },
+  },
+  {
+    id: 'tanada',
+    name: '棚田',
+    subtitle: '水鏡の段丘を畦づたいに詰める低遮蔽戦',
+    seed: 127,
+    size: 60,
+    obstacleCount: 22,
+    maxHeight: 2.5,
+    botCount: 5,
+    palette: {
+      sky: '#e2d5ae',
+      fog: '#ddd6a0', // verdict.fix: sakyuu(#e8d6a8)とヘイズ署名が被るため緑金寄りへ分離
+      floor: '#6e8a7c',
+      wall: '#7d7261',
+      obstacle: '#6f5b3e',
+      accent: '#a8c94f',
+      lightColor: '#ffdda0',
+      lightIntensity: 1.45,
+      ambientIntensity: 0.8,
+      fogDensity: 0.012,
+      emissiveAccent: false,
+      // verdict.fix: elevation24では空が淡金にならずsky/フォグ/光色と乖離するため14へ+turbidity5→7(安全域12以上は維持)
+      turbidity: 7,
+      rayleigh: 1.9,
+      mieCoefficient: 0.006,
+      mieDirectionalG: 0.8,
+      elevation: 14,
+      azimuth: 255,
+      exposure: 1.0,
+      environmentIntensity: 1.05, // 水鏡の高反射IBL。床が中明度なので露出1.0でも破綻しない
+      bloomStrength: 0.55,
+    },
+  },
+  {
+    id: 'misaki',
+    name: '岬灯台',
+    subtitle: '海風の岬に立つ白灯台の攻防',
+    seed: 131,
+    size: 58,
+    obstacleCount: 20,
+    maxHeight: 4,
+    botCount: 5,
+    palette: {
+      sky: '#8fc3e8',
+      fog: '#c2dcea',
+      floor: '#a8b28e',
+      wall: '#d8dde2',
+      obstacle: '#75858f', // verdict.fix: #8a9aa4は床と1.30:1で溶けるため明度分離(1.71:1)を確保
+      accent: '#e8442e',
+      lightColor: '#fff6e2',
+      lightIntensity: 1.5,
+      ambientIntensity: 0.85,
+      fogDensity: 0.01,
+      emissiveAccent: false,
+      turbidity: 4,
+      rayleigh: 2.2, // verdict.fix: kouwanの霞んだ港湾空から「岬の深い青」へ分離(1.7→2.2)
+      mieCoefficient: 0.004,
+      elevation: 33,
+      azimuth: 220,
+      exposure: 1.0,
+      environmentIntensity: 0.85, // 白壁#d8dde2のIBL焼き込みを抑え雪原型白飛びを回避
+    },
+  },
+  {
+    id: 'haieki',
+    name: '廃駅',
+    subtitle: '朝霧に沈む貨車列の遭遇戦',
+    seed: 137,
+    size: 62,
+    obstacleCount: 26,
+    maxHeight: 3.5,
+    botCount: 5,
+    palette: {
+      sky: '#d9d3c4',
+      fog: '#d5cfc0',
+      floor: '#8a8478',
+      wall: '#6f695f',
+      obstacle: '#8c4f38',
+      accent: '#4fae6b', // 場内信号灯の信号緑(唯一未使用の色相)
+      lightColor: '#ffe3b8',
+      lightIntensity: 1.35,
+      ambientIntensity: 0.85,
+      fogDensity: 0.018, // size62前後ならこのままで良い(verdict注記)
+      emissiveAccent: true,
+      // verdict.fix: rayleigh1.5だと天頂が青く「乳白の朝霧空」にならないため暖白の朝靄へ(7→9, 1.5→0.9)
+      turbidity: 9,
+      rayleigh: 0.9,
+      mieCoefficient: 0.008,
+      mieDirectionalG: 0.82,
+      elevation: 18,
+      azimuth: 110,
+      exposure: 1.02,
+      environmentIntensity: 0.75,
+      bloomThreshold: 0.8, // verdict.fix: 影側・霧中の信号灯だけが柔らかく滲む閾値
+    },
+  },
+  {
+    id: 'kyokoku',
+    name: '峡谷',
+    subtitle: '赤岩の高壁が絞る三本の射線',
+    seed: 139,
+    size: 66,
+    obstacleCount: 20,
+    maxHeight: 6,
+    botCount: 5,
+    palette: {
+      sky: '#8fc3e8',
+      fog: '#d9ae88', // 赤土埃(lerp後は乾いたベージュ靄)
+      floor: '#c07f58', // verdict.fix: #b5734fは障害物と1.48:1で溶けるため明度分離(1.77:1)を確保
+      wall: '#8a4a30',
+      obstacle: '#a25a38',
+      accent: '#2f9ec4',
+      lightColor: '#fff2dc',
+      lightIntensity: 1.75,
+      ambientIntensity: 0.65, // 昼マップ最低=谷底の深い影
+      fogDensity: 0.009,
+      emissiveAccent: false,
+      // verdict.fix: 空を宣言色「乾いた深青」に整合させnakaniwa/sakyuuと署名を分離(4→5, 1.1→1.4, 0.004→0.006)
+      turbidity: 5,
+      rayleigh: 1.4,
+      mieCoefficient: 0.006,
+      elevation: 55,
+      azimuth: 240, // verdict.fix: 195だとnakaniwa(200)と太陽方向がほぼ重複するため空白帯の240へ
+      exposure: 0.92,
+      environmentIntensity: 0.85,
+    },
+  },
+  {
+    id: 'kohan',
+    name: '湖畔',
+    subtitle: '桟橋と岩陰を縫う静かな水辺',
+    seed: 149,
+    size: 54,
+    obstacleCount: 16,
+    maxHeight: 3,
+    botCount: 4,
+    palette: {
+      sky: '#c2d3d6',
+      fog: '#c6d3cd',
+      floor: '#7a8a6e',
+      wall: '#8a7a63',
+      obstacle: '#5f6156', // verdict.fix: #8b887aは床と1.04:1でほぼ無分離のため濡れ花崗岩の暗灰へ(1.70:1)
+      accent: '#aacc33',
+      lightColor: '#f0efe2',
+      lightIntensity: 1.25,
+      ambientIntensity: 0.95,
+      fogDensity: 0.015,
+      emissiveAccent: false,
+      turbidity: 6,
+      rayleigh: 1.3,
+      mieCoefficient: 0.006,
+      elevation: 40,
+      azimuth: 215,
+      exposure: 0.98,
+      environmentIntensity: 0.75,
+    },
+  },
+  {
+    id: 'kuko',
+    name: '空港エプロン',
+    subtitle: '西日の誘導路を貫く超長射線',
+    seed: 151,
+    size: 70,
+    obstacleCount: 12,
+    maxHeight: 3,
+    botCount: 6,
+    palette: {
+      sky: '#c4c3b6', // verdict.fix: 寒色#bfc9d4だとsoukoと姉妹サムネに見えるため暖グレー空へ(fog lerpとも整合)
+      fog: '#cfc9ba',
+      floor: '#a8a29a',
+      wall: '#7b756c',
+      obstacle: '#5c6672',
+      accent: '#ffce1f', // ICAO誘導路イエロー
+      lightColor: '#ffdfa0', // verdict.fix: 西日として半歩暖色化(#ffe3ae→)
+      lightIntensity: 1.5,
+      ambientIntensity: 0.85,
+      fogDensity: 0.008, // kouwan(0.009)より下=最長視程
+      emissiveAccent: false,
+      turbidity: 5,
+      rayleigh: 2.4, // verdict.fix: 西空の暖グラデを強調しsoukoのニュートラル空と分離(2.0→2.4)
+      mieCoefficient: 0.008,
+      mieDirectionalG: 0.85, // verdict.fix: 西日ハロを指向的に(soukoの無ハロと差別化)
+      elevation: 26,
+      azimuth: 240,
+      exposure: 1.0,
+      environmentIntensity: 0.8,
+      bloomStrength: 0.55,
+    },
+  },
+  {
+    id: 'onsengai',
+    name: '湯けむり温泉街',
+    subtitle: '湯気の切れ間を突く石畳の近接戦',
+    seed: 157,
+    size: 50,
+    obstacleCount: 22,
+    maxHeight: 4,
+    botCount: 4,
+    palette: {
+      sky: '#c4d8d0',
+      fog: '#dce6de',
+      floor: '#8a938e', // verdict.fix: 暖灰#8a8378は木材障害物と溶けるため「空を映す濡れ石畳」の緑白へ(寒暖分離1.57:1)
+      wall: '#5f4c3c',
+      obstacle: '#8a6a4a',
+      accent: '#4a74b4', // verdict.fix: #3a5f9eは障害物より暗く影の塊に見えるため半段明るい藍へ
+      lightColor: '#ffeed2',
+      lightIntensity: 1.35,
+      ambientIntensity: 0.85,
+      fogDensity: 0.015, // verdict.fix: 0.02はsetsugenの深フォグと被るため0.015へ(湯気は局所演出に委ねる)
+      emissiveAccent: false,
+      turbidity: 6,
+      rayleigh: 1.6,
+      mieCoefficient: 0.008,
+      elevation: 30,
+      azimuth: 110,
+      exposure: 1.0,
+      environmentIntensity: 0.75,
     },
   },
 ];

@@ -629,6 +629,64 @@ export class SoundKit {
     });
   }
 
+  // 素手: パンチの空振り(短い風切り)
+  punchWhoosh(): void {
+    this.noiseBurst({
+      durationS: 0.06,
+      filterHz: 900,
+      filterType: 'bandpass',
+      gain: 0.18,
+      bus: this.sfxBus ?? undefined,
+    });
+  }
+
+  // 素手: パンチ命中。step(1..3)で重くなる(3段目は低音の芯を足す)
+  punchHit(step: number): void {
+    this.tone({
+      freq: 340 - step * 40,
+      endFreq: 160,
+      durationS: 0.07,
+      type: 'triangle',
+      gain: 0.3,
+      bus: this.sfxBus ?? undefined,
+    });
+    if (step >= 3) {
+      this.tone({ freq: 120, endFreq: 55, durationS: 0.14, type: 'sine', gain: 0.4 });
+    }
+  }
+
+  // 素手: ダイブスラム着地の衝撃波(サブベース+土煙ノイズ)
+  groundPound(): void {
+    this.tone({ freq: 55, endFreq: 22, durationS: 0.5, type: 'sine', gain: 0.6 });
+    this.noiseBurst({ durationS: 0.3, filterHz: 320, filterType: 'lowpass', gain: 0.55 });
+    this.noiseBurst({
+      durationS: 0.08,
+      filterHz: 2200,
+      filterType: 'bandpass',
+      gain: 0.25,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // スコープを目に押し当てる瞬間のスナップ音(scope-in 85%)。BO2 DSRの接眼の所作
+  lensSnap(): void {
+    this.noiseBurst({
+      durationS: 0.03,
+      filterHz: 3800,
+      filterType: 'bandpass',
+      gain: 0.2,
+      bus: this.uiBus ?? undefined,
+    });
+    this.tone({
+      freq: 240,
+      endFreq: 110,
+      durationS: 0.07,
+      type: 'sine',
+      gain: 0.18,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
   // 息を止めた合図(息を吸う柔らかいノイズ + 小さなクリック)
   holdBreath(): void {
     this.noiseBurst({

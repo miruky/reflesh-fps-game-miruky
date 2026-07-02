@@ -70,7 +70,8 @@ export interface MenuSelection {
 
 export interface MenuCallbacks {
   onStart: (selection: MenuSelection) => void;
-  onStartMission: (missionId: string) => void;
+  // primaryId 省略時はミッションの支給武器で出撃する
+  onStartMission: (missionId: string, primaryId?: string) => void;
   onResume: () => void;
   onRestart: () => void;
   onQuit: () => void;
@@ -702,7 +703,7 @@ export class Menu {
           <div class="brief-body">${briefLines}</div>
           <dl class="brief-meta">
             <div><dt>目的</dt><dd>${mission.objective.label}</dd></div>
-            <div><dt>支給</dt><dd>${WEAPON_DEFS[mission.primaryId]?.name ?? mission.primaryId}</dd></div>
+            <div><dt>武器</dt><dd><select class="brief-weapon-select" data-id="brief-weapon-select" aria-label="出撃武器の選択"></select></dd></div>
             <div><dt>特殊条件</dt><dd>${mods}</dd></div>
           </dl>
           ${intel}
@@ -713,8 +714,22 @@ export class Menu {
         </div>
       </div>
     `;
+    // 武器は自由選択(既定=支給武器)。解放済みの主武器から選べる
+    const weaponSelect = this.query('brief-weapon-select') as HTMLSelectElement;
+    const level = this.playerLevel();
+    const supplied = document.createElement('option');
+    supplied.value = mission.primaryId;
+    supplied.textContent = `${WEAPON_DEFS[mission.primaryId]?.name ?? mission.primaryId}(支給)`;
+    weaponSelect.appendChild(supplied);
+    for (const id of PRIMARY_IDS) {
+      if (id === mission.primaryId || !isUnlocked('weapon', id, level)) continue;
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = WEAPON_DEFS[id]?.name ?? id;
+      weaponSelect.appendChild(opt);
+    }
     this.query('deploy-mission').addEventListener('click', () => {
-      this.callbacks.onStartMission(mission.id);
+      this.callbacks.onStartMission(mission.id, weaponSelect.value);
     });
     this.query('brief-back').addEventListener('click', () => {
       this.showMain();
@@ -1059,6 +1074,7 @@ export class Menu {
     const fid = `g${stage.id.replace(/[^a-z0-9]/gi, '')}`;
     const pp = (pts: Array<{ x: number; y: number }>): string =>
       pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+    let shadows = '';
     let polys = '';
     let anyGlow = false;
     for (const b of obst) {
@@ -1074,23 +1090,37 @@ export class Menu {
       const bR = projectIso(nx + hw, nz + hd, 0);
       const bF = projectIso(nx + hw, nz - hd, 0);
       const bL = projectIso(nx - hw, nz + hd, 0);
+      const b0 = projectIso(nx - hw, nz - hd, 0);
       const glow = b.emissive ? ` filter="url(#${fid})"` : '';
       if (b.emissive) anyGlow = true;
+      // 落ち影: 接地矩形を太陽と逆側(左下)へ高さぶん伸ばした平行四辺形。立体感が跳ねる
+      const sdx = 3 + b.h * 1.6;
+      const sdy = 1.5 + b.h * 0.8;
+      shadows += `<polygon points="${pp([b0, bF, { x: bF.x - sdx, y: bF.y + sdy }, { x: b0.x - sdx, y: b0.y + sdy }])}" fill="#000" opacity="0.16"/>`;
       // 右面(暗め基準) / 左面(さらに暗) / 上面(明るめ)で陰影をつける
       polys +=
         `<polygon points="${pp([t1, t2, bR, bF])}" fill="${b.color}"${glow}/>` +
         `<polygon points="${pp([t2, t3, bL, bR])}" fill="${shadeHex(b.color, -0.22)}"${glow}/>` +
         `<polygon points="${pp([t0, t1, t2, t3])}" fill="${shadeHex(b.color, 0.18)}"${glow}/>`;
     }
-    const defs = anyGlow
-      ? `<defs><filter id="${fid}" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="1.6"/><feComponentTransfer><feFuncA type="linear" slope="1.6"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`
+    // 空グラデ(天頂→地平で明るく)・太陽グロー・ビネットで「キーアート」感を出す
+    const glowFilter = anyGlow
+      ? `<filter id="${fid}" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="1.6"/><feComponentTransfer><feFuncA type="linear" slope="1.6"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>`
       : '';
+    const defs =
+      `<defs>${glowFilter}` +
+      `<linearGradient id="sky${fid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${shadeHex(palette.sky, -0.06)}"/><stop offset="1" stop-color="${shadeHex(palette.sky, 0.12)}"/></linearGradient>` +
+      `<radialGradient id="vg${fid}" cx="0.5" cy="0.45" r="0.75"><stop offset="0.62" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.3"/></radialGradient>` +
+      `</defs>`;
     const svg =
       `<svg viewBox="0 0 160 92" role="img" aria-label="${stage.name}の戦域プレビュー">` +
       `<title>${stage.name}の戦域</title>${defs}` +
-      `<rect width="160" height="92" fill="${palette.sky}"/>` +
-      `<polygon points="${floorPts}" fill="${palette.floor}" opacity="0.85"/>` +
-      `${polys}</svg>`;
+      `<rect width="160" height="92" fill="url(#sky${fid})"/>` +
+      `<circle cx="126" cy="12" r="16" fill="${shadeHex(palette.sky, 0.28)}" opacity="0.55"/>` +
+      `<circle cx="126" cy="12" r="6" fill="${shadeHex(palette.sky, 0.4)}" opacity="0.85"/>` +
+      `<polygon points="${floorPts}" fill="${palette.floor}" opacity="0.92"/>` +
+      `${shadows}${polys}` +
+      `<rect width="160" height="92" fill="url(#vg${fid})"/></svg>`;
 
     if (stageSvgCache.size >= 64) {
       const oldest = stageSvgCache.keys().next().value;

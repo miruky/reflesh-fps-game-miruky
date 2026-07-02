@@ -1983,10 +1983,30 @@ tr.score-ally td {
   height: min(100vh, 100vw);
 }
 
-/* 円形フィールドストップ: 1枚の巨大シャドウで円外を黒く落とす + 縁とビネット */
+/* パンチイン中の背景: sc-mask は transform:scale されるため box-shadow も縮み、
+   序盤(--in<0.4)に四隅が露出する。スケールされない黒レイヤに「開いていく円孔」を
+   radial マスクで開けて全画面を確実に覆う */
+.sc-back {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--base) 86%, #000);
+  -webkit-mask: radial-gradient(
+    circle at 50% 50%,
+    transparent calc(50vmin * (0.08 + 0.92 * var(--in, 0)) - 2px),
+    #000 calc(50vmin * (0.08 + 0.92 * var(--in, 0)))
+  );
+  mask: radial-gradient(
+    circle at 50% 50%,
+    transparent calc(50vmin * (0.08 + 0.92 * var(--in, 0)) - 2px),
+    #000 calc(50vmin * (0.08 + 0.92 * var(--in, 0)))
+  );
+}
+
+/* 円形フィールドストップ: 1枚の巨大シャドウで円外を黒く落とす + 縁とビネット。
+   R8: BO2のパンチイン——スコープ円が点から一気に開く(scale 0.08→1) */
 .sc-mask {
   border-radius: 50%;
-  transform: translate3d(-50%, -50%, 0) scale(calc(1.1 - 0.1 * var(--in, 0)));
+  transform: translate3d(-50%, -50%, 0) scale(calc(0.08 + 0.92 * var(--in, 0)));
   box-shadow:
     0 0 0 100vmax color-mix(in srgb, var(--base) 86%, #000),
     inset 0 0 0 2px rgba(255, 255, 255, 0.1),
@@ -3812,6 +3832,24 @@ tr.score-ally td {
   display: flex;
   gap: 12px;
   margin-top: 18px;
+}
+
+/* ブリーフィングの武器自由選択 */
+.brief-weapon-select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--raise);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  padding: 4px 8px;
+  max-width: 100%;
+}
+.brief-weapon-select:hover {
+  border-color: var(--ink-faint);
+}
+.brief-weapon-select option {
+  background: var(--base-2);
 }
 
 /* ミッション結果の星 */

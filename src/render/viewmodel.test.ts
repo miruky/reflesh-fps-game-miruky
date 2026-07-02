@@ -42,7 +42,7 @@ describe('buildGunBody', () => {
     });
   }
 
-  // 15形状すべてが組めること(satisfies で網羅も型チェック)。
+  // 全形状が組めること(satisfies で網羅も型チェック)。
   const ALL_SHAPES = {
     rifle: 1,
     carbine: 1,
@@ -52,6 +52,8 @@ describe('buildGunBody', () => {
     'machine-pistol': 1,
     dmr: 1,
     'sniper-bolt': 1,
+    'dsr-bp': 1,
+    fists: 1,
     'shotgun-pump': 1,
     'shotgun-auto': 1,
     'shotgun-double': 1,

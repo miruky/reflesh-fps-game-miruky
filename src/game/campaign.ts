@@ -27,6 +27,8 @@ export interface EnemyGroupDef {
   tier: BotTier;
   count: number;
   difficulty: Difficulty;
+  // 敵の機体種。省略時はエンジン既定(boss=大型戦車、通常波の一部がドローン化)
+  kind?: 'humanoid' | 'drone' | 'tank' | 'turret';
 }
 export interface EnemyWaveDef {
   trigger: 'start' | 'wave-clear' | 'timer';

@@ -237,8 +237,9 @@ describe('拡張ロスターの不変条件', () => {
     }
   });
 
-  it('プライマリ24本・セカンダリ4本である', () => {
-    expect(PRIMARY_IDS.length).toBe(24);
+  it('プライマリ25本(銃24+素手)・セカンダリ4本である', () => {
+    expect(PRIMARY_IDS.length).toBe(25);
+    expect(PRIMARY_IDS).toContain('fists');
     expect(SECONDARY_IDS.length).toBe(4);
     // ID重複なし
     expect(new Set(PRIMARY_IDS).size).toBe(PRIMARY_IDS.length);

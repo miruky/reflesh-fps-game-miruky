@@ -20,7 +20,7 @@ type FeedKind =
   | 'horizontal'
   | 'none';
 // ハンドガード形状。slim=細身、rail=レール付き、wood=木製、shroud=バレルシュラウド
-type HandguardKind = 'none' | 'slim' | 'rail' | 'wood' | 'shroud';
+type HandguardKind = 'none' | 'slim' | 'rail' | 'wood' | 'shroud' | 'vented';
 // ストック形状。fixed=固定、skeleton=スケルトン、folding=折りたたみ
 type StockKind = 'none' | 'fixed' | 'skeleton' | 'folding';
 // マズルデバイス。brake=マズルブレーキ、flash=フラッシュハイダー、shroud=覆い
@@ -163,6 +163,36 @@ const SHAPE_SPECS: Record<ViewModelShape, Silhouette> = {
     muzzle: 'none',
     accentBand: 'receiver',
     bodyScale: 1.25,
+  },
+  // BO2 DSR-50: ブルパップ(弾倉がグリップ後方)・大型4ポートブレーキ・
+  // ベンチレーテッドシュラウド・大型スコープ。R8でDSR(yamasemi)専用に追加
+  'dsr-bp': {
+    receiver: { w: 0.082, h: 0.1, d: 0.38 },
+    barrelGauge: 0.038,
+    barrelLen: 0.3,
+    feed: 'mag-curved',
+    feedZ: 0.14,
+    handguard: 'vented',
+    stock: 'none',
+    scope: { r: 0.036, len: 0.22, y: 0.092 },
+    boltHandle: true,
+    muzzle: 'brake',
+    accentBand: 'receiver',
+    bodyScale: 1.35,
+  },
+  // 素手: buildGunBody が専用の早期分岐で拳を組むため、この行は網羅性のための最小値
+  fists: {
+    receiver: { w: 0.01, h: 0.01, d: 0.01 },
+    barrelGauge: 0.01,
+    barrelLen: 0.01,
+    feed: 'none',
+    handguard: 'none',
+    stock: 'none',
+    scope: null,
+    boltHandle: false,
+    muzzle: 'none',
+    accentBand: 'receiver',
+    bodyScale: 1,
   },
   'shotgun-pump': {
     receiver: { w: 0.075, h: 0.095, d: 0.34 },
@@ -356,6 +386,27 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
   const { dark, darker } = getShared();
   const accent = getAccent(def.tracerColor);
 
+  // 素手: 銃は描かず、拳のナックルラップ(巻き布+アクセント帯)だけを構える。
+  // FPVの腕は ViewModel.buildGun 側が追加するので、ここは「握った拳」の芯のみ
+  if (def.shape === 'fists') {
+    const knuckle = (sx: number): THREE.Group => {
+      const g = new THREE.Group();
+      const fist = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.06, 0.09), darker);
+      fist.castShadow = false;
+      const wrap = new THREE.Mesh(new THREE.BoxGeometry(0.074, 0.02, 0.094), accent);
+      wrap.position.y = 0.012;
+      g.add(fist, wrap);
+      g.position.set(sx, -0.05, -0.34);
+      g.rotation.z = -sx * 0.5;
+      return g;
+    };
+    gun.add(knuckle(-0.09), knuckle(0.09));
+    const muzzleF = new THREE.Object3D();
+    muzzleF.position.set(0, -0.05, -0.42);
+    gun.add(muzzleF);
+    return { gun, muzzle: muzzleF };
+  }
+
   const sil = resolveSilhouette(def);
   const bs = def.bodyScale ?? sil.bodyScale;
   const r = sil.receiver;
@@ -532,6 +583,24 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
       gun.add(g);
       break;
     }
+    case 'vented': {
+      // ベンチレーテッドシュラウド(BO2 DSR-50): 角形シュラウド+横スリット風の
+      // 明暗リブ4本+上面ストラット2本で「放熱孔の並んだ角ばった前部」を作る
+      const g = box(gauge + 0.034, gauge + 0.03, barLen * 0.8, darker);
+      g.position.set(0, BARREL_Y, barCenterZ);
+      gun.add(g);
+      for (let i = 0; i < 4; i += 1) {
+        const rib = box(gauge + 0.04, 0.008, 0.016, dark);
+        rib.position.set(0, BARREL_Y - 0.004 + (i % 2) * 0.014, barCenterZ - barLen * 0.3 + i * barLen * 0.2);
+        gun.add(rib);
+      }
+      const strutL = box(0.006, 0.012, barLen * 0.7, dark);
+      strutL.position.set(-(gauge + 0.02), BARREL_Y + 0.012, barCenterZ);
+      const strutR = box(0.006, 0.012, barLen * 0.7, dark);
+      strutR.position.set(gauge + 0.02, BARREL_Y + 0.012, barCenterZ);
+      gun.add(strutL, strutR);
+      break;
+    }
     default:
       assertNever(sil.handguard);
   }
@@ -575,6 +644,26 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     const mount = box(0.03, 0.03, 0.04, darker);
     mount.position.set(0, sil.scope.y - 0.03, 0.0);
     gun.add(optic, mount);
+    // BO2の見本どおり: 対物レンズ前端の赤リング + 青みARコートのガラス
+    const frontZ = -0.02 - sil.scope.len / 2;
+    const ring = cyl(sil.scope.r + 0.004, sil.scope.r + 0.004, 0.012, accent);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0, sil.scope.y, frontZ + 0.004);
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0x24344f,
+      roughness: 0.05,
+      metalness: 0.4,
+      transparent: true,
+      opacity: 0.85,
+      envMapIntensity: 0.9,
+    });
+    const glass = new THREE.Mesh(
+      new THREE.CircleGeometry(sil.scope.r * 0.86, 20),
+      glassMat, // 固有色(非shared)。disposeのtraverseで個別解放される
+    );
+    glass.rotation.y = Math.PI;
+    glass.position.set(0, sil.scope.y, frontZ - 0.001);
+    gun.add(ring, glass);
   }
 
   // ボルトハンドル(右側に突き出る)
@@ -610,10 +699,19 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
         muzzleZ = barFrontZ - 0.01 * bs;
         break;
       case 'brake': {
-        const d = box(gauge + 0.018, gauge + 0.018, 0.03, darker);
-        d.position.set(0, BARREL_Y, barFrontZ - 0.015);
-        gun.add(d);
-        muzzleZ = barFrontZ - 0.04;
+        // 大型ボクシー・マズルブレーキ(BO2 DSR-50風): 角箱ベース+上面排気溝2+左右ポート
+        const base = box(gauge * 2.4, gauge * 2.0, 0.085, darker);
+        base.position.set(0, BARREL_Y, barFrontZ - 0.042);
+        const slotT1 = box(gauge * 1.6, 0.006, 0.02, dark);
+        slotT1.position.set(0, BARREL_Y + gauge * 1.02, barFrontZ - 0.028);
+        const slotT2 = box(gauge * 1.6, 0.006, 0.02, dark);
+        slotT2.position.set(0, BARREL_Y + gauge * 1.02, barFrontZ - 0.06);
+        const portL = box(0.006, gauge * 1.3, 0.05, dark);
+        portL.position.set(-gauge * 1.24, BARREL_Y, barFrontZ - 0.042);
+        const portR = box(0.006, gauge * 1.3, 0.05, dark);
+        portR.position.set(gauge * 1.24, BARREL_Y, barFrontZ - 0.042);
+        gun.add(base, slotT1, slotT2, portL, portR);
+        muzzleZ = barFrontZ - 0.1;
         break;
       }
       case 'flash': {
@@ -755,6 +853,16 @@ export class ViewModel {
       m.rotation.set(rx, ry, rz);
       return m;
     };
+    if (def.shape === 'fists') {
+      // 素手: 両腕がそれぞれのナックル(±0.09, -0.05, -0.34)へ向かうファイティングポーズ。
+      // 銃握り位置の手を流用すると「3つ目の拳」が中央に浮くため専用配置にする
+      const rArmF = limb(sleeve, 0.08, 0.08, 0.34, 0.12, -0.14, -0.16, 0.35, 0.22, 0);
+      const lArmF = limb(sleeve, 0.08, 0.08, 0.34, -0.12, -0.14, -0.16, 0.35, -0.22, 0);
+      const rWrist = limb(glove, 0.065, 0.065, 0.08, 0.095, -0.06, -0.29, 0.2, 0.1, 0);
+      const lWrist = limb(glove, 0.065, 0.065, 0.08, -0.095, -0.06, -0.29, 0.2, -0.1, 0);
+      gun.add(rArmF, lArmF, rWrist, lWrist);
+      return { gun, muzzle };
+    }
     // 右手(グリップ)と右前腕(画面右下へ抜ける)
     const rHand = limb(glove, 0.06, 0.07, 0.11, 0.0, -0.11, 0.11, 0.3, 0, 0);
     const rArm = limb(sleeve, 0.08, 0.08, 0.3, 0.03, -0.22, 0.3, 0.62, -0.1, 0);
@@ -766,11 +874,12 @@ export class ViewModel {
     return { gun, muzzle };
   }
 
-  fire(scoped = false): void {
+  fire(scoped = false, flash = true): void {
     // スコープ武器はボルト排莢のように大きく後退・跳ね上げる(BO2 DSRの重い一撃)
     this.kickZ = Math.min(scoped ? 0.2 : 0.08, this.kickZ + (scoped ? 0.18 : 0.045));
     this.kickRot = Math.min(scoped ? 0.34 : 0.18, this.kickRot + (scoped ? 0.22 : 0.09));
-    this.flashTimer = scoped ? 0.03 : 0.045;
+    // flash=false は素手パンチ等の非発砲キック(マズルフラッシュを出さない)
+    if (flash) this.flashTimer = scoped ? 0.03 : 0.045;
     // スコープ武器のみ、約180ms後にボルト閉鎖の小さな揺り戻しを入れる
     if (scoped) this.counterKickTimer = 0.18;
   }
@@ -820,6 +929,7 @@ export class ViewModel {
       alive: boolean; // 死亡中は銃を隠す
       scopeReveal01: number; // スコープ覗き込み度。1に近いほど銃を引っ込めて隠す
       sprinting?: boolean; // スプリント中は銃を下げる(戦闘遷移コストの可視化)
+      scopeWeapon?: boolean; // スコープ武器: ADSでスコープが目へ飛び込む所作を出す
     },
   ): void {
     const ads = state.adsProgress;
@@ -869,8 +979,20 @@ export class ViewModel {
       counterKick = -Math.sin((1 - this.counterKickTimer / 0.18) * Math.PI) * 0.04;
     }
 
-    const pos = new THREE.Vector3().lerpVectors(HIP_POSITION, ADS_POSITION, ads);
+    // 視覚ADSはeaseOutQuintで「素早く構えて最後に据わる」BO2の所作にする。
+    // ゲームプレイ(スプレッド/QS判定)は線形adsのままなので挙動は不変
+    const adsVis = 1 - Math.pow(1 - ads, 5);
+    const pos = new THREE.Vector3().lerpVectors(HIP_POSITION, ADS_POSITION, adsVis);
     pos.x += this.swayX + bobX;
+    if (state.scopeWeapon) {
+      // スコープイン: ads 0.28→0.50→0.72 の鐘型カーブでスコープが目へ飛び込み、
+      // わずかに前傾(バレルティルト)。BO2 DSRの「レンズが迫る」瞬間を再現
+      const bell =
+        THREE.MathUtils.smoothstep(ads, 0.28, 0.5) *
+        (1 - THREE.MathUtils.smoothstep(ads, 0.5, 0.72));
+      pos.z -= 0.18 * bell;
+      pos.y += 0.045 * bell;
+    }
     // スコープを覗き込むほど銃を下げ、完全に覗いたらDOMスコープのため非表示にする
     pos.y +=
       this.swayY +
@@ -884,6 +1006,8 @@ export class ViewModel {
     this.root.visible = state.alive && state.scopeReveal01 < 0.95;
 
     let rotX = this.kickRot * 0.6 + counterKick + state.raiseRatio * -0.5;
+    // スコープ武器のADSで銃身をわずかに前へ倒す(スコープ接眼の所作)
+    if (state.scopeWeapon) rotX += adsVis * 0.13;
     let rotZ = 0;
     if (state.reloadRatio !== null) {
       const wave = Math.sin(state.reloadRatio * Math.PI);

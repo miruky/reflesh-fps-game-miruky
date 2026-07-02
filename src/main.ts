@@ -160,17 +160,22 @@ function startMatch(selection: MenuSelection): void {
   });
 }
 
-// ストーリー・ミッションを起動する
-function startMission(missionId: string): void {
+// ストーリー・ミッションを起動する。武器は自由選択(省略時=支給武器)
+let activeMissionPrimary: string | null = null; // リトライ時に選択武器を引き継ぐ
+function startMission(missionId: string, primaryId?: string): void {
   const mission = missionById(missionId);
   if (!mission) return;
+  // 別ミッションへ移る時は前回の選択武器を持ち越さない(支給武器を黙って上書きしない)。
+  // 同一ミッションのリトライのみ選択を引き継ぐ
+  if (missionId !== activeMissionId) activeMissionPrimary = null;
   activeMissionId = missionId;
+  activeMissionPrimary = primaryId ?? activeMissionPrimary ?? mission.primaryId;
   lastSelection = null;
   const stage = stageDefFromId(mission.stageId) ?? stageById(mission.stageId);
   launch({
     stage,
     mode: 'story',
-    primaryId: mission.primaryId,
+    primaryId: activeMissionPrimary,
     attachments: [],
     grenade: 'frag',
     difficulty: mission.difficulty,
