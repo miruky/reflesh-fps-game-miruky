@@ -783,7 +783,8 @@ export class Menu {
     }
     this.query('retry-mission').addEventListener('click', () => this.callbacks.onRestart());
     this.query('to-campaign').addEventListener('click', () => {
-      this.showMain();
+      // onQuit経由でmatch破棄+音の後始末(quiesce)を必ず通す(直接showMainだと鳴り残る)
+      this.callbacks.onQuit();
       this.setMfdPage('campaign');
     });
     (this.query(nextId && nextUnlocked ? 'next-mission' : 'to-campaign')).focus({

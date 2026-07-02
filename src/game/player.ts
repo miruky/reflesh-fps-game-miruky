@@ -403,7 +403,7 @@ export class Player {
         this.takeDamage((fallSpeed - FALL_DAMAGE_THRESHOLD) * FALL_DAMAGE_MULT);
       }
       if (fallSpeed > 6) this.landImpact = fallSpeed;
-      sounds.footstep(Math.min(1, fallSpeed / 8));
+      sounds.footstep(Math.min(1, fallSpeed / 8), true); // 着地(歩行のヒール・トゥとは別物)
       this.airJumpsLeft = AIR_JUMPS;
     }
 

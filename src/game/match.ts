@@ -59,6 +59,8 @@ import {
   type Difficulty,
 } from './bot';
 import type { EnemyWaveDef, MissionDef } from './campaign';
+import { deriveSurfaceMaterials } from './materials';
+import { closestApproach } from './whizz';
 import type { MissionSummary } from './progression';
 import {
   MedalTracker,
@@ -644,6 +646,8 @@ export class Match {
     // 障害物のビジュアル装飾(当たり判定には一切触れない・純粋に飾り)
     this.buildPropDecor(boxes, palette);
     this.buildAtmosphere(this.config.stage.palette, this.config.stage.size);
+    // ステージパレットから床/遮蔽物の材質を推定し、足音・着弾音のテクスチャを決める
+    this.sounds.setSurfaceMaterial(deriveSurfaceMaterials(this.config.stage.palette));
   }
 
   // 共有unitBoxへ体積AOの頂点カラーを焼く。天面=明・側面=高さで階調・底面=暗。
@@ -1422,6 +1426,8 @@ export class Match {
     heat += Math.min(1, this.shakeTrauma) * 0.3;
     heat += Math.min(1, 1 - this.player.hp / this.player.maxHp) * 0.3;
     this.sounds.setCombatHeat(Math.min(1, heat));
+    // 瀕死の聴覚こもり(差分ガードはSoundKit側。死亡中は解除して観戦を明瞭に)
+    this.sounds.setHealthState(this.player.alive ? this.player.hp / this.player.maxHp : 1);
   }
 
   // 描画フレームごとの処理。視点操作はフレームレートに追従させる
@@ -1852,6 +1858,8 @@ export class Match {
       const damage = explosionDamage(spec, dist);
       if (damage > 0 && this.explosionReaches(point, this.player.position)) {
         const died = this.player.takeDamage(damage);
+        // 至近爆発は耳鳴り(世界の音が一瞬遠のく)
+        if (dist < 6) this.sounds.tinnitus((6 - dist) / 6);
         this.tookDamage = true;
         this.haptic(110, 0.5, 0.55);
         this.addShake(Math.min(0.7, damage * 0.01));
@@ -2102,6 +2110,9 @@ export class Match {
 
       if (tag?.kind !== 'world' || !hit.normal) return;
       this.effects.impact(end, new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z));
+      // 着弾の材質音: 法線が上向きなら床、それ以外は壁(遮蔽物)の材質で鳴らす
+      const ip = this.panAndDistance(end);
+      this.sounds.impactSurface(hit.normal.y > 0.65 ? 'floor' : 'wall', ip.pan, ip.distance);
 
       if (leg > 0 || weapon.def.penetrationM <= 0) return;
 
@@ -2440,9 +2451,33 @@ export class Match {
       bot.team === PLAYER_TEAM ? this.colors.allyTracer : this.colors.enemyTracer,
     );
 
-    // 発砲音は方向と距離をつけて鳴らす
+    // 発砲音は方向と距離をつけて鳴らす。敵弾のみ遮蔽レイ1本で「壁越しのこもり」を判定
     const { pan, distance } = this.panAndDistance(origin);
-    this.sounds.enemyShot(pan, distance);
+    let occluded = false;
+    if (bot.team !== PLAYER_TEAM && this.player.alive) {
+      const eye = this.player.eyePosition;
+      const toEar = eye.clone().sub(origin);
+      const earDist = toEar.length();
+      if (earDist > 1) {
+        const block = this.castRay(origin, toEar.normalize(), earDist - 0.4, bot.body);
+        // 世界ジオメトリ(壁/障害物)に遮られている時だけこもらせる
+        if (block) {
+          const bt = this.tags.get(block.collider.handle);
+          occluded = bt === undefined || bt.kind === 'world';
+        }
+      }
+      // 弾のwhizz: 頭部至近(2.5m)を通過した弾のかすめ音(超近接2m以内の発砲は除外)。
+      // プレイヤーに命中した弾は被弾音が鳴るのでニアミス音は重ねない
+      const hitPlayer = hit ? this.tags.get(hit.collider.handle)?.kind === 'player' : false;
+      const segLen = end.distanceTo(origin);
+      const ca = closestApproach(origin, dir, segLen, eye);
+      if (!hitPlayer && ca.dist < 2.5 && ca.along > 2) {
+        const at = origin.clone().addScaledVector(dir, ca.along);
+        const wp = this.panAndDistance(at);
+        this.sounds.bulletWhizz(wp.pan, 1 - ca.dist / 2.5);
+      }
+    }
+    this.sounds.enemyShot(pan, distance, occluded);
 
     if (!hit) return;
     const tag = this.tags.get(hit.collider.handle);
