@@ -984,7 +984,14 @@ export class ViewModel {
     const adsVis = 1 - Math.pow(1 - ads, 5);
     const pos = new THREE.Vector3().lerpVectors(HIP_POSITION, ADS_POSITION, adsVis);
     pos.x += this.swayX + bobX;
+    // BO2 DSR: 正面からではなく「右腰だめから横滑り」で構える。
+    // easeOutQuintでXが一瞬で中央へ寄ってしまうため、スコープ武器は横(X)の収束を
+    // 遅らせて右に残し(+0.16)、ads 0.3→0.78 で遅れて中央へスライドインさせる
+    let scopeSlide = 0;
     if (state.scopeWeapon) {
+      scopeSlide = 1 - THREE.MathUtils.smoothstep(ads, 0.3, 0.78);
+      pos.x += 0.16 * scopeSlide;
+      pos.y -= 0.03 * scopeSlide; // 腰だめ側はわずかに低く担ぐ
       // スコープイン: ads 0.28→0.50→0.72 の鐘型カーブでスコープが目へ飛び込み、
       // わずかに前傾(バレルティルト)。BO2 DSRの「レンズが迫る」瞬間を再現
       const bell =
@@ -1008,13 +1015,15 @@ export class ViewModel {
     let rotX = this.kickRot * 0.6 + counterKick + state.raiseRatio * -0.5;
     // スコープ武器のADSで銃身をわずかに前へ倒す(スコープ接眼の所作)
     if (state.scopeWeapon) rotX += adsVis * 0.13;
-    let rotZ = 0;
+    // 横滑り中は右担ぎのカント(傾き)+銃口をやや内向きに。中央到達で水平へ戻る
+    let rotZ = -0.16 * scopeSlide;
+    const slideYaw = 0.1 * scopeSlide;
     if (state.reloadRatio !== null) {
       const wave = Math.sin(state.reloadRatio * Math.PI);
       rotX -= wave * 0.55;
       rotZ = wave * 0.25;
       this.root.position.y -= wave * 0.09;
     }
-    this.root.rotation.set(rotX, this.swayX * 2, rotZ);
+    this.root.rotation.set(rotX, this.swayX * 2 + slideYaw, rotZ);
   }
 }
