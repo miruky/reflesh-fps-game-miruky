@@ -176,6 +176,30 @@ void main(){
 `;
 
 
+// ── ページ連動カメラのフォーカス表 ────────────────────────────────
+// 各MFDページで宇宙背景の画角(カメラ位置/注視点)と星の減光を切り替え、
+// メニューにシネマ的な奥行きを与える。DoFは blur禁止(#space-bgを毎フレーム
+// 全面再合成させない決定済)のため pixelRatio を落とす side で表現する。
+export type BgFocus = {
+  pos: readonly [number, number, number];
+  look: readonly [number, number, number];
+  starDim: number;
+};
+
+const DEFAULT_FOCUS: BgFocus = { pos: [0, 0, 0.3], look: [1.3, -0.8, -3.4], starDim: 1 };
+const FOCUS: Record<string, BgFocus> = {
+  // DEPLOY: 地球をヒーローに正対
+  deploy: DEFAULT_FOCUS,
+  // CAMPAIGN: 環付き巨星へ振り、広大な戦役の画へ
+  campaign: { pos: [-0.8, 0.42, 0.5], look: [-30, 16, -84], starDim: 0.85 },
+  // ARMORY: 手前の月へ寄せ、星を落として武器プレビューを引き立てる
+  armory: { pos: [0.3, 0.18, 0.9], look: [-2.4, 1.6, -7.2], starDim: 0.62 },
+  // INTEL: 赤錆の岩石惑星を遠望
+  intel: { pos: [0.55, -0.12, 0.36], look: [22, -8, -118], starDim: 0.9 },
+  // SYSTEM: 深宇宙側へ静かに傾ける
+  system: { pos: [-0.4, 0.28, 0.72], look: [-6, 3, -60], starDim: 0.78 },
+};
+
 // メニュー背景の宇宙(星野)。GameLoopとは独立した自前RAFで回す軽量レンダラ。
 // アセットレス: 単一のPointsで約3000星を1ドローコール。start/stopは冪等で、
 // 出撃時は確実に停止・非表示にしてプレイ中のRAF/GPUを圧迫しない。
@@ -213,6 +237,17 @@ export class SpaceBg {
   private bakedNight: THREE.WebGLRenderTarget | null = null;
   private bakedCloud: THREE.WebGLRenderTarget | null = null;
   private lastT = 0; // dt正規化用(高リフレッシュ環境で回転が速くなりすぎないように)
+
+  // ── ページ連動カメラ(setFocus / setModalDim) ──────────────────────
+  private readonly focusPos = new THREE.Vector3(0, 0, 0.3);
+  private readonly focusLook = new THREE.Vector3(0, 0, -1);
+  private readonly curPos = new THREE.Vector3(0, 0, 0.3);
+  private readonly curLook = new THREE.Vector3(0, 0, -1);
+  private readonly lookScratch = new THREE.Vector3();
+  private targetStarDim = 1;
+  private curStarDim = 1;
+  private modalDim = 0; // モーダル時のDoF量(pixelRatioを落とし被写界深度風に。blur不使用)
+  private focusInited = false;
 
   private readonly onResize = (): void => this.resize();
   private readonly onVisibility = (): void => {
@@ -484,6 +519,47 @@ export class SpaceBg {
     if (was && !v && this.running) this.startLoop();
   }
 
+  // MFDページに応じて画角を切り替える。通常時は frame() が指数減衰で寄せ、
+  // 省モーション時と初回は即着地して1枚だけ描き直す(誤った既定向きからのパンを避ける)。
+  setFocus(page: string): void {
+    const f = FOCUS[page] ?? DEFAULT_FOCUS;
+    this.focusPos.set(f.pos[0], f.pos[1], f.pos[2]);
+    this.focusLook.set(f.look[0], f.look[1], f.look[2]);
+    this.targetStarDim = f.starDim;
+    if (!this.focusInited || this.reduceMotion) {
+      this.focusInited = true;
+      this.curPos.copy(this.focusPos);
+      this.curLook.copy(this.focusLook);
+      this.curStarDim = this.targetStarDim;
+      this.material.opacity = 0.95 * this.curStarDim;
+      this.camera.position.copy(this.curPos);
+      this.camera.lookAt(this.curLook);
+      // 省モーションでループ停止中(running かつ rafId==0)は1枚描き直す(resize同型)
+      if (this.running && this.rafId === 0) this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  // モーダル(ブリーフィング等)表示時の被写界深度風のぼけ量。blur禁止のため、
+  // renderer の pixelRatio を落として星野を柔らかく沈める(DOM側の減光はCSSが担う)。
+  setModalDim(v: number): void {
+    const nv = THREE.MathUtils.clamp(v, 0, 1);
+    if (nv === this.modalDim) return;
+    this.modalDim = nv;
+    this.applyPixelRatio();
+    if (this.running && this.rafId === 0) this.renderer.render(this.scene, this.camera);
+  }
+
+  private basePixelRatio(): number {
+    const full = Math.min(window.devicePixelRatio || 1, 1.5);
+    // modalDim=1 で約0.6倍まで解像度を落とし、DoF風の柔らかさを作る
+    return full * (1 - this.modalDim * 0.4);
+  }
+
+  private applyPixelRatio(): void {
+    this.renderer.setPixelRatio(this.basePixelRatio());
+    this.renderer.setSize(window.innerWidth, Math.max(1, window.innerHeight), false);
+  }
+
   private startLoop(): void {
     if (this.rafId) return;
     const tick = (): void => {
@@ -506,11 +582,12 @@ export class SpaceBg {
     const dt60 = this.lastT === 0 ? 1 : Math.min(((now - this.lastT) / 1000) * 60, 2);
     this.lastT = now;
 
-    // 省モーション時は見栄えの良い静止ポーズ(昼夜境界が見える既定向き)を1枚だけ描く
+    // 省モーション時は見栄えの良い静止ポーズ(現在のフォーカス向き)を1枚だけ描く
     if (this.reduceMotion) {
       this.stars.rotation.y = this.spin;
-      this.camera.rotation.set(0, 0, 0);
-      this.camera.position.set(0, 0, 0);
+      this.material.opacity = 0.95 * this.curStarDim;
+      this.camera.position.copy(this.curPos);
+      this.camera.lookAt(this.curLook);
       this.renderer.render(this.scene, this.camera);
       this.pauseLoop();
       return;
@@ -519,6 +596,13 @@ export class SpaceBg {
     this.offX += (this.targetX - this.offX) * 0.04;
     this.offY += (this.targetY - this.offY) * 0.04;
     this.stars.rotation.y = this.spin;
+
+    // ページ連動フォーカスへ指数減衰で寄せる(cinematicカメラ)。星の減光も追従
+    const foc = 1 - Math.pow(0.9, dt60);
+    this.curPos.lerp(this.focusPos, foc);
+    this.curLook.lerp(this.focusLook, foc);
+    this.curStarDim += (this.targetStarDim - this.curStarDim) * foc;
+    this.material.opacity = 0.95 * this.curStarDim;
 
     // 地球の自転・雲の流れ・伴星の自転(すべてdt正規化)
     this.earthGroup.rotation.y += 0.0009 * dt60;
@@ -529,17 +613,27 @@ export class SpaceBg {
     }
     for (const s of this.spinners) s.rotation.y += 0.00018 * dt60;
 
-    // パララックス: カメラの回転(従来)に微小な平行移動を足し、近景の月と
-    // 遠景の巨星に視差差を出す(立体感)
-    this.camera.rotation.set(-this.offY * 0.1, -this.offX * 0.1, 0);
-    this.camera.position.set(this.offX * 0.18, -this.offY * 0.14, 0);
+    // Lissajousの微小ドリフト+ポインタ視差でカメラに命を吹き込む。近景の月と
+    // 遠景の巨星に視差差が出て立体感が跳ねる(注視点側に足すほど自然な首振り)
+    const t = now * 0.001;
+    const driftX = Math.sin(t * 0.13) * 0.06 + Math.sin(t * 0.29) * 0.02;
+    const driftY = Math.cos(t * 0.11) * 0.045 + Math.cos(t * 0.23) * 0.02;
+    this.camera.position.set(
+      this.curPos.x + this.offX * 0.18 + driftX * 0.5,
+      this.curPos.y - this.offY * 0.14 + driftY * 0.5,
+      this.curPos.z,
+    );
+    this.lookScratch.copy(this.curLook);
+    this.lookScratch.x += this.offX * 0.6 + driftX;
+    this.lookScratch.y += -this.offY * 0.6 + driftY;
+    this.camera.lookAt(this.lookScratch);
     this.renderer.render(this.scene, this.camera);
   }
 
   private resize(): void {
     const w = window.innerWidth;
     const h = Math.max(1, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    this.renderer.setPixelRatio(this.basePixelRatio());
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();

@@ -61,6 +61,9 @@ import {
 import type { EnemyWaveDef, MissionDef } from './campaign';
 import { deriveSurfaceMaterials } from './materials';
 import { closestApproach } from './whizz';
+import { Atmosphere, resolveMood, resolveGrade } from '../render/atmosphere';
+import { createGradePass } from '../render/grade';
+import { PostFXPass } from '../render/postfx';
 import type { MissionSummary } from './progression';
 import {
   MedalTracker,
@@ -152,11 +155,32 @@ const ZONE_RADIUS = 3.5;
 const SPECTATE_RADIUS = 5.5;
 const SPECTATE_HEIGHT = 3;
 const KILLCAM_S = 2.4;
+const CAM_UP = new THREE.Vector3(0, 1, 0); // lookAt行列のワールド上方向
 const ALERT_RADIUS = 35;
 const ALERT_RADIUS_SUPPRESSED = 9;
 // クッキング限界の直前で強制投擲し、手元爆発はさせない
 const COOK_SAFETY_S = 0.25;
 const FIRE_TICK_S = 0.5;
+
+// キルカメラの「KILLED BY」カードに出す、倒した相手の武器/機種ラベル
+function killcamWeaponFor(killer: Bot): string {
+  switch (killer.kind) {
+    case 'humanoid': {
+      const p = killer.tier === 'boss' ? '首魁・' : killer.tier === 'elite' ? '精鋭・' : '';
+      return `${p}突撃銃`;
+    }
+    case 'drone':
+      return 'ドローン機銃';
+    case 'tank':
+      return '戦車砲';
+    case 'turret':
+      return '固定砲台';
+    default: {
+      const _exhaustive: never = killer.kind;
+      return _exhaustive;
+    }
+  }
+}
 
 export interface MatchConfig {
   stage: StageDef;
@@ -267,6 +291,16 @@ export interface MatchSnapshot {
   announcements: string[];
   spectating: boolean;
   killcam: string | null; // キルカメラ中に映している相手の名前
+  // ── R11 シネマティック・キルカメラ / ジュース(HUDは読むのみ) ──
+  killcamRatio: number; // 0..1 = killcamTimer/KILLCAM_S(キルカメラ非該当時0)
+  killcamWeapon: string | null; // キルした相手の武器/機種ラベル(非該当null)
+  killcamDistM: number; // killer→player 水平距離(m, round)
+  killcamFlash: number; // 0..1 キルカメラ突入の白フラッシュ(dt*5.5減衰)
+  deathVeil: number; // 0..1 遷移黒幕(死亡/リスポーンの無条件減衰)
+  killcamFinal: boolean; // 終盤(killcamTimer<0.7 && killer生存)の赤ビネット
+  killcamCamActive: boolean; // カメラがシネマ姿勢を所有中(HUDシネマ枠の単一の真実)
+  lowHp01: number; // 0..1 低HP(juiceのDOMフォールバック用)
+  postfxActive: boolean; // medium/high=true(PostFXシェーダ所有), low=false
   feed: FeedEntry[];
   hits: Array<'hit' | 'head' | 'kill' | 'snipe' | 'limb'>;
   hitExpandRad: number; // ヒットマーカーの一時拡大量(連続ヒットで広がる)
@@ -358,6 +392,31 @@ export class Match {
   private orbitAngle = 0;
   private killer: Bot | null = null;
   private killcamTimer = 0;
+  // ── R11 シネマティック・キルカメラ / ジュース の内部状態 ──
+  private killcamWeaponLabel: string | null = null; // killした相手の武器/機種ラベル
+  private killcamDistM = 0; // killer→player 水平距離(m)
+  private killcamFlash = 0; // 突入白フラッシュ 0..1
+  private deathVeil = 0; // 遷移黒幕 0..1(無条件減衰)
+  private postfxActive = false; // PostFX(medium/high)有効
+  private atmosphere: Atmosphere | null = null; // 映画的アトモスフィア(草/フォグ/粒子/遠景)
+  private postfx: PostFXPass | null = null; // ジュース専用PostFX(被弾パルス・enable-gate)
+  private hitFlashEnv = 0; // 被弾フラッシュのエンベロープ 0..1
+  // キルカメラ補間: 死亡時に固定するアンカー + 現在の補間カメラ姿勢(exp damping)
+  private readonly killcamAnchorHead = new THREE.Vector3(); // 死亡時のkiller頭位置(固定)
+  private readonly killcamAnchorPos = new THREE.Vector3(); // 死亡時のkiller胴位置(固定)
+  private killcamElapsedS = 0; // キルカメラ開始からの経過秒
+  private killcamArc = 0; // 弧の累積方位(角度を積分=arcSpeed低下で真に減速・段差なし)
+  private killcamCamActive = false; // このフレームでキルカメラがカメラを所有しているか
+  private prevKillcamCamActive = false; // 前フレームのカメラ所有(bail検出用)
+  private killcamSeeded = false; // 現在姿勢を一人称からシードしたか
+  private readonly killcamCurPos = new THREE.Vector3();
+  private readonly killcamCurQuat = new THREE.Quaternion();
+  private killcamFov = 60;
+  // scratch(GC回避)
+  private readonly _kcTarget = new THREE.Vector3();
+  private readonly _kcLook = new THREE.Vector3();
+  private readonly _kcM4 = new THREE.Matrix4();
+  private readonly _kcQuat = new THREE.Quaternion();
   private crouchLatch = false;
   private readonly colors: TeamPalette;
   private bestStreak = 0;
@@ -514,12 +573,21 @@ export class Match {
     this.activeWeapon.raise();
 
     this.buildComposer(resolveGraphicsTier(settings.graphicsQuality, renderer.capabilities.isWebGL2));
+    // シェーダ事前コンパイル(初フレーム/初撃破のスタッター防止)。ディゾルブ変種(dissolve1)は
+    // defineを一時点火してcompile→消灯の順で両プログラムをキャッシュへ載せる
+    for (const bot of this.bots) bot.prewarmDissolve(true);
+    this.renderer.compile(this.scene, this.camera);
+    for (const bot of this.bots) bot.prewarmDissolve(false);
   }
 
   // ポストプロセス: medium/high のみ Render→Bloom→SMAA→Output の最小4パス。
   // low(WebGL1含む)は composer を作らず render() が素のレンダラへフォールバックする。
   private buildComposer(tier: GraphicsQuality): void {
-    if (tier === 'low') return;
+    if (tier === 'low') {
+      this.postfxActive = false; // low: シェーダPostFX無し(CSSフォールバックのみ)
+      return;
+    }
+    this.postfxActive = true;
     const p = this.config.stage.palette;
     const size = this.renderer.getSize(new THREE.Vector2());
     const composer = new EffectComposer(this.renderer);
@@ -531,8 +599,30 @@ export class Match {
       p.bloomThreshold ?? 0.85, // threshold
     );
     composer.addPass(bloom);
+    // アトモスフィアの映画的カラーグレード(ムード別・HDR空間=bloom後/SMAA前)
+    composer.addPass(
+      createGradePass(resolveGrade(resolveMood(p), p), {
+        reduceMotion: this.settings.reduceMotion,
+        width: size.x,
+        height: size.y,
+      }),
+    );
     composer.addPass(new SMAAPass(size.x, size.y));
     composer.addPass(new OutputPass()); // AgX+exposure+sRGB を renderer から自動適用
+    // ジュース専用PostFX(被弾パルスの赤tint+収差)。表示空間(AgX後)・被弾時のみenable
+    const postfx = new PostFXPass();
+    postfx.setParams({
+      vigInner: 0.95, // 静的グレードはgradePassが持つ=ここは実質パススルー
+      vigOuter: 1.0,
+      grain: 0,
+      aberration: 0,
+      desat: 0,
+      hitPulse: 0,
+      hitTint: [1, 0.32, 0.28],
+      enabled: false, // hitPulse>0 のフレームだけ有効化(idleコストゼロ)
+    });
+    composer.addPass(postfx);
+    this.postfx = postfx;
     this.composer = composer;
   }
 
@@ -648,6 +738,24 @@ export class Match {
     this.buildAtmosphere(this.config.stage.palette, this.config.stage.size);
     // ステージパレットから床/遮蔽物の材質を推定し、足音・着弾音のテクスチャを決める
     this.sounds.setSurfaceMaterial(deriveSurfaceMaterials(this.config.stage.palette));
+    // 映画的アトモスフィア(ムード照明/奥行きフォグ/草/環境パーティクル/遠景シルエット)。
+    // physics/tags非受領=当たり判定ゼロ・装飾のみ。tierで低スペックは自動ゲート
+    const atmoTier = resolveGraphicsTier(
+      this.settings.graphicsQuality,
+      this.renderer.capabilities.isWebGL2,
+    );
+    this.atmosphere = new Atmosphere(
+      this.scene,
+      this.renderer,
+      palette,
+      resolveMood(palette),
+      atmoTier,
+      this.settings.reduceMotion,
+      size,
+      boxes,
+      this.sunDir,
+      mulberry32(this.config.stage.seed ^ 0x0a7),
+    );
   }
 
   // 共有unitBoxへ体積AOの頂点カラーを焼く。天面=明・側面=高さで階調・底面=暗。
@@ -1400,6 +1508,11 @@ export class Match {
     this.updateZones(dt);
 
     if (!this.player.alive && this.killcamTimer > 0) this.killcamTimer -= dt;
+    // 遷移黒幕/突入フラッシュは死亡ゲート外で無条件減衰(リスポーン後の黒画面固着を防ぐ)
+    this.deathVeil = Math.max(0, this.deathVeil - dt * 4);
+    this.killcamFlash = Math.max(0, this.killcamFlash - dt * 5.5);
+    // キルカメラのカメラ姿勢を固定dtで前進(時間前進はここ1箇所に集約=冪等)
+    this.advanceKillcam(dt);
 
     this.updateBots(dt);
     this.physics.step();
@@ -1573,7 +1686,8 @@ export class Match {
       (this.settings.fov + speedFov) *
       (1 - (1 - weapon.def.adsFovScale) * weapon.adsProgress) *
       breathZoom;
-    if (Math.abs(this.camera.fov - targetFov) > 0.01) {
+    // キルカメラ中は advanceKillcam が FOV を唯一所有する(望遠パンチと競合させない)
+    if (!this.killcamCamActive && Math.abs(this.camera.fov - targetFov) > 0.01) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 14);
       this.camera.updateProjectionMatrix();
     }
@@ -1628,17 +1742,110 @@ export class Match {
       scopeWeapon: weapon.def.scope === true,
     });
     this.effects.update(vmDt);
+    // 映画的アトモスフィア(草の風/環境パーティクル/グラウンドフォグ/グレインの時間前進)
+    this.atmosphere?.update(vmDt, this.camera.position);
+    // ジュース: 被弾フラッシュのエンベロープ→PostFX(被弾時のみ有効化=idleコストゼロ)
+    if (this.tookDamage) this.hitFlashEnv = 1;
+    this.hitFlashEnv = Math.max(0, this.hitFlashEnv - dt * 3.5);
+    if (this.postfx) {
+      const pulse = this.settings.reduceMotion ? 0 : this.hitFlashEnv * 0.75;
+      this.postfx.enabled = pulse > 0.002;
+      this.postfx.setHitPulse(pulse);
+      this.postfx.setTime(this.elapsed);
+    }
+  }
+
+  // キルカメラのカメラ姿勢を固定dtで前進する(update()から呼ぶ)。
+  // 被写体は「倒した相手(killer)」。一人称からOTS三人称へexp dampingで滑らかに引き、
+  // killerの正面を三分割で捉える。killerが4m以上動く/倒れると観戦へbail(冪等)。
+  private advanceKillcam(dt: number): void {
+    const killer = this.killer;
+    const active =
+      !this.player.alive &&
+      this.killcamTimer > 0 &&
+      this.deathPos !== null &&
+      killer !== null &&
+      killer.alive &&
+      killer.position.distanceTo(this.killcamAnchorPos) <= 4;
+    this.killcamCamActive = active;
+    // bail検出(killerが4m超離脱): キルカメラ→観戦のハードカットが起きるフレームを
+    // 黒幕で一瞬隠す。以降シネマHUDも killcamCamActive で連動して消える(乖離解消)
+    if (this.prevKillcamCamActive && !active && !this.player.alive && this.killcamTimer > 0) {
+      this.deathVeil = Math.max(this.deathVeil, 0.6);
+    }
+    this.prevKillcamCamActive = active;
+    if (!active || !killer || !this.deathPos) return;
+    this.killcamElapsedS += dt;
+    const rm = this.settings.reduceMotion;
+    const head = killer.headPosition();
+    // victim(死亡地点)側から killer 正面を捉える方向
+    this._kcLook.set(this.deathPos.x - killer.position.x, 0, this.deathPos.z - killer.position.z);
+    if (this._kcLook.lengthSq() < 0.01) this._kcLook.set(0, 0, 1);
+    this._kcLook.normalize();
+    // 緩やかな弧(終盤slow)。角度は積分するのでarcSpeed低下=真の減速(方位に段差なし)。
+    // reduceMotionは弧なしの静止ショット
+    const arcSpeed = rm ? 0 : this.killcamTimer < 0.7 ? 0.12 : 0.4;
+    this.killcamArc += arcSpeed * dt;
+    const arc = this.killcamArc;
+    const dist = 3.2;
+    const dirX = this._kcLook.x * Math.cos(arc) - this._kcLook.z * Math.sin(arc);
+    const dirZ = this._kcLook.x * Math.sin(arc) + this._kcLook.z * Math.cos(arc);
+    this._kcTarget.set(head.x + dirX * dist, head.y + 1.05, head.z + dirZ * dist);
+    // 壁抜け防止: killer頭→カメラ目標へレイ、world遮蔽なら手前へ寄せる
+    const dcx = this._kcTarget.x - head.x;
+    const dcy = this._kcTarget.y - head.y;
+    const dcz = this._kcTarget.z - head.z;
+    const camDist = Math.hypot(dcx, dcy, dcz);
+    if (camDist > 0.1) {
+      const inv = 1 / camDist;
+      this._kcLook.set(dcx * inv, dcy * inv, dcz * inv);
+      const hit = this.castRay(head, this._kcLook, camDist, this.player.body);
+      if (hit) {
+        const t = this.tags.get(hit.collider.handle);
+        if (t === undefined || t.kind === 'world') {
+          const safe = Math.max(0.6, hitToi(hit) - 0.15);
+          this._kcTarget.set(head.x + this._kcLook.x * safe, head.y + this._kcLook.y * safe, head.z + this._kcLook.z * safe);
+        }
+      }
+    }
+    this._kcM4.lookAt(this._kcTarget, head, CAM_UP);
+    this._kcQuat.setFromRotationMatrix(this._kcM4);
+    if (!this.killcamSeeded) {
+      // 一人称からシード(引く演出の起点)
+      this.killcamSeeded = true;
+      const eye = this.player.eyePosition;
+      const fwd = this.cameraForward();
+      this.killcamCurPos.copy(eye);
+      this._kcM4.lookAt(eye, this._kcTarget.clone().set(eye.x + fwd.x, eye.y + fwd.y, eye.z + fwd.z), CAM_UP);
+      this.killcamCurQuat.setFromRotationMatrix(this._kcM4);
+      this.killcamFov = this.camera.fov;
+      // シード後に本来の目標を再設定(上でtargetを一時流用したため)
+      this._kcTarget.set(head.x + dirX * dist, head.y + 1.05, head.z + dirZ * dist);
+    }
+    const k = rm ? 1 : 1 - Math.exp(-3.2 * dt);
+    this.killcamCurPos.lerp(this._kcTarget, k);
+    this.killcamCurQuat.slerp(this._kcQuat, k);
+    this.killcamFov += (46 - this.killcamFov) * (rm ? 1 : Math.min(1, dt * 3));
   }
 
   private syncCamera(): void {
-    // 死亡直後はキルカメラ: 倒した相手の視点から自分の倒れた地点を見せ、
-    // どこから撃たれたのかを伝える。相手が倒れたら観戦カメラへ移る
-    if (!this.player.alive && this.deathPos) {
-      if (this.killcamTimer > 0 && this.killer?.alive) {
-        this.camera.position.copy(this.killer.headPosition());
-        this.camera.lookAt(this.deathPos.x, this.deathPos.y + 0.6, this.deathPos.z);
-        return;
+    // キルカメラ: advanceKillcam(固定dt)が算出した姿勢をコピー+決定論的手ブレのみ
+    if (this.killcamCamActive) {
+      this.camera.position.copy(this.killcamCurPos);
+      this.camera.quaternion.copy(this.killcamCurQuat);
+      if (!this.settings.reduceMotion) {
+        // 微細な手持ちカメラ風の揺れ(elapsed駆動=決定論的)
+        this.camera.rotation.z += Math.sin(this.elapsed * 1.7) * 0.006;
+        this.camera.rotation.x += Math.sin(this.elapsed * 2.3 + 1.1) * 0.004;
       }
+      if (Math.abs(this.camera.fov - this.killcamFov) > 0.01) {
+        this.camera.fov = this.killcamFov;
+        this.camera.updateProjectionMatrix();
+      }
+      return;
+    }
+    // 死亡だがキルカメラ非該当(自爆/落下/killer不在/bail): 観戦オービット
+    if (!this.player.alive && this.deathPos) {
       const focus = this.deathPos.clone().setY(this.deathPos.y + 1);
       this.camera.position.set(
         this.deathPos.x + Math.cos(this.orbitAngle) * SPECTATE_RADIUS,
@@ -2560,6 +2767,24 @@ export class Match {
     this.orbitAngle = this.player.yaw + Math.PI / 2;
     this.killer = killer;
     this.killcamTimer = killer ? KILLCAM_S : 0;
+    // 死亡→キルカメラの遷移黒幕(短い暗転で一人称からの繋ぎを滑らかに)
+    this.deathVeil = 0.85;
+    if (killer) {
+      // アンカーを固定(killerが動いても構図が破綻しないよう死亡時の姿勢を凍結)
+      this.killcamAnchorHead.copy(killer.headPosition());
+      this.killcamAnchorPos.copy(killer.position);
+      this.killcamWeaponLabel = killcamWeaponFor(killer);
+      const dx = killer.position.x - this.player.position.x;
+      const dz = killer.position.z - this.player.position.z;
+      this.killcamDistM = Math.round(Math.hypot(dx, dz));
+      this.killcamFlash = this.settings.reduceMotion ? 0 : 1;
+      this.killcamElapsedS = 0;
+      this.killcamArc = 0;
+      this.prevKillcamCamActive = false;
+      this.killcamSeeded = false; // 現在のカメラ姿勢を一人称からシードし直す
+    } else {
+      this.killcamWeaponLabel = null;
+    }
   }
 
   // 銃声を「聞かせる」。全周検知にはせず、音源方向への警戒(調査行動)を与える
@@ -3151,6 +3376,21 @@ export class Match {
       spectating: !this.player.alive && this.deathPos !== null,
       killcam:
         !this.player.alive && this.killcamTimer > 0 && this.killer?.alive ? this.killer.name : null,
+      killcamRatio:
+        !this.player.alive && this.killcamTimer > 0 ? this.killcamTimer / KILLCAM_S : 0,
+      killcamWeapon:
+        !this.player.alive && this.killcamTimer > 0 && this.killer?.alive
+          ? this.killcamWeaponLabel
+          : null,
+      killcamDistM: this.killcamDistM,
+      killcamFlash: this.killcamFlash,
+      deathVeil: this.deathVeil,
+      killcamFinal: this.killcamCamActive && this.killcamTimer < 0.7,
+      killcamCamActive: this.killcamCamActive,
+      lowHp01: this.player.alive
+        ? Math.max(0, Math.min(1, (0.3 - this.player.hp / this.player.maxHp) / 0.3))
+        : 0,
+      postfxActive: this.postfxActive,
       feed: this.feed,
       hits: this.hits,
       hitExpandRad: this.hitExpand,
@@ -3333,6 +3573,8 @@ export class Match {
   }
 
   dispose(): void {
+    this.atmosphere?.dispose(); // 草/フォグ/粒子/遠景/リムライトを解放(scene.traverse前)
+    this.atmosphere = null;
     this.effects.dispose();
     this.viewModel.dispose();
     for (const item of this.thrown) {

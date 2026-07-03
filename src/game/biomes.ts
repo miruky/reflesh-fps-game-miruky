@@ -1,5 +1,12 @@
 import { mulberry32, range, type Rand } from '../core/rng';
-import type { StageDef, StagePalette } from './stage';
+import type {
+  GrassKind,
+  MoodId,
+  ParticleKind,
+  SilhouetteKind,
+  StageDef,
+  StagePalette,
+} from './stage';
 
 // プロシージャル・ステージ生成のためのバイオーム定義。
 // 手書きの STAGES(stages.ts)と同じ値域に収まるよう、各プロファイルの
@@ -224,6 +231,29 @@ const BIOME_PROFILES: Record<Biome, BiomeProfile> = {
   },
 };
 
+// バイオーム別の映画的アトモスフィア導出(R11)。すべて定数=RNGを一切消費しないため
+// generatePalette の乱数列は不変で、既存 gen-id のラウンドトリップを壊さない。
+interface BiomeAtmosphere {
+  mood: MoodId;
+  grassKind: GrassKind;
+  grassDensity?: number;
+  particle: ParticleKind;
+  particleAmount?: number;
+  silhouette: SilhouetteKind;
+  groundFog?: number;
+}
+
+const ATMOSPHERE_BY_BIOME: Record<Biome, BiomeAtmosphere> = {
+  urban: { mood: 'day', grassKind: 'none', particle: 'dust', particleAmount: 0.4, silhouette: 'skyline' },
+  industrial: { mood: 'overcast', grassKind: 'none', particle: 'ember', silhouette: 'skyline', groundFog: 0.5 },
+  desert: { mood: 'day', grassKind: 'dry', grassDensity: 0.35, particle: 'dust', particleAmount: 0.9, silhouette: 'mountain', groundFog: 0.2 },
+  snow: { mood: 'snow', grassKind: 'snowtuft', grassDensity: 0.35, particle: 'snow', particleAmount: 1.0, silhouette: 'mountain', groundFog: 0.6 },
+  neon: { mood: 'night', grassKind: 'none', particle: 'ember', silhouette: 'skyline', groundFog: 0.4 },
+  verdant: { mood: 'day', grassKind: 'blade', grassDensity: 0.8, particle: 'firefly', silhouette: 'ridge', groundFog: 0.2 },
+  harbor: { mood: 'overcast', grassKind: 'none', particle: 'dust', silhouette: 'skyline', groundFog: 0.3 },
+  dusk: { mood: 'dusk', grassKind: 'dry', grassDensity: 0.35, particle: 'dust', silhouette: 'ridge', groundFog: 0.25 },
+};
+
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
@@ -301,6 +331,7 @@ export function generatePalette(rand: Rand, biome: Biome): StagePalette {
     azimuth: range(rand, 70, 290),
     exposure: range(rand, p.exposure[0], p.exposure[1]),
     environmentIntensity: range(rand, p.env[0], p.env[1]),
+    ...ATMOSPHERE_BY_BIOME[biome], // 定数マージ(RNG消費なし)
   };
   if (p.bloomStrength) {
     palette.bloomStrength = range(rand, p.bloomStrength[0], p.bloomStrength[1]);

@@ -1,6 +1,31 @@
 import * as THREE from 'three';
+import { easeOutCubic } from '../core/easing';
 import type { WeaponDef } from '../game/weapons';
 import { buildGunBody } from './viewmodel';
+
+// 台座(祭壇)のホロ光輪。アセットレス: CircleGeometry + 手続きGLSLの加算合成のみ。
+// 同心リング + 外周エッジ + レーダー掃引で「兵装を捧げる祭壇」の質感を作る。
+const PEDESTAL_VERT = /* glsl */ `
+varying vec2 vUv;
+void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+`;
+const PEDESTAL_FRAG = /* glsl */ `
+precision mediump float;
+varying vec2 vUv;
+uniform float uTime;
+uniform vec3 uColor;
+void main(){
+  vec2 p = vUv - 0.5;
+  float d = length(p) * 2.0;                 // 0=中心 .. 1=外周
+  float glow = smoothstep(1.0, 0.0, d);      // 中心へ向かう放射減衰
+  float ring = 0.5 + 0.5 * sin(d * 30.0 - uTime * 1.5);
+  float edge = smoothstep(0.82, 0.98, d) * (1.0 - smoothstep(0.98, 1.02, d));
+  float ang = atan(p.y, p.x);
+  float sweep = (0.5 + 0.5 * sin(ang - uTime * 0.9)) * glow; // 掃引
+  float a = glow * (0.12 + 0.16 * ring) + edge * 0.7 + sweep * 0.1;
+  gl_FragColor = vec4(uColor * a, a);
+}
+`;
 
 // ARMORYの3D武器インスペクト・プレビュー。GameLoop/SpaceBgとは独立した自前レンダラで、
 // 選択中の武器(アタッチメント反映済み)を回転表示する。ドラッグで手動回転、放置でオート
@@ -12,6 +37,11 @@ export class WeaponPreview {
   private readonly camera: THREE.PerspectiveCamera;
   private readonly pivot = new THREE.Group();
   private readonly accent: THREE.PointLight;
+  private readonly key: THREE.DirectionalLight;
+  private readonly kicker: THREE.DirectionalLight;
+  private readonly pedestal: THREE.Mesh;
+  private readonly pedestalMat: THREE.ShaderMaterial;
+  private presentT = 1; // 武器登場ドリーの進捗(setWeaponで0へ)
   private current: THREE.Group | null = null;
 
   private rafId = 0;
@@ -44,17 +74,39 @@ export class WeaponPreview {
     this.camera.lookAt(0, 0, 0);
 
     this.scene.add(this.pivot);
-    // ガンスミス風ライティング: 柔らかいアンビエント + キー + クール寄りのリム + アクセント
+    // ガンスミス風ライティング: 柔らかいアンビエント + キー + クール寄りのリム
+    // + 下方からのキッカー + 周回アクセント
     this.scene.add(new THREE.AmbientLight(0xb8c4d6, 0.75));
-    const key = new THREE.DirectionalLight(0xffffff, 1.7);
-    key.position.set(2.2, 3, 2.2);
-    this.scene.add(key);
+    this.key = new THREE.DirectionalLight(0xffffff, 1.7);
+    this.key.position.set(2.2, 3, 2.2);
+    this.scene.add(this.key);
     const rim = new THREE.DirectionalLight(0x6f8dff, 0.7);
     rim.position.set(-2.4, 1, -2);
     this.scene.add(rim);
+    // キッカー: 銃身下面のエッジを起こす暖色の下方光。台座の反射光の見立て
+    this.kicker = new THREE.DirectionalLight(0xffe3b0, 0.55);
+    this.kicker.position.set(0.4, -1.8, -1.2);
+    this.scene.add(this.kicker);
     this.accent = new THREE.PointLight(0xffc46b, 7, 7);
     this.accent.position.set(-0.5, 0.35, 0.7);
     this.scene.add(this.accent);
+
+    // 台座のホロ光輪(武器の真下・水平)。ドラッグ回転から独立させるためsceneへ直接
+    this.pedestalMat = new THREE.ShaderMaterial({
+      vertexShader: PEDESTAL_VERT,
+      fragmentShader: PEDESTAL_FRAG,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uColor: { value: new THREE.Color(0x6f8dff) },
+      },
+    });
+    this.pedestal = new THREE.Mesh(new THREE.CircleGeometry(0.72, 64), this.pedestalMat);
+    this.pedestal.rotation.x = -Math.PI / 2; // 水平に寝かせて光輪に
+    this.pedestal.position.y = -0.44;
+    this.scene.add(this.pedestal);
 
     canvas.style.touchAction = 'none';
     canvas.style.cursor = 'grab';
@@ -117,6 +169,8 @@ export class WeaponPreview {
     this.pivot.add(gun);
     this.current = gun;
     this.accent.color.setHex(def.tracerColor);
+    this.pedestalMat.uniforms.uColor!.value.setHex(def.tracerColor);
+    this.presentT = 0; // 新武器の登場ドリーを開始
   }
 
   private clearCurrent(): void {
@@ -192,6 +246,29 @@ export class WeaponPreview {
       if (!this.reduceMotion) this.yaw += 0.006 * dt60;
     }
     this.pivot.rotation.set(this.pitch, this.yaw, 0);
+
+    if (this.reduceMotion) {
+      // 省モーション: 登場ドリー/呼吸/光の周回/掃引を止め、静止ポーズで見せる
+      this.presentT = 1;
+      this.pivot.position.set(0, 0, 0);
+      this.pivot.scale.setScalar(1);
+      this.key.intensity = 1.7;
+    } else {
+      // 登場ドリー: わずかに沈み+奥から迫り上がり、通常スケール・位置へ寄る。
+      // 併せてキー光を一瞬持ち上げて「披露」のハイライトを流す
+      this.presentT = Math.min(1, this.presentT + dt60 * 0.05);
+      const pres = easeOutCubic(this.presentT);
+      const breath = Math.sin(now * 0.0016) * 0.01;
+      this.pivot.position.set(0, (1 - pres) * -0.14 + breath, (1 - pres) * -0.12);
+      this.pivot.scale.setScalar(0.96 + 0.04 * pres);
+      this.key.intensity = 1.7 + (1 - pres) * 0.6;
+      // アクセント光を武器の周りへゆっくり周回させ、金属面にハイライトを流す
+      const a = now * 0.0006;
+      this.accent.position.set(Math.cos(a) * 0.72, 0.35, Math.sin(a) * 0.72);
+      // 祭壇のホロ光輪を掃引させる
+      this.pedestalMat.uniforms.uTime!.value = now * 0.001;
+    }
+
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -215,6 +292,8 @@ export class WeaponPreview {
     this.canvas.removeEventListener('pointercancel', this.onUp);
     window.removeEventListener('resize', this.onResize);
     this.clearCurrent();
+    this.pedestal.geometry.dispose();
+    this.pedestalMat.dispose();
     this.renderer.dispose();
     // 一過性キャンバスなのでGLコンテキストを明示破棄(ブラウザの同時コンテキスト上限対策)
     this.renderer.forceContextLoss();

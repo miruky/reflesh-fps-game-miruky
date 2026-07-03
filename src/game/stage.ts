@@ -1,5 +1,22 @@
 import { mulberry32 } from '../core/rng';
 
+// ── 映画的アトモスフィア(R11): THREE非依存の純型。render/atmosphere.ts と共有する ──
+export type MoodId = 'day' | 'dusk' | 'night' | 'overcast' | 'snow';
+export type GrassKind = 'none' | 'blade' | 'dry' | 'reed' | 'snowtuft';
+export type ParticleKind = 'none' | 'snow' | 'dust' | 'ember' | 'firefly';
+export type SilhouetteKind = 'none' | 'mountain' | 'ridge' | 'skyline';
+
+// カラーグレードのパラメータ束(表示前段の色収差/ビネット/グレイン/コントラスト/彩度/ティント)。
+export interface GradeParams {
+  tint: [number, number, number];
+  contrast: number;
+  saturation: number;
+  vignette: number;
+  vignetteR: number;
+  grain: number;
+  chroma: number;
+}
+
 export interface StagePalette {
   sky: string;
   fog: string;
@@ -23,6 +40,16 @@ export interface StagePalette {
   environmentIntensity?: number; // 空から焼くIBL(環境反射)の強さ
   bloomStrength?: number; // ステージ別のBloom強度上書き
   bloomThreshold?: number; // Bloomがかかる輝度しきい値の上書き
+  // ── 映画的アトモスフィア(R11): 全optional。未設定なら resolveMood() が既定ムードへフォールバック(後方互換) ──
+  mood?: MoodId; // 明示ムード。未設定時はパレット値から分類される
+  groundFog?: number; // 接地フォグ板の濃さ 0..1(0/未設定=フォグ板なし)
+  groundFogTop?: number; // 接地フォグ上端の高さ(m)。既定1.1・上限1.5(立ち姿の胴/頭を隠さない)
+  grassKind?: GrassKind; // 草タフトの種別
+  grassDensity?: number; // 草の本数倍率。既定0.6
+  particle?: ParticleKind; // 環境パーティクル種別。未設定時はムード既定
+  particleAmount?: number; // 環境パーティクル量の倍率。既定0.6
+  silhouette?: SilhouetteKind; // 遠景シルエット種別。未設定時はムード既定
+  grade?: Partial<GradeParams>; // カラーグレードのステージ別上書き(ムード既定にマージ)
 }
 
 export interface StageDef {

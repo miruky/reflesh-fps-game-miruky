@@ -208,7 +208,19 @@ export class Hud {
       <div class="hud-death" data-id="death" hidden>
         <div class="hud-death-title">やられた</div>
         <div class="hud-death-sub">リスポーンまで <span data-id="respawn">0.0</span> 秒</div>
-        <div class="hud-killcam" data-id="killcam" hidden></div>
+      </div>
+      <!-- R11 キルカメラ・シネマ: #hud直下(生存時は.hud-death暗幕の外)。
+           opacity と body.killcam-active のみで駆動。fixed inset:0 がビューポート解決 -->
+      <div class="kc-veil" data-id="kcveil" aria-hidden="true"></div>
+      <div class="kc-flash" data-id="kcflash" aria-hidden="true"></div>
+      <div class="kc-vign" data-id="kcvign" aria-hidden="true"></div>
+      <div class="kc-bars" aria-hidden="true"><i class="kc-bar kc-bar-t"></i><i class="kc-bar kc-bar-b"></i></div>
+      <div class="kc-card" data-id="kccard" aria-hidden="true">
+        <div class="kc-banner">KILLED BY</div>
+        <div class="kc-name" data-id="kcname"></div>
+        <div class="kc-weapon" data-id="kcweapon"></div>
+        <div class="kc-dist"><span data-id="kcdist">0</span><i>M</i></div>
+        <div class="kc-timer"><i data-id="kctimer"></i></div>
       </div>
       <div class="hud-scoreboard" data-id="scoreboard" hidden>
         <header><span data-id="scoremode"></span><strong data-id="scoregoal"></strong></header>
@@ -286,6 +298,14 @@ export class Hud {
     this.lastUltActive = false;
     this.scopeOn = false;
     this.wasSteady = false;
+    // R11 キルカメラ状態の完全クリア(試合開始/離脱で黒幕やビネットを残さない)
+    document.body.classList.remove('killcam-active');
+    for (const id of ['kcveil', 'kcflash'] as const) {
+      const n = this.el[id];
+      if (n) n.style.opacity = '0';
+    }
+    const vign = this.el['kcvign'];
+    if (vign) vign.classList.remove('final');
     const toast = this.el['scoretoast'];
     if (toast) toast.innerHTML = '';
     const badges = this.el['badgestack'];
@@ -785,11 +805,25 @@ export class Hud {
     if (!death) return;
     death.hidden = snap.alive;
     if (!snap.alive) this.text('respawn', snap.respawnIn.toFixed(1));
-    const killcam = this.el['killcam'];
-    if (killcam) {
-      killcam.hidden = snap.killcam === null;
-      if (snap.killcam !== null) this.text('killcam', `キルカメラ: ${snap.killcam}`);
+
+    // ── R11 キルカメラ・シネマ(#hud直下・opacity/body classで駆動) ──
+    // シネマ枠はカメラの真実(killcamCamActive)に連動=bailで観戦へ切替時も乖離しない
+    const kcActive = snap.killcamCamActive && snap.killcamWeapon !== null;
+    document.body.classList.toggle('killcam-active', kcActive);
+    if (kcActive) {
+      if (snap.killcam !== null) this.text('kcname', snap.killcam);
+      if (snap.killcamWeapon !== null) this.text('kcweapon', snap.killcamWeapon);
+      this.text('kcdist', String(snap.killcamDistM));
+      const timer = this.el['kctimer'];
+      if (timer) timer.style.width = `${Math.max(0, Math.min(1, snap.killcamRatio)) * 100}%`;
     }
+    // 黒幕/フラッシュ/終盤ビネットは opacity のみ(遷移で常時滑らかに減衰)
+    const veil = this.el['kcveil'];
+    if (veil) veil.style.opacity = String(Math.max(0, Math.min(1, snap.deathVeil)));
+    const flash = this.el['kcflash'];
+    if (flash) flash.style.opacity = String(Math.max(0, Math.min(1, snap.killcamFlash)));
+    const vign = this.el['kcvign'];
+    if (vign) vign.classList.toggle('final', snap.killcamFinal);
   }
 
   private updateMovement(snap: MatchSnapshot): void {

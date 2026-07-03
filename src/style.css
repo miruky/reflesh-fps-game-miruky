@@ -8667,3 +8667,236 @@ tr.score-ally td {
     width: min(280px, 44vw);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   R11 KILLCAM CINEMA — シネマティック・キルカメラ(#hud直下・opacity駆動)
+   body.killcam-active で表示。fixed inset:0 でビューポート基準。全て pointer-events:none。
+   ═══════════════════════════════════════════════════════════════════ */
+.kc-veil,
+.kc-flash,
+.kc-vign,
+.kc-bars,
+.kc-card {
+  position: fixed;
+  pointer-events: none;
+  z-index: 60;
+}
+/* 遷移黒幕(死亡→キルカメラ→リスポーンの繋ぎ)。opacity は JS が deathVeil で駆動 */
+.kc-veil {
+  inset: 0;
+  background: var(--void, #07090b);
+  opacity: 0;
+}
+/* 突入フラッシュ(撃たれた瞬間の白飛び)。JS が killcamFlash で駆動 */
+.kc-flash {
+  inset: 0;
+  background: radial-gradient(circle at 50% 45%, rgba(255, 240, 235, 0.9), rgba(255, 120, 100, 0.3) 60%, transparent 80%);
+  opacity: 0;
+  mix-blend-mode: screen;
+}
+/* 常時のシネマ・ビネット(キルカメラ中のみ)。final でエンベロープが赤く締まる */
+.kc-vign {
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(120% 100% at 50% 50%, transparent 46%, rgba(0, 0, 0, 0.55) 100%);
+  transition: opacity 0.35s var(--ease-out, ease), box-shadow 0.3s var(--ease-out, ease);
+}
+body.killcam-active .kc-vign {
+  opacity: 1;
+}
+body.killcam-active .kc-vign.final {
+  box-shadow: inset 0 0 200px 40px rgba(255, 40, 30, 0.35);
+}
+/* レターボックス(上下の黒帯)。killcam-active でスライドイン */
+.kc-bars {
+  inset: 0;
+}
+.kc-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8.5vh;
+  background: linear-gradient(var(--void, #07090b), color-mix(in srgb, var(--void, #07090b) 88%, transparent));
+  transform: scaleY(0);
+  transition: transform 0.34s var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.kc-bar-t {
+  top: 0;
+  transform-origin: top;
+}
+.kc-bar-b {
+  bottom: 0;
+  background: linear-gradient(to top, var(--void, #07090b), color-mix(in srgb, var(--void, #07090b) 88%, transparent));
+  transform-origin: bottom;
+}
+body.killcam-active .kc-bar {
+  transform: scaleY(1);
+}
+/* KILLED BY カード(下部帯・計器フレーム) */
+.kc-card {
+  left: 50%;
+  bottom: calc(8.5vh + 26px);
+  transform: translateX(-50%) translateY(12px);
+  min-width: 320px;
+  padding: 12px 26px 14px;
+  text-align: center;
+  background: var(--glass-heavy, rgba(7, 9, 12, 0.84));
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+  opacity: 0;
+  transition:
+    opacity 0.28s var(--ease-out, ease) 0.12s,
+    transform 0.28s var(--ease-out, ease) 0.12s;
+}
+.kc-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  clip-path: inherit;
+  border: 1px solid color-mix(in srgb, var(--threat, #ff3b2f) 45%, transparent);
+  pointer-events: none;
+}
+body.killcam-active .kc-card {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.kc-banner {
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  color: var(--threat, #ff3b2f);
+}
+.kc-name {
+  margin-top: 4px;
+  font-family: var(--display, sans-serif);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--ink, #f0f1ee);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+}
+.kc-weapon {
+  margin-top: 2px;
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-soft, #a9afb1);
+}
+.kc-dist {
+  margin-top: 6px;
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--signal, #71c4d1);
+}
+.kc-dist i {
+  margin-left: 1px;
+  font-style: normal;
+  font-size: 9px;
+  color: var(--ink-faint, #7a8288);
+}
+/* リスポーン進捗タイマー(killcamRatio→width) */
+.kc-timer {
+  margin: 10px auto 0;
+  width: 180px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.kc-timer > i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--threat, #ff3b2f), color-mix(in srgb, var(--threat, #ff3b2f) 60%, #ff9a70));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--threat, #ff3b2f) 55%, transparent);
+}
+/* R10の55%暗幕がシネマと喧嘩するため、キルカメラ中は.hud-death地を透過 */
+body.killcam-active .hud-death {
+  background: transparent;
+}
+/* reduceMotion三重ゲート: 情報性のためカード/timer/veilは表示、動きのみ抑止 */
+@media (prefers-reduced-motion: reduce) {
+  .kc-bar,
+  .kc-card,
+  .kc-vign {
+    transition: none;
+  }
+}
+:root.reduce-motion .kc-bar,
+:root.reduce-motion .kc-card,
+:root.reduce-motion .kc-vign {
+  transition: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   R11 MENU CINEMA — ページ連動タブ標(.mfd-ink) + デッキ掃引(.mfd-deck.wipe)
+   menu.ts が --ink-x/-y/-w/-h(px)を書き、.mfd-deck に .wipe を一時付与する
+   ═══════════════════════════════════════════════════════════════════ */
+.mfd-rail {
+  position: relative; /* .mfd-ink(absolute)の位置基準 */
+}
+/* アクティブタブを滑って追う点火標(下辺の発光バー) */
+.mfd-ink {
+  position: absolute;
+  left: var(--ink-x, 0);
+  top: calc(var(--ink-y, 0px) + var(--ink-h, 0px) - 3px);
+  width: var(--ink-w, 0);
+  height: 3px;
+  background: var(--ember);
+  box-shadow: 0 0 10px var(--ember-glow);
+  pointer-events: none;
+  transition:
+    left 0.24s var(--ease-out),
+    width 0.24s var(--ease-out);
+}
+/* デッキ掃引: ページ切替時に薄い点火インクが左→右に走る */
+.mfd-deck {
+  position: relative;
+}
+.mfd-deck.wipe::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    color-mix(in srgb, var(--ember) 22%, transparent) 46%,
+    color-mix(in srgb, var(--signal) 18%, transparent) 54%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: mfd-wipe 0.36s var(--ease-out) forwards;
+}
+@keyframes mfd-wipe {
+  from {
+    transform: translateX(-100%);
+    opacity: 0.9;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+/* ブリーフィングの星野減光は menu-bg の setModalDim(pixelRatio) が担う。
+   showBriefing は innerHTML を差し替えるため .console-bezel は存在せず、
+   ここでの減光ルールは常に空振りだったので置かない(setModalDimで十分) */
+@media (prefers-reduced-motion: reduce) {
+  .mfd-ink,
+  .mfd-deck.wipe::after {
+    transition: none;
+    animation: none;
+  }
+}
+:root.reduce-motion .mfd-ink {
+  transition: none;
+}
+:root.reduce-motion .mfd-deck.wipe::after {
+  animation: none;
+  opacity: 0;
+}

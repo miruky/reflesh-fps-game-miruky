@@ -48,6 +48,7 @@ import {
 import { generateStage } from '../game/stage';
 import { STAGES } from '../game/stages';
 import { TEAM_PALETTES } from '../game/teamcolors';
+import type { SpaceBg } from './menu-bg';
 import { WeaponPreview } from '../render/weapon-preview';
 import {
   computeWeaponBars,
@@ -293,6 +294,9 @@ export class Menu {
   private capturingAction: PadAction | null = null; // リバインド捕捉中のアクション
   private bindNote = ''; // 競合解消などの通知文(リバインド表の下に表示)
   private captureCleanup: (() => void) | null = null; // 捕捉中の keydown リスナ等の後始末
+  private bg: SpaceBg | null = null; // メニュー背景の宇宙(ページ連動カメラ)。attachBgで注入
+  private wipeTimer = 0; // 画面遷移ワイプのフォールバックタイマ(animationend不発でも畳む)
+  private mfdWiped = false; // 初回マウントはワイプ抑止(ベゼル入場と二重演出にしない)
 
   constructor(
     private readonly root: HTMLElement,
@@ -353,11 +357,29 @@ export class Menu {
     localStorage.setItem(LOADOUT_KEY, JSON.stringify(this.selection));
   }
 
+  // main.ts から宇宙背景を注入する。初回フォーカスを即送出して画角を現在ページへ一致させる
+  attachBg(bg: SpaceBg): void {
+    this.bg = bg;
+    bg.setFocus(this.activePage);
+  }
+
+  // 背景の遷移状態(recede/soft/killcam)を一括で解除し、宇宙背景のDoFも戻す。
+  // hide()とshowMain()冒頭で呼び、モーダル由来の暗転やワイプがメニューに残らないようにする
+  private clearBgTransition(): void {
+    document.body.classList.remove('bg-recede', 'bg-soft', 'killcam-active');
+    this.bg?.setModalDim(0);
+    if (this.wipeTimer !== 0) {
+      window.clearTimeout(this.wipeTimer);
+      this.wipeTimer = 0;
+    }
+  }
+
   hide(): void {
     // メニューを隠す瞬間に必ずリバインド捕捉を畳む。捕捉中のまま試合へ復帰すると
     // 最初のパッド入力がリバインドに食われ、設定が静かに書き換わるのを防ぐ
     this.endCapture();
     this.teardownPreview();
+    this.clearBgTransition();
     this.root.hidden = true;
   }
 
@@ -469,6 +491,8 @@ export class Menu {
   }
 
   showMain(): void {
+    this.clearBgTransition();
+    this.mfdWiped = false; // 再マウント: 最初の setMfdPage はワイプせず即時
     this.teardownPreview();
     this.root.hidden = false;
     this.root.innerHTML = `
@@ -520,6 +544,7 @@ export class Menu {
               <button class="mfd-tab" type="button" role="tab" data-page="armory" id="mfd-tab-armory" aria-controls="mfd-panel-armory"><b>02</b><span>ARMORY</span><small>兵装</small></button>
               <button class="mfd-tab" type="button" role="tab" data-page="intel" id="mfd-tab-intel" aria-controls="mfd-panel-intel"><b>03</b><span>INTEL</span><small>戦況</small></button>
               <button class="mfd-tab" type="button" role="tab" data-page="system" id="mfd-tab-system" aria-controls="mfd-panel-system"><b>04</b><span>SYSTEM</span><small>系統</small></button>
+              <i class="mfd-ink" aria-hidden="true"></i>
             </nav>
             <div class="mfd-deck">
               <section class="mfd-page" data-page="campaign" role="tabpanel" id="mfd-panel-campaign" aria-labelledby="mfd-tab-campaign" hidden>
@@ -696,6 +721,10 @@ export class Menu {
   showBriefing(mission: MissionDef): void {
     this.endCapture(); // 画面差し替え前にリバインド捕捉を畳む(孤立リスナ防止)
     this.teardownPreview();
+    // モーダル: 背景を後退させ、宇宙背景をDoFで沈めてブリーフィングを前面へ立てる
+    // (menu-briefingは透過のため星野が見える)。showMain/hide が解除する
+    document.body.classList.add('bg-recede');
+    this.bg?.setModalDim(1);
     this.root.hidden = false;
     const modLabels: Record<string, string> = {
       'one-life': '一機限り',
@@ -854,6 +883,18 @@ export class Menu {
   }
 
   private setMfdPage(page: string): void {
+    // 初回マウント(wireMfd末の同一ページ呼び)はワイプ無しで即時。以降はワイプ演出。
+    // ワイプは swap を同期実行するためフォーカス/プレビュー/aria の挙動は従来どおり。
+    if (!this.mfdWiped) {
+      this.mfdWiped = true;
+      this.applyMfdPage(page);
+      return;
+    }
+    this.wipe(() => this.applyMfdPage(page));
+  }
+
+  // 実際のページ差し替え。ページ連動の宇宙背景フォーカスとMFDインク移動もここで駆動する
+  private applyMfdPage(page: string): void {
     this.activePage = page;
     this.root.querySelectorAll<HTMLElement>('.mfd-page').forEach((p) => {
       const on = p.dataset.page === page;
@@ -869,6 +910,58 @@ export class Menu {
     // ARMORY表示時のみ3Dプレビューを起動(遅延生成)。他ページでは止める
     if (page === 'armory') this.mountWeaponPreview();
     else this.weaponPreview?.suspend();
+    // ページに応じて宇宙背景の画角を寄せ、MFDインクを現在タブへ滑らせる
+    this.bg?.setFocus(page);
+    this.updateMfdInk();
+  }
+
+  // MFDインク(選択タブへ滑るインジケータ)を現在タブの座標へ移す。
+  // レイアウト確定後(rAF)に offset 系を読み、縦横どちらの表現にも使えるCSS変数で渡す
+  private updateMfdInk(): void {
+    const ink = this.root.querySelector<HTMLElement>('.mfd-ink');
+    if (!ink) return;
+    const page = this.activePage;
+    requestAnimationFrame(() => {
+      const tab = this.root.querySelector<HTMLElement>(`.mfd-tab[data-page="${page}"]`);
+      if (!ink.isConnected || !tab) return;
+      ink.style.setProperty('--ink-x', `${tab.offsetLeft}px`);
+      ink.style.setProperty('--ink-y', `${tab.offsetTop}px`);
+      ink.style.setProperty('--ink-w', `${tab.offsetWidth}px`);
+      ink.style.setProperty('--ink-h', `${tab.offsetHeight}px`);
+    });
+  }
+
+  // 画面遷移ワイプ。swap は同期実行(フォーカス/プレビュー/aria を既存どおり保つ)し、
+  // 直後にデッキへ .wipe を一瞬載せて掃引で見せる。省モーションは swap のみで演出なし。
+  // animationend 不発(タブ休止/GPU/CSS未適用)でも setTimeout フォールバックで確実に畳む。
+  private wipe(swap: () => void): void {
+    swap();
+    if (this.prefersReducedMotion) return;
+    const deck = this.root.querySelector<HTMLElement>('.mfd-deck');
+    if (!deck) return;
+    if (this.wipeTimer !== 0) window.clearTimeout(this.wipeTimer);
+    deck.classList.remove('wipe');
+    deck.getBoundingClientRect(); // reflowを強制し .wipe アニメを確実に再発火させる
+    deck.classList.add('wipe');
+    const clear = (): void => {
+      if (this.wipeTimer !== 0) {
+        window.clearTimeout(this.wipeTimer);
+        this.wipeTimer = 0;
+      }
+      deck.classList.remove('wipe');
+    };
+    const onEnd = (e: AnimationEvent): void => {
+      if (e.target !== deck) return; // 子ページの入場アニメのバブルは無視
+      deck.removeEventListener('animationend', onEnd);
+      clear();
+    };
+    deck.addEventListener('animationend', onEnd);
+    // フォールバックは掃引アニメ長(mfd-wipe 0.36s)より確実に長く。短いとanimationend
+    // 前に毎回打ち切ってしまい主経路が死ぬ。真の不発時のみ畳む保険にする
+    this.wipeTimer = window.setTimeout(() => {
+      deck.removeEventListener('animationend', onEnd);
+      clear();
+    }, 480);
   }
 
   // ARMORYの3D武器プレビューを必要時に生成・再開する
