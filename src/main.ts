@@ -1,7 +1,8 @@
 import './style.css';
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { deriveReverbPreset, SoundKit } from './core/audio';
+import { deriveReverbPreset, SoundKit, type BgmProfileKey } from './core/audio';
+import { resolveMood } from './render/atmosphere';
 import { gamepadCfg } from './core/gamepad';
 import { Input } from './core/input';
 import { GameLoop } from './core/loop';
@@ -62,7 +63,9 @@ const graphicsTier = resolveGraphicsTier(settings.graphicsQuality, hasWebGL2);
 
 const renderer = new THREE.WebGLRenderer({ antialias: graphicsTier === 'low' });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphicsTier === 'high' ? 2 : 1.5));
+// 適応DPRの基準pixelRatio。試合開始時にここへ戻すことで前試合の低下段を持ち越さない
+const BASE_DPR = Math.min(window.devicePixelRatio, graphicsTier === 'high' ? 2 : 1.5);
+renderer.setPixelRatio(BASE_DPR);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 // AgX(ACESより ember/neon の色相を保つ)+ 線形→sRGB の物理ベース出力
@@ -129,7 +132,18 @@ function launch(config: MatchConfig): void {
   // reduced-motionはCSS(@media)側で尊重される
   // リスタート経路の二重起動防止→ステージの空間残響→環境音ベッドの順に音場を用意
   sounds.stopAmbience();
+  // 適応DPRの状態を初期化(前試合の解像度スケール段を持ち越さない)。共有rendererの
+  // pixelRatioも基準へ戻す(これを怠ると新試合のcomposerが低下値を継承し複利で劣化する)
+  frameEma = 0.0166;
+  bestFrame = 0.0166;
+  dprStep = 0;
+  renderer.setPixelRatio(BASE_DPR);
   sounds.setReverb(deriveReverbPreset(config.stage));
+  // BGMをステージのムード別プロファイルへ(夜市yoichiのみネオン特化)。かっこいい軍事エレクトロニカ
+  const bgmMood = resolveMood(config.stage.palette);
+  const bgmKey: BgmProfileKey =
+    bgmMood === 'night' && config.stage.id === 'yoichi' ? 'night-neon' : bgmMood;
+  sounds.setMusicProfile(bgmKey);
   sounds.startAmbience(config.stage);
   match?.dispose();
   match = new Match(
@@ -248,6 +262,31 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) sounds.pauseAmbience(true);
 });
 
+// R12軽量化(適応DPR): フレーム時間のEMAを取り、重い時に実解像度を段階的に下げてfps床を維持。
+// 3段([1.0,0.85,0.72])・ヒステリシス・変更間隔≥1秒でRT再確保のバタつきを防ぐ
+const DPR_STEPS = [1, 0.85, 0.72] as const;
+let frameEma = 0.0166; // 秒(初期60fps相当)
+let bestFrame = 0.0166; // 観測フロア(表示周期/GPU余力の推定)。速い時は素早く追従・遅い時は緩慢
+let dprStep = 0; // DPR_STEPS のインデックス
+let lastDprChangeMs = 0;
+function adaptResolution(dt: number, nowMs: number): void {
+  if (!match || mode !== 'playing') return;
+  frameEma += (dt - frameEma) * 0.06; // ~0.5s平滑
+  bestFrame += (dt - bestFrame) * (dt < bestFrame ? 0.3 : 0.002); // フロア追従(速く沈み遅く浮く)
+  if (nowMs - lastDprChangeMs < 1000) return; // 再確保は1秒に1回まで
+  // 降格は「絶対しきい(>18ms)」かつ「自身のフロア比1.35超(=GPU律速の悪化)」の両立時のみ。
+  // 30Hzパネル/rAFスロットル(表示律速)では frameEma≈bestFrame で発火せず最小固定を回避
+  if (frameEma > 0.018 && frameEma > bestFrame * 1.35 && dprStep < DPR_STEPS.length - 1) {
+    dprStep += 1;
+    lastDprChangeMs = nowMs;
+    match.setResolutionScale(DPR_STEPS[dprStep]!);
+  } else if (frameEma < 0.013 && dprStep > 0) {
+    dprStep -= 1; // 十分軽い(<13ms)→1段戻す
+    lastDprChangeMs = nowMs;
+    match.setResolutionScale(DPR_STEPS[dprStep]!);
+  }
+}
+
 const loop = new GameLoop(
   (dt) => {
     if (mode === 'playing' && match) match.update(dt);
@@ -324,6 +363,7 @@ const loop = new GameLoop(
           }
         }
       }
+      adaptResolution(dt, performance.now());
       match.render();
     }
     input.endFrame();

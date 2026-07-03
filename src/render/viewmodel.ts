@@ -3,10 +3,17 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { WeaponClass, ViewModelShape, WeaponDef } from '../game/weapons';
 
 const HIP_POSITION = new THREE.Vector3(0.24, -0.22, -0.5);
-const ADS_POSITION = new THREE.Vector3(0, -0.142, -0.42);
+// ADS 収束座標。X/Z は全武器共通、Y は武器ごとに resolveSightY で動的算出する
+// (各銃のサイト=ビード/アイアン/レフレックス/スコープ をカメラ空間 Y=0 の射線へ載せる)。
+const ADS_X = 0;
+const ADS_Z = -0.42;
 const LOWERED_OFFSET = -0.35;
 // 銃身・マズルの基準高さ(全シルエット共通)。トレーサー原点もこの高さに乗る
 const BARREL_Y = 0.012;
+
+// 頂点カラーの陰影モード。flat=均一、gradY=下暗上明の擬似AO、
+// machined=削り出し鋼(急勾配+稜線ベベル)、edgeHi=研磨リム(上端を二次で光らせる)。
+type ShadeMode = 'flat' | 'gradY' | 'machined' | 'edgeHi';
 
 // ── procedural シルエット定義 ───────────────────────────────────────────
 // 給弾方式。mag-curved/straight=着脱式弾倉、drum=ドラム、box=箱型、belt=ベルト給弾、
@@ -494,7 +501,7 @@ function getShared(): SharedMats {
     reflexDot.userData.shared = true;
     sharedMats = {
       metalVC: vcMat(0.62, 0.34),
-      polishVC: vcMat(0.85, 0.18),
+      polishVC: vcMat(0.9, 0.14),
       polyVC: vcMat(0.0, 0.72),
       glass,
       reflexDot,
@@ -551,12 +558,18 @@ function col(hex: number): THREE.Color {
   return c;
 }
 
-// 頂点カラーを焼く。shade='gradY' は gun ローカルYの上明下暗で擬似AO(エッジ・面の陰影)。
-function setColor(g: THREE.BufferGeometry, color: THREE.Color, shade: 'flat' | 'gradY'): void {
+// 頂点カラーを焼く。flat 以外は gun ローカルYの上明下暗で擬似AO(エッジ・面の陰影)を作る。
+function setColor(g: THREE.BufferGeometry, color: THREE.Color, shade: ShadeMode): void {
   const pos = g.attributes.position as THREE.BufferAttribute;
   const n = pos.count;
   const arr = new Float32Array(n * 3);
-  if (shade === 'gradY') {
+  if (shade === 'flat') {
+    for (let i = 0; i < n; i += 1) {
+      arr[i * 3] = color.r;
+      arr[i * 3 + 1] = color.g;
+      arr[i * 3 + 2] = color.b;
+    }
+  } else {
     let minY = Infinity;
     let maxY = -Infinity;
     for (let i = 0; i < n; i += 1) {
@@ -567,16 +580,21 @@ function setColor(g: THREE.BufferGeometry, color: THREE.Color, shade: 'flat' | '
     const span = Math.max(1e-5, maxY - minY);
     for (let i = 0; i < n; i += 1) {
       const t = (pos.getY(i) - minY) / span;
-      const f = 0.8 + 0.24 * t; // 下=0.80 / 上=1.04(軽い立体感)
+      let f: number;
+      if (shade === 'gradY') {
+        f = 0.8 + 0.24 * t; // 下=0.80 / 上=1.04(軽い立体感)
+      } else if (shade === 'machined') {
+        // 削り出し鋼: 下暗→上明の急勾配 + 上稜(t>0.86)にベベルハイライト。
+        // 面内の微細縞(sin)は cyl16/ExtrudeGeometry の頂点密度では塗れず2トーンの
+        // artifact になるため入れない(勾配 + 稜線ベベルで削り出し感を出す)。
+        f = 0.72 + 0.3 * t + (t > 0.86 ? 0.22 : 0);
+      } else {
+        // edgeHi: 研磨リム。上端へ向け二次で持ち上げてエッジを強く光らせる
+        f = 0.68 + 0.52 * t * t;
+      }
       arr[i * 3] = color.r * f;
       arr[i * 3 + 1] = color.g * f;
       arr[i * 3 + 2] = color.b * f;
-    }
-  } else {
-    for (let i = 0; i < n; i += 1) {
-      arr[i * 3] = color.r;
-      arr[i * 3 + 1] = color.g;
-      arr[i * 3 + 2] = color.b;
     }
   }
   g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
@@ -727,7 +745,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     rx = 0,
     ry = 0,
     rz = 0,
-    shade: 'flat' | 'gradY' = 'gradY',
+    shade: ShadeMode = 'gradY',
   ): void => {
     eul.set(rx, ry, rz);
     q.setFromEuler(eul);
@@ -753,7 +771,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     rx = 0,
     ry = 0,
     rz = 0,
-    shade: 'flat' | 'gradY' = 'gradY',
+    shade: ShadeMode = 'gradY',
   ): void => {
     eul.set(rx, ry, rz);
     q.setFromEuler(eul);
@@ -779,7 +797,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     rx = 0,
     ry = 0,
     rz = 0,
-    shade: 'flat' | 'gradY' = 'gradY',
+    shade: ShadeMode = 'gradY',
   ): void => bake(family, unitBox, color, px, py, pz, w, h, d, rx, ry, rz, shade);
   const tubeZ = (
     family: THREE.BufferGeometry[],
@@ -790,7 +808,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     py: number,
     pz: number,
     round = false,
-    shade: 'flat' | 'gradY' = 'gradY',
+    shade: ShadeMode = 'gradY',
   ): void =>
     bake(family, round ? cyl16 : cyl8, color, px, py, pz, radius, len, radius, Math.PI / 2, 0, 0, shade);
   const coneZ = (
@@ -802,7 +820,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     px: number,
     py: number,
     pz: number,
-    shade: 'flat' | 'gradY' = 'gradY',
+    shade: ShadeMode = 'gradY',
   ): void => {
     const g = new THREE.CylinderGeometry(rFront, rBack, len, 10);
     bakeAt(family, g, color, px, py, pz, Math.PI / 2, 0, 0, shade);
@@ -816,12 +834,25 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
       boxP(metalParts, i % 2 ? C_RIM : C_RAIL, width * 0.86, 0.004, 0.006, 0, yTop + 0.005, zz, 0, 0, 0, 'flat');
     }
   };
+  // 発光アクセントライン: tracerColor を accentFam(発光帯の merge 先=DC不変)へ flat で焼く細帯。
+  // 背稜スパイン/マグウェルリップなど「線」で銃を締める演出に使う。
+  const accentLine = (w: number, h: number, d: number, x: number, y: number, z: number): void =>
+    boxP(accentFam, def.tracerColor, w, h, d, x, y, z, 0, 0, 0, 'flat');
 
   // ── レシーバ(面取りヒーロー面) + 上稜線リムハイライト + 分割シーム + マグウェル ──
-  bakeAt(metalParts, chamferBox(r.w, r.h, recD, 0.005), C_BASE, 0, 0, 0);
+  // ヒーロー面は machined(削り出し鋼)で塗り、至近の主面に稜線ハイライトを立てる
+  bakeAt(metalParts, chamferBox(r.w, r.h, recD, 0.005), C_BASE, 0, 0, 0, 0, 0, 0, 'machined');
   boxP(metalParts, C_RIM, r.w * 0.52, 0.006, recD * 0.9, 0, r.h / 2 - 0.001, 0, 0, 0, 0, 'flat');
   if (det.receiverStyle === 'split') {
     boxP(metalParts, C_GROOVE, r.w + 0.001, 0.004, recD * 0.84, 0, 0.006, 0, 0, 0, 0, 'flat');
+  }
+  // 背稜スパイン: レシーバ上稜の発光ライン。full レール時はレール下でZファイト・不可視のため出さない
+  if (det.railTop !== 'full') {
+    accentLine(0.006, 0.003, recD * 0.7, 0, r.h / 2 + 0.004, 0);
+  }
+  // マグウェルリップ: 着脱弾倉系の給弾口を発光帯で縁取る(底面共面を避け -r.h/2-0.004 へ)
+  if (sil.feed === 'mag-curved' || sil.feed === 'mag-straight' || sil.feed === 'box' || sil.feed === 'drum') {
+    accentLine(r.w * 0.72, 0.004, 0.06, 0, -r.h / 2 - 0.004, sil.feedZ ?? -0.03);
   }
   if (det.grip === 'ar' && sil.feed !== 'none' && sil.feed !== 'belt' && sil.feed !== 'tube') {
     bakeAt(metalParts, chamferBox(r.w + 0.012, 0.05, 0.06, 0.004), C_DARK, 0, -r.h / 2 + 0.006, -0.02);
@@ -1154,7 +1185,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
   // ── 拳銃スライド(可動 vm:slide) + セレーション + サイト ──
   if (det.slide) {
     const mv = newMovable('vm:slide');
-    bakeAt(mv.metal, chamferBox(r.w + 0.006, 0.03, recD * 0.92, 0.004), C_BASE, 0, r.h / 2 - 0.008, -recD * 0.02);
+    bakeAt(mv.metal, chamferBox(r.w + 0.006, 0.03, recD * 0.92, 0.004), C_BASE, 0, r.h / 2 - 0.008, -recD * 0.02, 0, 0, 0, 'machined');
     for (let i = 0; i < 6; i += 1) {
       boxP(mv.metal, C_GROOVE, r.w + 0.008, 0.02, 0.004, 0, r.h / 2 - 0.008, recHalf * 0.5 - i * 0.01, 0, 0, 0, 'flat');
     }
@@ -1174,7 +1205,9 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
   } else {
     switch (sil.muzzle) {
       case 'none': {
-        tubeZ(polishParts, C_POLISH, barR * 0.7, 0.008, 0, BARREL_Y, barFrontZ - 0.004, true);
+        // 可視マズルクラウン: バレル外径よりわずかに太い研磨リング(edgeHi)で銃口を縁取る。
+        // round=false(cyl8)で頂点半減。旧 barR*0.7 はバレル内部埋没で不可視だった
+        tubeZ(polishParts, C_POLISH_HI, barR * 1.02, 0.012, 0, BARREL_Y, barFrontZ - 0.004, false, 'edgeHi');
         muzzleZ = barFrontZ - 0.01 * bs;
         break;
       }
@@ -1184,7 +1217,8 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
         boxP(metalParts, C_GROOVE, gauge * 1.6, 0.006, 0.02, 0, BARREL_Y + gauge * 1.02, barFrontZ - 0.06, 0, 0, 0, 'flat');
         boxP(metalParts, C_GROOVE, 0.006, gauge * 1.3, 0.05, -gauge * 1.24, BARREL_Y, barFrontZ - 0.042, 0, 0, 0, 'flat');
         boxP(metalParts, C_GROOVE, 0.006, gauge * 1.3, 0.05, gauge * 1.24, BARREL_Y, barFrontZ - 0.042, 0, 0, 0, 'flat');
-        tubeZ(polishParts, C_POLISH, barR * 0.7, 0.006, 0, BARREL_Y, barFrontZ - 0.004, true);
+        // 可視マズルクラウン(cyl8・edgeHi 研磨リム)。ブレーキ本体前端の銃口を縁取る
+        tubeZ(polishParts, C_POLISH_HI, barR * 1.02, 0.012, 0, BARREL_Y, barFrontZ - 0.004, false, 'edgeHi');
         muzzleZ = barFrontZ - 0.1;
         break;
       }
@@ -1258,6 +1292,28 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
   return { gun, muzzle };
 }
 
+// ADS 収束 Y を武器ごとに算出する純関数。buildGunBody のサイト焼き座標の「鏡写し」であり、
+// ADS 時に各銃のサイトがカメラ空間 Y=0(画面中央=射線)へ載るよう root.position.y=-sightY を作る。
+// 返す各値は buildGunBody の対応ジオメトリと必ず一致させること(片方だけ動かすと照準がずれる):
+//   fists                    → 0                    (拳のみ・サイト無し)
+//   built-in scope           → sil.scope.y          (buildGunBody 「一体型光学」 tubeZ(…, s.y, …))
+//   reflex 着脱               → 0.08                 (buildGunBody 着脱 reflex dot.position.set(0, 0.08, …))
+//   telescopic 着脱(scope無)  → 0.08                (buildGunBody 着脱 telescopic tubeZ(…, 0.08, …))
+//   iron bead                → BARREL_Y + gauge*0.6  (buildGunBody アイアンサイト bead bakeAt(…, BARREL_Y+gauge*0.6, …))
+//   iron post(fixed/flip/ghost)→ 0.062              (buildGunBody アイアンサイト前ポスト boxP(…, 0.062, …))
+export function resolveSightY(def: WeaponDef): number {
+  if (def.shape === 'fists') return 0;
+  const sil = resolveSilhouette(def);
+  // 一体型スコープ最優先(アイアンサイトは buildGunBody で省略される)
+  if (sil.scope) return sil.scope.y;
+  const attachments = def.attachmentIds ?? [];
+  if (attachments.includes('reflex')) return 0.08;
+  if (attachments.includes('telescopic')) return 0.08;
+  const det = resolveDetail(sil, def);
+  if (det.iron === 'bead') return BARREL_Y + sil.barrelGauge * 0.6;
+  return 0.062;
+}
+
 // 可動ノード(buildGunBody が name='vm:*' の Group として分離)の参照束。
 // setWeapon で一度だけ引き、毎フレーム探索しない。全て optional(その銃に無ければ undefined)。
 interface MovableRig {
@@ -1279,6 +1335,12 @@ export class ViewModel {
   private flashMesh: THREE.Mesh;
   private flashLight: THREE.PointLight;
   private readonly cache = new Map<string, { gun: THREE.Group; muzzle: THREE.Object3D }>();
+
+  // ADS 収束オフセット。setWeapon で adsY=-resolveSightY(def) をキャッシュし、
+  // adsTarget=(ADS_X, adsY, ADS_Z) を毎フレーム lerp 先に使う(_pos はスクラッチで alloc 回避)。
+  private adsY = -0.142;
+  private readonly adsTarget = new THREE.Vector3(ADS_X, -0.142, ADS_Z);
+  private readonly _pos = new THREE.Vector3();
 
   private swayX = 0;
   private swayY = 0;
@@ -1331,6 +1393,9 @@ export class ViewModel {
     this.muzzle.add(this.flashMesh);
     this.muzzle.add(this.flashLight);
     this.captureRig();
+    // 各武器のサイト高さを ADS 収束 Y へ反映(attachmentIds 可変にも追従)。キャッシュ両経路後。
+    this.adsY = -resolveSightY(def);
+    this.adsTarget.set(ADS_X, this.adsY, ADS_Z);
   }
 
   // 可動ノード参照を一度だけ引き、メカ状態をrest(identity変形)へ戻す。銃はキャッシュ
@@ -1535,7 +1600,7 @@ export class ViewModel {
     // 視覚ADSはeaseOutQuintで「素早く構えて最後に据わる」BO2の所作にする。
     // ゲームプレイ(スプレッド/QS判定)は線形adsのままなので挙動は不変
     const adsVis = 1 - Math.pow(1 - ads, 5);
-    const pos = new THREE.Vector3().lerpVectors(HIP_POSITION, ADS_POSITION, adsVis);
+    const pos = this._pos.lerpVectors(HIP_POSITION, this.adsTarget, adsVis);
     // BO2 DSR: 所作を「順序化」する。同時進行だとZラッシュが支配して正面から
     // 迫って見えるため、(1)右で構える→(2)右から中央へ横スイープ→(3)中央到達後に
     // スコープが目へ飛び込む→(4)ブラックアウト、の順に時間帯を分ける
@@ -1545,10 +1610,12 @@ export class ViewModel {
       // ads 10〜68% をかけて中央へスイープ(それまで銃は明確に画面右にいる)
       const sweep = THREE.MathUtils.smoothstep(ads, 0.1, 0.68);
       scopeSlide = 1 - sweep;
-      pos.x = THREE.MathUtils.lerp(HIP_POSITION.x + 0.12, ADS_POSITION.x, sweep);
+      pos.x = THREE.MathUtils.lerp(HIP_POSITION.x + 0.12, ADS_X, sweep);
+      // Y は武器ごとの adsY(=-sightY)へ収束させる。ADS_POSITION.y 固定だとサイトが
+      // 画面中央からずれ、scopeReveal01 越えで上下スナップが出ていた
       pos.y = THREE.MathUtils.lerp(
         HIP_POSITION.y - 0.02,
-        ADS_POSITION.y,
+        this.adsY,
         THREE.MathUtils.smoothstep(ads, 0.12, 0.7),
       );
       // Z ラッシュは中央到達後(58→74%がピーク)に発火: スコープが目へ飛び込み、

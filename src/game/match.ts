@@ -182,6 +182,15 @@ function killcamWeaponFor(killer: Bot): string {
   }
 }
 
+// R12軽量化: bloomを半解像で処理する。EffectComposer.addPass/setSize がフル実効サイズで
+// pass.setSize を強制するため、サブクラスで毎回半分へ丸めて bright/blur を面積1/16(現状1/4)へ。
+// 合成加算はフル解像 readBuffer を読むので出力はフル解像=見た目維持で bloom実質-40〜50%。
+class HalfBloom extends UnrealBloomPass {
+  override setSize(width: number, height: number): void {
+    super.setSize(Math.ceil(width * 0.5), Math.ceil(height * 0.5));
+  }
+}
+
 export interface MatchConfig {
   stage: StageDef;
   mode: GameMode;
@@ -246,6 +255,7 @@ export interface MatchSnapshot {
   respawnIn: number;
   ammo: number;
   reserve: number;
+  magSize: number; // 弾倉容量(HUDの弾ピップ正規化 ammo/magSize 用)
   weaponName: string;
   weaponSlot: string; // 'PRIMARY' / 'SECONDARY'
   fireMode: string;
@@ -400,6 +410,8 @@ export class Match {
   private postfxActive = false; // PostFX(medium/high)有効
   private atmosphere: Atmosphere | null = null; // 映画的アトモスフィア(草/フォグ/粒子/遠景)
   private postfx: PostFXPass | null = null; // ジュース専用PostFX(被弾パルス・enable-gate)
+  private baseDpr = 0; // 動的DPRの基準(初回setで確定=main.tsが設定した実効pixelRatio)
+  private resScale = 1; // 現在の解像度スケール 0.6..1
   private hitFlashEnv = 0; // 被弾フラッシュのエンベロープ 0..1
   // キルカメラ補間: 死亡時に固定するアンカー + 現在の補間カメラ姿勢(exp damping)
   private readonly killcamAnchorHead = new THREE.Vector3(); // 死亡時のkiller頭位置(固定)
@@ -592,7 +604,7 @@ export class Match {
     const size = this.renderer.getSize(new THREE.Vector2());
     const composer = new EffectComposer(this.renderer);
     composer.addPass(new RenderPass(this.scene, this.camera));
-    const bloom = new UnrealBloomPass(
+    const bloom = new HalfBloom(
       new THREE.Vector2(size.x, size.y),
       p.bloomStrength ?? 0.5, // strength: 真の発光体だけ拾う控えめな値
       0.4, // radius
@@ -626,11 +638,29 @@ export class Match {
     this.composer = composer;
   }
 
+  // R12軽量化(適応): スパイク時に実解像度を段階的に下げてfps床を維持する。
+  // main.ts のフレーム時間EMAが呼ぶ。base=main.tsが設定した実効pixelRatio、s∈[0.6,1]。
+  // renderer/composer の setPixelRatio がCSSサイズから内部RTを再確保する(自前setSize禁止)
+  setResolutionScale(s: number): void {
+    if (this.baseDpr === 0) this.baseDpr = this.renderer.getPixelRatio();
+    const clamped = Math.max(0.6, Math.min(1, s));
+    if (Math.abs(clamped - this.resScale) < 0.02) return;
+    this.resScale = clamped;
+    const pr = this.baseDpr * clamped;
+    this.renderer.setPixelRatio(pr);
+    this.composer?.setPixelRatio(pr);
+  }
+
   get activeWeapon(): Weapon {
     return this.weapons[this.activeIndex] ?? this.weapons[0]!;
   }
 
   private buildStageScene(boxes: ReturnType<typeof generateStage>['boxes']): void {
+    // R12軽量化: 画質ティアを1回だけ算出して影/フォグ/草へ配線(hoist)
+    const tier = resolveGraphicsTier(
+      this.settings.graphicsQuality,
+      this.renderer.capabilities.isWebGL2,
+    );
     const palette = this.config.stage.palette;
     const size = this.config.stage.size;
     // Sky.js を可視背景にするため background は使わない
@@ -656,7 +686,8 @@ export class Match {
     const sun = new THREE.DirectionalLight(palette.lightColor, palette.lightIntensity);
     sun.position.copy(this.sunDir).multiplyScalar(size); // 見える太陽と影方向を一致させる
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    // R12軽量化: mediumは1024²で影フラグメント1/4・VRAM 12MB→3MB(highは2048²維持)
+    sun.shadow.mapSize.set(tier === 'high' ? 2048 : 1024, tier === 'high' ? 2048 : 1024);
     sun.shadow.bias = -0.0005; // シャドウアクネ除去
     sun.shadow.normalBias = 0.02; // ピーターパン(浮き影)防止
     sun.shadow.radius = 2; // PCFカーネル拡大(ほぼ0コストで柔らかく)
@@ -739,17 +770,13 @@ export class Match {
     // ステージパレットから床/遮蔽物の材質を推定し、足音・着弾音のテクスチャを決める
     this.sounds.setSurfaceMaterial(deriveSurfaceMaterials(this.config.stage.palette));
     // 映画的アトモスフィア(ムード照明/奥行きフォグ/草/環境パーティクル/遠景シルエット)。
-    // physics/tags非受領=当たり判定ゼロ・装飾のみ。tierで低スペックは自動ゲート
-    const atmoTier = resolveGraphicsTier(
-      this.settings.graphicsQuality,
-      this.renderer.capabilities.isWebGL2,
-    );
+    // physics/tags非受領=当たり判定ゼロ・装飾のみ。tier(hoist済)で低スペックは自動ゲート
     this.atmosphere = new Atmosphere(
       this.scene,
       this.renderer,
       palette,
       resolveMood(palette),
-      atmoTier,
+      tier,
       this.settings.reduceMotion,
       size,
       boxes,
@@ -3317,6 +3344,7 @@ export class Match {
       respawnIn: Math.max(0, this.player.respawnIn),
       ammo: weapon.magazine.rounds,
       reserve: weapon.magazine.reserve,
+      magSize: weapon.magazine.capacity,
       weaponName: weapon.def.name,
       weaponSlot: this.activeIndex === 0 ? 'PRIMARY' : 'SECONDARY',
       fireMode:

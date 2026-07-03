@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { easeOutCubic } from '../core/easing';
 import type { WeaponDef } from '../game/weapons';
 import { buildGunBody } from './viewmodel';
@@ -41,6 +42,7 @@ export class WeaponPreview {
   private readonly kicker: THREE.DirectionalLight;
   private readonly pedestal: THREE.Mesh;
   private readonly pedestalMat: THREE.ShaderMaterial;
+  private envRT: THREE.WebGLRenderTarget | null = null; // ショールームIBL(PMREM生成物)
   private presentT = 1; // 武器登場ドリーの進捗(setWeaponで0へ)
   private current: THREE.Group | null = null;
 
@@ -73,11 +75,28 @@ export class WeaponPreview {
     this.camera.position.set(0, 0.04, 1.75);
     this.camera.lookAt(0, 0, 0);
 
+    // ショールームIBL: RoomEnvironment(アセットレス・プリミティブ~20メッシュ)を PMREM 化し
+    // scene.environment に一度だけ焼く。金属面に周辺反射が乗り、武器が「陳列棚」の質感になる。
+    // fromScene は RoomEnvironment の geo/mat を解放しないので pmrem.dispose() 後に手動 dispose。
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const roomEnv = new RoomEnvironment();
+    this.envRT = pmrem.fromScene(roomEnv, 0.04);
+    this.scene.environment = this.envRT.texture;
+    pmrem.dispose();
+    roomEnv.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry.dispose();
+      const mat = mesh.material;
+      if (Array.isArray(mat)) for (const m of mat) m.dispose();
+      else mat.dispose();
+    });
+
     this.scene.add(this.pivot);
     // ガンスミス風ライティング: 柔らかいアンビエント + キー + クール寄りのリム
-    // + 下方からのキッカー + 周回アクセント
+    // + 下方からのキッカー + 周回アクセント。IBL を足したぶんキー光は 1.55 へ抑える(白飛び相殺)
     this.scene.add(new THREE.AmbientLight(0xb8c4d6, 0.75));
-    this.key = new THREE.DirectionalLight(0xffffff, 1.7);
+    this.key = new THREE.DirectionalLight(0xffffff, 1.55);
     this.key.position.set(2.2, 3, 2.2);
     this.scene.add(this.key);
     const rim = new THREE.DirectionalLight(0x6f8dff, 0.7);
@@ -158,12 +177,18 @@ export class WeaponPreview {
     if (this.disposed) return;
     this.clearCurrent();
     const { gun } = buildGunBody(def);
-    // マテリアルをこのプレビュー専用に複製して所有(モジュール共有singletonと分離)
+    // マテリアルをこのプレビュー専用に複製して所有(モジュール共有singletonと分離)。
+    // 複製にだけショールームIBLを効かせる(envMapIntensity=0.8・ゲーム/shared は非改変)。
+    const clonePreview = (m: THREE.Material): THREE.Material => {
+      const c = m.clone();
+      if (c instanceof THREE.MeshStandardMaterial) c.envMapIntensity = 0.8;
+      return c;
+    };
     gun.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
       const mat = mesh.material;
-      mesh.material = Array.isArray(mat) ? mat.map((m) => m.clone()) : mat.clone();
+      mesh.material = Array.isArray(mat) ? mat.map(clonePreview) : clonePreview(mat);
     });
     this.fitToView(gun);
     this.pivot.add(gun);
@@ -252,7 +277,7 @@ export class WeaponPreview {
       this.presentT = 1;
       this.pivot.position.set(0, 0, 0);
       this.pivot.scale.setScalar(1);
-      this.key.intensity = 1.7;
+      this.key.intensity = 1.55;
     } else {
       // 登場ドリー: わずかに沈み+奥から迫り上がり、通常スケール・位置へ寄る。
       // 併せてキー光を一瞬持ち上げて「披露」のハイライトを流す
@@ -261,7 +286,7 @@ export class WeaponPreview {
       const breath = Math.sin(now * 0.0016) * 0.01;
       this.pivot.position.set(0, (1 - pres) * -0.14 + breath, (1 - pres) * -0.12);
       this.pivot.scale.setScalar(0.96 + 0.04 * pres);
-      this.key.intensity = 1.7 + (1 - pres) * 0.6;
+      this.key.intensity = 1.55 + (1 - pres) * 0.6;
       // アクセント光を武器の周りへゆっくり周回させ、金属面にハイライトを流す
       const a = now * 0.0006;
       this.accent.position.set(Math.cos(a) * 0.72, 0.35, Math.sin(a) * 0.72);
@@ -294,6 +319,11 @@ export class WeaponPreview {
     this.clearCurrent();
     this.pedestal.geometry.dispose();
     this.pedestalMat.dispose();
+    if (this.envRT) {
+      this.envRT.dispose();
+      this.envRT = null;
+    }
+    this.scene.environment = null;
     this.renderer.dispose();
     // 一過性キャンバスなのでGLコンテキストを明示破棄(ブラウザの同時コンテキスト上限対策)
     this.renderer.forceContextLoss();

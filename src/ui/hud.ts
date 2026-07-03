@@ -55,6 +55,13 @@ const DIRECTIONS: Array<[number, string]> = [
 const FEED_LIFETIME_MS = 4200;
 const PX_PER_DEG = 2.2;
 
+// 円形HPリングの可視弧長。r=38 の円周(2π·38≈238.76)の 240°/360°=2/3 が見える弧。
+// stroke-dasharray '159.17 238.76' と対で使い、offset=ARC*(1-hp比) で満欠を描く。
+const HP_ARC_LEN = 159.17;
+
+// スコアストリーク3段の到達キル数(updateBanner の TRIPLE/RAMPAGE/UNSTOPPABLE と対応)。
+const SS_TIERS: readonly number[] = [3, 5, 7];
+
 export class Hud {
   private readonly el: Record<string, HTMLElement> = {};
   private compassMarks: Array<{ bearing: number; el: HTMLElement }> = [];
@@ -64,6 +71,10 @@ export class Hud {
   private scopeOn = false; // スコープ表示の立ち上がり検出用
   private wasSteady = false; // 息止め成立の立ち上がり検出用(集中グリント再発火)
   private badgeSeq = 0; // バッジSVGの一意ID用カウンタ(gradient/filterのid衝突回避)
+  private lastHpOff = ''; // HPリングの stroke-dashoffset 直近書込み値(無変化フレームの書込み抑止)
+  private lastPipMag = -1; // 弾ピップの生成済み本数(=装弾数)。変化時のみ作り直す
+  private lastPipAmmo = -1; // 弾ピップの点灯本数(=残弾)。変化時のみ点灯を更新
+  private lastSsStreak = -1; // スコアストリーク段の直近キル数(変化時のみ更新)
 
   constructor(private readonly root: HTMLElement) {
     root.innerHTML = `
@@ -77,6 +88,7 @@ export class Hud {
       </div>
       <div class="hud-top-center">
         <div class="hud-compass"><div class="hud-compass-strip" data-id="compass"></div><div class="hud-compass-needle"></div></div>
+        <div class="hud-heading" aria-hidden="true"><span data-id="hdg">0</span><i>°</i></div>
         <div class="hud-timer"><small>TIME</small><strong data-id="timer">5:00</strong></div>
         <div class="hud-objective">
           <div class="hud-teamscore" data-id="teamscore">
@@ -163,15 +175,23 @@ export class Hud {
       <div class="hud-bottom-left ig-panel ig-panel--hud">
         <div class="hud-vitals-heading"><span>VITAL</span><small data-id="hpmax">/ 100</small></div>
         <div class="hud-vitals-row">
-          <div class="hud-hp-num" data-id="hp">100</div>
-          <div class="hud-hp-bar"><div data-id="hpfill"></div></div>
+          <div class="hud-hp-ring">
+            <svg class="hp-ring-svg" viewBox="-50 -50 100 100" aria-hidden="true">
+              <circle class="hp-ring-track" r="38" transform="rotate(-210)" fill="none" stroke-dasharray="159.17 238.76"></circle>
+              <circle class="hp-ring-fill" data-id="hpring" r="38" transform="rotate(-210)" fill="none" stroke-dasharray="159.17 238.76" stroke-dashoffset="0"></circle>
+            </svg>
+            <div class="hud-hp-num" data-id="hp">100</div>
+          </div>
         </div>
       </div>
       <div class="hud-bottom-right ig-panel ig-panel--hud ig-panel--ember">
         <div class="hud-weapon-row"><span data-id="weaponslot">PRIMARY</span><strong class="hud-weapon" data-id="weapon"></strong></div>
         <div class="hud-ammo-row">
-          <div class="hud-ammo"><span data-id="ammo">30</span><span class="hud-reserve" data-id="reserve">/ 120</span></div>
-          <div class="hud-mode" data-id="mode"></div>
+          <div class="hud-ammo-line">
+            <div class="hud-ammo"><span data-id="ammo">30</span><span class="hud-reserve" data-id="reserve">/ 120</span></div>
+            <div class="hud-mode" data-id="mode"></div>
+          </div>
+          <div class="hud-ammo-pips" data-id="ammopips" aria-hidden="true"></div>
         </div>
         <div class="hud-grenade"><span>UTILITY</span><strong data-id="gname"></strong><span class="hud-gcount" data-id="gcount"></span></div>
       </div>
@@ -204,6 +224,11 @@ export class Hud {
       <div class="hud-ult" data-id="ult">
         <div class="hud-ult-bar"><div data-id="ultfill"></div></div>
         <span class="hud-ult-label" data-id="ultlabel">ULT</span>
+      </div>
+      <div class="hud-ss-panel" aria-hidden="true">
+        <div class="hud-ss-slot" data-id="ss0"><i class="ss-fill" data-id="ss0f"></i><b>3</b></div>
+        <div class="hud-ss-slot" data-id="ss1"><i class="ss-fill" data-id="ss1f"></i><b>5</b></div>
+        <div class="hud-ss-slot" data-id="ss2"><i class="ss-fill" data-id="ss2f"></i><b>7</b></div>
       </div>
       <div class="hud-death" data-id="death" hidden>
         <div class="hud-death-title">やられた</div>
@@ -298,6 +323,7 @@ export class Hud {
     this.lastUltActive = false;
     this.scopeOn = false;
     this.wasSteady = false;
+    this.lastSsStreak = -1; // 段の再描画を次フレームで強制(前試合の残値を持ち越さない)
     // R11 キルカメラ状態の完全クリア(試合開始/離脱で黒幕やビネットを残さない)
     document.body.classList.remove('killcam-active');
     for (const id of ['kcveil', 'kcflash'] as const) {
@@ -353,6 +379,7 @@ export class Hud {
     this.updateMovement(snap);
     this.updateBanner(snap);
     this.updateUlt(snap);
+    this.updateScorestreak(snap);
 
     const scoreboard = this.el['scoreboard'];
     if (scoreboard) {
@@ -368,6 +395,8 @@ export class Hud {
 
   private updateCompass(yaw: number, _width: number): void {
     const headingDeg = ((-yaw * 180) / Math.PI + 360 * 4) % 360;
+    // コンパス帯のmask外に置いた数値方位(3桁ゼロ詰め・360°は0°へ丸め込む)
+    this.text('hdg', String(Math.round(headingDeg) % 360).padStart(3, '0'));
     for (const mark of this.compassMarks) {
       const relative = ((mark.bearing - headingDeg + 540) % 360) - 180;
       const visible = Math.abs(relative) <= 65;
@@ -387,6 +416,9 @@ export class Hud {
       crosshair.dataset.reticle = snap.reticleStyle;
     }
     crosshair.style.setProperty('--reticle-color', reticleColorValue(snap.reticleColor));
+    // 覗き込み量を毎フレーム公開。CSS側で circle/chevron 擬似要素レティクルを
+    // ADS進行に応じて消し込む(barはJSのopacityで消えるが擬似要素は非対象なため)。
+    crosshair.style.setProperty('--ads', String(snap.adsProgress));
     if (!snap.alive) {
       crosshair.style.opacity = '0';
       return;
@@ -400,7 +432,8 @@ export class Hud {
     crosshair.style.opacity = '1';
     const fovRad = (snap.fov * Math.PI) / 180;
     const gap = 4 + (Math.tan(snap.spreadRad) / Math.tan(fovRad / 2)) * (height / 2);
-    const barOpacity = String(Math.max(0, 1 - snap.adsProgress * 1.4));
+    // ADS序盤で4本バーを素早く消す(係数2.5=ads≈0.4で消灯)。擬似要素はCSSで同係数消去。
+    const barOpacity = String(Math.max(0, 1 - snap.adsProgress * 2.5));
     const set = (id: string, transform: string) => {
       const bar = this.el[id];
       if (bar) {
@@ -469,11 +502,65 @@ export class Hud {
     this.text('mode', snap.fireMode);
     const ammoEl = this.el['ammo'];
     if (ammoEl) ammoEl.classList.toggle('hud-ammo-low', snap.ammo <= 5);
+    this.updateAmmoPips(snap);
 
     const reload = this.el['reload'];
     if (reload) reload.hidden = !snap.reloading;
     const fill = this.el['reloadfill'];
     if (fill && snap.reloading) fill.style.width = `${snap.reloadRatio * 100}%`;
+  }
+
+  // 現在武器の装弾数。match.ts が snap.magSize を供給すればそれを採用し、
+  // 無い間は「装備直後の残弾=満タン=装弾数」を利用した最大残弾トラッカでフォールバックする。
+  private magSizeOf(snap: MatchSnapshot): number {
+    // magSize は MatchSnapshot の必須フィールド(match.tsが weapon.magazine.capacity を供給)
+    return Math.max(1, Math.floor(snap.magSize));
+  }
+
+  // 弾ピップ列。装弾数ぶんのセルを一度だけ生成し、残弾に応じて先頭から点灯する。
+  // ピップ本数は snap.magSize(=装弾数)基準で正規化(/30 の固定スケール誤りを回避)。
+  private updateAmmoPips(snap: MatchSnapshot): void {
+    const host = this.el['ammopips'];
+    if (!host) return;
+    const mag = this.magSizeOf(snap);
+    // 大容量/無限(素手 magSize 999 等)はピップ列を出さず数値表示のみに退避する。
+    // 上限を設けないとDOMノードが弾倉容量ぶん無制限に増えHUDが崩れヒッチする
+    if (mag > 60) {
+      if (this.lastPipMag !== 0) {
+        host.replaceChildren();
+        this.lastPipMag = 0;
+        this.lastPipAmmo = -1;
+      }
+      return;
+    }
+    if (mag !== this.lastPipMag) {
+      const frag = document.createDocumentFragment();
+      for (let i = 0; i < mag; i += 1) frag.appendChild(document.createElement('i'));
+      host.replaceChildren(frag);
+      this.lastPipMag = mag;
+      this.lastPipAmmo = -1; // セル再生成後は必ず点灯を貼り直す
+    }
+    if (snap.ammo !== this.lastPipAmmo) {
+      const pips = host.children;
+      for (let i = 0; i < pips.length; i += 1) {
+        (pips[i] as HTMLElement).classList.toggle('spent', i >= snap.ammo);
+      }
+      this.lastPipAmmo = snap.ammo;
+    }
+  }
+
+  // BO3起点の縦3段スコアストリーク計器。専用スナップショットは持たないため、
+  // 既存のキルストリーク(TRIPLE/RAMPAGE/UNSTOPPABLE の到達点)への進捗を可視化する。
+  private updateScorestreak(snap: MatchSnapshot): void {
+    if (snap.streak === this.lastSsStreak) return;
+    this.lastSsStreak = snap.streak;
+    for (let i = 0; i < SS_TIERS.length; i += 1) {
+      const at = SS_TIERS[i] ?? 1;
+      const fill = this.el[`ss${i}f`];
+      if (fill) fill.style.transform = `scaleY(${clampN(snap.streak / at, 0, 1)})`;
+      const slot = this.el[`ss${i}`];
+      if (slot) slot.classList.toggle('ss-ready', snap.streak >= at);
+    }
   }
 
   private updateObjective(snap: MatchSnapshot): void {
@@ -568,11 +655,16 @@ export class Hud {
   private updateHp(snap: MatchSnapshot): void {
     this.text('hp', String(snap.hp));
     this.text('hpmax', `/ ${snap.maxHp}`);
-    const fill = this.el['hpfill'];
-    if (fill) {
-      const ratio = snap.hp / snap.maxHp;
-      fill.style.width = `${ratio * 100}%`;
-      fill.classList.toggle('hp-low', ratio < 0.35);
+    const ring = this.el['hpring'];
+    if (ring) {
+      const ratio = clampN(snap.hp / snap.maxHp, 0, 1);
+      // 満タンで offset=0(弧が全て見える)、0で offset=ARC(弧が消える)。
+      const off = (HP_ARC_LEN * (1 - ratio)).toFixed(2);
+      if (off !== this.lastHpOff) {
+        ring.setAttribute('stroke-dashoffset', off);
+        this.lastHpOff = off;
+      }
+      ring.classList.toggle('hp-low', ratio < 0.35);
     }
     const vignette = this.el['vignette'];
     if (vignette) {

@@ -1623,6 +1623,8 @@ tr.score-ally td {
   border: 1.5px solid var(--reticle-color, #fff);
   transform: translate(-50%, -50%);
   box-shadow: 0 0 2px rgba(0, 0, 0, 0.85);
+  /* 擬似要素レティクルはJSの.style.opacity非対象。ADS進行(--ads)で自前に消し込む */
+  opacity: max(0, 1 - var(--ads, 0) * 2.5);
 }
 
 .hud-crosshair[data-reticle='chevron']::before {
@@ -1636,6 +1638,7 @@ tr.score-ally td {
   border-bottom: 2px solid var(--reticle-color, #fff);
   transform: translate(-50%, -150%) rotate(-45deg);
   filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.85));
+  opacity: max(0, 1 - var(--ads, 0) * 2.5);
 }
 
 .hud-hitmarker {
@@ -5375,60 +5378,8 @@ tr.score-ally td {
   color: var(--ember);
 }
 
-/* 6軸バー: ig-bar計器言語(6px 尖り端+4分割ティック+glow) */
-.armory-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.stat-row {
-  display: grid;
-  grid-template-columns: 46px 1fr 26px;
-  align-items: center;
-  gap: 10px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em; /* 和文軸名(威力/連射…) */
-  color: var(--ink-soft);
-  margin-top: 0;
-}
-.stat-bar {
-  position: relative;
-  height: 6px;
-  background: rgba(255, 255, 255, 0.14);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rule-strong) 85%, transparent);
-  overflow: hidden;
-  border-radius: 0;
-  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%);
-}
-.stat-bar i {
-  display: block;
-  height: 100%;
-  width: 100%;
-  transform-origin: left center;
-  background: linear-gradient(90deg, var(--ember-deep), var(--ember));
-  box-shadow: 0 0 6px var(--ember-glow);
-  transition: transform 0.45s var(--ease-out);
-}
-.stat-bar::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    90deg,
-    transparent 0 calc(25% - 1px),
-    rgba(0, 0, 0, 0.7) calc(25% - 1px) 25%
-  );
-}
-.stat-num {
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--signal);
-  text-align: right;
-}
+/* R12: 6軸バーは create-a-class セクション(後方)で .stat-bar--seg として再定義する。
+   旧 .armory-bars/.stat-row/.stat-bar/.stat-num は撤去(result画面は .stat-cell を使うため無害) */
 
 /* 数値4種: 2×2計器セル(1px罫線グリッド) */
 .armory-stats {
@@ -5528,6 +5479,142 @@ tr.score-ally td {
     rgba(255, 255, 255, 0.03) 0 1px,
     transparent 1px 9px
   );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   R12 CREATE-A-CLASS: クラスタブ + 武器グリッド(シルエット) + 10分割
+   セグメント点火バー。R10 armory override 塊の直後に置き(後勝ち)、後方の
+   keyframe/@media レスポンシブより前に置く(レスポンシブ勝ちを維持)。
+   軽量規律: backdrop-filter/無限@keyframes/drop-shadow の新規はゼロ。
+   ══════════════════════════════════════════════════════════════ */
+/* クラスタブ: attach-btn と同じ計器チップ言語(選択=ember塗り) */
+.wclass-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.wcls-tab {
+  padding: 5px 12px 5px 11px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em; /* 和文クラス名 */
+  clip-path: var(--chip-cut);
+  cursor: pointer;
+  transition:
+    color 0.12s var(--ease),
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+.wcls-tab:hover {
+  border-color: var(--glass-edge-lit);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+}
+.wcls-tab.selected {
+  border-color: var(--ember);
+  background: var(--ember);
+  color: #140b08;
+  font-weight: 800;
+}
+
+/* 武器グリッド: auto-fill カード。非アクティブクラスは .off で display:none */
+.weapon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  counter-reset: wpn; /* 通し番号カウンタはグリッドへ移設(旧 .weapon-list から) */
+}
+.weapon-grid .weapon-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--rule);
+  text-align: left;
+  contain: layout; /* カード内レイアウトを封じ込め(タブ切替の再レイアウト波及を抑える) */
+}
+.weapon-grid .weapon-card.off {
+  display: none;
+}
+/* グリッドでは通し番号(::after カウンタ)を出さない=シルエット優先 */
+.weapon-grid .weapon-card::after {
+  content: none;
+}
+
+/* 2Dシルエット: 本体=currentColor(ink系)、銃口/光学の発光のみ tracer 色を焼き込み済み */
+.weapon-sil {
+  display: block;
+  height: 42px;
+  color: var(--ink-soft);
+  contain: layout paint;
+}
+.weapon-sil .wsil {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.weapon-card.selected .weapon-sil {
+  color: var(--ink);
+}
+.weapon-card.locked .weapon-sil {
+  color: var(--ink-faint);
+  opacity: 0.55;
+}
+.weapon-grid .weapon-name {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.weapon-grid .weapon-mode {
+  font-size: 10.5px;
+}
+
+/* 主ステータス(横バー維持): 10分割セグメント点火バー。glow(box-shadow外光)は使わない */
+.armory-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.stat-seg-row {
+  display: grid;
+  grid-template-columns: 42px 1fr 22px;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.stat-seg-label {
+  font-weight: 600;
+  letter-spacing: 0.06em; /* 和文軸名(威力/連射…) */
+}
+.stat-bar--seg {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+}
+.stat-bar--seg i {
+  flex: 1;
+  background: var(--hud-track);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rule-strong) 70%, transparent);
+  clip-path: polygon(2px 0, 100% 0, calc(100% - 2px) 100%, 0 100%);
+}
+.stat-bar--seg i.on {
+  background: linear-gradient(180deg, var(--ember), var(--ember-deep));
+  box-shadow: none;
+}
+.stat-seg-num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--signal);
+  text-align: right;
 }
 
 /* 投擲物の所持数チップ */
@@ -7120,12 +7207,6 @@ tr.score-ally td {
     opacity: 0;
   }
 }
-@keyframes stat-ignite {
-  from {
-    transform: scaleX(0);
-  }
-  /* to省略=インラインstyleのscaleX値へ収束 */
-}
 @keyframes chip-ignite {
   0% {
     filter: none;
@@ -7246,25 +7327,6 @@ tr.score-ally td {
   }
   :root:not(.reduce-motion) :is(.menu-pause, .menu-result) {
     animation: overlay-dim 0.2s var(--ease-out) both;
-  }
-  /* ARMORY 6軸バー点火: 武器切替のたびinnerHTML再生成→毎回scaleX(0)から着火 */
-  :root:not(.reduce-motion) .stat-bar i {
-    animation: stat-ignite 0.5s var(--ease-out);
-  }
-  :root:not(.reduce-motion) .armory-bars .stat-row:nth-child(2) .stat-bar i {
-    animation-delay: 0.04s;
-  }
-  :root:not(.reduce-motion) .armory-bars .stat-row:nth-child(3) .stat-bar i {
-    animation-delay: 0.08s;
-  }
-  :root:not(.reduce-motion) .armory-bars .stat-row:nth-child(4) .stat-bar i {
-    animation-delay: 0.12s;
-  }
-  :root:not(.reduce-motion) .armory-bars .stat-row:nth-child(5) .stat-bar i {
-    animation-delay: 0.16s;
-  }
-  :root:not(.reduce-motion) .armory-bars .stat-row:nth-child(6) .stat-bar i {
-    animation-delay: 0.2s;
   }
   /* アタッチメント確定の火花ブルーム(クラスtoggleのみ=付与瞬間に1回だけ) */
   :root:not(.reduce-motion) .attach-btn.selected {
@@ -7967,11 +8029,18 @@ tr.score-ally td {
   text-shadow: var(--hud-tsh);
 }
 .hud-ammo-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 16px;
+  /* 基底が display:grid のため flex-direction が不活性化する。明示 flex 化してから縦積みへ */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
   margin-top: 8px;
+}
+.hud-ammo-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 14px;
 }
 .hud-ammo {
   font-family: var(--mono);
@@ -8634,6 +8703,174 @@ tr.score-ally td {
   :root:not(.reduce-motion) .hud-boss:not([hidden]) {
     animation: boss-in 0.32s var(--ease-out) both;
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   R12 戦闘HUD刷新(BO3起点の独自HUD)。R10 HUDレイヤ内・レスポンシブより前へ。
+   軽量規律: backdrop-filter/無限@keyframes/drop-shadow の新規はゼロ。
+   contain を四隅パネルへ付け描画コストを据え置き〜微減にする。
+   ══════════════════════════════════════════════════════════════════ */
+/* 四隅計器パネル: レイアウト封じ込め(paintは既存clip-pathと冗長なのでlayoutのみ) */
+.ig-panel--hud {
+  contain: layout;
+}
+
+/* ── H6'. 円形HPリング(可視弧240°・中央HP数値) ── */
+.hud-vitals-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+.hud-hp-ring {
+  position: relative;
+  width: 90px;
+  height: 90px;
+}
+.hp-ring-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.hp-ring-track,
+.hp-ring-fill {
+  fill: none;
+  stroke-width: 7;
+  stroke-linecap: butt;
+}
+.hp-ring-track {
+  stroke: rgba(255, 255, 255, 0.12);
+}
+.hp-ring-fill {
+  stroke: var(--signal);
+  transition:
+    stroke-dashoffset 0.18s var(--ease-out),
+    stroke 0.2s var(--ease);
+}
+.hp-ring-fill.hp-low {
+  stroke: var(--threat);
+}
+.hud-hp-ring .hud-hp-num {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
+  line-height: 1;
+  color: #fff;
+  text-shadow: var(--hud-tsh);
+}
+
+/* ── H7'. 弾数ピップ列(装弾数=snap.magSize基準・右詰め) ── */
+.hud-ammo-pips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px 3px;
+  max-width: 224px;
+}
+.hud-ammo-pips i {
+  width: 5px;
+  height: 9px;
+  background: var(--ember);
+  clip-path: polygon(1px 0, 100% 0, calc(100% - 1px) 100%, 0 100%);
+}
+.hud-ammo-pips i.spent {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* ── H3'. 数値方位readout(コンパス帯のmask外・.hud-top-center直下) ── */
+.hud-heading {
+  width: fit-content;
+  margin: 4px auto 0;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--signal);
+  text-shadow: var(--hud-tsh);
+}
+.hud-heading i {
+  margin-left: 1px;
+  color: var(--ink-soft);
+  font-style: normal;
+}
+
+/* ── H8'. 八角ミニマップ枠(疑似要素・DOM/JS変更ゼロ) ── */
+.hud-radar {
+  isolation: isolate; /* 枠の擬似要素(z-index:-1)を自身の重なり文脈へ閉じ込める */
+}
+.hud-radar::before,
+.hud-radar::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+}
+.hud-radar::before {
+  inset: -4px;
+  background: var(--signal-dim);
+  opacity: 0.6;
+}
+.hud-radar::after {
+  inset: -1px;
+  background: color-mix(in srgb, var(--void, #07090b) 90%, transparent);
+}
+
+/* ── H22. スコアストリーク縦3段(BO3起点の独自計器) ── */
+.hud-ss-panel {
+  position: absolute;
+  right: 22px;
+  top: 42%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.hud-ss-slot {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--rule-strong);
+  background: var(--glass-heavy);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  overflow: hidden;
+}
+.ss-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 100%;
+  transform: scaleY(0);
+  transform-origin: bottom;
+  background: linear-gradient(0deg, var(--signal-dim), var(--signal));
+  transition: transform 0.25s var(--ease-out);
+}
+.hud-ss-slot b {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  text-shadow: var(--hud-tsh);
+}
+/* 到達段は静的な内側リング(box-shadow inset・無限アニメ無し) */
+.hud-ss-slot.ss-ready {
+  border-color: var(--ember);
+  box-shadow: inset 0 0 0 1px var(--ember);
+}
+.hud-ss-slot.ss-ready .ss-fill {
+  background: linear-gradient(0deg, var(--ember-deep), var(--ember));
+}
+.hud-ss-slot.ss-ready b {
+  color: #fff;
 }
 
 /* ── H21. レスポンシブ(基底@mediaを後勝ちで潰したためここで再宣言) ── */

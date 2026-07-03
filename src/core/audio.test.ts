@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BGM_PROFILES,
   BGM_PROGRESSION,
+  BGM_ROOT_HZ,
   bgmNoteHz,
+  type BgmProfileKey,
   COMPRESSOR_PARAMS,
   dbToGain,
   deriveReverbPreset,
@@ -19,6 +22,7 @@ import {
   REVERB_PRESETS,
   scoreVoice,
   SHOT_PROFILES,
+  SoundKit,
   type VoiceLike,
 } from './audio';
 import { STAGES } from '../game/stages';
@@ -238,12 +242,13 @@ describe('R9 ミキシング/BGM理論', () => {
     expect(h05).toBeGreaterThanOrEqual(800);
   });
 
-  it('layerGains: heatに対し単調・全て0..1、パッドは常時>=0.5', () => {
+  it('layerGains: heatに対し単調・全て0..1、パッドは常時>=0.5、leadは最後に立つ', () => {
     let prev = layerGains(0);
     expect(prev.pad).toBeCloseTo(0.5, 5);
+    expect(prev.lead).toBe(0); // heat=0 では歪みリードは無音
     for (const h of [0.2, 0.4, 0.6, 0.8, 1]) {
       const g = layerGains(h);
-      for (const k of ['pad', 'bass', 'perc', 'hat', 'arp'] as const) {
+      for (const k of ['pad', 'bass', 'perc', 'hat', 'arp', 'lead'] as const) {
         expect(g[k]).toBeGreaterThanOrEqual(prev[k]);
         expect(g[k]).toBeGreaterThanOrEqual(0);
         expect(g[k]).toBeLessThanOrEqual(1);
@@ -251,6 +256,8 @@ describe('R9 ミキシング/BGM理論', () => {
       prev = g;
     }
     expect(layerGains(1).arp).toBe(1);
+    expect(layerGains(1).lead).toBe(1);
+    expect(layerGains(0.6).lead).toBe(0); // lead は heat>0.6 で初めて立ち上がる
   });
 
   it('BGM_PROGRESSION: 4小節×3和音、bgmNoteHzはD2基準のオクターブ倍', () => {
@@ -259,5 +266,73 @@ describe('R9 ミキシング/BGM理論', () => {
     expect(bgmNoteHz(0)).toBeCloseTo(73.42, 2);
     expect(bgmNoteHz(0, 1)).toBeCloseTo(146.84, 2);
     expect(bgmNoteHz(12)).toBeCloseTo(146.84, 2);
+  });
+
+  it('bgmNoteHz: 第3引数 rootHz で調を移す(既定は D2、指定でその周波数基準)', () => {
+    // 既定は BGM_ROOT_HZ(D2)基準で従来と一致
+    expect(bgmNoteHz(0)).toBeCloseTo(BGM_ROOT_HZ, 5);
+    expect(bgmNoteHz(0, 0, BGM_ROOT_HZ)).toBeCloseTo(BGM_ROOT_HZ, 5);
+    // rootHz を渡すとその周波数が基準(semitone/octave の倍率は不変)
+    expect(bgmNoteHz(0, 0, 100)).toBeCloseTo(100, 5);
+    expect(bgmNoteHz(12, 0, 100)).toBeCloseTo(200, 5);
+    expect(bgmNoteHz(0, 1, 100)).toBeCloseTo(200, 5);
+    expect(bgmNoteHz(7, 0, 100)).toBeCloseTo(100 * Math.pow(2, 7 / 12), 5);
+  });
+});
+
+describe('R12 ステージ/ムード別 BGMプロファイル', () => {
+  const KEYS: BgmProfileKey[] = ['day', 'dusk', 'night', 'overcast', 'snow', 'night-neon'];
+
+  it('BGM_PROFILES: 全キー(MoodId + night-neon)が存在し、各progressionは4小節×3和音', () => {
+    for (const key of KEYS) {
+      const prof = BGM_PROFILES[key];
+      expect(prof).toBeDefined();
+      expect(prof.progression.length).toBe(4);
+      for (const chord of prof.progression) expect(chord.length).toBe(3);
+      // 各パラメータの健全性
+      expect(prof.rootHz).toBeGreaterThan(0);
+      expect(prof.bpmBase).toBeGreaterThan(0);
+      expect(prof.bpmRange).toBeGreaterThanOrEqual(0);
+      expect(prof.leadDrive).toBeGreaterThanOrEqual(0);
+      expect(prof.padWet).toBeGreaterThanOrEqual(0);
+      expect(prof.padWet).toBeLessThanOrEqual(0.05); // 残響薄めの規律
+      expect(prof.hatBrightHz).toBeGreaterThan(0);
+    }
+    // Record網羅: 余計なキーが無い
+    expect(Object.keys(BGM_PROFILES).sort()).toEqual([...KEYS].sort());
+  });
+
+  it('BGM_PROFILES: 隣接ムードが「移調だけ」に潰れない({rootHz,padType,arpType,bpm帯}が不一致)', () => {
+    const sig = (k: BgmProfileKey): string => {
+      const p = BGM_PROFILES[k];
+      return `${p.rootHz}|${p.padType}|${p.arpType}|${p.bpmBase}`;
+    };
+    const sigs = KEYS.map(sig);
+    expect(new Set(sigs).size).toBe(KEYS.length); // 全て相異なる識別子
+    // rootHz は全ムードで相異なる(単なる移調反復の回避)
+    const roots = KEYS.map((k) => BGM_PROFILES[k].rootHz);
+    expect(new Set(roots).size).toBe(KEYS.length);
+  });
+
+  it('BGM_PROFILES: 設計上の音色/リズム識別(overcast=triangle低cutoff、night/neon=saw+drive、snow=sparse)', () => {
+    expect(BGM_PROFILES.overcast.padType).toBe('triangle');
+    expect(BGM_PROFILES.overcast.leadDrive).toBe(0);
+    expect(BGM_PROFILES.night.padType).toBe('sawtooth');
+    expect(BGM_PROFILES.night.bassMode).toBe('drive');
+    expect(BGM_PROFILES.night.leadDrive).toBeGreaterThan(0);
+    expect(BGM_PROFILES['night-neon'].bassMode).toBe('drive');
+    expect(BGM_PROFILES['night-neon'].leadDrive).toBeGreaterThan(BGM_PROFILES.night.leadDrive);
+    expect(BGM_PROFILES.snow.sparse).toBe(true);
+    expect(BGM_PROFILES.snow.leadDrive).toBe(0);
+  });
+
+  it('setMusicProfile: 全キーで例外なく切替でき、同一キー/未再生では安全(AudioContext不要)', () => {
+    const kit = new SoundKit();
+    for (const key of KEYS) {
+      expect(() => kit.setMusicProfile(key)).not.toThrow();
+      expect(() => kit.setMusicProfile(key)).not.toThrow(); // 同一キーの早期return経路
+    }
+    // 再生前(bgmStopped=true)は stopBgm() を呼ばないので AudioContext 未生成でも安全
+    expect(() => kit.setMusicProfile('day')).not.toThrow();
   });
 });

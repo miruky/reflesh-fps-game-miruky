@@ -55,6 +55,7 @@ import {
   PRIMARY_IDS,
   SECONDARY_IDS,
   WEAPON_DEFS,
+  type ViewModelShape,
   type WeaponClass,
   type WeaponDef,
 } from '../game/weapons';
@@ -272,6 +273,182 @@ const LOGO_SVG = `
   <path d="M32 14v8M32 42v8M18 32h8M38 32h8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
   <path class="spark" filter="url(#lg-glow)" d="M32 20l3.6 7.6L43 32l-7.4 3.4L32 44l-3.6-8.6L21 32l7.4-4.4z"/>
 </svg>`;
+
+// ── ARMORY 兵装カードの2D武器シルエット(アセットレス・純関数+メモ化) ──
+// 本体は currentColor(CSSの --ink 系)、銃口/光学の発光アクセントのみ tracerColor を焼く。
+// メモ化キーは `${shape}|${tracerColor}`(shape単独だとトレーサ色を無視するバグになる)。
+const silCache = new Map<string, string>();
+
+// shape 未指定の武器(=一部の副武器)用のクラス既定シルエット。
+const CLASS_SHAPE: Record<WeaponClass, ViewModelShape> = {
+  ar: 'rifle',
+  smg: 'smg',
+  marksman: 'dmr',
+  sniper: 'sniper-bolt',
+  shotgun: 'shotgun-pump',
+  br: 'rifle',
+  lmg: 'lmg-belt',
+  pistol: 'pistol',
+};
+
+interface SilSpec {
+  arch: 'ar' | 'bullpup' | 'smg' | 'dmr' | 'sniper' | 'shotgun' | 'lmg' | 'pistol' | 'revolver' | 'fists';
+  barrel?: number; // 銃口X(viewBox 0..128)
+  mag?: 'curved' | 'straight' | 'box' | 'drum' | 'tube' | 'twin' | 'none';
+  optic?: 'iron' | 'red' | 'scope' | 'long';
+  stock?: 'full' | 'skel' | 'none' | 'bull';
+}
+
+const SHAPE_SIL: Record<ViewModelShape, SilSpec> = {
+  rifle: { arch: 'ar', barrel: 118, mag: 'curved', optic: 'red', stock: 'full' },
+  carbine: { arch: 'ar', barrel: 106, mag: 'curved', optic: 'red', stock: 'skel' },
+  bullpup: { arch: 'bullpup', barrel: 116, mag: 'curved', optic: 'red', stock: 'full' },
+  smg: { arch: 'smg', barrel: 98, mag: 'straight', optic: 'red', stock: 'skel' },
+  pdw: { arch: 'smg', barrel: 92, mag: 'straight', optic: 'iron', stock: 'skel' },
+  'machine-pistol': { arch: 'smg', barrel: 82, mag: 'straight', optic: 'iron', stock: 'none' },
+  dmr: { arch: 'dmr', barrel: 120, mag: 'straight', optic: 'scope', stock: 'full' },
+  'sniper-bolt': { arch: 'sniper', barrel: 124, mag: 'straight', optic: 'long', stock: 'full' },
+  'dsr-bp': { arch: 'sniper', barrel: 126, mag: 'box', optic: 'long', stock: 'bull' },
+  fists: { arch: 'fists' },
+  'shotgun-pump': { arch: 'shotgun', barrel: 116, mag: 'tube', optic: 'iron', stock: 'full' },
+  'shotgun-auto': { arch: 'shotgun', barrel: 112, mag: 'box', optic: 'iron', stock: 'full' },
+  'shotgun-double': { arch: 'shotgun', barrel: 120, mag: 'twin', optic: 'iron', stock: 'full' },
+  'lmg-belt': { arch: 'lmg', barrel: 122, mag: 'box', optic: 'red', stock: 'full' },
+  'lmg-drum': { arch: 'lmg', barrel: 118, mag: 'drum', optic: 'red', stock: 'full' },
+  pistol: { arch: 'pistol' },
+  revolver: { arch: 'revolver' },
+};
+
+function tracerHex(color: number): string {
+  return '#' + (color & 0xffffff).toString(16).padStart(6, '0');
+}
+
+const rc = (x: number, y: number, w: number, h: number): string =>
+  `<rect x="${x}" y="${y}" width="${w}" height="${h}"/>`;
+const pg = (pts: string): string => `<polygon points="${pts}"/>`;
+const ci = (x: number, y: number, r: number): string => `<circle cx="${x}" cy="${y}" r="${r}"/>`;
+
+// 光学(照準器)を上面へ。iron/red/scope/long で長さと発光レンズが変わる
+function silOptic(kind: string | undefined, barrel: number, b: string[], a: string[]): void {
+  if (kind === 'red') {
+    b.push(rc(44, 10, 15, 6));
+    a.push(`<rect x="46" y="11" width="4.5" height="4" fill="__T__"/>`);
+  } else if (kind === 'scope') {
+    b.push(rc(40, 9, 28, 6), rc(44, 15, 2, 2), rc(60, 15, 2, 2));
+    a.push(`<rect x="64" y="9.5" width="3.4" height="5" fill="__T__"/>`);
+  } else if (kind === 'long') {
+    b.push(rc(34, 7, 42, 6), pg('76,7 82,9 82,11 76,13'), rc(44, 13, 2, 3), rc(64, 13, 2, 3));
+    a.push(`<rect x="79.5" y="8.6" width="3" height="4.8" fill="__T__"/>`);
+  } else {
+    // iron: 前後サイトポスト
+    b.push(rc(barrel - 14, 13.5, 2, 4), rc(41, 13, 2, 4));
+  }
+}
+
+// 弾倉(受け下)。curved/straight/box/drum、tube/twin は銃身系(別処理)
+function silMag(kind: string | undefined, b: string[]): void {
+  if (kind === 'curved') b.push(pg('53,27 64,27 68,43 57,43'));
+  else if (kind === 'straight') b.push(pg('53,27 63,27 64,42 55,42'));
+  else if (kind === 'box') b.push(rc(52, 27, 13, 15));
+  else if (kind === 'drum') b.push(rc(54, 27, 8, 4), ci(58, 35, 8.5));
+}
+
+function silInner(spec: SilSpec, tracer: string): string {
+  const b: string[] = [];
+  const a: string[] = [];
+  const barrel = spec.barrel ?? 116;
+
+  if (spec.arch === 'fists') {
+    b.push(
+      pg('46,16 70,16 76,20 76,32 70,36 46,36 42,32 42,20'),
+      rc(50, 12, 4, 6),
+      rc(57, 11, 4, 7),
+      rc(64, 12, 4, 6),
+      pg('42,24 36,28 40,34 46,32'),
+    );
+    a.push(`<rect x="70" y="22" width="6" height="4" fill="${tracer}"/>`);
+  } else if (spec.arch === 'pistol') {
+    b.push(
+      rc(44, 17, 40, 8),
+      pg('48,25 62,25 58,42 44,41'),
+      rc(60, 15, 3, 2),
+      rc(46, 15, 3, 2),
+      rc(60, 25, 10, 3),
+    );
+    a.push(`<rect x="82" y="18.5" width="4" height="4" fill="${tracer}"/>`);
+  } else if (spec.arch === 'revolver') {
+    b.push(
+      rc(48, 17, 22, 9),
+      rc(70, 19, 22, 3),
+      ci(58, 24, 7.2),
+      pg('48,26 60,26 55,42 45,40'),
+      pg('46,15 52,14 52,18 46,18'),
+    );
+    a.push(`<rect x="89" y="19" width="3.5" height="3.4" fill="${tracer}"/>`, `<circle cx="58" cy="24" r="2.4" fill="${tracer}"/>`);
+  } else {
+    // ── 長物: 受け / 銃身 / ハンドガード / ストック / グリップ / 弾倉 / 光学 ──
+    const bull = spec.arch === 'bullpup' || spec.stock === 'bull';
+    b.push(bull ? rc(8, 16, 64, 11) : rc(34, 16, 36, 11));
+    b.push(rc(64, 17, 10, 9)); // チャンバーブロック
+    b.push(rc(72, 18.5, Math.max(4, barrel - 82), 6.5)); // ハンドガード
+    b.push(rc(74, 20.2, barrel - 74, 2.6)); // 銃身
+    // ストック
+    if (!bull) {
+      if (spec.stock === 'full') b.push(pg('8,17 22,15 34,16 34,27 8,28'));
+      else if (spec.stock === 'skel') b.push(pg('10,16 34,16 34,18.5 16,19 16,24 34,24 34,27 10,27'));
+    }
+    // グリップ+トリガーガード
+    b.push(pg('42,27 51,27 48,41 40,41'), rc(50, 27.5, 11, 3));
+    // 弾倉
+    if (spec.mag === 'tube') {
+      b.push(rc(74, 24.4, barrel - 82, 2.6)); // 銃身下チューブ弾倉(ポンプ/オート散弾)
+      b.push(rc(78, 22.6, 12, 2.2)); // ポンプフォアグリップ
+    } else if (spec.mag === 'twin') {
+      b.push(rc(74, 24.2, barrel - 74, 2.6)); // 二連の下銃身
+    } else if (bull) {
+      b.push(pg('20,27 31,27 33,42 22,42')); // ブルパップ弾倉(グリップ後方)
+    } else {
+      silMag(spec.mag, b);
+    }
+    // 光学
+    silOptic(spec.optic, barrel, b, a);
+    // 銃口アクセント(+短いマズルフラッシュ)
+    a.push(
+      `<rect x="${barrel - 5}" y="19.4" width="5" height="3.4" fill="${tracer}"/>`,
+      `<polygon points="${barrel},20.4 ${barrel + 4},21.6 ${barrel},22.8" fill="${tracer}" opacity="0.75"/>`,
+    );
+  }
+
+  const body = b.join('');
+  const accent = a.join('').replace(/__T__/g, tracer);
+  return `<g fill="currentColor">${body}</g><g>${accent}</g>`;
+}
+
+// 武器シルエットSVG(メモ化)。shape 別+tracer色別にキャッシュする。
+function weaponSilSVG(shape: ViewModelShape, tracerColor: number): string {
+  const key = `${shape}|${tracerColor}`;
+  const hit = silCache.get(key);
+  if (hit !== undefined) return hit;
+  const spec = SHAPE_SIL[shape] ?? SHAPE_SIL.rifle;
+  const svg = `<svg class="wsil" viewBox="0 0 128 44" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${silInner(spec, tracerHex(tracerColor))}</svg>`;
+  silCache.set(key, svg);
+  return svg;
+}
+
+// 兵装カードの派生スタット(横バーの副次表示)。DPS/確殺弾数/実効RPM/TTKを WeaponDef から導出。
+function computeDerivedStats(def: WeaponDef): {
+  dps: number;
+  shotsToKill: number;
+  effRpm: number;
+  ttk: number;
+} {
+  const perShot = def.damage * def.pellets;
+  const rps = def.rpm / 60;
+  const dps = Math.round(perShot * rps);
+  const shotsToKill = Math.max(1, Math.ceil(100 / Math.max(1, perShot)));
+  const ttk = Math.round(((shotsToKill - 1) * 60000) / Math.max(1, def.rpm));
+  return { dps, shotsToKill, effRpm: def.rpm, ttk };
+}
 
 export class Menu {
   private selection: MenuSelection = {
@@ -576,11 +753,12 @@ export class Menu {
                   <div class="armory-list">
                     <section class="menu-section">
                       <h2>メイン武器</h2>
-                      <div class="weapon-list" data-id="weapons"></div>
+                      <div class="wclass-tabs" data-id="wclass-tabs" role="tablist" aria-label="武器クラス"></div>
+                      <div class="weapon-grid" data-id="weapons"></div>
                     </section>
                     <section class="menu-section">
                       <h2>副武器</h2>
-                      <div class="weapon-list" data-id="secondaries"></div>
+                      <div class="weapon-grid weapon-grid--sec" data-id="secondaries"></div>
                     </section>
                     <section class="menu-section">
                       <h2>アタッチメント</h2>
@@ -1270,25 +1448,55 @@ export class Menu {
 
   private renderWeapons(): void {
     const list = this.query('weapons');
+    const tabsHost = this.query('wclass-tabs');
     list.innerHTML = '';
+    tabsHost.innerHTML = '';
     const level = this.playerLevel();
     // 保存されていた選択がロック中(記録の読み込み直後など)なら初期武器へ戻す
     if (!isUnlocked('weapon', this.selection.primaryId, level)) {
       this.selection.primaryId = 'kaede-ar';
     }
-    // クラス別に見出し付きでグループ化(24武器を読みやすく)
-    for (const cls of CLASS_ORDER) {
-      const ids = PRIMARY_IDS.filter((id) => WEAPON_DEFS[id]?.class === cls);
-      if (ids.length === 0) continue;
-      const head = document.createElement('div');
-      head.className = 'weapon-class-head';
-      head.textContent = CLASS_LABELS[cls];
-      list.appendChild(head);
-      for (const id of ids) list.appendChild(this.weaponCard(id, 'primary'));
+    // 武器を持つクラスだけタブ化(空クラスは出さない)
+    const classes = CLASS_ORDER.filter((cls) =>
+      PRIMARY_IDS.some((id) => WEAPON_DEFS[id]?.class === cls),
+    );
+    // 全28枚を1グリッドへ入れておき、タブで表示クラスだけ display させる
+    // (data-cls=絞り込み用 / data-weapon=選択用。タブには data-weapon を付けない)
+    for (const cls of classes) {
+      for (const id of PRIMARY_IDS.filter((id) => WEAPON_DEFS[id]?.class === cls)) {
+        list.appendChild(this.weaponCard(id, 'primary'));
+      }
     }
-    this.stagger(list); // 入場アニメ(listitem-in)の--i付与。見出し→カードの順に流れる
+    this.stagger(list); // 入場アニメ(listitem-in)の--i付与
+    for (const cls of classes) {
+      const tab = document.createElement('button');
+      tab.type = 'button';
+      tab.className = 'wcls-tab';
+      tab.dataset.cls = cls;
+      tab.setAttribute('role', 'tab');
+      tab.textContent = CLASS_LABELS[cls];
+      tab.addEventListener('click', () => this.showWeaponClass(cls));
+      tabsHost.appendChild(tab);
+    }
+    // 既定タブ=選択中の主武器のクラス(初期は数枚のみペイント=28枚一括より軽い)
+    const activeCls = WEAPON_DEFS[this.selection.primaryId]?.class ?? classes[0] ?? 'ar';
+    this.showWeaponClass(activeCls);
     this.markSelected(list, 'weapon', this.selection.primaryId);
     this.previewWeapon(this.currentPrimaryDef());
+  }
+
+  // 表示クラスの切替。該当クラス以外のカードを display:none(.off)にし、タブの選択状態を更新する
+  private showWeaponClass(cls: WeaponClass): void {
+    const list = this.query('weapons');
+    list.querySelectorAll<HTMLElement>('.weapon-card').forEach((card) => {
+      card.classList.toggle('off', card.dataset.cls !== cls);
+    });
+    const tabs = this.query('wclass-tabs');
+    tabs.querySelectorAll<HTMLElement>('.wcls-tab').forEach((tab) => {
+      const on = tab.dataset.cls === cls;
+      tab.classList.toggle('selected', on);
+      tab.setAttribute('aria-selected', String(on));
+    });
   }
 
   private renderSecondaries(): void {
@@ -1297,6 +1505,7 @@ export class Menu {
     const level = this.playerLevel();
     if (!isUnlocked('weapon', this.selection.secondaryId, level))
       this.selection.secondaryId = 'suzume';
+    // 副武器はハンドガン1クラスのためタブ無しでグリッド直描画
     for (const id of SECONDARY_IDS) list.appendChild(this.weaponCard(id, 'secondary'));
     this.stagger(list);
     this.markSelected(list, 'weapon2', this.selection.secondaryId);
@@ -1308,9 +1517,11 @@ export class Menu {
     const level = this.playerLevel();
     const unlocked = isUnlocked('weapon', id, level);
     const card = document.createElement('button');
+    card.type = 'button';
     card.className = unlocked ? 'weapon-card' : 'weapon-card locked';
     const key = slot === 'primary' ? 'weapon' : 'weapon2';
     card.dataset[key] = id;
+    card.dataset.cls = def.class; // タブ絞り込み用(副武器グリッドでは未使用=無害)
     const mode =
       def.mode === 'auto'
         ? 'フルオート'
@@ -1320,7 +1531,11 @@ export class Menu {
     const lockNote = unlocked
       ? ''
       : `<span class="locked-note">Lv ${unlockLevelOf('weapon', id)} で解放</span>`;
-    card.innerHTML = `<span class="weapon-name">${def.name}</span><span class="weapon-mode">${mode} / 装弾 ${def.magazineSize}</span>${lockNote}`;
+    const shape = def.shape ?? CLASS_SHAPE[def.class] ?? 'rifle';
+    card.innerHTML =
+      `<span class="weapon-sil" aria-hidden="true">${weaponSilSVG(shape, def.tracerColor)}</span>` +
+      `<span class="weapon-name">${def.name}</span>` +
+      `<span class="weapon-mode">${mode} / 装弾 ${def.magazineSize}</span>${lockNote}`;
     if (!unlocked) {
       card.disabled = true;
       return card;
@@ -1358,22 +1573,26 @@ export class Menu {
     const statsEl = this.root.querySelector<HTMLElement>('[data-id="armory-stats"]');
     if (!name || !barsEl || !statsEl) return;
     name.textContent = def.name;
+    // 主ステータスはBO3語彙の横バー(10分割セグメント点火バー)を維持する
     const bars = computeWeaponBars(def);
     barsEl.innerHTML = BAR_AXES.map(([k, label]) => this.bar(label, bars[k])).join('');
-    const dps = def.damage * def.pellets;
+    // 派生スタットは副次表示(DPS / 確殺弾数 / TTK / RPM)
+    const d = computeDerivedStats(def);
     statsEl.innerHTML =
-      `<span>ダメージ <b>${dps}</b></span><span>RPM <b>${def.rpm}</b></span>` +
-      `<span>装弾 <b>${def.magazineSize}</b></span><span>射程 <b>${Math.round(def.falloff.end)}</b>m</span>`;
+      `<span>DPS <b>${d.dps}</b></span><span>確殺 <b>${d.shotsToKill}</b></span>` +
+      `<span>TTK <b>${d.ttk}</b><em>ms</em></span><span>RPM <b>${d.effRpm}</b></span>`;
   }
 
+  // 10分割セグメント点火バー(0..10)。左から value 個を点灯。box-shadow glow は使わない。
   private bar(label: string, value: number): string {
-    // 数値も併記し、棒はscaleXで描く(GPU合成・リフローなし)
-    return `
-      <span class="stat-row">
-        <span class="stat-label">${label}</span>
-        <span class="stat-bar"><i style="transform:scaleX(${value / 10})"></i></span>
-        <span class="stat-num">${value}</span>
-      </span>`;
+    const v = Math.max(0, Math.min(10, Math.round(value)));
+    let segs = '';
+    for (let i = 0; i < 10; i += 1) segs += i < v ? '<i class="on"></i>' : '<i></i>';
+    return (
+      `<span class="stat-seg-row"><span class="stat-seg-label">${label}</span>` +
+      `<span class="stat-bar--seg">${segs}</span>` +
+      `<span class="stat-seg-num">${v}</span></span>`
+    );
   }
 
   private renderProfile(): void {

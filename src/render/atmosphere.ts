@@ -188,10 +188,12 @@ export function placeGrass(
 
 // tier 別の予算。low は完全ゲート(0=何も作らない)。
 function grassBudget(tier: GraphicsQuality): number {
-  return tier === 'high' ? 4000 : tier === 'medium' ? 2000 : 0;
+  // R12軽量化: 見た目を保ったまま確定的に頂点削減(high 4000→3000, med 2000→1500)
+  return tier === 'high' ? 3000 : tier === 'medium' ? 1500 : 0;
 }
 function particleBudget(tier: GraphicsQuality): number {
-  return tier === 'high' ? 1500 : tier === 'medium' ? 800 : 0;
+  // R12軽量化: サイズ/密度で視覚維持しつつ数を確定削減(high 1500→1100)
+  return tier === 'high' ? 1100 : tier === 'medium' ? 800 : 0;
 }
 
 // ============================================================================
@@ -362,26 +364,30 @@ export class Atmosphere {
     if (tier === 'low') return;
 
     const preset = MOOD_PRESETS[mood];
-    this.buildGroundFog(size);
+    this.buildGroundFog(size, tier);
     this.buildGrass(size, boxes, grassBudget(tier));
     this.buildParticles(palette.particle ?? preset.particle, particleBudget(tier));
     this.buildSilhouette(palette.silhouette ?? preset.silhouette, mood, size);
     this.buildRim(preset.rim, sunDir, size);
   }
 
-  // ── グラウンドフォグ: カメラ追従の板3枚。上端≤1.1mで立ち姿の胴/頭を隠さない ──
-  private buildGroundFog(size: number): void {
+  // ── グラウンドフォグ: カメラ追従の板。上端≤1.1mで立ち姿の胴/頭を隠さない ──
+  // R12軽量化: highは3枚(厚み)、mediumは1枚(αオーバードロー-66%・opacity増で密度代償)
+  private buildGroundFog(size: number, tier: GraphicsQuality): void {
     const strength = this.palette.groundFog ?? 0;
     if (strength <= 0) return;
     const top = Math.min(this.palette.groundFogTop ?? 1.1, 1.5);
     const color = new THREE.Color(this.palette.fog).lerp(new THREE.Color(1, 1, 1), 0.15);
     const geo = new THREE.PlaneGeometry(size * 1.3, size * 1.3);
     this.geometries.push(geo);
-    const layers: Array<[number, number]> = [
-      [top * 0.22, 0.1],
-      [top * 0.55, 0.07],
-      [top * 1.0, 0.05],
-    ];
+    const layers: Array<[number, number]> =
+      tier === 'high'
+        ? [
+            [top * 0.22, 0.1],
+            [top * 0.55, 0.07],
+            [top * 1.0, 0.05],
+          ]
+        : [[top * 0.6, 0.15]]; // 1枚に集約(最上層をやや濃く)
     for (const [y, baseOpacity] of layers) {
       const uTime = { value: 0 };
       this.timeUniforms.push(uTime);
