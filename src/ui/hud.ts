@@ -155,12 +155,45 @@ export class Hud {
               <line x1="-7" y1="48" x2="7" y2="48"></line>
             </g>
           </defs>
-          <circle class="sc-refring-halo" r="60"></circle>
-          <circle class="sc-refring" r="60"></circle>
-          <use href="#sc-marks" class="sc-halo"></use>
-          <use href="#sc-marks" class="sc-core"></use>
-          <circle class="sc-dot-halo" r="1.6"></circle>
-          <circle class="sc-dot" r="0.7"></circle>
+          <!-- R13: レティクルは data-reticle で厳密に1種のみ可視。既存ミルドット十字を rk-mildot に内包 -->
+          <g class="rk rk-mildot">
+            <circle class="sc-refring-halo" r="60"></circle>
+            <circle class="sc-refring" r="60"></circle>
+            <use href="#sc-marks" class="sc-halo"></use>
+            <use href="#sc-marks" class="sc-core"></use>
+            <circle class="sc-dot-halo" r="1.6"></circle>
+            <circle class="sc-dot" r="0.7"></circle>
+          </g>
+          <!-- ACOG: 中央シェブロン(▲)+下方スタジア線 -->
+          <g class="rk rk-chevron">
+            <path class="sc-halo" d="M0,-2 L7,10 L0,6 L-7,10 Z"></path>
+            <path class="sc-core" d="M0,-2 L7,10 L0,6 L-7,10 Z"></path>
+            <line class="sc-core" x1="0" y1="22" x2="0" y2="30"></line>
+            <line class="sc-core" x1="0" y1="40" x2="0" y2="46"></line>
+          </g>
+          <!-- ハイブリッド: 外リング+中央ドット(CQB) -->
+          <g class="rk rk-circle-dot">
+            <circle class="sc-refring-halo" r="34" fill="none"></circle>
+            <circle class="sc-refring" r="34" fill="none"></circle>
+            <line class="sc-core" x1="-46" y1="0" x2="-40" y2="0"></line>
+            <line class="sc-core" x1="46" y1="0" x2="40" y2="0"></line>
+            <line class="sc-core" x1="0" y1="-46" x2="0" y2="-40"></line>
+            <line class="sc-core" x1="0" y1="46" x2="0" y2="40"></line>
+            <circle class="sc-dot-halo" r="1.8"></circle>
+            <circle class="sc-dot" r="0.9"></circle>
+          </g>
+          <!-- サーマル: 琥珀十字+アパーチャ(色はCSSの data-reticle='thermal' で暖色化) -->
+          <g class="rk rk-thermal">
+            <line class="sc-halo" x1="-30" y1="0" x2="-6" y2="0"></line>
+            <line class="sc-halo" x1="6" y1="0" x2="30" y2="0"></line>
+            <line class="sc-halo" x1="0" y1="-30" x2="0" y2="-6"></line>
+            <line class="sc-halo" x1="0" y1="6" x2="0" y2="30"></line>
+            <line class="sc-core" x1="-30" y1="0" x2="-6" y2="0"></line>
+            <line class="sc-core" x1="6" y1="0" x2="30" y2="0"></line>
+            <line class="sc-core" x1="0" y1="-30" x2="0" y2="-6"></line>
+            <line class="sc-core" x1="0" y1="6" x2="0" y2="30"></line>
+            <circle class="sc-dot" r="0.9"></circle>
+          </g>
           <circle class="sc-lock" r="5"></circle>
         </svg>
       </div>
@@ -423,9 +456,9 @@ export class Hud {
       crosshair.style.opacity = '0';
       return;
     }
-    // スコープ覗き込み中はDOMスコープに任せ、通常クロスヘアは丸ごと消す
+    // スコープ/倍率光学の覗き込み中はDOMスコープに任せ、通常クロスヘアは丸ごと消す
     // (.ch-dotはバー不透明度の影響を受けないため、コンテナごと0にする)
-    if (snap.scopedWeapon && snap.adsProgress > 0.5) {
+    if ((snap.scopedWeapon || snap.adsOpticActive) && snap.adsProgress > 0.5) {
       crosshair.style.opacity = '0';
       return;
     }
@@ -453,13 +486,19 @@ export class Hud {
     const scope = this.el['scope'];
     if (!scope) return;
     const t = clampN((snap.adsProgress - 0.5) / 0.5, 0, 1);
-    const on = snap.alive && snap.scopedWeapon && t > 0;
+    // R13: ネイティブ狙撃(scopedWeapon)に加え、後付け倍率光学(adsOpticActive)でもオーバーレイを開く
+    const on = snap.alive && (snap.scopedWeapon || snap.adsOpticActive) && t > 0;
     scope.hidden = !on;
     if (!on) {
       this.scopeOn = false;
       this.wasSteady = false;
       return;
     }
+    // レティクル種別と光学クラス(native=全画面暗転 / magnified=後付け光学は軽量オーバーレイで
+    // ビューモデルを残す)を data属性で公開。CSSが厳密に1レティクルだけ可視化+暗転量を切替
+    if (scope.dataset.reticle !== snap.sightStyle) scope.dataset.reticle = snap.sightStyle;
+    const opticClass = snap.scopedWeapon ? 'native' : 'magnified';
+    if (scope.dataset.opticClass !== opticClass) scope.dataset.opticClass = opticClass;
     scope.style.opacity = String(t);
     scope.style.setProperty('--in', String(t));
     scope.style.setProperty('--conv', String(1 - t));

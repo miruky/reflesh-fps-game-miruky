@@ -29,7 +29,7 @@ jobs:
       - run: npm ci
       - run: npm run build
         env:
-          HIBANA_BASE: /hibana/
+          HIBANA_BASE: /reflesh-fps-game-miruky/
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

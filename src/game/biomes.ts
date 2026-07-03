@@ -85,7 +85,8 @@ const BIOME_PROFILES: Record<Biome, BiomeProfile> = {
     warmLight: true,
     emissive: false,
     densityPerSqM: [0.008, 0.013],
-    fog: [0.014, 0.02],
+    // R13: koushou(0.016)に倣い過濃を緩和。鉄骨越しの敵シルエットを霧で潰さない
+    fog: [0.012, 0.016],
     elevation: [6, 18],
     turbidity: [8, 14],
     rayleigh: [0.9, 1.4],
@@ -129,7 +130,9 @@ const BIOME_PROFILES: Record<Biome, BiomeProfile> = {
     warmLight: false,
     emissive: false,
     densityPerSqM: [0.006, 0.01],
-    fog: [0.022, 0.032],
+    // R13: 高明度の床/空で 0.022-0.032 は地平が白飛びして「バグっぽい」白霞になる。
+    // 銀青の意図的な雪霧が読める密度域へ緩和(中距離の敵シルエットを残す)。
+    fog: [0.013, 0.02],
     elevation: [15, 28],
     turbidity: [1, 2.5],
     rayleigh: [0.3, 0.6],
@@ -151,7 +154,8 @@ const BIOME_PROFILES: Record<Biome, BiomeProfile> = {
     warmLight: false,
     emissive: true,
     densityPerSqM: [0.008, 0.012],
-    fog: [0.02, 0.028],
+    // R13: 暗色ゆえ白飛びはしないが 0.028 はネオンが霧に沈み視程を潰す。yoichi(0.018)に倣い緩和
+    fog: [0.016, 0.022],
     elevation: [-6, 4],
     turbidity: [12, 18],
     rayleigh: [0.4, 0.8],
@@ -247,7 +251,7 @@ const ATMOSPHERE_BY_BIOME: Record<Biome, BiomeAtmosphere> = {
   urban: { mood: 'day', grassKind: 'none', particle: 'dust', particleAmount: 0.4, silhouette: 'skyline' },
   industrial: { mood: 'overcast', grassKind: 'none', particle: 'ember', silhouette: 'skyline', groundFog: 0.5 },
   desert: { mood: 'day', grassKind: 'dry', grassDensity: 0.35, particle: 'dust', particleAmount: 0.9, silhouette: 'mountain', groundFog: 0.2 },
-  snow: { mood: 'snow', grassKind: 'snowtuft', grassDensity: 0.35, particle: 'snow', particleAmount: 1.0, silhouette: 'mountain', groundFog: 0.6 },
+  snow: { mood: 'snow', grassKind: 'snowtuft', grassDensity: 0.35, particle: 'snow', particleAmount: 1.0, silhouette: 'mountain', groundFog: 0.5 },
   neon: { mood: 'night', grassKind: 'none', particle: 'ember', silhouette: 'skyline', groundFog: 0.4 },
   verdant: { mood: 'day', grassKind: 'blade', grassDensity: 0.8, particle: 'firefly', silhouette: 'ridge', groundFog: 0.2 },
   harbor: { mood: 'overcast', grassKind: 'none', particle: 'dust', silhouette: 'skyline', groundFog: 0.3 },

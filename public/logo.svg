@@ -1,6 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="hibanaのロゴ">
-  <title>hibana</title>
-  <circle cx="32" cy="32" r="20" fill="none" stroke="#e8eaf0" stroke-width="3" opacity="0.55"/>
-  <path d="M32 4v12M32 48v12M4 32h12M48 32h12" stroke="#e8eaf0" stroke-width="4" stroke-linecap="round"/>
-  <path d="M32 22l3.2 6.8L42 32l-6.8 3.2L32 42l-3.2-6.8L22 32l6.8-3.2z" fill="#ff5a3c"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="FPS-reFlesh Play Style-">
+  <title>FPS-reFlesh Play Style-</title>
+  <desc>IGNITION FRAME app icon. Carbon tile with an ember-accented "reF" monogram from the reFlesh wordmark. Self-contained: system fonts only, no external font/image references.</desc>
+  <defs>
+    <!-- carbon tile: base to base-2 -->
+    <linearGradient id="lg-carbon" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#12151a" />
+      <stop offset="0.55" stop-color="#0b0e11" />
+      <stop offset="1" stop-color="#070a0d" />
+    </linearGradient>
+    <!-- ember ignition glow from the top-right -->
+    <radialGradient id="lg-glow" cx="0.82" cy="0.14" r="0.85">
+      <stop offset="0" stop-color="#ff574f" stop-opacity="0.34" />
+      <stop offset="0.55" stop-color="#ff574f" stop-opacity="0" />
+    </radialGradient>
+    <!-- brushed-steel metallic for "re": ink to ink-soft to ink-faint -->
+    <linearGradient id="lg-steel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="0.34" stop-color="#e7e9e5" />
+      <stop offset="0.55" stop-color="#a9afb1" />
+      <stop offset="1" stop-color="#6e767c" />
+    </linearGradient>
+    <!-- ember accent for the hero "F": ember-ink to ember to ember-deep -->
+    <linearGradient id="lg-ember" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffb3ad" />
+      <stop offset="0.34" stop-color="#ff817b" />
+      <stop offset="0.66" stop-color="#ff574f" />
+      <stop offset="1" stop-color="#d83b34" />
+    </linearGradient>
+    <filter id="lg-emberglow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="1.7" />
+    </filter>
+  </defs>
+
+  <!-- tile + hairline frame -->
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="url(#lg-carbon)" stroke="#2a3138" stroke-width="1" />
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="url(#lg-glow)" />
+  <rect x="5.5" y="5.5" width="53" height="53" rx="10" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="1" />
+
+  <!-- top kicker: FPS -->
+  <text x="32" y="16.5" text-anchor="middle"
+        font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace" font-size="7" font-weight="600"
+        letter-spacing="2.6" fill="#71c4d1" fill-opacity="0.92"
+        textLength="24" lengthAdjust="spacingAndGlyphs">FPS</text>
+
+  <!-- reF monogram: "re" in steel, "F" in ember (glow copy beneath the sharp glyph) -->
+  <text x="12.5" y="45" font-family="-apple-system,'Segoe UI','Helvetica Neue',Arial,sans-serif"
+        font-weight="800" font-size="17" fill="url(#lg-steel)"
+        textLength="13.5" lengthAdjust="spacingAndGlyphs">re</text>
+  <text x="29" y="47.5" font-family="-apple-system,'Segoe UI','Helvetica Neue',Arial,sans-serif"
+        font-weight="900" font-size="35" fill="url(#lg-ember)" filter="url(#lg-emberglow)" opacity="0.85"
+        textLength="20" lengthAdjust="spacingAndGlyphs">F</text>
+  <text x="29" y="47.5" font-family="-apple-system,'Segoe UI','Helvetica Neue',Arial,sans-serif"
+        font-weight="900" font-size="35" fill="url(#lg-ember)"
+        textLength="20" lengthAdjust="spacingAndGlyphs">F</text>
+
+  <!-- bottom kicker: PLAY STYLE -->
+  <text x="32" y="56.5" text-anchor="middle"
+        font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace" font-size="5.2" font-weight="500"
+        letter-spacing="1.4" fill="#7a8288"
+        textLength="41" lengthAdjust="spacingAndGlyphs">PLAY STYLE</text>
 </svg>

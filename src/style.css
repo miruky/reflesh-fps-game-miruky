@@ -2190,6 +2190,49 @@ tr.score-ally td {
   stroke: none;
 }
 
+/* ══ R13: 光学レティクルを data-reticle で厳密に1種のみ可視(倍率光学の識別) ══ */
+.sc-cross > .rk {
+  display: none;
+}
+/* 既定=mildot(ネイティブ狙撃/可変倍率)。未知/1x種別も安全網としてmildotへフォールバック */
+.hud-scope:not([data-reticle]) .sc-cross > .rk-mildot,
+.hud-scope[data-reticle='mildot'] .sc-cross > .rk-mildot,
+.hud-scope[data-reticle='dot'] .sc-cross > .rk-mildot,
+.hud-scope[data-reticle='holo'] .sc-cross > .rk-mildot,
+.hud-scope[data-reticle='delta'] .sc-cross > .rk-mildot,
+.hud-scope[data-reticle='chevron'] .sc-cross > .rk-chevron,
+.hud-scope[data-reticle='circle-dot'] .sc-cross > .rk-circle-dot,
+.hud-scope[data-reticle='thermal'] .sc-cross > .rk-thermal {
+  display: block;
+}
+/* ACOGシェブロンは塗り(sc-cross * の fill:none を path のみ上書き。lineスタジアはstroke維持) */
+.rk-chevron path.sc-halo {
+  fill: rgba(0, 0, 0, 0.85);
+  stroke: rgba(0, 0, 0, 0.85);
+  stroke-width: 3;
+}
+.rk-chevron path.sc-core {
+  fill: var(--scope-reticle-core, #fff);
+  stroke: none;
+}
+/* サーマル: 全画面フィルタは使わず、オーバーレイ内で琥珀の視野+暖色レティクルとして表現 */
+.hud-scope[data-reticle='thermal'] {
+  --scope-reticle-core: #ffcf8a;
+}
+.hud-scope[data-reticle='thermal'] .sc-glass {
+  background: radial-gradient(
+    120% 120% at 50% 50%,
+    rgba(255, 176, 96, 0.14),
+    rgba(78, 40, 12, 0.3) 78%
+  );
+}
+/* 後付け倍率光学(magnified): ネイティブ狙撃のような全画面暗転をせず、黒縁マスクを弱めて
+   ビューモデルを残す軽量オーバーレイ(二重像回避)。ネイティブ狙撃(native)は従来どおり全画面 */
+.hud-scope[data-optic-class='magnified'] .sc-back,
+.hud-scope[data-optic-class='magnified'] .sc-mask {
+  opacity: 0.32;
+}
+
 .sc-readout {
   position: absolute;
   right: 16%;
@@ -4453,6 +4496,55 @@ tr.score-ally td {
   background-clip: text;
   color: transparent;
   filter: drop-shadow(0 2px 12px rgba(0, 0, 0, 0.6));
+}
+/* R13 ブランドワードマーク「FPS-reFlesh Play Style-」。旧 .wordmark h1(uppercase+単色スチール)を
+   .wordmark h1.brand-wm(spec 0,2,1)で上書きし、mixed-case の reFlesh に ember の F を効かせる。
+   スチール縦グラデ+ember Fアクセント+mono kicker(Agent Fの logo.svg/og.svg 意匠と統一) */
+.wordmark h1.brand-wm {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-transform: none;
+  letter-spacing: normal;
+  background: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  color: var(--ink, #e9ebe7);
+  filter: none;
+  line-height: 1;
+}
+.brand-wm .wm-kicker {
+  font-family: var(--mono);
+  font-size: clamp(10px, 1.3vw, 14px);
+  font-weight: 700;
+  letter-spacing: 0.36em;
+  color: var(--ember-ink, #ff817b);
+}
+.brand-wm .wm-hero {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(38px, 5.4vw, 58px);
+  letter-spacing: -0.01em;
+  line-height: 0.92;
+  background: linear-gradient(180deg, #ffffff 26%, #e9ebe7 50%, #a9afb1 72%, #6b737a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 11px rgba(0, 0, 0, 0.55));
+}
+.brand-wm .wm-hero em {
+  font-style: normal;
+  background: linear-gradient(180deg, #ffb3ad, #ff574f 55%, #d83b34);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.brand-wm .wm-style {
+  font-family: var(--mono);
+  font-size: clamp(10px, 1.35vw, 14px);
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  color: var(--ink-soft, #a9afb1);
 }
 /* タグライン: 英字=T7 microtag、和文=専用トークン(和文0.06em上限 major #19) */
 .menu-tagline {
@@ -6827,7 +6919,11 @@ tr.score-ally td {
   -webkit-backdrop-filter: blur(7px) saturate(0.8);
   display: grid;
   place-items: start center;
-  position: relative;
+  /* position:relative を置かない: .menu-screen の position:absolute/inset:0/overflow-y:auto を
+     回復し、このパネル自身をスクロールコンテナ化する(結果画面が縦に長くてもホームボタンへ到達可能)。
+     position:relative があると inset:0 が無効化されコンテンツ高で伸び、スクロール不能=見切れバグ */
+  overflow-x: hidden;
+  overscroll-behavior: contain;
 }
 /* 勝敗ティント: 勝利=下からemberの放射 / 敗北=冷たい鋼のビネット */
 .menu-result::before {
@@ -6853,13 +6949,16 @@ tr.score-ally td {
   --edge-color: var(--glass-edge);
   position: relative;
   width: min(600px, calc(100vw - 40px));
-  margin: 7vh 0 48px;
+  /* R13: 縦マージンを短いビューポートで縮む clamp に(固定7vh+48pxだと小画面で下が溢れる) */
+  margin: clamp(14px, 5vh, 44px) 0 clamp(14px, 4vh, 40px);
   background: var(--glass-heavy);
   border: none;
   border-radius: 0;
   box-shadow: none;
   clip-path: var(--frame-cut);
-  padding: 30px 34px 26px;
+  --pad-x: 34px;
+  --pad-b: 26px;
+  padding: 30px var(--pad-x) var(--pad-b);
   text-align: left;
 }
 .result-panel::before {
@@ -7139,7 +7238,18 @@ tr.score-ally td {
 /* ボタン列 */
 .result-buttons {
   gap: 10px;
-  margin-top: 4px;
+  /* R13: ボタン群を下端stickyにしてスクロール位置に関わらずホームボタンへ常に到達可能に。
+     負マージンはpanelのclip-path面取りと干渉するため使わず、背景フェードで本文の上に重ねる */
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin: 14px 0 0;
+  padding: 12px 0 calc(4px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(
+    to top,
+    var(--glass-heavy) 62%,
+    color-mix(in srgb, var(--glass-heavy) 45%, transparent)
+  );
 }
 .result-buttons .menu-start {
   margin-top: 0;

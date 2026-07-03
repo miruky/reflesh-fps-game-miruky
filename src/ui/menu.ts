@@ -29,6 +29,7 @@ import {
   attachmentsForSlot,
   type AttachmentSlot,
 } from '../game/attachments';
+import { OPTIC_SPECS } from '../game/optics';
 import type { Difficulty } from '../game/bot';
 import { GRENADE_KINDS, GRENADE_SPECS, type GrenadeKind } from '../game/grenades';
 import type { MatchResult } from '../game/match';
@@ -256,8 +257,8 @@ const stageSvgCache = new Map<string, string>();
 // R10 IGNITION FRAME: 盾型ベゼル2層+十字計器+発光スパークの多層エンブレム。
 // viewBox / role / aria-label / .spark クラスは旧ロゴと同一に保ち、CSSフックを壊さない
 const LOGO_SVG = `
-<svg viewBox="0 0 64 64" width="56" height="56" role="img" aria-label="hibanaのロゴ">
-  <title>hibana</title>
+<svg viewBox="0 0 64 64" width="56" height="56" role="img" aria-label="FPS-reFlesh Play Style- のロゴ">
+  <title>FPS-reFlesh Play Style-</title>
   <defs>
     <linearGradient id="lg-ring" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
@@ -683,7 +684,11 @@ export class Menu {
             </span>
             <span class="menu-logo">${LOGO_SVG}</span>
             <div class="wordmark">
-              <h1>hibana</h1>
+              <h1 class="brand-wm" aria-label="FPS-reFlesh Play Style-">
+                <span class="wm-kicker" aria-hidden="true">FPS-</span>
+                <span class="wm-hero" aria-hidden="true">re<em>F</em>lesh</span>
+                <span class="wm-style" aria-hidden="true">Play Style-</span>
+              </h1>
               <p class="menu-tagline"><span lang="en">Orbital Dropdeck</span><span lang="ja">軌道降下管制盤</span></p>
             </div>
             <div class="nav-readout" aria-hidden="true">
@@ -807,7 +812,7 @@ export class Menu {
             </div>
           </div>
           <footer class="console-status" aria-hidden="true">
-            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span class="status-opr">OPR <b>LV.${this.playerLevel()}</b></span><span class="status-fill"></span><span>hibana // tactical sim · BUILD R10</span>
+            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span class="status-opr">OPR <b>LV.${this.playerLevel()}</b></span><span class="status-fill"></span><span>reFlesh // tactical sim · BUILD R13</span>
           </footer>
         </div>
       </div>
@@ -1681,10 +1686,21 @@ export class Menu {
   private renderAttachments(): void {
     const panel = this.query('attachments');
     const level = this.playerLevel();
+    // R13: 光学の武器適合ゲート。内蔵スコープ機(狙撃/DMR)や拳銃系に倍率光学を出さない
+    // (装着すると視覚はネイティブのまま・ズームだけ静かに書き換わる split-brain を防ぐ)。
+    const primaryDef = this.currentPrimaryDef();
+    const opticFits = (id: string): boolean => {
+      const spec = OPTIC_SPECS[id];
+      return !spec?.fits || spec.fits(primaryDef);
+    };
     for (const { slot, label } of ATTACHMENT_SLOTS) {
-      // ロック中のアタッチメントが選択に残っていたら外す
+      // ロック中/この武器に適合しないアタッチメントが選択に残っていたら外す
       const selected = this.attachmentBySlot[slot];
-      if (selected && !isUnlocked('attachment', selected, level)) {
+      if (
+        selected &&
+        (!isUnlocked('attachment', selected, level) ||
+          (slot === 'sight' && !opticFits(selected)))
+      ) {
         this.attachmentBySlot[slot] = null;
       }
       const row = document.createElement('div');
@@ -1698,11 +1714,13 @@ export class Menu {
       buttons.className = 'attach-options';
       const choices: Array<{ id: string | null; text: string; title: string }> = [
         { id: null, text: 'なし', title: '' },
-        ...attachmentsForSlot(slot).map((a) => ({
-          id: a.id,
-          text: a.name,
-          title: a.cons === 'なし' ? a.pros : `${a.pros} / ${a.cons}`,
-        })),
+        ...attachmentsForSlot(slot)
+          .filter((a) => slot !== 'sight' || opticFits(a.id))
+          .map((a) => ({
+            id: a.id,
+            text: a.name,
+            title: a.cons === 'なし' ? a.pros : `${a.pros} / ${a.cons}`,
+          })),
       ];
       for (const choice of choices) {
         const btn = document.createElement('button');

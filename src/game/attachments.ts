@@ -1,6 +1,25 @@
 import type { WeaponDef } from './weapons';
+import { OPTIC_SPECS } from './optics';
 
 export type AttachmentSlot = 'sight' | 'muzzle' | 'grip' | 'mag';
+
+// 新光学の apply を OPTIC_SPECS から生成(単一真実源)。倍率光学は def.scope を絶対に立てず
+// (match.ts の sniper 分岐 hijack 回避)、adsFovScale を host 非依存の絶対値で代入 + adsTimeMs。
+// 1x ドットは倍率据置で ADS 速度/精度のみ改善。
+function applyOptic(id: string): (def: WeaponDef) => void {
+  return (def) => {
+    const spec = OPTIC_SPECS[id];
+    if (!spec) return;
+    if (spec.magnified) {
+      def.adsFovScale = spec.adsFovScale;
+      if (spec.adsTimeMs != null) def.adsTimeMs = spec.adsTimeMs;
+      def.spreadAdsDeg *= 0.7;
+    } else {
+      def.adsTimeMs *= 0.9;
+      def.spreadAdsDeg *= 0.92;
+    }
+  };
+}
 
 export interface AttachmentDef {
   id: string;
@@ -42,6 +61,71 @@ export const ATTACHMENT_DEFS: Record<string, AttachmentDef> = {
       def.spreadAdsDeg *= 0.7;
       def.adsTimeMs *= 1.2;
     },
+  },
+  // ── ③追加光学(sight スロット・OPTIC_SPECS 駆動)──
+  holographic: {
+    id: 'holographic',
+    slot: 'sight',
+    name: 'ホロサイト',
+    pros: 'ADS速度+10% / 広い視界のホロレティクル',
+    cons: 'なし',
+    apply: applyOptic('holographic'),
+  },
+  delta: {
+    id: 'delta',
+    slot: 'sight',
+    name: 'デルタサイト',
+    pros: 'ADS速度+10% / エッチングされたデルタレティクル',
+    cons: 'なし',
+    apply: applyOptic('delta'),
+  },
+  pico: {
+    id: 'pico',
+    slot: 'sight',
+    name: 'ピコドット',
+    pros: 'ADS速度+10% / 極小で視界を遮らない',
+    cons: 'なし',
+    apply: applyOptic('pico'),
+  },
+  canted: {
+    id: 'canted',
+    slot: 'sight',
+    name: 'カンテッドサイト',
+    pros: 'ADS速度+10% / 副照準ドット',
+    cons: 'なし',
+    apply: applyOptic('canted'),
+  },
+  acog: {
+    id: 'acog',
+    slot: 'sight',
+    name: 'ACOGスコープ',
+    pros: '中倍率ズーム / ADS精度+30%',
+    cons: 'ADS速度低下',
+    apply: applyOptic('acog'),
+  },
+  variable: {
+    id: 'variable',
+    slot: 'sight',
+    name: 'バリアブルスコープ',
+    pros: '高倍率ズーム / ADS精度+30%',
+    cons: 'ADS速度低下',
+    apply: applyOptic('variable'),
+  },
+  thermal: {
+    id: 'thermal',
+    slot: 'sight',
+    name: 'リコンスコープ',
+    pros: '倍率ズーム / 暗視で標的が浮かぶ',
+    cons: 'ADS速度低下',
+    apply: applyOptic('thermal'),
+  },
+  hybrid: {
+    id: 'hybrid',
+    slot: 'sight',
+    name: 'ハイブリッドサイト',
+    pros: '近接ドット+倍率マグの複合 / ADS精度+30%',
+    cons: 'ADS速度低下',
+    apply: applyOptic('hybrid'),
   },
   suppressor: {
     id: 'suppressor',

@@ -94,10 +94,12 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
     particle: 'snow',
     silhouette: 'mountain',
     grade: {
-      tint: [0.97, 0.99, 1.05],
+      // R13 意図的な雪霧: tintを寒色へ振り(赤↓青↑)、彩度を落として銀青のヘイズに。
+      // vignetteを上げて中央だけ抜けの良い「意図された霞」に見せる(白飛びの平板さを排除)。
+      tint: [0.92, 0.98, 1.1],
       contrast: 1.03,
-      saturation: 0.86,
-      vignette: 0.24,
+      saturation: 0.72,
+      vignette: 0.32,
       vignetteR: 0.8,
       grain: 0.018,
       chroma: 0.4,
@@ -364,7 +366,7 @@ export class Atmosphere {
     if (tier === 'low') return;
 
     const preset = MOOD_PRESETS[mood];
-    this.buildGroundFog(size, tier);
+    this.buildGroundFog(size, tier, mood);
     this.buildGrass(size, boxes, grassBudget(tier));
     this.buildParticles(palette.particle ?? preset.particle, particleBudget(tier));
     this.buildSilhouette(palette.silhouette ?? preset.silhouette, mood, size);
@@ -373,11 +375,16 @@ export class Atmosphere {
 
   // ── グラウンドフォグ: カメラ追従の板。上端≤1.1mで立ち姿の胴/頭を隠さない ──
   // R12軽量化: highは3枚(厚み)、mediumは1枚(αオーバードロー-66%・opacity増で密度代償)
-  private buildGroundFog(size: number, tier: GraphicsQuality): void {
-    const strength = this.palette.groundFog ?? 0;
+  private buildGroundFog(size: number, tier: GraphicsQuality, mood: MoodId): void {
+    // R13: 過剰なオーバードロー/白飛びを断つため密度を 0.65 で頭打ちにする。
+    const strength = Math.min(this.palette.groundFog ?? 0, 0.65);
     if (strength <= 0) return;
     const top = Math.min(this.palette.groundFogTop ?? 1.1, 1.5);
-    const color = new THREE.Color(this.palette.fog).lerp(new THREE.Color(1, 1, 1), 0.15);
+    // 白寄せ(whitePush): 元々一律0.15で足元を白く霞ませていたが、雪/曇はただでさえ
+    // 空とフォグが高明度で「バグっぽい白飛び」になる。雪/曇は0.05に抑え、フォグ固有の
+    // 銀青/乳白の色相を残して意図的な大気に。それ以外(砂塵/夕/夜)は0.15で従来通り。
+    const whitePush = mood === 'snow' || mood === 'overcast' ? 0.05 : 0.15;
+    const color = new THREE.Color(this.palette.fog).lerp(new THREE.Color(1, 1, 1), whitePush);
     const geo = new THREE.PlaneGeometry(size * 1.3, size * 1.3);
     this.geometries.push(geo);
     const layers: Array<[number, number]> =

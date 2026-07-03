@@ -21,9 +21,10 @@ describe('deriveAmbientProfile(パレット→環境音の決定的導出)', () 
   it('setsugen: 濃霧の屋外。風が太く高帯域、ハム/群衆/イベント無し', () => {
     const p = profileOf('setsugen');
     expect(p.isIndoor).toBe(false);
-    expect(p.windGain).toBeCloseTo(0.77, 5); // 0.28 + 0.028*17.5 (V9: 可聴レベルへ増強)
-    expect(p.windHz).toBeCloseTo(760, 5); // 200 + 0.028*20000
-    expect(p.windLfoHz).toBeCloseTo(0.08 + (0.028 / 0.03) * 0.17, 5);
+    // R13: setsugen fogDensity 0.028→0.018(霧の白飛び緩和)に伴い風音も追従(fogDensity由来)
+    expect(p.windGain).toBeCloseTo(0.595, 5); // 0.28 + 0.018*17.5
+    expect(p.windHz).toBeCloseTo(560, 5); // 200 + 0.018*20000
+    expect(p.windLfoHz).toBeCloseTo(0.08 + (0.018 / 0.03) * 0.17, 5);
     expect(p.humGain).toBe(0); // turbidity 1.5 < 9
     expect(p.crowdGain).toBe(0);
     expect(p.waterGain).toBe(0.05); // accent #4a7dbf が青優勢

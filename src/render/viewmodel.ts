@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { WeaponClass, ViewModelShape, WeaponDef } from '../game/weapons';
+import type { ViewModelShape, WeaponDef } from '../game/weapons';
+import { classDefault, OPTIC_SPECS, resolveOpticId } from '../game/optics';
 
 const HIP_POSITION = new THREE.Vector3(0.24, -0.22, -0.5);
 // ADS 収束座標。X/Z は全武器共通、Y は武器ごとに resolveSightY で動的算出する
@@ -320,27 +321,7 @@ const SHAPE_SPECS: Record<ViewModelShape, Silhouette> = {
   },
 };
 
-// クラス既定のシルエット。def.shape 未指定時のフォールバック。
-function classDefault(cls: WeaponClass): ViewModelShape {
-  switch (cls) {
-    case 'ar':
-      return 'rifle';
-    case 'smg':
-      return 'smg';
-    case 'sniper':
-      return 'sniper-bolt';
-    case 'shotgun':
-      return 'shotgun-pump';
-    case 'br':
-      return 'rifle';
-    case 'lmg':
-      return 'lmg-belt';
-    case 'pistol':
-      return 'pistol';
-    case 'marksman':
-      return 'dmr';
-  }
-}
+// classDefault は optics.ts の単一真実源から import(shape 解決を viewmodel/match/optics で共有)。
 
 // def から行を引く。Record<Union,V> 索引なので noUncheckedIndexedAccess でも undefined にならない。
 function resolveSilhouette(def: WeaponDef): Silhouette {
@@ -448,14 +429,17 @@ function assertNever(x: never): never {
 
 // ── 共有マテリアル(頂点カラー系統) ─────────────────────────────────────
 // バケツ方式: 系統ごとに1マテリアルへ merge するため、アルベドは頂点カラーで焼く。
-// metalVC/polishVC/polyVC/glass/reflexDot は全銃で1度だけ生成(userData.shared=true)。
+// metalVC/polishVC/polyVC/glassThin/glassScope/reflexDot は全銃で1度だけ生成(userData.shared=true)。
 // accent は emissive 帯用に tracerColor ごとにキャッシュ。sleeve/glove は腕専用(非merge)。
 // 銃はカメラ近接(near 0.05)なので envMapIntensity/emissiveIntensity を抑えて近接Bloomハロを回避。
+// ③透過根治: レンズは depthWrite:false の薄透過材へ分割。glassThin=レフレックス開口レンズ
+// (ほぼ素通し)、glassScope=倍率スコープ管(やや色付き)。両 DoubleSide で覗き方向不問。
 interface SharedMats {
   metalVC: THREE.MeshStandardMaterial; // レシーバ/バレル/レール/greeble(艶消し鋼)
   polishVC: THREE.MeshStandardMaterial; // ボルト/光学リング/銃口crown/シリンダ(研磨鋼)
   polyVC: THREE.MeshStandardMaterial; // ポリマー/木部/グリップ
-  glass: THREE.MeshStandardMaterial; // スコープレンズ(透過・merge除外)
+  glassThin: THREE.MeshBasicMaterial; // 素通しレンズ(reflex/holo/rmr 等・透過・merge除外)
+  glassScope: THREE.MeshStandardMaterial; // スコープ管レンズ(倍率・透過・merge除外)
   reflexDot: THREE.MeshBasicMaterial; // 赤ドット(加算・merge除外)
   sleeve: THREE.MeshStandardMaterial; // 腕(袖)
   glove: THREE.MeshStandardMaterial; // 手(手袋)
@@ -481,19 +465,33 @@ function clothMat(color: number, roughness: number): THREE.MeshStandardMaterial 
 
 function getShared(): SharedMats {
   if (!sharedMats) {
-    const glass = new THREE.MeshStandardMaterial({
-      color: 0x24344f,
+    // 素通しレンズ: depthWrite:false でレンズ越しの背後ジオメトリを塞がない。ほぼ透明の
+    // 薄い寒色ティント。DoubleSide で接眼/対物どちらから見ても描画する。
+    const glassThin = new THREE.MeshBasicMaterial({
+      color: 0x8fb8e0,
+      transparent: true,
+      opacity: 0.1,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    glassThin.userData.shared = true;
+    // スコープ管レンズ: 素通しより濃いが depthWrite:false で背後を透かす。envMap を抑え
+    // 近接Bloomハロを回避。color は arm hex(0x2b2e34/0x161820)と衝突させない(テスト保護)。
+    const glassScope = new THREE.MeshStandardMaterial({
+      color: 0x233348,
       roughness: 0.05,
       metalness: 0.4,
       transparent: true,
-      opacity: 0.85,
-      envMapIntensity: 0.3,
+      opacity: 0.26,
+      depthWrite: false,
+      envMapIntensity: 0.12,
+      side: THREE.DoubleSide,
     });
-    glass.userData.shared = true;
+    glassScope.userData.shared = true;
     const reflexDot = new THREE.MeshBasicMaterial({
       color: 0x7ad1ff,
       transparent: true,
-      opacity: 0.6,
+      opacity: 0.68,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -503,7 +501,8 @@ function getShared(): SharedMats {
       metalVC: vcMat(0.62, 0.34),
       polishVC: vcMat(0.9, 0.14),
       polyVC: vcMat(0.0, 0.72),
-      glass,
+      glassThin,
+      glassScope,
       reflexDot,
       sleeve: clothMat(0x2b2e34, 0.7),
       glove: clothMat(0x161820, 0.55),
@@ -536,7 +535,8 @@ function disposeShared(): void {
     sharedMats.metalVC.dispose();
     sharedMats.polishVC.dispose();
     sharedMats.polyVC.dispose();
-    sharedMats.glass.dispose();
+    sharedMats.glassThin.dispose();
+    sharedMats.glassScope.dispose();
     sharedMats.reflexDot.dispose();
     sharedMats.sleeve.dispose();
     sharedMats.glove.dispose();
@@ -679,20 +679,21 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
   const extendedMag = attachments.includes('extended');
   const suppressor = attachments.includes('suppressor');
 
-  const { metalVC, polishVC, polyVC, glass, reflexDot } = getShared();
+  const { metalVC, polishVC, polyVC, glassThin, glassScope, reflexDot } = getShared();
   const accent = getAccent(def.tracerColor);
 
-  // 頂点アルベド・パレット(実際の陰影はvertexColor gradY+IBL/Bloomで出す)
-  const C_BASE = 0x33373e;
-  const C_DARK = 0x24272d;
-  const C_BARREL = 0x1b1d22;
-  const C_RAIL = 0x16181c;
-  const C_RIM = 0x4d525c;
-  const C_GROOVE = 0x121317;
-  const C_POLISH = 0x44484f;
-  const C_POLISH_HI = 0x565b63;
-  const C_POLY = 0x1b1d21;
-  const C_GRIP = 0x242629;
+  // ⑤ BO3寒色化: 頂点アルベドをブルースチール寄りへ(実際の陰影はvertexColor gradY+IBL/Bloom)。
+  // どれも arm hex 0x2b2e34/0x161820 と不一致(監査済み)。C_WOOD/C_BRASS は暖寒コントラスト維持で据置。
+  const C_BASE = 0x2c3340;
+  const C_DARK = 0x20242c;
+  const C_BARREL = 0x181b22;
+  const C_RAIL = 0x14171e;
+  const C_RIM = 0x515f74;
+  const C_GROOVE = 0x101319;
+  const C_POLISH = 0x424b58;
+  const C_POLISH_HI = 0x5a6a80;
+  const C_POLY = 0x191c22;
+  const C_GRIP = 0x21242b;
   const C_WOOD = 0x5b3d24;
   const C_WOOD_HI = 0x6d4a2c;
   const C_BRASS = 0x8a6a2c;
@@ -856,6 +857,17 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
   }
   if (det.grip === 'ar' && sil.feed !== 'none' && sil.feed !== 'belt' && sil.feed !== 'tube') {
     bakeAt(metalParts, chamferBox(r.w + 0.012, 0.05, 0.06, 0.004), C_DARK, 0, -r.h / 2 + 0.006, -0.02);
+  }
+
+  // ⑤ 装甲ディテール(縦リブ+装甲プレート+発光シーム)。metalParts/accentFam へ merge=DC不変。
+  // det.grip==='ar' ゲートで pistol/revolver/dual/fists/smg を除外(長物のみ)。排莢ポートは
+  // 右面なので装甲リブは左面へ寄せて重複を避ける。頂点微増のみ(+DC ゼロ)。
+  if (det.grip === 'ar') {
+    for (let i = 0; i < 3; i += 1) {
+      boxP(metalParts, C_RIM, 0.004, r.h * 0.5, 0.006, -(r.w / 2 + 0.002), 0.006, -recD * 0.16 + i * 0.05, 0, 0, 0, 'flat');
+    }
+    accentLine(0.003, 0.003, recD * 0.5, -(r.w / 2 - 0.004), r.h / 2 - 0.008, -recD * 0.02);
+    bakeAt(metalParts, chamferBox(r.w + 0.006, 0.018, recD * 0.3, 0.003), C_POLISH, 0, -r.h / 2 + 0.004, -recD * 0.2, 0, 0, 0, 'flat');
   }
 
   // ── バレル + プロファイル ──
@@ -1125,25 +1137,38 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     bakeAt(mv.polish, knob, C_POLISH_HI, 0.066, 0.012, 0.06, 0, 0, 0, 'flat');
   }
 
-  // ── 一体型光学(スコープ) ──
+  // ── 一体型光学(スコープ)── ③透過根治
+  // 主筒を openEnded 化(接眼キャップ除去)、ベゼル/前アクセントを中空アニュラス(RingGeometry)
+  // へ差し替えて bore 中心を開放。接眼→透明glassR→開放bore→透明glassF→ワールド の視軸を通す。
+  // 座標(s.y)不変で resolveSightY 契約に無影響。glassScope+renderOrder=2 で近接ソート安定。
   if (sil.scope) {
     const s = sil.scope;
-    tubeZ(metalParts, C_DARK, s.r, s.len, 0, s.y, -0.02, true);
+    // openEnded 主筒(キャップ無し)。共有 cyl16 は openEnded=false のため fresh を焼く(temps 経由で dispose)。
+    const tube = new THREE.CylinderGeometry(s.r, s.r, s.len, 16, 1, true);
+    bakeAt(metalParts, tube, C_DARK, 0, s.y, -0.02, Math.PI / 2, 0, 0, 'gradY');
+    // 前後ベゼルは中空アニュラス(既定XY面=±Z向き・無回転)。polishParts へ merge=+0DC。
     for (const zz of [-0.02 - s.len / 2 + 0.01, -0.02 + s.len / 2 - 0.01] as const) {
-      tubeZ(polishParts, C_POLISH, s.r + 0.004, 0.012, 0, s.y, zz, true);
+      const bezel = new THREE.RingGeometry(s.r - 0.001, s.r + 0.006, 20);
+      bakeAt(polishParts, bezel, C_POLISH, 0, s.y, zz, 0, 0, 0, 'flat');
     }
+    // タレット(上/横)は bore を塞がない位置なのでソリッドのまま。
     for (const zz of [-0.03, 0.03] as const) {
       boxP(metalParts, C_DARK, 0.03, 0.04, 0.022, 0, s.y - 0.03, zz);
     }
     boxP(polishParts, C_POLISH, 0.02, 0.022, 0.024, 0, s.y + s.r, -0.02);
     boxP(polishParts, C_POLISH, 0.024, 0.02, 0.02, s.r, s.y, -0.02);
     const frontZ = -0.02 - s.len / 2;
-    tubeZ(accentFam, def.tracerColor, s.r + 0.004, 0.012, 0, s.y, frontZ + 0.004, true);
-    const glassF = new THREE.Mesh(new THREE.CircleGeometry(s.r * 0.86, 20), glass);
+    // 前アクセントリングも中空アニュラス(accentFam へ merge)。bore 中心を開放。
+    const accRing = new THREE.RingGeometry(s.r - 0.001, s.r + 0.006, 20);
+    bakeAt(accentFam, accRing, def.tracerColor, 0, s.y, frontZ + 0.004, 0, 0, 0, 'flat');
+    // レンズ(glassScope・透過・renderOrder=2)。CircleGeometry の最初=対物 glassF(=s.y)を維持。
+    const glassF = new THREE.Mesh(new THREE.CircleGeometry(s.r * 0.86, 20), glassScope);
     glassF.rotation.y = Math.PI;
     glassF.position.set(0, s.y, frontZ - 0.001);
-    const glassR = new THREE.Mesh(new THREE.CircleGeometry(s.r * 0.82, 20), glass);
+    glassF.renderOrder = 2;
+    const glassR = new THREE.Mesh(new THREE.CircleGeometry(s.r * 0.82, 20), glassScope);
     glassR.position.set(0, s.y, -0.02 + s.len / 2 + 0.001);
+    glassR.renderOrder = 2;
     gun.add(glassF, glassR);
   }
 
@@ -1246,19 +1271,165 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     boxP(metalParts, C_DARK, gauge * 1.4, gauge * 1.2, 0.02, 0, BARREL_Y, barFrontZ - 0.01);
   }
 
-  // ── 着脱式アタッチメント ──
-  if (attachments.includes('reflex')) {
-    boxP(metalParts, C_DARK, 0.05, 0.05, 0.02, 0, 0.078, 0.05);
-    boxP(metalParts, C_DARK, 0.05, 0.008, 0.05, 0, 0.055, 0.05, 0, 0, 0, 'flat');
-    const dot = new THREE.Mesh(new THREE.PlaneGeometry(0.034, 0.034), reflexDot);
-    dot.position.set(0, 0.08, 0.04);
-    gun.add(dot);
-  }
-  if (attachments.includes('telescopic') && sil.scope === null) {
-    tubeZ(metalParts, C_DARK, 0.026, 0.14, 0, 0.08, 0.0, true);
-    for (const zz of [-0.06, 0.06] as const) {
-      tubeZ(polishParts, C_POLISH, 0.03, 0.01, 0, 0.08, zz, true);
+  // ── 着脱式光学(OPTIC_SPECS.housing 別)── ③スコープ種類を倍増
+  // 共有ヘルパ: openEnded 筒 + 中空アニュラス + glassScope レンズの倍率スコープ管を焼く。
+  // 筒/リング/マウントは metalParts/polishParts/accentFam へ merge(+0DC)、レンズのみ透明add。
+  const mountedScopeTube = (
+    sy: number,
+    tr: number,
+    tlen: number,
+    cz = 0,
+    accentColor = def.tracerColor,
+  ): void => {
+    const tube = new THREE.CylinderGeometry(tr, tr, tlen, 16, 1, true);
+    bakeAt(metalParts, tube, C_DARK, 0, sy, cz, Math.PI / 2, 0, 0, 'gradY');
+    for (const zz of [cz - tlen / 2 + 0.008, cz + tlen / 2 - 0.008] as const) {
+      const ring = new THREE.RingGeometry(tr - 0.001, tr + 0.005, 18);
+      bakeAt(polishParts, ring, C_POLISH, 0, sy, zz, 0, 0, 0, 'flat');
     }
+    boxP(metalParts, C_DARK, tr * 1.3, 0.02, tlen * 0.42, 0, sy - tr - 0.012, cz, 0, 0, 0, 'flat');
+    const acc = new THREE.RingGeometry(tr - 0.001, tr + 0.005, 18);
+    bakeAt(accentFam, acc, accentColor, 0, sy, cz - tlen / 2 + 0.001, 0, 0, 0, 'flat');
+    const lensF = new THREE.Mesh(new THREE.CircleGeometry(tr * 0.85, 18), glassScope);
+    lensF.rotation.y = Math.PI;
+    lensF.position.set(0, sy, cz - tlen / 2 - 0.001);
+    lensF.renderOrder = 2;
+    const lensR = new THREE.Mesh(new THREE.CircleGeometry(tr * 0.8, 18), glassScope);
+    lensR.position.set(0, sy, cz + tlen / 2 + 0.001);
+    lensR.renderOrder = 2;
+    gun.add(lensF, lensR);
+  };
+  // 素通しドット窓: reflexDot は「最初かつ唯一の PlaneGeometry」を維持(ドリフトテスト保護)。
+  // レンズは glassThin CircleGeometry(dot より前に Plane を出さない)。y は sy 固定。
+  const reflexDotWindow = (sy: number, lensR: number, dotS: number, dz: number): void => {
+    const lens = new THREE.Mesh(new THREE.CircleGeometry(lensR, 18), glassThin);
+    lens.position.set(0, sy, dz);
+    lens.renderOrder = 2;
+    const dot = new THREE.Mesh(new THREE.PlaneGeometry(dotS, dotS), reflexDot);
+    dot.position.set(0, sy, dz - 0.008);
+    dot.renderOrder = 3;
+    gun.add(lens, dot);
+  };
+  // 全着脱 housing は sil.scope===null ガード配下(内蔵scope機は上流で構築済み=二重build回避)。
+  if (sil.scope === null) {
+    const om = OPTIC_SPECS[resolveOpticId(def)];
+    if (om) {
+      const sy = om.sightY;
+      switch (om.housing) {
+        case 'reflex': {
+          // 開口フレーム(底レール+上リム+左右ピラー)。bore を塞がず素通し。
+          boxP(metalParts, C_DARK, 0.05, 0.01, 0.05, 0, sy - 0.026, 0.05, 0, 0, 0, 'flat');
+          boxP(metalParts, C_DARK, 0.05, 0.006, 0.05, 0, sy + 0.022, 0.05, 0, 0, 0, 'flat');
+          for (const sx of [-1, 1] as const) {
+            boxP(metalParts, C_DARK, 0.006, 0.05, 0.05, sx * 0.023, sy - 0.002, 0.05, 0, 0, 0, 'flat');
+          }
+          reflexDotWindow(sy, 0.018, 0.02, 0.05);
+          break;
+        }
+        case 'holo': {
+          // ホロサイト: 横長フード+後方エミッタ+四角スクリーン(PlaneGeometry)。
+          boxP(metalParts, C_DARK, 0.07, 0.012, 0.055, 0, sy - 0.03, 0.05, 0, 0, 0, 'flat');
+          boxP(metalParts, C_DARK, 0.012, 0.05, 0.055, -0.032, sy, 0.05, 0, 0, 0, 'flat');
+          boxP(metalParts, C_DARK, 0.07, 0.006, 0.012, 0, sy + 0.026, 0.03, 0, 0, 0, 'flat');
+          const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.05, 0.04), glassThin);
+          screen.position.set(0, sy, 0.05);
+          screen.renderOrder = 2;
+          const dot = new THREE.Mesh(new THREE.PlaneGeometry(0.02, 0.02), reflexDot);
+          dot.position.set(0, sy, 0.045);
+          dot.renderOrder = 3;
+          gun.add(screen, dot);
+          break;
+        }
+        case 'rmr': {
+          // ピコ(ミニRMR): フレームのみ ×0.62 縮小、レティクル/レンズ中心は sy 固定。
+          const f = 0.62;
+          boxP(metalParts, C_DARK, 0.032, 0.008, 0.032, 0, sy - 0.016 * f, 0.05, 0, 0, 0, 'flat');
+          for (const sx of [-1, 1] as const) {
+            boxP(metalParts, C_DARK, 0.005, 0.03 * f, 0.03, sx * 0.014, sy, 0.05, 0, 0, 0, 'flat');
+          }
+          boxP(metalParts, C_DARK, 0.032, 0.005, 0.01, 0, sy + 0.016 * f, 0.045, 0, 0, 0, 'flat');
+          reflexDotWindow(sy, 0.011, 0.012, 0.05);
+          break;
+        }
+        case 'delta': {
+          // デルタ(プリズム)サイト: コンパクト本体+上レール+etchedレティクル。
+          bakeAt(metalParts, chamferBox(0.038, 0.05, 0.05, 0.004), C_DARK, 0, sy - 0.01, 0.05);
+          boxP(metalParts, C_RIM, 0.038, 0.006, 0.05, 0, sy + 0.016, 0.05, 0, 0, 0, 'flat');
+          // R13: レンズ/ドットは筐体の射手側面(z≈0.075)より手前へ。ソリッド箱に潜ると
+          // 不透明筐体が先に深度を書き、depthTestでドット断片が破棄されて見えなくなる
+          reflexDotWindow(sy, 0.014, 0.016, 0.09);
+          break;
+        }
+        case 'canted': {
+          // カンテッド(副照準): 左へ僅かにロールした小型ハウジング。ADS整合のため dot は sy 中心。
+          bakeAt(metalParts, chamferBox(0.03, 0.03, 0.04, 0.003), C_DARK, 0, sy - 0.006, 0.055, 0, 0, 0.5);
+          // R13: dz を筐体の射手側面(z≈0.075)より手前へ出しドット埋没(深度オクルージョン)を回避
+          reflexDotWindow(sy, 0.01, 0.011, 0.088);
+          break;
+        }
+        case 'acog': {
+          mountedScopeTube(sy, 0.024, 0.13);
+          break;
+        }
+        case 'variable': {
+          mountedScopeTube(sy, 0.026, 0.16);
+          const magRing = new THREE.RingGeometry(0.026, 0.032, 16);
+          bakeAt(polishParts, magRing, C_POLISH_HI, 0, sy, 0.03, 0, 0, 0, 'flat');
+          break;
+        }
+        case 'thermal': {
+          // リコン/暗視スコープ: 素通し倍率管 + 上面センサフード + 琥珀エミッタ。全画面フィルタは
+          // HUD 側(sightStyle==='thermal')が担当、ここは housing + 熱センサ発光を表現。
+          mountedScopeTube(sy, 0.024, 0.12);
+          boxP(metalParts, C_DARK, 0.05, 0.02, 0.05, 0, sy + 0.03, -0.02, 0, 0, 0, 'flat');
+          // R13: 琥珀の熱センサ発光。accentFam(固定tracerColor)ではtintが無効化されるため、
+          // 単色emissive材(getAccent・非merge・shared+disposeShared解放)で対物リングを灯す
+          const amberRing = new THREE.Mesh(
+            new THREE.RingGeometry(0.014, 0.023, 18),
+            getAccent(typeof om.tint === 'number' ? om.tint : 0xffb060),
+          );
+          amberRing.position.set(0, sy, -0.062);
+          amberRing.rotation.y = Math.PI;
+          gun.add(amberRing);
+          break;
+        }
+        case 'hybrid': {
+          // ハイブリッド: 前方に赤ドット窓(照準面=sy)、後方に倍率マグ管を同軸配置。
+          boxP(metalParts, C_DARK, 0.045, 0.01, 0.04, 0, sy - 0.024, -0.02, 0, 0, 0, 'flat');
+          for (const sx of [-1, 1] as const) {
+            boxP(metalParts, C_DARK, 0.005, 0.045, 0.04, sx * 0.021, sy, -0.02, 0, 0, 0, 'flat');
+          }
+          reflexDotWindow(sy, 0.016, 0.017, -0.02);
+          mountedScopeTube(sy, 0.02, 0.07, 0.06);
+          break;
+        }
+        case 'scope':
+          // 内蔵スコープ: 上流の sil.scope 分岐で構築済み(ここでは何もしない)。
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  // ── 着脱テレスコピック(レジストリ外レガシー・倍率マグ)── ③透過根治
+  // 主筒 openEnded + 前後リング中空アニュラス + glassScope レンズで覗いて背後が透ける。
+  if (attachments.includes('telescopic') && sil.scope === null) {
+    const ty = 0.08;
+    const tr = 0.026;
+    const tube = new THREE.CylinderGeometry(tr, tr, 0.14, 16, 1, true);
+    bakeAt(metalParts, tube, C_DARK, 0, ty, 0.0, Math.PI / 2, 0, 0, 'gradY');
+    for (const zz of [-0.06, 0.06] as const) {
+      const ring = new THREE.RingGeometry(tr - 0.002, tr + 0.006, 18);
+      bakeAt(polishParts, ring, C_POLISH, 0, ty, zz, 0, 0, 0, 'flat');
+    }
+    const gf = new THREE.Mesh(new THREE.CircleGeometry(tr * 0.86, 18), glassScope);
+    gf.rotation.y = Math.PI;
+    gf.position.set(0, ty, -0.069);
+    gf.renderOrder = 2;
+    const gr = new THREE.Mesh(new THREE.CircleGeometry(tr * 0.82, 18), glassScope);
+    gr.position.set(0, ty, 0.069);
+    gr.renderOrder = 2;
+    gun.add(gf, gr);
   }
   if (attachments.includes('vertical') || attachments.includes('angled')) {
     const angled = attachments.includes('angled');
@@ -1303,11 +1474,13 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
 //   iron post(fixed/flip/ghost)→ 0.062              (buildGunBody アイアンサイト前ポスト boxP(…, 0.062, …))
 export function resolveSightY(def: WeaponDef): number {
   if (def.shape === 'fists') return 0;
+  // 光学(内蔵スコープ/着脱reflex/holo/…)は OPTIC_SPECS.sightY を単一真実源に。
+  // 内蔵スコープは resolveOpticId が shape から scope-dmr/sniper/dsr を最優先で返す。
+  const om = OPTIC_SPECS[resolveOpticId(def)];
+  if (om) return om.sightY;
+  // レジストリ外(iron/telescopic レガシー)のフォールバック。
   const sil = resolveSilhouette(def);
-  // 一体型スコープ最優先(アイアンサイトは buildGunBody で省略される)
-  if (sil.scope) return sil.scope.y;
   const attachments = def.attachmentIds ?? [];
-  if (attachments.includes('reflex')) return 0.08;
   if (attachments.includes('telescopic')) return 0.08;
   const det = resolveDetail(sil, def);
   if (det.iron === 'bead') return BARREL_Y + sil.barrelGauge * 0.6;

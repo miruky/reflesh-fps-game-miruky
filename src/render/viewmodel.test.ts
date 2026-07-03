@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { buildGunBody, resolveSightY } from './viewmodel';
 import { WEAPON_DEFS, type ViewModelShape, type WeaponDef } from '../game/weapons';
+import { OPTIC_SPECS, resolveOpticId } from '../game/optics';
 
 // 一人称腕は sleeve/glove の固有色で塗られる。銃本体にこれらが混ざっていなければ
 // 「腕なし」と判定できる(dark/darker/accent とは別色)。
@@ -133,6 +134,55 @@ describe('resolveSightY', () => {
     });
     expect(Number.isNaN(dotY)).toBe(false);
     expect(dotY).toBeCloseTo(resolveSightY(def), 6);
+  });
+
+  it('着脱光学の各 housing が組め、ADS収束Yが OPTIC_SPECS.sightY と一致する', () => {
+    const ar = WEAPON_DEFS['kaede-ar'];
+    if (!ar) throw new Error('kaede-ar missing');
+    for (const id of ['reflex', 'holographic', 'delta', 'pico', 'canted', 'acog', 'variable', 'thermal', 'hybrid'] as const) {
+      const def: WeaponDef = { ...ar, attachmentIds: [id] };
+      const { gun, muzzle } = buildGunBody(def);
+      expect(meshCount(gun), id).toBeGreaterThan(0);
+      expect(muzzle.position.z, id).toBeLessThan(0);
+      expect(hasArmMaterials(gun), id).toBe(false);
+      // resolveOpticId が付与光学を解決し、resolveSightY が sightY を返す
+      expect(resolveOpticId(def), id).toBe(id);
+      expect(resolveSightY(def), id).toBeCloseTo(OPTIC_SPECS[id]!.sightY, 6);
+    }
+  });
+
+  it('着脱reflex のドット(plane)は依然として最初かつ 0.08 面(倍増後も不変)', () => {
+    const ar = WEAPON_DEFS['kaede-ar'];
+    if (!ar) throw new Error('kaede-ar missing');
+    const { gun } = buildGunBody({ ...ar, attachmentIds: ['reflex'] });
+    let dotY = Number.NaN;
+    gun.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.geometry.type === 'PlaneGeometry' && Number.isNaN(dotY)) {
+        dotY = o.position.y;
+      }
+    });
+    expect(dotY).toBeCloseTo(0.08, 6);
+  });
+
+  it('内蔵スコープ機(DMR/sniper/DSR)はレンズCircleを持ち、resolveSightYと一致する', () => {
+    for (const [shape, expected] of [
+      ['dmr', 0.085],
+      ['sniper-bolt', 0.08],
+      ['dsr-bp', 0.092],
+    ] as const) {
+      const base = Object.values(WEAPON_DEFS)[0]!;
+      const def: WeaponDef = { ...base, shape };
+      const { gun } = buildGunBody(def);
+      let glassY = Number.NaN;
+      gun.traverse((o) => {
+        if (o instanceof THREE.Mesh && o.geometry.type === 'CircleGeometry' && Number.isNaN(glassY)) {
+          glassY = o.position.y;
+        }
+      });
+      expect(Number.isNaN(glassY), shape).toBe(false);
+      expect(glassY, shape).toBeCloseTo(expected, 6);
+      expect(resolveSightY(def), shape).toBeCloseTo(expected, 6);
+    }
   });
 
   it('アイアンビード球の実Yと一致する(ドリフト検出)', () => {

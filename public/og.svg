@@ -1,35 +1,91 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="hibana — ブラウザで動く3D FPS">
-  <title>hibana — ブラウザで動く3D FPS</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="FPS-reFlesh Play Style- — ブラウザで動く3D FPS">
+  <title>FPS-reFlesh Play Style- — ブラウザで動く3D FPS</title>
+  <desc>IGNITION FRAME Open Graph card. Metallic "reFlesh" wordmark with an ember "F" accent, framed by the FPS- / Play Style- mono kickers.</desc>
+
+  <!--
+    KNOWN LIMITATION (asset-less constraint): this OG image is an SVG. Most social
+    scrapers (X/Twitter, Facebook, Slack, LINE, Discord, iMessage) rasterize og:image
+    and DO NOT render SVG, so link unfurls will show NO preview / no wordmark. This is
+    accepted per the asset-less rule (no binary PNG/JPG in the repo). The card is kept
+    fully self-contained (system fonts only, no external font/image refs) so any renderer
+    that DOES support SVG (some crawlers, direct opens, screenshotters) shows it correctly.
+    To get real unfurls, a build step would need to rasterize this SVG to og.png.
+  -->
+
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.45" y2="1">
-      <stop offset="0" stop-color="#1c1813" />
-      <stop offset="0.62" stop-color="#121009" />
-      <stop offset="1" stop-color="#0e0c07" />
+    <!-- carbon backdrop: base-2 to base -->
+    <linearGradient id="og-carbon" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#12151a" />
+      <stop offset="0.6" stop-color="#0b0e11" />
+      <stop offset="1" stop-color="#080b0e" />
     </linearGradient>
-    <radialGradient id="glow" cx="0.84" cy="-0.05" r="0.7">
-      <stop offset="0" stop-color="#ff5a3c" stop-opacity="0.28" />
-      <stop offset="0.6" stop-color="#ff5a3c" stop-opacity="0" />
+    <!-- ember ignition glow from the top-right -->
+    <radialGradient id="og-glow" cx="0.86" cy="-0.02" r="0.72">
+      <stop offset="0" stop-color="#ff574f" stop-opacity="0.26" />
+      <stop offset="0.6" stop-color="#ff574f" stop-opacity="0" />
     </radialGradient>
+    <!-- signal wash from the lower-left (instrumentation cyan) -->
+    <radialGradient id="og-signal" cx="0.02" cy="1.05" r="0.6">
+      <stop offset="0" stop-color="#71c4d1" stop-opacity="0.1" />
+      <stop offset="0.7" stop-color="#71c4d1" stop-opacity="0" />
+    </radialGradient>
+    <!-- brushed-steel metallic for the wordmark -->
+    <linearGradient id="og-steel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="0.32" stop-color="#e9ebe7" />
+      <stop offset="0.56" stop-color="#a9afb1" />
+      <stop offset="1" stop-color="#6b737a" />
+    </linearGradient>
+    <!-- ember accent for the "F" -->
+    <linearGradient id="og-ember" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffb3ad" />
+      <stop offset="0.34" stop-color="#ff817b" />
+      <stop offset="0.66" stop-color="#ff574f" />
+      <stop offset="1" stop-color="#d83b34" />
+    </linearGradient>
+    <filter id="og-emberglow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="9" />
+    </filter>
   </defs>
 
-  <rect width="1200" height="630" fill="url(#bg)" />
-  <rect width="1200" height="630" fill="url(#glow)" />
-  <rect x="40.5" y="40.5" width="1119" height="549" fill="none" stroke="#2a251e" stroke-width="1" />
+  <!-- backdrop -->
+  <rect width="1200" height="630" fill="url(#og-carbon)" />
+  <rect width="1200" height="630" fill="url(#og-signal)" />
+  <rect width="1200" height="630" fill="url(#og-glow)" />
+  <rect x="40.5" y="40.5" width="1119" height="549" fill="none" stroke="#2a3138" stroke-width="1" />
 
-  <g transform="translate(112 235) scale(2.5)">
-    <circle cx="32" cy="32" r="20" fill="none" stroke="#ece7dd" stroke-width="3" opacity="0.5" />
-    <path d="M32 4v12M32 48v12M4 32h12M48 32h12" stroke="#ece7dd" stroke-width="4" stroke-linecap="round" />
-    <path d="M32 22l3.2 6.8L42 32l-6.8 3.2L32 42l-3.2-6.8L22 32l6.8-3.2z" fill="#ff5a3c" />
-  </g>
+  <!-- ember spine (IGNITION FRAME accent bar to the left of the wordmark block) -->
+  <rect x="96" y="196" width="6" height="252" rx="3" fill="url(#og-ember)" />
 
-  <rect x="304" y="200" width="34" height="3" fill="#ff5a3c" />
-  <text x="350" y="211" font-family="'Helvetica Neue',Arial,sans-serif" font-size="22" font-weight="600" letter-spacing="9" fill="#a39c8f">BROWSER · 3D · FPS</text>
+  <!-- top kicker -->
+  <text x="126" y="210" font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace"
+        font-size="23" font-weight="600" letter-spacing="8" fill="#71c4d1"
+        textLength="330" lengthAdjust="spacingAndGlyphs">BROWSER · 3D · FPS</text>
 
-  <text x="300" y="360" font-family="'Helvetica Neue',Arial,sans-serif" font-size="158" font-weight="800" letter-spacing="-4" fill="#ece7dd">hibana</text>
+  <!-- hero wordmark: reFlesh (steel) with an ember "F" (soft glow copy beneath) -->
+  <text x="120" y="372" font-family="-apple-system,'Segoe UI','Helvetica Neue',Arial,sans-serif"
+        font-weight="900" font-size="150" fill="url(#og-ember)" filter="url(#og-emberglow)" opacity="0.5"
+        textLength="560" lengthAdjust="spacingAndGlyphs">reFlesh</text>
+  <text x="120" y="372" font-family="-apple-system,'Segoe UI','Helvetica Neue',Arial,sans-serif"
+        font-weight="900" font-size="150" fill="url(#og-steel)"
+        textLength="560" lengthAdjust="spacingAndGlyphs"><tspan fill="url(#og-steel)">re</tspan><tspan fill="url(#og-ember)">F</tspan><tspan fill="url(#og-steel)">lesh</tspan></text>
 
-  <text x="306" y="430" font-family="'Hiragino Sans','Noto Sans JP',sans-serif" font-size="34" fill="#a39c8f">ブラウザで動く3D FPS。撃って、走って、BOTと撃ち合う。</text>
+  <!-- mono lockup: the exact brand string, echoing the ember-F treatment -->
+  <text x="124" y="442" font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace"
+        font-size="27" font-weight="600" letter-spacing="3" fill="#a9afb1"
+        textLength="500" lengthAdjust="spacingAndGlyphs"><tspan fill="#ff574f">FPS-</tspan><tspan fill="#f0f1ee">re</tspan><tspan fill="#ff574f">F</tspan><tspan fill="#f0f1ee">lesh</tspan><tspan fill="#a9afb1"> Play Style-</tspan></text>
 
-  <line x1="300" y1="520" x2="1104" y2="520" stroke="#2a251e" stroke-width="1" />
-  <text x="300" y="562" font-family="'Helvetica Neue',Arial,sans-serif" font-size="24" letter-spacing="1" fill="#6d675c">Three.js · Rapier · TypeScript</text>
-  <text x="1104" y="562" text-anchor="end" font-family="'Helvetica Neue',Arial,sans-serif" font-size="24" letter-spacing="1" fill="#6d675c">miruky.github.io/hibana</text>
+  <!-- sub copy -->
+  <text x="124" y="506" font-family="'Hiragino Sans','Noto Sans JP',sans-serif"
+        font-size="33" fill="#a9afb1"
+        textLength="720" lengthAdjust="spacingAndGlyphs">ブラウザで動く3D FPS。撃って、走って、BOTと撃ち合う。</text>
+
+  <!-- footer -->
+  <line x1="124" y1="548" x2="1076" y2="548" stroke="#2a3138" stroke-width="1" />
+  <text x="124" y="588" font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace"
+        font-size="24" letter-spacing="1" fill="#7a8288"
+        textLength="360" lengthAdjust="spacingAndGlyphs">Three.js · Rapier · TypeScript</text>
+  <text x="1076" y="588" text-anchor="end" font-family="ui-monospace,'SF Mono',Menlo,Consolas,monospace"
+        font-size="24" letter-spacing="1" fill="#7a8288"
+        textLength="278" lengthAdjust="spacingAndGlyphs">miruky.github.io/hibana</text>
 </svg>

@@ -263,7 +263,9 @@ export const STAGES: StageDef[] = [
     botCount: 5,
     palette: {
       sky: '#dce8f4',
-      fog: '#e4edf6',
+      // R13 意図的な雪霧: near-white(#e4edf6)は地平が白飛びして「バグっぽい」白霞になる。
+      // 銀青の霞へ。match側の sky-lerp後(≈#a9c5de/L0.77)に着地させ、中距離の敵が視認できる。
+      fog: '#9cbcd8',
       floor: '#e8edf2',
       wall: '#c2ccd8',
       obstacle: '#9fb4cc',
@@ -274,11 +276,12 @@ export const STAGES: StageDef[] = [
       particle: 'snow',
       particleAmount: 1.0,
       silhouette: 'mountain',
-      groundFog: 0.6,
+      groundFog: 0.5,
       lightColor: '#eef4ff',
       lightIntensity: 1.2,
       ambientIntensity: 1,
-      fogDensity: 0.028,
+      // R13: 0.028は中距離(30m)で50%も白霞に沈み敵が消える。0.018で30m≈25%まで緩和。
+      fogDensity: 0.018,
       emissiveAccent: false,
       turbidity: 1.5,
       rayleigh: 0.4,
@@ -309,11 +312,12 @@ export const STAGES: StageDef[] = [
       grassKind: 'none',
       particle: 'ember',
       silhouette: 'skyline',
-      groundFog: 0.6,
+      // R13: 足元の霧を薄め、鉄骨越しの敵シルエットを潰さない
+      groundFog: 0.45,
       lightColor: '#ffd9b0',
       lightIntensity: 1.1,
       ambientIntensity: 0.55,
-      fogDensity: 0.02,
+      fogDensity: 0.016,
       emissiveAccent: true,
       turbidity: 12,
       rayleigh: 1.0,
@@ -348,7 +352,8 @@ export const STAGES: StageDef[] = [
       lightColor: '#aab4ff',
       lightIntensity: 0.7,
       ambientIntensity: 0.4,
-      fogDensity: 0.024,
+      // R13: ネオンが霧に沈みすぎるのを緩和(夜市の視程を確保)
+      fogDensity: 0.018,
       emissiveAccent: true,
       turbidity: 16,
       rayleigh: 0.6,
@@ -564,7 +569,8 @@ export const STAGES: StageDef[] = [
       grassKind: 'none',
       particle: 'dust',
       silhouette: 'skyline',
-      groundFog: 0.9,
+      // R13: 0.9は足元が白飛びして貨車が消える。朝霧の「沈む」情感は残しつつ0.55へ
+      groundFog: 0.55,
       lightColor: '#ffe3b8',
       lightIntensity: 1.35,
       ambientIntensity: 0.85,
@@ -704,7 +710,8 @@ export const STAGES: StageDef[] = [
     botCount: 4,
     palette: {
       sky: '#c4d8d0',
-      fog: '#dce6de',
+      // R13: near-white(#dce6de)は湯気が画面全体を白霞させバグっぽい。緑白の霞へ半段落とす
+      fog: '#cdd8d2',
       floor: '#8a938e', // verdict.fix: 暖灰#8a8378は木材障害物と溶けるため「空を映す濡れ石畳」の緑白へ(寒暖分離1.57:1)
       wall: '#5f4c3c',
       obstacle: '#8a6a4a',
@@ -714,7 +721,8 @@ export const STAGES: StageDef[] = [
       grassDensity: 0.4,
       particle: 'none',
       silhouette: 'ridge',
-      groundFog: 0.9,
+      // R13: 湯けむりの足元霧。0.9は白飛びで石畳/敵が消えるため0.55へ(局所湯気演出に委ねる)
+      groundFog: 0.55,
       lightColor: '#ffeed2',
       lightIntensity: 1.35,
       ambientIntensity: 0.85,

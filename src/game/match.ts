@@ -31,6 +31,7 @@ import {
   type AimPart,
 } from './aimassist';
 import { applyAttachments } from './attachments';
+import { resolveOpticId, OPTIC_SPECS } from './optics';
 import {
   coneOffset,
   damageAtDistance,
@@ -281,6 +282,9 @@ export interface MatchSnapshot {
   ultActive: boolean; // オーバードライブ発動中
   // スナイパースコープ/エイムアシスト関連
   scopedWeapon: boolean; // 現在の武器がスコープ持ちか(オーバーレイ表示の起点)
+  opticId: string; // 現在の光学ID(optics.ts OPTIC_SPECS)。HUDレティクル/オーバーレイ駆動
+  adsOpticActive: boolean; // 倍率光学をADS中(magnified && adsProgress>0.5)。def.scopeとは独立系統
+  sightStyle: string; // = OpticSpec.reticleKind。HUDの data-reticle 駆動(全画面レティクルの種類)
   scope: { sway: { x: number; y: number }; steady: boolean; breath01: number }; // swayは度
   aimAssistEngaged: boolean; // 視認できる敵が吸着円錐内にいる
   rangeM: number; // スコープのレンジ表示(対象までの距離m、無ければ0)
@@ -1190,8 +1194,14 @@ export class Match {
     (envSky.material as THREE.Material).dispose();
     pmrem.dispose();
 
-    // フォグ色を空の地平側へ寄せ、空とフォグの境目を目立たなくする
-    if (this.scene.fog) (this.scene.fog as THREE.FogExp2).color.lerp(new THREE.Color(palette.sky), 0.35);
+    // フォグ色を空の地平側へ寄せ、空とフォグの境目を目立たなくする。
+    // R13: snow/overcast は空へ寄せすぎると白飛びして「バグっぽい霧」になるため寄せを弱め、
+    // フォグ固有の色相(銀青/霞)を保って意図的な大気に見せる
+    if (this.scene.fog) {
+      const fogMood = resolveMood(palette);
+      const skyLerp = fogMood === 'snow' || fogMood === 'overcast' ? 0.2 : 0.35;
+      (this.scene.fog as THREE.FogExp2).color.lerp(new THREE.Color(palette.sky), skyLerp);
+    }
 
     // 床のグリッド(アクセント色の薄い線)で平坦さを解消する
     const grid = new THREE.GridHelper(
@@ -3071,7 +3081,8 @@ export class Match {
   // ミッション開始時の準備: 濃霧・脱出地点・第1波
   private setupMission(mission: MissionDef): void {
     if (this.modifierSet.has('dense-fog') && this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.density = Math.min(0.12, this.scene.fog.density * 2.6 + 0.012);
+      // R13: 濃霧modifierも「意図的な霧」に留める。係数2.6/上限0.12は白飛びしすぎるため緩和
+      this.scene.fog.density = Math.min(0.07, this.scene.fog.density * 1.6 + 0.01);
     }
     // 脱出地点(extract用): プレイヤー初期位置から最も遠い隅
     const start = this.playerSpawns[0] ?? new THREE.Vector3();
@@ -3335,6 +3346,10 @@ export class Match {
 
   snapshot(): MatchSnapshot {
     const weapon = this.activeWeapon;
+    // R13: 光学ID→OpticSpecを解決(HUDレティクル種別/倍率オーバーレイ判定)。
+    // adsOpticActiveはdef.scope(ネイティブ狙撃)とは独立で、後付け倍率光学のADS時に立つ
+    const opticId = resolveOpticId(weapon.def);
+    const optic = OPTIC_SPECS[opticId];
     const spec = GRENADE_SPECS[this.grenadeKind];
     const cookWindow = spec.fuseS - COOK_SAFETY_S;
     const snapshot: MatchSnapshot = {
@@ -3379,6 +3394,9 @@ export class Match {
       ultCharge: this.ultCharge,
       ultActive: this.ultActive > 0,
       scopedWeapon: weapon.def.scope === true,
+      opticId,
+      adsOpticActive: !!optic?.magnified && weapon.adsProgress > 0.5,
+      sightStyle: optic?.reticleKind ?? 'dot',
       scope: {
         sway: this.settings.reduceMotion ? { x: 0, y: 0 } : this.scopeSway,
         steady: this.breathSteady,

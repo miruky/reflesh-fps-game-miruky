@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CAMPAIGN } from './campaign';
 import { WEAPON_DEFS } from './weapons';
+import { ATTACHMENT_DEFS } from './attachments';
 import {
   applyCampaignMission,
   applyMatch,
@@ -81,6 +82,18 @@ describe('アンロック', () => {
     }
     // ウェポンアンロックのIDは重複しない
     const ids = weaponUnlocks.map((u) => u.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('全アタッチメントアンロックのIDがアタッチメント定義表に存在する', () => {
+    const attachmentUnlocks = UNLOCKS.filter((u) => u.kind === 'attachment');
+    // 既存8(reflex/vertical/extended/suppressor/angled/compensator/telescopic/quick)+ 追加光学8 = 16
+    expect(attachmentUnlocks.length).toBe(16);
+    for (const u of attachmentUnlocks) {
+      expect(ATTACHMENT_DEFS[u.id], u.id).toBeDefined();
+    }
+    // アタッチメントアンロックのIDは重複しない
+    const ids = attachmentUnlocks.map((u) => u.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 

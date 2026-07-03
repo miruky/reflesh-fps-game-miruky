@@ -149,6 +149,15 @@ export const UNLOCKS: UnlockDef[] = [
   { kind: 'attachment', id: 'suppressor', name: 'サプレッサー', level: 5 },
   { kind: 'weapon', id: 'kumagera-lmg', name: 'クマゲラLMG', level: 6 },
   { kind: 'attachment', id: 'angled', name: 'アングルドグリップ', level: 6 },
+  // ── ③追加光学8種を段階配置(pico/holo 早期→delta/canted 中盤→acog/variable/hybrid/thermal 後半) ──
+  { kind: 'attachment', id: 'pico', name: 'ピコドット', level: 3 },
+  { kind: 'attachment', id: 'holographic', name: 'ホロサイト', level: 5 },
+  { kind: 'attachment', id: 'delta', name: 'デルタサイト', level: 8 },
+  { kind: 'attachment', id: 'canted', name: 'カンテッドサイト', level: 10 },
+  { kind: 'attachment', id: 'acog', name: 'ACOGスコープ', level: 12 },
+  { kind: 'attachment', id: 'variable', name: 'バリアブルスコープ', level: 15 },
+  { kind: 'attachment', id: 'hybrid', name: 'ハイブリッドサイト', level: 18 },
+  { kind: 'attachment', id: 'thermal', name: 'リコンスコープ', level: 22 },
   // 追加18プライマリを L7-L24 へ1本/レベルで配置
   { kind: 'weapon', id: 'kasasagi-ar', name: 'カササギAR', level: 7 },
   { kind: 'attachment', id: 'compensator', name: 'コンペンセイター', level: 7 },
