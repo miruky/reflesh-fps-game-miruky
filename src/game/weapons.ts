@@ -1319,7 +1319,7 @@ export class Weapon {
     this.burstLeft = 0;
     this.adsProgress = 0;
     this.bloomDeg = 0;
-    this.recoil.reset();
+    this.recoil.hardReset(); // R14: 蓄積オフセットも消す(切替繰り越しの視点ガクつき防止)
   }
 
   cancelReload(): void {
@@ -1334,7 +1334,7 @@ export class Weapon {
     this.cancelReload();
     this.burstLeft = 0;
     this.bloomDeg = 0;
-    this.recoil.reset();
+    this.recoil.hardReset(); // R14: リスポーンで反動オフセットも完全リセット
   }
 
   currentSpreadRad(ctx: SpreadContext): number {
@@ -1407,7 +1407,8 @@ export class Weapon {
     }
 
     if (wantsShot && this.cooldownMs <= 0 && this.raiseRemainingMs <= 0) {
-      if (this.magazine.fire()) {
+      // R14: 素手(fists)は近接攻撃なので弾倉を消費しない(999発を消費し999回でロック、を回避)
+      if (this.def.id === 'fists' || this.magazine.fire()) {
         this.cooldownMs = 60000 / this.def.rpm;
         this.sinceLastShotMs = 0;
         this.bloomDeg = Math.min(this.def.bloomMaxDeg, this.bloomDeg + this.def.bloomPerShotDeg);
@@ -1416,6 +1417,7 @@ export class Weapon {
         if (this.def.mode === 'burst') this.burstLeft -= 1;
         // 空マガジンになったら自動リロード
         if (this.magazine.isEmpty && this.magazine.canReload) {
+          this.burstLeft = 0; // R14: 空リロードでバースト残を消し、リロード後の幽霊発射を防ぐ
           this.reloadingKind = 'empty';
           this.reloadRemainingMs = this.def.reloadEmptyMs;
           this.reloadDurationMs = this.def.reloadEmptyMs;

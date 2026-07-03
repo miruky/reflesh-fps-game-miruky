@@ -96,7 +96,8 @@ function fitsDot(def: WeaponDef): boolean {
   return !SCOPED_SHAPES.has(shape) && shape !== 'fists';
 }
 // 倍率光学: 内蔵スコープ機・拳銃系・素手を除外。
-function fitsMagnified(def: WeaponDef): boolean {
+// export: OPTIC_SPECS外の倍率サイト(legacy telescopic)の適合判定にもUI側から使う。
+export function fitsMagnified(def: WeaponDef): boolean {
   const shape = resolveShape(def);
   return !SCOPED_SHAPES.has(shape) && !MAGNIFIED_EXCLUDE.has(shape);
 }

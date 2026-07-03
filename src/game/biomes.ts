@@ -113,7 +113,9 @@ const BIOME_PROFILES: Record<Biome, BiomeProfile> = {
     turbidity: [3, 6],
     rayleigh: [0.8, 1.2],
     mie: [0.002, 0.004],
-    exposure: [1.05, 1.2],
+    // R13glare: 露出1.05-1.2は明るい砂床で白飛び・眩しさの主因。手書きの砂漠系
+    // (sakyuu0.9/kyokoku0.92/saisekiba0.98)に揃え、日向のコントラストは維持しつつ過露出を断つ。
+    exposure: [0.95, 1.05],
     env: [0.9, 1.05],
     namePool: ['灼熱砂丘', '風蝕谷', '枯れ井戸', '砂嵐前線'],
     subPool: ['遮蔽の乏しい我慢比べ', '陽炎ゆらぐ広域戦', '砂塵に紛れる長射程戦'],
@@ -160,7 +162,9 @@ const BIOME_PROFILES: Record<Biome, BiomeProfile> = {
     turbidity: [12, 18],
     rayleigh: [0.4, 0.8],
     mie: [0.015, 0.025],
-    exposure: [1.1, 1.25],
+    // R13glare: 露出1.1-1.25は発光看板+bloomでネオンが白潰れするため半段下げる
+    // (yoichi=1.1に整合)。暗い床なので視程は落ちず、滲みだけが締まる。
+    exposure: [1.05, 1.12],
     env: [0.4, 0.55],
     bloomStrength: [0.7, 1.1],
     namePool: ['夜市', '電脳街', '虹彩区', '残光通り'],
@@ -339,6 +343,12 @@ export function generatePalette(rand: Rand, biome: Biome): StagePalette {
   };
   if (p.bloomStrength) {
     palette.bloomStrength = range(rand, p.bloomStrength[0], p.bloomStrength[1]);
+  }
+  // R13glare: 既定bloom閾値を0.9へ引き上げた(昼の明部の眩しい滲みを断つ)ため、
+  // 発光バイオーム(ネオン)は明示的に旧既定0.85を保ちネオンの滲みを据え置く。
+  // 定数=RNG非消費なので生成id/決定論は不変。
+  if (p.emissive) {
+    palette.bloomThreshold = 0.85;
   }
   return palette;
 }

@@ -29,7 +29,7 @@ import {
   attachmentsForSlot,
   type AttachmentSlot,
 } from '../game/attachments';
-import { OPTIC_SPECS } from '../game/optics';
+import { OPTIC_SPECS, fitsMagnified } from '../game/optics';
 import type { Difficulty } from '../game/bot';
 import { GRENADE_KINDS, GRENADE_SPECS, type GrenadeKind } from '../game/grenades';
 import type { MatchResult } from '../game/match';
@@ -1303,9 +1303,13 @@ export class Menu {
     return node;
   }
 
-  // prefers-reduced-motionの利用者には演出を飛ばして即値を見せる
+  // prefers-reduced-motionの利用者には演出を飛ばして即値を見せる。
+  // R14: OSのメディアクエリだけでなくアプリ内設定(画面の揺れを軽減)も併用(JS/WebGL演出の二重ゲート)
   private get prefersReducedMotion(): boolean {
-    return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    return (
+      (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false) ||
+      this.settings.reduceMotion
+    );
   }
 
   // 0から目標値まで数字を駆け上がらせる。画面差し替えで要素が外れたら止める
@@ -1549,6 +1553,9 @@ export class Menu {
       if (slot === 'primary') {
         this.selection.primaryId = id;
         this.markSelected(this.query('weapons'), 'weapon', id);
+        // R14: 先に光学の適合ゲートを再評価して不適合な倍率光学を外し(syncAttachmentsで
+        // selection.attachmentsも更新)、その確定ロードアウトでプレビュー/数値を描く(順序重要)
+        this.renderAttachments();
         this.previewWeapon(this.currentPrimaryDef());
         this.renderBriefing();
       } else {
@@ -1685,13 +1692,19 @@ export class Menu {
 
   private renderAttachments(): void {
     const panel = this.query('attachments');
+    // R14: 冪等化。武器切替で再実行されるため、既存行をクリアしないとスロット行が重複増殖する
+    panel.replaceChildren();
     const level = this.playerLevel();
     // R13: 光学の武器適合ゲート。内蔵スコープ機(狙撃/DMR)や拳銃系に倍率光学を出さない
     // (装着すると視覚はネイティブのまま・ズームだけ静かに書き換わる split-brain を防ぐ)。
     const primaryDef = this.currentPrimaryDef();
     const opticFits = (id: string): boolean => {
       const spec = OPTIC_SPECS[id];
-      return !spec?.fits || spec.fits(primaryDef);
+      if (spec?.fits) return spec.fits(primaryDef);
+      // R14: telescopic は OPTIC_SPECS 外の倍率サイト。内蔵スコープ機/拳銃系には付けない
+      // (spec 未登録だと従来 opticFits が true に短絡しゲートを素通りしていた)
+      if (id === 'telescopic') return fitsMagnified(primaryDef);
+      return true;
     };
     for (const { slot, label } of ATTACHMENT_SLOTS) {
       // ロック中/この武器に適合しないアタッチメントが選択に残っていたら外す

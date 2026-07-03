@@ -34,7 +34,9 @@ export const STAGES: StageDef[] = [
       mieCoefficient: 0.005,
       elevation: 45,
       azimuth: 180,
-      exposure: 1.0,
+      // R13glare: 入門マップは最初に眩しさが問われる。明るい床+sun1.6で明部が飛ぶため
+      // 露出を半段(1.0→0.96)引いて白飛りを抜く。直射/影の落ち方はsun不変で維持。
+      exposure: 0.96,
       environmentIntensity: 0.9,
     },
   },
@@ -104,7 +106,8 @@ export const STAGES: StageDef[] = [
       mieCoefficient: 0.004,
       elevation: 50,
       azimuth: 200,
-      exposure: 1.0,
+      // R13glare: sun1.7の高照度で明部が飛ぶため露出を半段(1.0→0.97)引く。影は不変。
+      exposure: 0.97,
       environmentIntensity: 0.85,
     },
   },

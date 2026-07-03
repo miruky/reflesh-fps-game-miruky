@@ -336,17 +336,21 @@ export const SHOT_PROFILES: Record<SoundProfile, ShotProfileSpec> = {
       { kind: 'tail', durationS: 0.55, filterHz: 700, filterType: 'lowpass', gain: 0.24, delayS: 0.012, wet: 0.3, optional: true },
     ],
   },
-  // DSR: 「バン!」の衝撃。メカ→重ボディ+非対称歪みサブ→クラック→ロングテール(専用コンボルバ)
+  // DSR/スナイパー: 「ドゥーン!」の重厚な衝撃。R14でさらに重量化 —
+  // 重ボディ2層(基音+深いブーム)+非対称歪みサブ(深度UP)+鋭いクラック→巨大ロングテール。
+  // ※sub層はgain<=0.45規律(小型スピーカー保護)を守り、重さはbody-tone/tailで稼ぐ。
   dmr: {
-    duckDb: -9,
-    duckHoldS: 0.08,
+    duckDb: -11, // より深くダック=一撃の存在感を増す
+    duckHoldS: 0.1,
     layers: [
-      { kind: 'mech', durationS: 0.004, filterHz: 2800, filterType: 'bandpass', q: 14, gain: 0.5, attackS: 0.001 },
-      { kind: 'body-noise', durationS: 0.16, filterHz: 1100, filterType: 'lowpass', gain: 0.72, drive: 10 },
-      { kind: 'body-tone', durationS: 0.22, freq: 95, endFreq: 40, oscType: 'sine', gain: 0.7, drive: 6, curve: 'asym' },
-      { kind: 'sub', durationS: 0.09, freq: 45, endFreq: 20, oscType: 'sine', gain: 0.45, drive: 5, curve: 'asym' },
-      { kind: 'crack', durationS: 0.024, filterHz: 1200, filterType: 'bandpass', q: 12, gain: 0.58, attackS: 0.001 },
-      { kind: 'tail', durationS: 0.9, filterHz: 550, filterType: 'lowpass', gain: 0.26, delayS: 0.015, wet: 0.3, wetLong: 0.5 },
+      { kind: 'mech', durationS: 0.004, filterHz: 2800, filterType: 'bandpass', q: 14, gain: 0.54, attackS: 0.001 },
+      { kind: 'body-noise', durationS: 0.2, filterHz: 1050, filterType: 'lowpass', gain: 0.8, drive: 12 },
+      { kind: 'body-tone', durationS: 0.3, freq: 95, endFreq: 38, oscType: 'sine', gain: 0.82, drive: 8, curve: 'asym' },
+      // 追加: 更に低い基音のブーム(谷を転がる重い余韻。subでなくbody-toneなので厚みを出せる)
+      { kind: 'body-tone', durationS: 0.36, freq: 60, endFreq: 24, oscType: 'sine', gain: 0.6, drive: 6, curve: 'asym', detuneRangeCents: 12 },
+      { kind: 'sub', durationS: 0.14, freq: 40, endFreq: 16, oscType: 'sine', gain: 0.45, drive: 6, curve: 'asym' },
+      { kind: 'crack', durationS: 0.026, filterHz: 1200, filterType: 'bandpass', q: 13, gain: 0.68, attackS: 0.001 },
+      { kind: 'tail', durationS: 1.35, filterHz: 520, filterType: 'lowpass', gain: 0.36, delayS: 0.015, wet: 0.36, wetLong: 0.66 },
     ],
   },
 };
@@ -405,8 +409,10 @@ export function bgmNoteHz(semitone: number, octave = 0, rootHz = BGM_ROOT_HZ): n
   return rootHz * Math.pow(2, semitone / 12 + octave);
 }
 
-// combat-heatに応じた各レイヤーの音量(0..1)。パッドは常時、他はheat閾値で立ち上がる。
-// lead は最も高いheat(>0.6)で立つ歪みリードの層(driveプロファイルのみ発音)。
+// combat-heatに応じた各レイヤーの音量(0..1)。
+// R14: 旧設計は低heat(探索中)でパッドのみ鳴り「ヒーリング音楽」に聞こえていた。
+// 探索中でも駆動ベース+キック+ハット+アルペジオが常時鳴るグルーヴ主体へ作り替え、
+// パッドは支配的な主旋律でなく薄いベッドに降格。歪みリードは交戦ピーク(heat>0.6)専用のまま。
 export function layerGains(heat: number): {
   pad: number;
   bass: number;
@@ -418,12 +424,12 @@ export function layerGains(heat: number): {
   const c = (x: number): number => Math.max(0, Math.min(1, x));
   const h = c(heat);
   return {
-    pad: 0.5 + 0.5 * h,
-    bass: c((h - 0.15) / 0.2),
-    perc: c((h - 0.3) / 0.2),
-    hat: c((h - 0.5) / 0.2),
-    arp: c((h - 0.55) / 0.2),
-    lead: c((h - 0.6) / 0.2),
+    pad: 0.25 + 0.35 * h, // ベッド(主張しすぎない)。0.25→0.6
+    bass: 0.5 + 0.5 * h, // 駆動ベースは常時。0.5→1.0
+    perc: 0.42 + 0.58 * h, // キック/ビートも常時。0.42→1.0
+    hat: c(0.2 + h * 0.9), // 0.2→1.0
+    arp: c(0.3 + h * 0.7), // クールな旋律のアルペジオを常時。0.3→1.0
+    lead: c((h - 0.6) / 0.2), // 歪みリードは交戦ピーク専用(heat>0.6で立つ)
   };
 }
 
@@ -497,7 +503,7 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     leadDrive: 0.5,
     hatBrightHz: 7000,
     padWet: 0.03,
-    bassMode: 'root',
+    bassMode: 'drive',
     lpQ: 0.6,
   },
   // 夕: 王道の物悲しい進行(D2)。sine arp で丸く、リードは控えめに歌う。
@@ -513,7 +519,7 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     leadDrive: 0.8,
     hatBrightHz: 6000,
     padWet: 0.045,
-    bassMode: 'root',
+    bassMode: 'drive',
     lpQ: 0.9,
   },
   // 夜: 緊迫。C2の暗い進行+drive bass(8分連打)+square arp+歪みリードで攻撃的。
@@ -536,16 +542,16 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
   overcast: {
     progression: PROG_OVERCAST,
     rootHz: 61.74, // B1
-    bpmBase: 70,
+    bpmBase: 76,
     bpmRange: 46,
-    padType: 'triangle',
+    padType: 'sawtooth',
     bassType: 'triangle',
     arpType: 'triangle',
     leadType: 'triangle',
-    leadDrive: 0,
+    leadDrive: 0.6,
     hatBrightHz: 4800,
     padWet: 0.05,
-    bassMode: 'root',
+    bassMode: 'drive',
     lpQ: 0.5,
   },
   // 雪: 疎。G2で開離和音、sparse=half-time、高オクターブ短triangleのFM風arpで冷たい輝き。
@@ -558,11 +564,11 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     bassType: 'sine',
     arpType: 'triangle',
     leadType: 'sine',
-    leadDrive: 0,
+    leadDrive: 0.5,
     hatBrightHz: 9000,
     padWet: 0.05,
     sparse: true,
-    bassMode: 'root',
+    bassMode: 'drive',
     lpQ: 0.5,
   },
   // 夜市(ネオン): 最も攻撃的。A1の深い基準+反復進行+drive bass+高leadDrive+高hat。
@@ -862,6 +868,9 @@ export class SoundKit {
     if (opts.cancel) synth.cancel();
     if (opts.delayMs) {
       const delay = opts.delayMs;
+      // R14: 前の予約を必ず解除してから上書き(360ms以内の連続アンロックで孤児タイマが
+      // quiesce後に発火し、メニューでアンロック名を喋る事故を防ぐ)
+      if (this.speakTimer) clearTimeout(this.speakTimer);
       this.speakTimer = window.setTimeout(() => synth.speak(u), delay);
     } else {
       synth.speak(u);

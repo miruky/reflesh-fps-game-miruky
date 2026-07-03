@@ -4,6 +4,7 @@ import { MedalTracker, type KillCtx, type MedalEvent, type MedalId } from './med
 function mk(overrides: Partial<KillCtx> = {}): KillCtx {
   return {
     victimName: 'bot',
+    victimId: 1,
     headshot: false,
     weaponName: 'カエデAR',
     weaponClass: 'ar',
@@ -55,17 +56,21 @@ describe('死亡で連続系リセット', () => {
     const t = new MedalTracker(new Set());
     const out: MedalEvent[] = [];
     t.onKill(mk(), out);
-    t.onPlayerDeath('enemy');
+    t.onPlayerDeath(42);
     out.length = 0;
     t.onKill(mk(), out);
     expect(ids(out)).not.toContain('double-kill');
   });
 
-  it('REVENGE: 自分を倒した相手を次に倒すと発火', () => {
+  it('REVENGE: 自分を倒した相手(uid)を次に倒すと発火・同名別idでは出ない', () => {
     const t = new MedalTracker(new Set());
     const out: MedalEvent[] = [];
-    t.onPlayerDeath('enemy7');
-    t.onKill(mk({ victimName: 'enemy7' }), out);
+    t.onPlayerDeath(7);
+    // 同じ名前でも別uid(名前は再利用される)ではリベンジにならない
+    t.onKill(mk({ victimName: 'enemy7', victimId: 99 }), out);
+    expect(ids(out)).not.toContain('revenge');
+    out.length = 0;
+    t.onKill(mk({ victimName: 'enemy7', victimId: 7 }), out);
     expect(ids(out)).toContain('revenge');
   });
 });

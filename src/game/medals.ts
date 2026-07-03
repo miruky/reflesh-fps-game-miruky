@@ -57,6 +57,7 @@ export interface MedalEvent {
 
 export interface KillCtx {
   victimName: string;
+  victimId: number; // 被害BOTの一意ID(名前は8種を再利用するためリベンジ判定に使う)
   headshot: boolean;
   weaponName: string;
   weaponClass: WeaponClass;
@@ -219,7 +220,7 @@ export class MedalTracker {
   private feedQuadBase = 0; // 直近にQuadFeedを出した位置(再武装の基点)
   private feedTriBase = 0; // 同・TripleFeed
   private feedMegaBase = 0; // 同・MegaFeed
-  private revengeTarget: string | null = null;
+  private revengeTarget: number | null = null; // killer BOTのuid(名前でなくidで追跡)
 
   constructor(known: Set<string>) {
     this.known = known;
@@ -287,7 +288,7 @@ export class MedalTracker {
     if (ctx.headshot) this.emit('headshot', out);
     if (ctx.distM >= LONGSHOT[ctx.weaponClass]) this.emit('longshot', out);
     if (ctx.distM <= 3.5) this.emit('point-blank', out);
-    if (this.revengeTarget !== null && ctx.victimName === this.revengeTarget) {
+    if (this.revengeTarget !== null && ctx.victimId === this.revengeTarget) {
       this.emit('revenge', out);
       this.revengeTarget = null;
     }
@@ -319,10 +320,10 @@ export class MedalTracker {
   }
 
   // プレイヤー死亡: 連続系を全リセットし、復讐対象を記録する
-  onPlayerDeath(killerName: string | null): void {
+  onPlayerDeath(killerId: number | null): void {
     this.chain = 0;
     this.resetFeed();
-    this.revengeTarget = killerName;
+    this.revengeTarget = killerId;
   }
 
   // killfeed への追加通知。他者のキルは自分の連続フィードを分断する

@@ -90,6 +90,9 @@ const spaceBg = spaceCanvas ? new SpaceBg(spaceCanvas) : null;
 // ズーム後の座標系で算出するため、HUDへ渡す画面サイズも同じ倍率で割る
 function applyUiScale(): void {
   hudRoot!.style.setProperty('zoom', String(settings.uiScale));
+  // R14: 全面オーバーレイ(被弾/フラッシュ/死亡幕)は zoom で縮むと視界を覆いきれず
+  // uiScale<1 で端からゲームが透けるため、CSS 側で 100%/--ui-scale に逆補正して常に全画面を覆う
+  hudRoot!.style.setProperty('--ui-scale', String(settings.uiScale));
 }
 applyUiScale();
 

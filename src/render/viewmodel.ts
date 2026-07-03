@@ -488,10 +488,12 @@ function getShared(): SharedMats {
       side: THREE.DoubleSide,
     });
     glassScope.userData.shared = true;
+    // R14: 全光学のドット印を赤・小型・高透過へ(旧: 水色0x7ad1ff/opacity0.68で大きく視界を塞いだ)。
+    // 加算合成なので赤でも芯は明るく残るが、透過を上げて背後の標的を隠さない
     const reflexDot = new THREE.MeshBasicMaterial({
-      color: 0x7ad1ff,
+      color: 0xff2a1c,
       transparent: true,
-      opacity: 0.68,
+      opacity: 0.55,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -966,22 +968,40 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
   }
 
   // ── アイアンサイト(scope機は省略=光学優先) ──
+  // R14: 暗色ハウジングだけだと暗所で照星が消えて狙いづらいため、前照星に高視認の
+  // 光ファイバ発光核(緑・emissiveでbloom)を、後照星に白ドット2つ(3ドット照準器)を足す。
   if (!sil.scope) {
+    const fiberMat = getAccent(0x7dff5a); // 緑ファイバ(shared+disposeSharedで解放)
+    const whiteDotMat = getAccent(0xf4f8ff); // 後照星の白ドット
+    const frontFiber = (x: number, y: number, z: number, r: number): void => {
+      const f = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), fiberMat);
+      f.position.set(x, y, z);
+      gun.add(f);
+    };
     if (det.iron === 'bead') {
       const bead = new THREE.SphereGeometry(0.006, 10, 8);
       bakeAt(polishParts, bead, C_BRASS, 0, BARREL_Y + gauge * 0.6, barFrontZ + 0.02, 0, 0, 0, 'flat');
+      frontFiber(0, BARREL_Y + gauge * 0.6, barFrontZ + 0.024, 0.0035);
     } else if (det.iron !== 'none') {
       boxP(metalParts, C_DARK, 0.007, 0.032, 0.008, 0, 0.062, -recD - 0.005);
       for (const sx of [-1, 1] as const) {
         boxP(metalParts, C_DARK, 0.006, 0.028, 0.012, sx * 0.013, 0.06, -recD - 0.005, 0, 0, 0, 'flat');
       }
+      // 後照星の白ドット2つ(前緑1+後白2で整列が一目で分かる3ドット照準器)
+      for (const sx of [-1, 1] as const) {
+        const wd = new THREE.Mesh(new THREE.SphereGeometry(0.0028, 8, 6), whiteDotMat);
+        wd.position.set(sx * 0.013, 0.07, -recD - 0.011);
+        gun.add(wd);
+      }
       if (det.iron === 'ghost') {
         const ring = new THREE.TorusGeometry(0.014, 0.004, 8, 14);
         bakeAt(metalParts, ring, C_DARK, 0, 0.066, 0.14, 0, 0, 0, 'flat');
+        frontFiber(0, 0.066, 0.144, 0.0042);
       } else {
         for (const sx of [-1, 1] as const) {
           boxP(metalParts, C_DARK, 0.012, 0.03, 0.014, sx * 0.018, 0.062, 0.14);
         }
+        frontFiber(0, 0.064, 0.14, 0.0042);
       }
     }
   }
@@ -1323,7 +1343,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
           for (const sx of [-1, 1] as const) {
             boxP(metalParts, C_DARK, 0.006, 0.05, 0.05, sx * 0.023, sy - 0.002, 0.05, 0, 0, 0, 'flat');
           }
-          reflexDotWindow(sy, 0.018, 0.02, 0.05);
+          reflexDotWindow(sy, 0.018, 0.012, 0.05);
           break;
         }
         case 'holo': {
@@ -1348,7 +1368,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
             boxP(metalParts, C_DARK, 0.005, 0.03 * f, 0.03, sx * 0.014, sy, 0.05, 0, 0, 0, 'flat');
           }
           boxP(metalParts, C_DARK, 0.032, 0.005, 0.01, 0, sy + 0.016 * f, 0.045, 0, 0, 0, 'flat');
-          reflexDotWindow(sy, 0.011, 0.012, 0.05);
+          reflexDotWindow(sy, 0.011, 0.008, 0.05);
           break;
         }
         case 'delta': {
@@ -1357,14 +1377,14 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
           boxP(metalParts, C_RIM, 0.038, 0.006, 0.05, 0, sy + 0.016, 0.05, 0, 0, 0, 'flat');
           // R13: レンズ/ドットは筐体の射手側面(z≈0.075)より手前へ。ソリッド箱に潜ると
           // 不透明筐体が先に深度を書き、depthTestでドット断片が破棄されて見えなくなる
-          reflexDotWindow(sy, 0.014, 0.016, 0.09);
+          reflexDotWindow(sy, 0.014, 0.01, 0.09);
           break;
         }
         case 'canted': {
           // カンテッド(副照準): 左へ僅かにロールした小型ハウジング。ADS整合のため dot は sy 中心。
           bakeAt(metalParts, chamferBox(0.03, 0.03, 0.04, 0.003), C_DARK, 0, sy - 0.006, 0.055, 0, 0, 0.5);
           // R13: dz を筐体の射手側面(z≈0.075)より手前へ出しドット埋没(深度オクルージョン)を回避
-          reflexDotWindow(sy, 0.01, 0.011, 0.088);
+          reflexDotWindow(sy, 0.01, 0.007, 0.088);
           break;
         }
         case 'acog': {
@@ -1399,7 +1419,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
           for (const sx of [-1, 1] as const) {
             boxP(metalParts, C_DARK, 0.005, 0.045, 0.04, sx * 0.021, sy, -0.02, 0, 0, 0, 'flat');
           }
-          reflexDotWindow(sy, 0.016, 0.017, -0.02);
+          reflexDotWindow(sy, 0.016, 0.011, -0.02);
           mountedScopeTube(sy, 0.02, 0.07, 0.06);
           break;
         }

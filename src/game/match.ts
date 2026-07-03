@@ -612,7 +612,10 @@ export class Match {
       new THREE.Vector2(size.x, size.y),
       p.bloomStrength ?? 0.5, // strength: 真の発光体だけ拾う控えめな値
       0.4, // radius
-      p.bloomThreshold ?? 0.85, // threshold
+      // threshold: 0.85 では昼の明部(明るい床/壁/箱の天面)まで滲んで白いグレアになり
+      // 「眩しくて見にくい」主因になっていた。0.9 へ上げて真に高輝度なものだけ滲ませる。
+      // ネオン/信号灯など発光演出は各パレットが明示 threshold(yoichi0.7/haieki0.8/neon0.85)を持つ。
+      p.bloomThreshold ?? 0.9, // threshold
     );
     composer.addPass(bloom);
     // アトモスフィアの映画的カラーグレード(ムード別・HDR空間=bloom後/SMAA前)
@@ -680,11 +683,13 @@ export class Match {
       THREE.MathUtils.degToRad(azimuth),
     );
 
-    // IBL(scene.environment)と二重になるため Hemi は控えめに
+    // IBL(scene.environment)と二重になるため Hemi は控えめに。
+    // 「天井(空)から差す環境光」が上面/明部を洗い流して眩しくする主因の一つなので
+    // 係数を 0.55→0.5 に下げて上方フィルを間引く(直射=sun/影は不変。むしろ日陰が締まる)。
     const hemi = new THREE.HemisphereLight(
       palette.sky,
       palette.floor,
-      palette.ambientIntensity * 0.55,
+      palette.ambientIntensity * 0.5,
     );
     this.scene.add(hemi);
     const sun = new THREE.DirectionalLight(palette.lightColor, palette.lightIntensity);
@@ -746,7 +751,10 @@ export class Match {
         });
         if (spec.emissive) {
           material.emissive = new THREE.Color(spec.color);
-          material.emissiveIntensity = 0.7; // AgX+Bloom前提で白飛びを抑える
+          // 0.7 は工廠/廃駅など発光ステージで箱が白飛び・過剰グレアの主因だった。
+          // 0.45 まで下げると暗い夜/ネオンでは依然「暗闇で自発光するアクセント」として
+          // はっきり読め、明るい発光ステージでの眩しさだけが消える(bloomは自発光を拾わない)。
+          material.emissiveIntensity = 0.45;
           material.envMapIntensity = 0.35; // 自発光体はIBLに打ち消されないよう抑制
         }
         materials.set(key, material);
@@ -1189,7 +1197,11 @@ export class Match {
     envScene.add(envSky);
     this.envRT = pmrem.fromScene(envScene, 0, 0.1, 1000);
     this.scene.environment = this.envRT.texture;
-    this.scene.environmentIntensity = palette.environmentIntensity ?? (elevation < 6 ? 0.4 : 0.85);
+    // 天球IBL(空の映り込み)の強さ=まさに「天井の光源」。値が高いと上面/明部が
+    // 空色で白飛びし全域が眩しくなる。0.8 を上限にクランプして眩しさを断つ。
+    // IBLは影を落とさないので sun.castShadow/影の落ち方には一切影響しない。
+    const envIntensity = palette.environmentIntensity ?? (elevation < 6 ? 0.4 : 0.85);
+    this.scene.environmentIntensity = Math.min(envIntensity, 0.8);
     envSky.geometry.dispose();
     (envSky.material as THREE.Material).dispose();
     pmrem.dispose();
@@ -1368,6 +1380,9 @@ export class Match {
     this.timeLeft -= dt;
     if (this.timeLeft <= 0) {
       this.timeLeft = 0;
+      // R14: 時間到達と同フレームに目的が達成される場合(extract/eliminate等)を敗北にしないよう、
+      // 失敗確定の前にミッションを一度評価して勝利を拾う(updateMission自身が pending 以外で早期return)
+      if (this.mission && this.missionOutcome === 'pending') this.updateMission(dt);
       // ミッションは時間到達で勝敗確定: survive/defend は勝利、その他の目的は時間切れ=失敗
       if (this.mission && this.missionOutcome === 'pending') {
         const k = this.mission.objective.kind;
@@ -1558,7 +1573,7 @@ export class Match {
 
     // プレイヤー死亡の立ち下がりでメダル連続系をリセット(復讐対象=直近のkiller)
     if (this.lastAlive && !this.player.alive) {
-      this.tracker.onPlayerDeath(this.killer?.name ?? null);
+      this.tracker.onPlayerDeath(this.killer?.uid ?? null);
     }
     this.lastAlive = this.player.alive;
 
@@ -1747,7 +1762,14 @@ export class Match {
       : 0;
 
     // レンジファインダー: 照準中心レイで、見ている地点までの距離を測る
-    if (weapon.def.scope === true && weapon.adsProgress > 0.5 && this.player.alive) {
+    // R14: ネイティブ狙撃に加え、後付け倍率光学(adsOpticActiveと同条件)でもレンジファインダーを動かす
+    // (旧: def.scope限定で、ACOG/可変/サーマル/DMRのオーバーレイは常に -- M 表示だった)
+    const opticMagnified = OPTIC_SPECS[resolveOpticId(weapon.def)]?.magnified === true;
+    if (
+      (weapon.def.scope === true || opticMagnified) &&
+      weapon.adsProgress > 0.5 &&
+      this.player.alive
+    ) {
       const hit = this.castRay(
         this.player.eyePosition,
         this.cameraForward(),
@@ -2445,6 +2467,7 @@ export class Match {
       const fromBehind = toBot.dot(bot.facing()) < -0.3;
       const ctx: KillCtx = {
         victimName: bot.name,
+        victimId: bot.uid,
         headshot,
         weaponName,
         weaponClass: srcClass ?? 'shotgun', // 非銃キルは shotgun 扱い=LONGSHOT無効

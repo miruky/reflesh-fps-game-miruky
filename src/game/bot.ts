@@ -358,7 +358,11 @@ function makeKindMats(color: number, tier: BotTier): KindMats {
   return { armor, dark, glow, gun, tierGlow };
 }
 
+let botUidSeq = 0;
+
 export class Bot {
+  // 生成ごと一意のインスタンスID(表示名は8種を再利用するため、リベンジ等の同一性判定に使う)
+  readonly uid = botUidSeq++;
   readonly body: RAPIER.RigidBody;
   readonly bodyCollider: RAPIER.Collider;
   readonly headCollider: RAPIER.Collider;

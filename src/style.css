@@ -1992,7 +1992,11 @@ tr.score-ally td {
 
 .hud-vignette {
   position: absolute;
-  inset: 0;
+  /* R14: #hud の zoom を打ち消して全画面(端の赤ビネットが uiScale<1 で切れない) */
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--ui-scale, 1));
+  height: calc(100% / var(--ui-scale, 1));
   background: radial-gradient(ellipse at center, transparent 52%, rgba(160, 16, 16, 0.55) 100%);
   opacity: 0;
   transition: opacity 0.25s;
@@ -2373,7 +2377,11 @@ tr.score-ally td {
 
 .hud-flash {
   position: absolute;
-  inset: 0;
+  /* R14: #hud の zoom を打ち消して常に全画面(uiScale<1でも端が透けない) */
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--ui-scale, 1));
+  height: calc(100% / var(--ui-scale, 1));
   background: rgba(200, 30, 20, 0.22);
   opacity: 0;
 }
@@ -2393,7 +2401,11 @@ tr.score-ally td {
 
 .hud-whiteout {
   position: absolute;
-  inset: 0;
+  /* R14: #hud の zoom を打ち消して常に全画面 */
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--ui-scale, 1));
+  height: calc(100% / var(--ui-scale, 1));
   background: #fff;
   opacity: 0;
   pointer-events: none;
@@ -2401,7 +2413,11 @@ tr.score-ally td {
 
 .hud-death {
   position: absolute;
-  inset: 0;
+  /* R14: #hud の zoom を打ち消して常に全画面(死亡幕から端が透けない)。中身はflexで中央維持 */
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--ui-scale, 1));
+  height: calc(100% / var(--ui-scale, 1));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2646,7 +2662,11 @@ tr.score-ally td {
 
 .hud-speedlines {
   position: absolute;
-  inset: 0;
+  /* R14: #hud の zoom を打ち消して全画面(端まで届くスピードライン) */
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--ui-scale, 1));
+  height: calc(100% / var(--ui-scale, 1));
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.12s linear;
@@ -2797,7 +2817,11 @@ tr.score-ally td {
    reduceMotion時はJS側で発火させない */
 .hud-ultflash {
   position: absolute;
-  inset: 0;
+  /* R14: #hud の zoom を打ち消して全画面(端まで届くアルト発動フラッシュ) */
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--ui-scale, 1));
+  height: calc(100% / var(--ui-scale, 1));
   opacity: 0;
   pointer-events: none;
   background: radial-gradient(circle at 50% 55%, transparent 30%, var(--accent) 125%);

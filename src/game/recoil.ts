@@ -30,6 +30,15 @@ export class RecoilTracker {
     this.index = 0;
   }
 
+  // 武器切替/リスポーン時: パターン位置に加え、未回復の蓄積オフセットも0へ。
+  // (reset()はindexのみ=射撃小休止の回復用。切替時にこれを使うと反動がplayer.pitchに
+  //  焼き付いたまま繰り越し、再選択時に下方向の視点ガクつきを起こすため hardReset を用意)
+  hardReset(): void {
+    this.index = 0;
+    this.offsetYaw = 0;
+    this.offsetPitch = 0;
+  }
+
   // 蓄積した反動オフセットを毎フレーム0へ戻す。戻した量を返すので
   // カメラ側は差分だけ視点を下げられる。
   recover(dt: number): RecoilStep {

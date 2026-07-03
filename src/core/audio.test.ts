@@ -242,9 +242,12 @@ describe('R9 ミキシング/BGM理論', () => {
     expect(h05).toBeGreaterThanOrEqual(800);
   });
 
-  it('layerGains: heatに対し単調・全て0..1、パッドは常時>=0.5、leadは最後に立つ', () => {
+  it('layerGains: heatに対し単調・全て0..1、低heatでもグルーヴ、leadは最後に立つ', () => {
     let prev = layerGains(0);
-    expect(prev.pad).toBeCloseTo(0.5, 5);
+    // R14: 探索中(heat=0)でもベース/ビート/アルペジオが鳴る(ヒーリング化回避)。パッドはベッドへ降格
+    expect(prev.pad).toBeCloseTo(0.25, 5);
+    expect(prev.bass).toBeGreaterThan(0.3); // 駆動ベースは常時
+    expect(prev.arp).toBeGreaterThan(0.2); // アルペジオも常時
     expect(prev.lead).toBe(0); // heat=0 では歪みリードは無音
     for (const h of [0.2, 0.4, 0.6, 0.8, 1]) {
       const g = layerGains(h);
@@ -314,16 +317,18 @@ describe('R12 ステージ/ムード別 BGMプロファイル', () => {
     expect(new Set(roots).size).toBe(KEYS.length);
   });
 
-  it('BGM_PROFILES: 設計上の音色/リズム識別(overcast=triangle低cutoff、night/neon=saw+drive、snow=sparse)', () => {
-    expect(BGM_PROFILES.overcast.padType).toBe('triangle');
-    expect(BGM_PROFILES.overcast.leadDrive).toBe(0);
+  it('BGM_PROFILES: 設計上の音色/リズム識別(R14: 全ムードdrive bass、overcastもエッジ、snow=sparse維持)', () => {
+    // R14: ヒーリング化回避で overcast は triangle→sawtooth + 交戦ピークにリード
+    expect(BGM_PROFILES.overcast.padType).toBe('sawtooth');
+    expect(BGM_PROFILES.overcast.leadDrive).toBeGreaterThan(0);
     expect(BGM_PROFILES.night.padType).toBe('sawtooth');
-    expect(BGM_PROFILES.night.bassMode).toBe('drive');
     expect(BGM_PROFILES.night.leadDrive).toBeGreaterThan(0);
-    expect(BGM_PROFILES['night-neon'].bassMode).toBe('drive');
     expect(BGM_PROFILES['night-neon'].leadDrive).toBeGreaterThan(BGM_PROFILES.night.leadDrive);
+    // snow は疎(half-time)の冷たい個性を保ちつつ、駆動ベース+交戦リードでヒーリング脱却
     expect(BGM_PROFILES.snow.sparse).toBe(true);
-    expect(BGM_PROFILES.snow.leadDrive).toBe(0);
+    expect(BGM_PROFILES.snow.leadDrive).toBeGreaterThan(0);
+    // R14: 全ムードのベースを駆動(root廃止)で、探索中もグルーヴが出る
+    for (const k of KEYS) expect(BGM_PROFILES[k].bassMode).toBe('drive');
   });
 
   it('setMusicProfile: 全キーで例外なく切替でき、同一キー/未再生では安全(AudioContext不要)', () => {
