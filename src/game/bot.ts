@@ -351,7 +351,7 @@ function makeKindMats(color: number, tier: BotTier): KindMats {
   const glow = new THREE.MeshStandardMaterial({
     color: 0x0d0f13,
     emissive: c.clone(),
-    emissiveIntensity: 0.9, // AgX+Bloom前提で白飛びを抑える(バイザーと同値)
+    emissiveIntensity: 0.9, // Neutral+Bloom前提で白飛びを抑える(バイザーと同値)
     roughness: 0.3,
   });
   const gun = new THREE.MeshStandardMaterial({ color: 0x202227, roughness: 0.5 });
@@ -569,7 +569,7 @@ export class Bot {
     const glow = new THREE.MeshStandardMaterial({
       color: 0x0d0f13,
       emissive: c.clone(),
-      emissiveIntensity: 0.9, // AgX+Bloom前提で白飛びを抑える(バイザー)
+      emissiveIntensity: 0.9, // Neutral+Bloom前提で白飛びを抑える(バイザー)
       roughness: 0.3,
     });
 

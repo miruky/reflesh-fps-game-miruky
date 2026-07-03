@@ -67,8 +67,10 @@ export class WeaponPreview {
       powerPreference: 'low-power',
     });
     this.renderer.setClearColor(0x000000, 0);
-    this.renderer.toneMapping = THREE.AgXToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    // R15: 本編と同じ Neutral(Khronos PBR Neutral)トーンマップへ統一。AgXのままだと
+    // ショールームだけ白飛び/脱色し、戦闘と色味・明度が食い違う(exposureも1.0基準へ)。
+    this.renderer.toneMapping = THREE.NeutralToneMapping;
+    this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.camera = new THREE.PerspectiveCamera(34, 1, 0.05, 50);

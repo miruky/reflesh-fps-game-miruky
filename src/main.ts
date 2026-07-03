@@ -68,8 +68,10 @@ const BASE_DPR = Math.min(window.devicePixelRatio, graphicsTier === 'high' ? 2 :
 renderer.setPixelRatio(BASE_DPR);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-// AgX(ACESより ember/neon の色相を保つ)+ 線形→sRGB の物理ベース出力
-renderer.toneMapping = THREE.AgXToneMapping;
+// R15: 白飛び解消 — AgXは明部を白へ脱色させ「色が際立たない/白飛び」の主因だった。
+// Khronos PBR Neutral は明部でも色相・彩度を保ちつつ緩やかにHDRロールオフするため、
+// 色が際立ち白飛びしない。線形→sRGB の物理ベース出力。
+renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 appRoot.appendChild(renderer.domElement);

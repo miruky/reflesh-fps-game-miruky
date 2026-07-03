@@ -39,7 +39,7 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
     grade: {
       tint: [1, 1, 1],
       contrast: 1.02,
-      saturation: 1.04,
+      saturation: 1.14,
       vignette: 0.18,
       vignetteR: 0.85,
       grain: 0.015,
@@ -53,7 +53,7 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
     grade: {
       tint: [1.06, 0.98, 0.9],
       contrast: 1.06,
-      saturation: 1.08,
+      saturation: 1.18,
       vignette: 0.28,
       vignetteR: 0.78,
       grain: 0.02,
@@ -68,7 +68,7 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
     grade: {
       tint: [0.86, 0.94, 1.12],
       contrast: 1.12,
-      saturation: 0.92,
+      saturation: 1.0,
       vignette: 0.4,
       vignetteR: 0.72,
       grain: 0.035,
@@ -82,7 +82,7 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
     grade: {
       tint: [0.98, 0.99, 1.02],
       contrast: 0.98,
-      saturation: 0.9,
+      saturation: 1.02,
       vignette: 0.22,
       vignetteR: 0.82,
       grain: 0.02,
@@ -97,8 +97,8 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
       // R13 意図的な雪霧: tintを寒色へ振り(赤↓青↑)、彩度を落として銀青のヘイズに。
       // vignetteを上げて中央だけ抜けの良い「意図された霞」に見せる(白飛びの平板さを排除)。
       tint: [0.92, 0.98, 1.1],
-      contrast: 1.03,
-      saturation: 0.72,
+      contrast: 1.07,
+      saturation: 0.95,
       vignette: 0.32,
       vignetteR: 0.8,
       grain: 0.018,

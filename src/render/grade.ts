@@ -3,7 +3,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import type { GradeParams } from '../game/stage';
 
 // ── 映画的カラーグレード(フルスクリーンポスト) ──
-// composer 順: Render → Bloom → Grade → SMAA → Output。Grade は OutputPass(AgX+sRGB)
+// composer 順: Render → Bloom → Grade → SMAA → Output。Grade は OutputPass(Neutral+sRGB)
 // より前段=線形HDR空間で走る。ムード別の色調(ティント/コントラスト/彩度)、周辺減光(ビネット)、
 // レンズの色収差、フィルムグレインを一括で乗せてフィールドごとの「作品性」を作る。
 export const GRADE_SHADER = {

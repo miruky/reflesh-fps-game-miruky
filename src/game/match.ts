@@ -627,8 +627,8 @@ export class Match {
       }),
     );
     composer.addPass(new SMAAPass(size.x, size.y));
-    composer.addPass(new OutputPass()); // AgX+exposure+sRGB を renderer から自動適用
-    // ジュース専用PostFX(被弾パルスの赤tint+収差)。表示空間(AgX後)・被弾時のみenable
+    composer.addPass(new OutputPass()); // Neutral+exposure+sRGB を renderer から自動適用
+    // ジュース専用PostFX(被弾パルスの赤tint+収差)。表示空間(Neutral後)・被弾時のみenable
     const postfx = new PostFXPass();
     postfx.setParams({
       vigInner: 0.95, // 静的グレードはgradePassが持つ=ここは実質パススルー
@@ -1102,7 +1102,7 @@ export class Match {
       const accentMat = new THREE.MeshStandardMaterial({ roughness: 0.5, vertexColors: true });
       if (palette.emissiveAccent) {
         accentMat.emissive = new THREE.Color(palette.accent);
-        accentMat.emissiveIntensity = 0.9; // AgX+Bloom前提
+        accentMat.emissiveIntensity = 0.9; // Neutral+Bloom前提
         accentMat.envMapIntensity = 0.35;
       }
       addMerged(accentParts, accentMat);
@@ -1198,10 +1198,11 @@ export class Match {
     this.envRT = pmrem.fromScene(envScene, 0, 0.1, 1000);
     this.scene.environment = this.envRT.texture;
     // 天球IBL(空の映り込み)の強さ=まさに「天井の光源」。値が高いと上面/明部が
-    // 空色で白飛びし全域が眩しくなる。0.8 を上限にクランプして眩しさを断つ。
+    // 空色で白飛びし全域が眩しくなる。0.72 を上限にクランプして眩しさを断つ。
     // IBLは影を落とさないので sun.castShadow/影の落ち方には一切影響しない。
     const envIntensity = palette.environmentIntensity ?? (elevation < 6 ? 0.4 : 0.85);
-    this.scene.environmentIntensity = Math.min(envIntensity, 0.8);
+    // R15: 白飛び完全解消のため天球IBLの上限を更に下げる(明るい空が金属/明部を洗い流すのを抑制)
+    this.scene.environmentIntensity = Math.min(envIntensity, 0.72);
     envSky.geometry.dispose();
     (envSky.material as THREE.Material).dispose();
     pmrem.dispose();
@@ -1238,7 +1239,7 @@ export class Match {
     const accentGlow = new THREE.MeshStandardMaterial({
       color: palette.accent,
       emissive: new THREE.Color(palette.accent),
-      emissiveIntensity: 0.9, // AgX+Bloom前提
+      emissiveIntensity: 0.9, // Neutral+Bloom前提
       roughness: 0.4,
       envMapIntensity: 0.35,
     });

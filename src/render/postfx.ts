@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
-// R11 ジュース: 表示空間(OutputPass後=AgX+sRGB適用済みLDR)をサンプルする最終ポストFX。
+// R11 ジュース: 表示空間(OutputPass後=Neutral+sRGB適用済みLDR)をサンプルする最終ポストFX。
 // ビネット / フィルムグレイン / 画面端の色収差 / 周辺彩度低下 / 被弾パルス(赤tint+収差増)。
-// AgXトーンマップと喧嘩しないよう必ずコンポーザ最後段に置く。正規化UV設計で解像度非依存。
+// Neutralトーンマップと喧嘩しないよう必ずコンポーザ最後段に置く。正規化UV設計で解像度非依存。
 export interface PostFXParams {
   vigInner: number; // ビネット開始半径(中央から, 0.5..1)
   vigOuter: number; // 周辺減光が最大になる半径

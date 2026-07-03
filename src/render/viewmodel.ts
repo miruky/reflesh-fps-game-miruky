@@ -968,41 +968,32 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
   }
 
   // ── アイアンサイト(scope機は省略=光学優先) ──
-  // R14: 暗色ハウジングだけだと暗所で照星が消えて狙いづらいため、前照星に高視認の
-  // 光ファイバ発光核(緑・emissiveでbloom)を、後照星に白ドット2つ(3ドット照準器)を足す。
+  // R15: 参考画像のスタイルへ統一 — 後照星は外・上へ角度をつけた「耳」2本(基部に琥珀アクセント)、
+  // 前照星は小さな琥珀の発光ビード。暗所でも消えず、耳の間に小さな琥珀点を合わせて狙う。
   if (!sil.scope) {
-    const fiberMat = getAccent(0x7dff5a); // 緑ファイバ(shared+disposeSharedで解放)
-    const whiteDotMat = getAccent(0xf4f8ff); // 後照星の白ドット
-    const frontFiber = (x: number, y: number, z: number, r: number): void => {
-      const f = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), fiberMat);
-      f.position.set(x, y, z);
-      gun.add(f);
+    const amberMat = getAccent(0xffab1e); // 琥珀ファイバ(shared+disposeSharedで解放)
+    const amberDot = (x: number, y: number, z: number, r: number): void => {
+      const d = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), amberMat);
+      d.position.set(x, y, z);
+      gun.add(d);
     };
+    // 後照星の「耳」2本(黒ポストを外へロール)+ 基部の琥珀点(参考画像の耳の付け根の光)。
+    // bead機(ショットガン)は前ビードがバレル上(高い)で耳と挟まないため耳を出さず単ビード構成に。
+    if (det.iron !== 'bead') {
+      for (const sx of [-1, 1] as const) {
+        boxP(metalParts, C_DARK, 0.007, 0.03, 0.01, sx * 0.014, 0.066, -recD - 0.006, 0, 0, sx * 0.24);
+        amberDot(sx * 0.011, 0.055, -recD - 0.009, 0.0022);
+      }
+    }
     if (det.iron === 'bead') {
+      // ショットガン等: バレル上の前照星ビード(brassはresolveSightY契約=polish top cluster)
       const bead = new THREE.SphereGeometry(0.006, 10, 8);
       bakeAt(polishParts, bead, C_BRASS, 0, BARREL_Y + gauge * 0.6, barFrontZ + 0.02, 0, 0, 0, 'flat');
-      frontFiber(0, BARREL_Y + gauge * 0.6, barFrontZ + 0.024, 0.0035);
+      amberDot(0, BARREL_Y + gauge * 0.6, barFrontZ + 0.024, 0.0026);
     } else if (det.iron !== 'none') {
-      boxP(metalParts, C_DARK, 0.007, 0.032, 0.008, 0, 0.062, -recD - 0.005);
-      for (const sx of [-1, 1] as const) {
-        boxP(metalParts, C_DARK, 0.006, 0.028, 0.012, sx * 0.013, 0.06, -recD - 0.005, 0, 0, 0, 'flat');
-      }
-      // 後照星の白ドット2つ(前緑1+後白2で整列が一目で分かる3ドット照準器)
-      for (const sx of [-1, 1] as const) {
-        const wd = new THREE.Mesh(new THREE.SphereGeometry(0.0028, 8, 6), whiteDotMat);
-        wd.position.set(sx * 0.013, 0.07, -recD - 0.011);
-        gun.add(wd);
-      }
-      if (det.iron === 'ghost') {
-        const ring = new THREE.TorusGeometry(0.014, 0.004, 8, 14);
-        bakeAt(metalParts, ring, C_DARK, 0, 0.066, 0.14, 0, 0, 0, 'flat');
-        frontFiber(0, 0.066, 0.144, 0.0042);
-      } else {
-        for (const sx of [-1, 1] as const) {
-          boxP(metalParts, C_DARK, 0.012, 0.03, 0.014, sx * 0.018, 0.062, 0.14);
-        }
-        frontFiber(0, 0.064, 0.14, 0.0042);
-      }
+      // 前照星の小ポスト(黒)+ 小さな琥珀ビード(狙点=resolveSightY 0.062 に一致させる)
+      boxP(metalParts, C_DARK, 0.005, 0.018, 0.007, 0, 0.056, 0.14);
+      amberDot(0, 0.062, 0.14, 0.0026);
     }
   }
 
@@ -1343,7 +1334,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
           for (const sx of [-1, 1] as const) {
             boxP(metalParts, C_DARK, 0.006, 0.05, 0.05, sx * 0.023, sy - 0.002, 0.05, 0, 0, 0, 'flat');
           }
-          reflexDotWindow(sy, 0.018, 0.012, 0.05);
+          reflexDotWindow(sy, 0.018, 0.006, 0.05);
           break;
         }
         case 'holo': {
@@ -1354,7 +1345,8 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
           const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.05, 0.04), glassThin);
           screen.position.set(0, sy, 0.05);
           screen.renderOrder = 2;
-          const dot = new THREE.Mesh(new THREE.PlaneGeometry(0.02, 0.02), reflexDot);
+          // R15: 他光学のドットに合わせて小型化(旧0.02は突出して大きかった)
+          const dot = new THREE.Mesh(new THREE.PlaneGeometry(0.008, 0.008), reflexDot);
           dot.position.set(0, sy, 0.045);
           dot.renderOrder = 3;
           gun.add(screen, dot);
@@ -1368,7 +1360,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
             boxP(metalParts, C_DARK, 0.005, 0.03 * f, 0.03, sx * 0.014, sy, 0.05, 0, 0, 0, 'flat');
           }
           boxP(metalParts, C_DARK, 0.032, 0.005, 0.01, 0, sy + 0.016 * f, 0.045, 0, 0, 0, 'flat');
-          reflexDotWindow(sy, 0.011, 0.008, 0.05);
+          reflexDotWindow(sy, 0.011, 0.005, 0.05);
           break;
         }
         case 'delta': {
@@ -1377,14 +1369,14 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
           boxP(metalParts, C_RIM, 0.038, 0.006, 0.05, 0, sy + 0.016, 0.05, 0, 0, 0, 'flat');
           // R13: レンズ/ドットは筐体の射手側面(z≈0.075)より手前へ。ソリッド箱に潜ると
           // 不透明筐体が先に深度を書き、depthTestでドット断片が破棄されて見えなくなる
-          reflexDotWindow(sy, 0.014, 0.01, 0.09);
+          reflexDotWindow(sy, 0.014, 0.006, 0.09);
           break;
         }
         case 'canted': {
           // カンテッド(副照準): 左へ僅かにロールした小型ハウジング。ADS整合のため dot は sy 中心。
           bakeAt(metalParts, chamferBox(0.03, 0.03, 0.04, 0.003), C_DARK, 0, sy - 0.006, 0.055, 0, 0, 0.5);
           // R13: dz を筐体の射手側面(z≈0.075)より手前へ出しドット埋没(深度オクルージョン)を回避
-          reflexDotWindow(sy, 0.01, 0.007, 0.088);
+          reflexDotWindow(sy, 0.01, 0.005, 0.088);
           break;
         }
         case 'acog': {
@@ -1419,7 +1411,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
           for (const sx of [-1, 1] as const) {
             boxP(metalParts, C_DARK, 0.005, 0.045, 0.04, sx * 0.021, sy, -0.02, 0, 0, 0, 'flat');
           }
-          reflexDotWindow(sy, 0.016, 0.011, -0.02);
+          reflexDotWindow(sy, 0.016, 0.006, -0.02);
           mountedScopeTube(sy, 0.02, 0.07, 0.06);
           break;
         }
@@ -1491,7 +1483,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
 //   reflex 着脱               → 0.08                 (buildGunBody 着脱 reflex dot.position.set(0, 0.08, …))
 //   telescopic 着脱(scope無)  → 0.08                (buildGunBody 着脱 telescopic tubeZ(…, 0.08, …))
 //   iron bead                → BARREL_Y + gauge*0.6  (buildGunBody アイアンサイト bead bakeAt(…, BARREL_Y+gauge*0.6, …))
-//   iron post(fixed/flip/ghost)→ 0.062              (buildGunBody アイアンサイト前ポスト boxP(…, 0.062, …))
+//   iron post(fixed/flip/ghost)→ 0.062              (R15: 狙点は前照星の琥珀ビード amberDot(0, 0.062, 0.14, …)。前ポスト箱は y=0.056 に降下)
 export function resolveSightY(def: WeaponDef): number {
   if (def.shape === 'fists') return 0;
   // 光学(内蔵スコープ/着脱reflex/holo/…)は OPTIC_SPECS.sightY を単一真実源に。
