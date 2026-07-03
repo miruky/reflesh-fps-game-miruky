@@ -67,7 +67,7 @@ export class Hud {
 
   constructor(private readonly root: HTMLElement) {
     root.innerHTML = `
-      <div class="hud-top-left">
+      <div class="hud-top-left ig-panel ig-panel--hud">
         <div class="hud-match-chip"><span data-id="modename">フリーフォーオール</span><i>LIVE</i></div>
         <div class="hud-score">
           <span><strong data-id="kills">0</strong><small>KILLS</small></span>
@@ -160,14 +160,14 @@ export class Hud {
       <div class="hud-cook" data-id="cook" hidden>
         <div class="hud-cook-bar"><div data-id="cookfill"></div></div>
       </div>
-      <div class="hud-bottom-left">
+      <div class="hud-bottom-left ig-panel ig-panel--hud">
         <div class="hud-vitals-heading"><span>VITAL</span><small data-id="hpmax">/ 100</small></div>
         <div class="hud-vitals-row">
           <div class="hud-hp-num" data-id="hp">100</div>
           <div class="hud-hp-bar"><div data-id="hpfill"></div></div>
         </div>
       </div>
-      <div class="hud-bottom-right">
+      <div class="hud-bottom-right ig-panel ig-panel--hud ig-panel--ember">
         <div class="hud-weapon-row"><span data-id="weaponslot">PRIMARY</span><strong class="hud-weapon" data-id="weapon"></strong></div>
         <div class="hud-ammo-row">
           <div class="hud-ammo"><span data-id="ammo">30</span><span class="hud-reserve" data-id="reserve">/ 120</span></div>
@@ -472,7 +472,8 @@ export class Hud {
       if (isMission) {
         this.text('obj-text', snap.objectiveText ?? '');
         const bar = this.el['obj-bar'];
-        if (bar) bar.style.transform = `scaleX(${Math.max(0, Math.min(1, snap.objectiveProgress01 ?? 0))})`;
+        if (bar)
+          bar.style.transform = `scaleX(${Math.max(0, Math.min(1, snap.objectiveProgress01 ?? 0))})`;
         const total = snap.waveTotal ?? 0;
         this.text('obj-wave', total > 1 ? `WAVE ${snap.waveIndex ?? 0}/${total}` : '');
       }
@@ -748,7 +749,10 @@ export class Hud {
     if (!on) return;
     const blips = group.children;
     for (let i = 0; i < blips.length; i += 1) {
-      const blip = blips[i] as unknown as { setAttribute: (k: string, v: string) => void; style: CSSStyleDeclaration };
+      const blip = blips[i] as unknown as {
+        setAttribute: (k: string, v: string) => void;
+        style: CSSStyleDeclaration;
+      };
       const bearing = snap.enemyBearings[i];
       if (!bearing) {
         blip.style.display = 'none';

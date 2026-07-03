@@ -5,38 +5,92 @@
 */
 
 :root {
-  /* 地色: 色味を抑えたカーボン。戦域色とアクセントが埋もれない。 */
-  --base: #101214;
-  --base-2: #16191c;
-  --raise: #1c2024;
+  /* ═══ IGNITION FRAME トークン(R10) ═══
+     骨格=BO2/BO3の軍事計器、面=MW2019のミニマル規律、点火=hibanaの火花。
+     二色規律: --ember=行動喚起/選択/達成(data-accent連動)、--signal=計器/環境情報(固定)。 */
+
+  /* 地色: MW2019 void化。パネルとの明度差を確保 */
+  --void: #07090b;
+  --base: #0b0e11;
+  --base-2: #12151a;
+  --raise: #191e24;
+  --raise-2: #222831;
+
+  /* ガラス(HUD/オーバーレイ半透明面) */
+  --glass: rgba(10, 13, 17, 0.66);
+  --glass-heavy: rgba(7, 9, 12, 0.84);
+  --glass-edge: rgba(255, 255, 255, 0.14);
+  --glass-edge-lit: rgba(255, 255, 255, 0.26);
 
   /* 文字の階調 */
   --ink: #f0f1ee;
   --ink-soft: #a9afb1;
-  --ink-faint: #71787b;
+  --ink-faint: #7a8288;
 
-  --rule: #292e32;
-  --rule-strong: #3a4146;
+  --rule: #2a3138;
+  --rule-strong: #414a52;
 
-  /* アクセント1色(火花)。小さな文字には少し明るい方を使う。 */
+  /* アクセント1色(火花)。派生は必ずcolor-mixでaccent切替に追従させる */
   --ember: #ff574f;
   --ember-ink: #ff817b;
   --ember-deep: #d83b34;
   --ember-wash: color-mix(in srgb, var(--ember) 12%, transparent);
-  --signal: #71c4d1;
+  --ember-wash-2: color-mix(in srgb, var(--ember) 20%, transparent);
+  --ember-glow: color-mix(in srgb, var(--ember) 55%, transparent);
+  --ember-halo: color-mix(in srgb, var(--ember) 28%, transparent);
+  --ember-metal: linear-gradient(
+    180deg,
+    color-mix(in srgb, #fff 14%, var(--ember)),
+    var(--ember) 46%,
+    var(--ember-deep)
+  );
 
-  /* 敵味方など機能上の二色(配色設定で上書きされる) */
+  /* 計器色(固定シアン。data-accentで変えない) */
+  --signal: #71c4d1;
+  --signal-dim: color-mix(in srgb, var(--signal) 55%, transparent);
+  --signal-wash: color-mix(in srgb, var(--signal) 10%, transparent);
+  --signal-glow: color-mix(in srgb, var(--signal) 45%, transparent);
+
+  /* 敵味方など機能色(配色設定で上書きされる) */
   --ally: #7fb0ff;
   --enemy: #ff8a76;
   --warn: #ffc24d;
+  --ok: #86d98c;
+  --threat: #ff3b2f;
+
+  /* 影と深度(3段) */
+  --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow-3: 0 24px 60px rgba(0, 0, 0, 0.65);
 
   --serif: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
   --sans: 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Roboto Mono', 'DejaVu Sans Mono', monospace;
+  /* 英語ディスプレイ(OS内蔵コンデンス系のみ。外部フォント禁止) */
+  --display:
+    'Bahnschrift', 'DIN Alternate', 'Avenir Next Condensed', 'Arial Narrow', 'Hiragino Sans',
+    sans-serif;
+
+  /* 4pxスケール余白とチャンファー(斜め切り)3段 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 48px;
+  --cut-s: 8px;
+  --cut-m: 14px;
+  --cut-l: 22px;
 
   --shell: 1280px;
+  --t-fast: 0.12s;
+  --t-base: 0.18s;
+  --t-page: 0.22s;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-snap: cubic-bezier(0.34, 1.56, 0.64, 1); /* 点火ポップ専用オーバーシュート */
 
   /* HUD等の旧変数名は新トークンへの別名として維持する */
   --accent: var(--ember);
@@ -2970,7 +3024,14 @@ tr.score-ally td {
   padding: clamp(16px, 2.4vw, 30px);
   border: 1px solid var(--rule-strong);
   background: linear-gradient(rgba(6, 10, 14, 0.36), rgba(6, 10, 14, 0.52));
-  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px));
+  clip-path: polygon(
+    0 0,
+    calc(100% - 22px) 0,
+    100% 22px,
+    100% 100%,
+    22px 100%,
+    0 calc(100% - 22px)
+  );
 }
 
 /* 四隅のLブラケット(対角2隅をシアンで強調) */
@@ -3166,7 +3227,11 @@ tr.score-ally td {
   border: 1px solid var(--rule);
   overflow: hidden;
   background:
-    radial-gradient(120% 80% at 50% 130%, color-mix(in srgb, var(--signal) 22%, transparent), transparent 60%),
+    radial-gradient(
+      120% 80% at 50% 130%,
+      color-mix(in srgb, var(--signal) 22%, transparent),
+      transparent 60%
+    ),
     linear-gradient(180deg, rgba(8, 12, 18, 0.2), rgba(8, 12, 18, 0.55));
   clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
 }
@@ -3178,7 +3243,12 @@ tr.score-ally td {
   aspect-ratio: 1;
   transform: translateX(-50%);
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 8%, color-mix(in srgb, var(--signal) 55%, #fff) 0 1%, color-mix(in srgb, var(--signal) 30%, transparent) 1.4%, transparent 3%);
+  background: radial-gradient(
+    circle at 50% 8%,
+    color-mix(in srgb, var(--signal) 55%, #fff) 0 1%,
+    color-mix(in srgb, var(--signal) 30%, transparent) 1.4%,
+    transparent 3%
+  );
   box-shadow: 0 0 60px color-mix(in srgb, var(--signal) 40%, transparent);
 }
 .hero-grid {
@@ -4026,5 +4096,4574 @@ tr.score-ally td {
   }
   .armory-preview {
     position: static;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   R10: IGNITION FRAME OVERRIDE LAYER(メニュー全画面の言語統一)
+   骨格=BO2/BO3の軍事計器(チャンファー/ブラケット/セグメントゲージ/monoテレメトリ)、
+   面=MW2019のミニマル規律(void地・1px罫線・選択は点火バーのみでベタ塗り禁止)、
+   固有性=火花(選択・確定・達成の瞬間にemberの点火表現)。
+   実装方針: 後勝ちカスケードで旧ブロックを上書きする(既存の機能規約
+   data-id / focusables / aria / uiScale(zoom) / reduceMotion二重ゲート /
+   #space-bg透過 は全て不変)。以降、このレイヤーより後に旧言語を足さないこと。
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── 0a. レイヤー内トークン(仕様批評 major #11/#14/#23/#32 の確定値) ── */
+:root {
+  /* チャンファー実測スケール(major #14): xs=チップ / s=リストカード /
+     m=パネル / plate=独立プレート / l=ダイアログ・ベゼル。直書き禁止 */
+  --cut-xs: 7px;
+  --cut-s: 10px; /* 8px→10px: リストカードの実寸へ量子化 */
+  --cut-plate: 18px;
+
+  /* CTA金属面(major #23): 文字が乗る帯を--emberで78%まで確保し、
+     ember-deep(暗部)は下端22%のみ → 濃色文字のコントラスト4.5:1を全アクセントで確保 */
+  --ember-metal: linear-gradient(
+    180deg,
+    color-mix(in srgb, #fff 14%, var(--ember)),
+    var(--ember) 78%,
+    var(--ember-deep)
+  );
+
+  /* 旧R4トークンの一本化(major #11): 値の直書きを廃止しエイリアス化 */
+  --space: var(--void);
+  --glass-panel: var(--glass);
+  --hud-condensed: var(--display);
+
+  /* 斜辺ストローク(blocker 7): clip-pathチャンファーの斜辺にはborderが引かれないため、
+     45°グラデの帯(±1px)で明示的に描く。帯の外側半分はclip-pathが正確に切り落とすので
+     視覚上は1pxの縁線がカット辺の内側に残る。色は--edge-colorで文脈ごとに差し替え */
+  --edge-diag: linear-gradient(
+    45deg,
+    transparent calc(50% - 1px),
+    var(--edge-color, var(--glass-edge)) calc(50% - 1px) calc(50% + 1px),
+    transparent calc(50% + 1px)
+  );
+
+  /* 対角2隅チャンファー(右上+左下)。--cutを各パネルで差し替える */
+  --frame-cut: polygon(
+    0 0,
+    calc(100% - var(--cut, var(--cut-m))) 0,
+    100% var(--cut, var(--cut-m)),
+    100% 100%,
+    var(--cut, var(--cut-m)) 100%,
+    0 calc(100% - var(--cut, var(--cut-m)))
+  );
+
+  /* パネル外周装飾一式: 斜辺ストローク×2 + Lブラケット(左上=signal計器 / 右下=ember行動)。
+     長さは--bk-len、色は--bk-tl/--bk-brで文脈上書き(例: 敗北リザルトは無彩) */
+  --frame-lines:
+    var(--edge-diag) top right / var(--cut, var(--cut-m)) var(--cut, var(--cut-m)) no-repeat,
+    var(--edge-diag) bottom left / var(--cut, var(--cut-m)) var(--cut, var(--cut-m)) no-repeat,
+    linear-gradient(
+        90deg,
+        var(--bk-tl, var(--signal)) 0 var(--bk-len, 18px),
+        transparent var(--bk-len, 18px)
+      )
+      top left / 100% 1.5px no-repeat,
+    linear-gradient(
+        180deg,
+        var(--bk-tl, var(--signal)) 0 var(--bk-len, 18px),
+        transparent var(--bk-len, 18px)
+      )
+      top left / 1.5px 100% no-repeat,
+    linear-gradient(
+        270deg,
+        var(--bk-br, var(--ember)) 0 var(--bk-len, 18px),
+        transparent var(--bk-len, 18px)
+      )
+      bottom right / 100% 1.5px no-repeat,
+    linear-gradient(
+        0deg,
+        var(--bk-br, var(--ember)) 0 var(--bk-len, 18px),
+        transparent var(--bk-len, 18px)
+      )
+      bottom right / 1.5px 100% no-repeat;
+
+  /* フィルムグレイン(feTurbulence data URI・アセットレス)。SVG内opacityで減衰済み */
+  --noise-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
+
+  /* 尖りチップ / セカンダリボタンの共通カット */
+  --chip-cut: polygon(
+    0 0,
+    calc(100% - var(--cut-xs)) 0,
+    100% 50%,
+    calc(100% - var(--cut-xs)) 100%,
+    0 100%
+  );
+  --quiet-cut: polygon(
+    var(--cut-s) 0,
+    100% 0,
+    100% calc(100% - var(--cut-s)),
+    calc(100% - var(--cut-s)) 100%,
+    0 100%,
+    0 var(--cut-s)
+  );
+}
+
+/* cyanアクセント時の二色衝突回避(major #32): --ember=#38c6d9 と --signal=#71c4d1 は
+   色相差約10度で「点火」と「計器」の対比が自壊する。計器を無彩スチールへ退避させ、
+   emberシアンだけが灯るMW2019的な単色計器にする(--signal派生はcolor-mixで自動追従) */
+:root[data-accent='cyan'] {
+  --signal: #93a3ad;
+}
+
+/* ── 0b. スクロールバー統一(major #36): OSネイティブバーはWeb感の最重要盲点 ── */
+#menu * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+}
+#menu ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+#menu ::-webkit-scrollbar-track {
+  background: transparent;
+}
+#menu ::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 0;
+}
+#menu ::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-faint);
+}
+.menu-screen {
+  /* タブ切替でコンテンツ高が変わってもベゼルが横に1pxガタつかない */
+  scrollbar-gutter: stable;
+}
+
+/* ── 0c. 共通質感: スキャンライン(輝度影響6%以下・pointer-events不干渉) ── */
+.ig-scan {
+  position: relative;
+}
+.ig-scan::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(0, 0, 0, 0.06) 2px 3px);
+}
+/* 走査光(1本だけゆっくり降りる)。@mediaゲート内定義なのでreduce時は生成ごと消える */
+@keyframes scan-drift {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not(.reduce-motion) .ig-scan--live::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 56px;
+    pointer-events: none;
+    z-index: 2;
+    background: linear-gradient(180deg, transparent, var(--signal-wash) 55%, transparent);
+    animation: scan-drift 7s linear infinite;
+  }
+}
+
+/* ── 0d. 共通ゲージ .ig-bar: セグメント+尖り端+グロー。
+   トラックは白14%+1px内郭線で「バーの全長(分母)」を明所でも読めるようにする(major #24) ── */
+.ig-bar {
+  position: relative;
+  display: inline-block;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rule-strong) 85%, transparent);
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%);
+  border-radius: 0;
+  overflow: hidden;
+}
+.ig-bar > i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  background: linear-gradient(90deg, var(--ember-deep), var(--ember));
+  box-shadow: 0 0 6px var(--ember-glow);
+  transition: transform 0.45s var(--ease-out);
+}
+.ig-bar::after {
+  /* 4分割ティック */
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(25% - 1px),
+    rgba(0, 0, 0, 0.7) calc(25% - 1px) 25%
+  );
+}
+
+/* ── 0e. 共通計器プレート .ig-panel(ARMORY祭壇などへHTML側でクラス付与)。
+   blocker 4/6: canvas内包パネルにfilter/backdrop-filterは絶対に載せない
+   (常時rAFで毎フレーム全面再合成になる)→ 84%不透明の--glass-heavy単板で成立させる ── */
+.ig-panel {
+  --cut: var(--cut-m);
+  position: relative;
+  border: none;
+  border-radius: 0;
+  background: var(--glass-heavy);
+  clip-path: var(--frame-cut);
+}
+.ig-panel::before {
+  /* 直辺の外周1px線。斜辺は::afterの--edge-diagが受け持つ(blocker 7) */
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  clip-path: inherit;
+  border: 1px solid var(--glass-edge);
+}
+.ig-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.85;
+  background: var(--frame-lines);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   1. メイン画面: 地・ベゼル・テレメトリレール・出撃ブリーフィング
+   ══════════════════════════════════════════════════════════════ */
+
+/* 画面地: #space-bg(z:1)透過は絶対維持。中央を素通しにするビネットのみ重ねる */
+.menu-screen.menu-main {
+  background: radial-gradient(
+    130% 105% at 50% 38%,
+    transparent 52%,
+    rgba(4, 6, 9, 0.38) 78%,
+    rgba(4, 6, 9, 0.72) 100%
+  );
+}
+/* 甲板グリッドはベゼルの発光と競合しないよう1段減光 */
+.menu-main::after {
+  opacity: 0.4;
+}
+
+/* コンソールベゼル: カーボン織り+void面+22px対角チャンファー。
+   blocker 3/5: filter:drop-shadow禁止(内部にlamp-pulse等の常時ループが複数あり、
+   1フレーム動くたびベゼル全面のアルファブラー再計算=iGPUで60fps割れの主犯になる)。
+   宇宙に浮くベゼルに接地影は不要 → 外周線+ブラケット+織りで深度を成立させる */
+.console-bezel {
+  --cut: var(--cut-l);
+  --edge-color: var(--glass-edge);
+  position: relative;
+  max-width: var(--shell);
+  margin-inline: auto;
+  padding: clamp(16px, 2.4vw, 30px);
+  border: none;
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 6px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 40%),
+    linear-gradient(rgba(7, 9, 12, 0.55), rgba(7, 9, 12, 0.72));
+  clip-path: var(--frame-cut);
+}
+/* 旧Lブラケット(26px角ボックス)を完全に打ち消して外周1px線へ役割変更 */
+.console-bezel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  top: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 1;
+  clip-path: inherit;
+  border: 1px solid var(--glass-edge);
+}
+.console-bezel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  height: auto;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0.85;
+  border: none;
+  --bk-len: 34px; /* ベゼルは最外殻なのでブラケットも1段長く */
+  background: var(--frame-lines);
+}
+/* フィルムグレイン(子要素実装: ::before/::afterは外周線とブラケットで使用済み) */
+.bezel-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.9;
+  mix-blend-mode: overlay;
+  background-image: var(--noise-img);
+}
+/* コンテンツをグレインより上層へ。deployment-briefingはposition:stickyを
+   壊さないため除外する(z-index:8を既に持つ) */
+.console-bezel > :not(.bezel-grain, .deployment-briefing) {
+  position: relative;
+  z-index: 3;
+}
+
+/* テレメトリ・レール(ヘッダー) */
+.menu-main .menu-header.telemetry-rail {
+  max-width: none;
+  margin: 0 0 var(--sp-4);
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: var(--sp-6);
+  padding-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--rule);
+}
+.menu-logo {
+  color: var(--ink);
+  filter: drop-shadow(0 0 10px var(--ember-halo));
+}
+.menu-logo svg {
+  width: 64px;
+  height: 64px;
+}
+/* T1ワードマーク: displayコンデンス+白熱グラデ(hibana→HIBANA表記はT1 uppercase規約) */
+.wordmark h1 {
+  font-family: var(--display);
+  font-size: clamp(44px, 6.4vw, 68px);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 0.9;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #fff 30%, #c9ced2 55%, #8a9299 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 12px rgba(0, 0, 0, 0.6));
+}
+/* タグライン: 英字=T7 microtag、和文=専用トークン(和文0.06em上限 major #19) */
+.menu-tagline {
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.menu-tagline::before {
+  content: '// ';
+  color: var(--ember);
+  letter-spacing: 0;
+}
+.menu-tagline [lang='ja'] {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+.menu-tagline [lang='ja']::before {
+  content: ' · ';
+  color: var(--ink-faint);
+  letter-spacing: 0;
+}
+/* システムランプ: 6px豆粒→9px+二重ハロー。ラベルは実効10px確保(major #21) */
+.sys-lamps {
+  display: flex;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.sys-lamps i {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-style: normal;
+}
+.sys-lamps b {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 30%,
+    #fff 0 18%,
+    var(--signal) 55%,
+    color-mix(in srgb, var(--signal) 55%, #000) 100%
+  );
+  box-shadow:
+    0 0 8px var(--signal-glow),
+    0 0 2px var(--signal);
+}
+/* 航法リードアウト: 罫線分節のmonoテレメトリ。ETAのみember(行動色) */
+.nav-readout {
+  justify-self: end;
+  display: flex;
+  gap: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+.nav-readout span {
+  padding-inline: 14px;
+  border-left: 1px solid var(--rule);
+}
+.nav-readout span:first-child {
+  border-left: none;
+  padding-left: 0;
+}
+.nav-readout b {
+  color: var(--signal);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+.nav-readout .nav-opr b {
+  color: var(--ink);
+}
+.nav-readout .nav-eta b {
+  color: var(--ember);
+  text-shadow: 0 0 10px var(--ember-halo);
+}
+
+/* 出撃ブリーフィング(sticky計器ガラス)。
+   major #28/7: sticky+backdrop+drop-shadowの3重合成は禁止 → 影なし・blur半径8px上限。
+   --glass-heavy(84%不透明)なのでbackdrop-filter未対応環境でも可読 */
+.deployment-briefing {
+  --cut: var(--cut-m);
+  --edge-color: var(--glass-edge);
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  min-height: 86px;
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 200px;
+  align-items: center;
+  gap: var(--sp-6);
+  margin-bottom: var(--sp-7);
+  padding: var(--sp-3) var(--sp-4) var(--sp-3) var(--sp-5);
+  border: none;
+  box-shadow: none;
+  background: var(--glass-heavy);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  clip-path: var(--frame-cut);
+}
+.deployment-briefing::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  clip-path: inherit;
+  border: 1px solid var(--glass-edge);
+  opacity: 0.9;
+  background: var(--frame-lines);
+}
+.briefing-heading span {
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+.briefing-heading span::before {
+  content: '// ';
+  color: var(--ember);
+  letter-spacing: 0;
+}
+.briefing-heading strong {
+  margin-top: 6px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.briefing-loadout dt {
+  /* 8.5px→T6へ引き上げ(英字ラベル) */
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.briefing-loadout dd {
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 出撃CTA: 右尖り+金属グラデ+左端点火ストライプ。
+   和文「出撃する」のため字間は0.06em上限(major #19)、文字色はember面上で
+   全アクセント4.5:1以上(major #23、--ember-metalの78%ストップと対) */
+.menu-start {
+  width: 100%;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 0 26px 0 18px;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #140b08;
+  background: linear-gradient(90deg, var(--ember-deep) 0 4px, transparent 4px), var(--ember-metal);
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%);
+  transition:
+    filter 0.14s var(--ease),
+    transform 0.1s var(--ease);
+}
+.menu-start svg {
+  width: 19px;
+  height: 19px;
+  flex: none;
+}
+.menu-start:hover {
+  /* 旧ember-inkベタを打ち消し、金属面のまま増光+ブルーム */
+  background: linear-gradient(90deg, var(--ember-deep) 0 4px, transparent 4px), var(--ember-metal);
+  filter: brightness(1.12) drop-shadow(0 0 14px var(--ember-glow));
+}
+.menu-start:active {
+  transform: translateY(1px) scale(0.995);
+}
+/* 降下警告灯: --warn固定が意図(アクセント非連動の管制灯)。beacon-spin 2.4s既存ループ維持 */
+.lever-beacon {
+  position: absolute;
+  top: -10px;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: conic-gradient(var(--warn), transparent 55%, var(--warn));
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--warn) 50%, transparent));
+  opacity: 0.9;
+}
+.lever-eta {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* セクション見出し: 「//」スラッシュ+点火ルール(和文本文は0.06em上限) */
+.menu-section h2,
+.menu-controls h2 {
+  gap: 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+.menu-section h2::before,
+.menu-controls h2::before {
+  content: '//';
+  width: auto;
+  height: auto;
+  background: none;
+  color: var(--ember);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: -0.1em;
+  flex: none;
+}
+.menu-section h2::after,
+.menu-controls h2::after {
+  height: 2px;
+  background: linear-gradient(90deg, var(--ember) 0 3px, var(--rule) 3px);
+  opacity: 0.7;
+}
+
+/* MFDタブ: BO3グロー下線。選択のベタ塗りは廃止し「3px ember下線+下から滲むwash」のみ */
+.mfd-rail {
+  gap: 2px;
+  margin-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--rule-strong);
+}
+.mfd-tab {
+  padding: 11px 20px 13px;
+  color: var(--ink-faint);
+  background: transparent;
+  border-bottom: 3px solid transparent;
+  transition:
+    color 0.1s var(--ease),
+    border-color 0.12s var(--ease-out),
+    box-shadow 0.16s var(--ease);
+}
+.mfd-tab b {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  color: var(--signal);
+  opacity: 0.5;
+}
+.mfd-tab span {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+}
+.mfd-tab small {
+  font-size: 10px;
+  letter-spacing: 0.04em; /* 和文サブラベル(降下管制など) */
+  color: var(--ink-faint);
+}
+.mfd-tab:hover {
+  color: var(--ink-soft);
+  background: transparent;
+  border-bottom-color: color-mix(in srgb, var(--ember) 40%, transparent);
+}
+.mfd-tab.selected {
+  color: var(--ink);
+  border-bottom-color: var(--ember);
+  background: transparent;
+  box-shadow:
+    inset 0 -34px 22px -26px var(--ember-wash-2),
+    0 3px 10px -4px var(--ember-glow);
+}
+.mfd-tab.selected b {
+  color: var(--ember);
+  opacity: 1;
+}
+.mfd-tab.selected small {
+  color: var(--ink-soft);
+}
+.mfd-tab-campaign b {
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--warn); /* ★は番号列と別格の作戦章 */
+  opacity: 0.8;
+}
+.mfd-tab-campaign.selected b {
+  color: var(--ember);
+}
+
+/* DEPLOYヒーロー: 白ぼんやり→惑星本体(暗)+1px大気弧+外光の3層リム */
+.mfd-hero {
+  position: relative;
+  height: clamp(140px, 20vh, 220px);
+  margin-bottom: var(--sp-4);
+  border: 1px solid var(--rule);
+  overflow: hidden;
+  background:
+    radial-gradient(
+      120% 80% at 50% 135%,
+      color-mix(in srgb, var(--signal) 26%, transparent),
+      transparent 62%
+    ),
+    linear-gradient(180deg, rgba(7, 9, 12, 0.25), rgba(7, 9, 12, 0.6));
+  clip-path: polygon(0 0, calc(100% - var(--cut-m)) 0, 100% var(--cut-m), 100% 100%, 0 100%);
+}
+.hero-limb {
+  position: absolute;
+  left: 50%;
+  bottom: -175%;
+  width: 230%;
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 4%,
+    rgba(255, 255, 255, 0.95) 0 0.25%,
+    color-mix(in srgb, var(--signal) 60%, transparent) 0.7%,
+    color-mix(in srgb, var(--signal) 22%, transparent) 1.6%,
+    rgba(6, 9, 12, 0.92) 3%
+  );
+  box-shadow:
+    0 -3px 30px color-mix(in srgb, var(--signal) 45%, transparent),
+    inset 0 4px 24px color-mix(in srgb, var(--signal) 30%, transparent);
+}
+.hero-grid {
+  opacity: 0.45;
+}
+.hero-readout {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  display: flex;
+  gap: 18px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+.hero-readout b {
+  color: var(--signal);
+  font-variant-numeric: tabular-nums;
+}
+
+/* フッター: SYS NOMINALを機能色--okへ、破線フィルで計器帯化 */
+.console-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 55%, transparent);
+}
+.status-opr b {
+  color: var(--signal);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   2. カード選択言語(blocker 1: 4種へ完全同一適用。画面章での分断禁止)
+   selected = 左端3px点火バー(scaleY)+ 左からのember-wash + バーglow。
+   hover = 白3.5%。背景ベタ塗りは禁止(MW2019規律)
+   ══════════════════════════════════════════════════════════════ */
+.mode-card,
+.weapon-card,
+.difficulty-card,
+.grenade-card {
+  position: relative;
+  border-radius: 0;
+  border-top: 1px solid var(--rule);
+  padding: 14px 12px 14px 18px;
+  background: transparent;
+  clip-path: polygon(0 0, calc(100% - var(--cut-s)) 0, 100% var(--cut-s), 100% 100%, 0 100%);
+  transition:
+    background 0.12s var(--ease),
+    color 0.12s var(--ease);
+}
+.mode-card::before,
+.weapon-card::before,
+.difficulty-card::before,
+.grenade-card::before {
+  /* 点火バー単一レシピ(major #16): フェザー端grad / origin center / 点灯時glow */
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    var(--ember) 10px,
+    var(--ember) calc(100% - 10px),
+    transparent
+  );
+  transform: scaleY(0);
+  transform-origin: center;
+  transition:
+    transform 0.18s var(--ease-out),
+    box-shadow 0.18s var(--ease);
+}
+.mode-card.selected::before,
+.weapon-card.selected::before,
+.difficulty-card.selected::before,
+.grenade-card.selected::before {
+  transform: scaleY(1);
+  box-shadow: 0 0 8px var(--ember-glow);
+}
+.mode-card.selected,
+.weapon-card.selected,
+.difficulty-card.selected,
+.grenade-card.selected {
+  background: linear-gradient(90deg, var(--ember-wash) 0%, transparent 60%);
+}
+.mode-card:hover,
+.weapon-card:not(.locked):hover,
+.difficulty-card:hover,
+.grenade-card:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+.weapon-card.locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  /* ロックはValorantハッチング(-45deg・9px周期) */
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.03) 0 1px,
+    transparent 1px 9px
+  );
+}
+
+/* 計器番号(CSSカウンタ・HTML変更ゼロ)。参照情報のため実効10px以上(major #21) */
+.weapon-list {
+  counter-reset: wpn;
+}
+.weapon-card {
+  counter-increment: wpn;
+}
+.weapon-card::after {
+  content: counter(wpn, decimal-leading-zero);
+  position: absolute;
+  top: 13px;
+  right: 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: #8b949c; /* ink-faint+opacityはAA割れ(major #22)→不透過の直指定 */
+  pointer-events: none;
+}
+.weapon-card.selected::after {
+  color: var(--ember);
+}
+.mode-list {
+  counter-reset: roe;
+}
+.mode-card {
+  counter-increment: roe;
+}
+.mode-card::after {
+  content: 'R0' counter(roe);
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+.difficulty-list {
+  counter-reset: thr;
+}
+.difficulty-card {
+  counter-increment: thr;
+}
+.difficulty-card::after {
+  content: 'LV' counter(thr);
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+.mode-card.selected::after,
+.difficulty-card.selected::after {
+  color: var(--ember);
+}
+.weapon-name {
+  font-size: 16px; /* T4b list-title */
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.weapon-mode {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.locked-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   3. DEPLOYタブ: 非対称2カラム+LZグリッド(表ハック廃止→独立プレート)
+   ══════════════════════════════════════════════════════════════ */
+.mfd-cols--deploy {
+  display: grid;
+  grid-template-columns: minmax(0, 2.1fr) minmax(280px, 1fr);
+  grid-template-areas: 'stages modes' 'stages threat';
+  gap: 14px clamp(16px, 2vw, 28px);
+  align-items: start;
+}
+.mfd-cols--deploy > .menu-section:nth-child(1) {
+  grid-area: stages;
+  margin-bottom: 0;
+}
+.mfd-cols--deploy > .menu-section:nth-child(2) {
+  grid-area: modes;
+  margin-bottom: 0;
+}
+.mfd-cols--deploy > .menu-section:nth-child(3) {
+  grid-area: threat;
+  margin-bottom: 0;
+}
+
+.stage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+  background: none; /* 旧1px表ハック撤去 */
+  border: none;
+  max-height: min(58vh, 640px);
+  overflow-y: auto;
+  padding: 2px 8px 14px 2px; /* selectedのdrop-shadowブルームが枠で切れない緩衝 */
+}
+
+/* LZカード: 独立チャンファープレート。斜辺の縁線は本体background先頭の
+   --edge-diag層で描く(疑似要素は点火バーと選択三角で枯渇・blocker 7) */
+.stage-card {
+  --edge-color: var(--rule);
+  position: relative;
+  padding: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--edge-color);
+  border-radius: 0;
+  background:
+    var(--edge-diag) top right / var(--cut-plate) var(--cut-plate) no-repeat,
+    var(--base-2);
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--cut-plate)) 0,
+    100% var(--cut-plate),
+    100% 100%,
+    0 100%
+  );
+  transition:
+    background-color 0.14s var(--ease),
+    border-color 0.14s var(--ease),
+    box-shadow 0.16s var(--ease);
+}
+.stage-card:hover {
+  /* 旧hoverがbackgroundショートハンドで斜辺線を消すため、必ず全レイヤーを再宣言する */
+  --edge-color: var(--rule-strong);
+  background:
+    var(--edge-diag) top right / var(--cut-plate) var(--cut-plate) no-repeat,
+    var(--raise);
+}
+.stage-card.selected {
+  --edge-color: var(--ember);
+  /* ベタ塗り禁止規律: 面はbase-2のまま、点火バー+ember枠+内向きグローで語る。
+     外向きdrop-shadowは.stage-gridのoverflow-y:auto(=横もclip)で最右列が切れるため、
+     clip-path形状に追従する内向きグロー(insetシャドウ)で表現する */
+  background:
+    var(--edge-diag) top right / var(--cut-plate) var(--cut-plate) no-repeat,
+    var(--base-2);
+  box-shadow:
+    inset 0 0 0 1px var(--ember-halo),
+    inset 0 0 14px -2px var(--ember-halo);
+}
+/* 点火バー(共通レシピ・origin centerへ統一 major #16) */
+.stage-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 3;
+  width: 3px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    var(--ember) 10px,
+    var(--ember) calc(100% - 10px),
+    transparent
+  );
+  transform: scaleY(0);
+  transform-origin: center;
+  transition:
+    transform 0.18s var(--ease-out),
+    box-shadow 0.18s var(--ease);
+}
+.stage-card.selected::before {
+  transform: scaleY(1);
+  box-shadow: 0 0 8px var(--ember-glow);
+}
+/* 選択コーナー三角(プレート級のspark tick)。--ease-snapで捺印 */
+.stage-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 4;
+  width: 26px; /* cut-plate+8px派生(major #14) */
+  height: 26px;
+  background: var(--ember);
+  clip-path: polygon(100% 0, 0 0, 100% 100%);
+  transform: scale(0);
+  transform-origin: top right;
+  transition: transform 0.16s var(--ease-snap);
+  pointer-events: none;
+}
+.stage-card.selected::after {
+  transform: scale(1);
+}
+
+/* プレビュー: SVG実比(160/92)で上下クリップ解消+signal Lブラケット額装 */
+.stage-preview {
+  position: relative;
+  display: block;
+  aspect-ratio: 160 / 92;
+  overflow: hidden;
+  border-bottom: 1px solid var(--rule);
+  background: var(--void);
+}
+/* hoverの彩度変化はfilter遷移でなく暗幕オーバーレイのopacityで表現
+   (major #29: 21枚のSVG再ラスタライズによるペイントストーム回避) */
+.stage-preview::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: rgba(7, 9, 12, 0.22);
+  opacity: 1;
+  transition: opacity 0.25s var(--ease);
+}
+.stage-card:hover .stage-preview::before,
+.stage-card.selected .stage-preview::before {
+  opacity: 0;
+}
+.stage-preview::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, var(--signal) 0 12px, transparent 12px) top left / 100% 1.5px no-repeat,
+    linear-gradient(180deg, var(--signal) 0 12px, transparent 12px) top left / 1.5px 100% no-repeat,
+    repeating-linear-gradient(0deg, transparent 0 2px, rgba(0, 0, 0, 0.05) 2px 3px),
+    linear-gradient(180deg, transparent 55%, rgba(0, 0, 0, 0.32));
+}
+.stage-preview svg {
+  filter: saturate(0.92) contrast(1.05); /* 静的固定。遷移させない(major #29) */
+  transition: transform 0.45s var(--ease-out);
+}
+.stage-card:hover .stage-preview svg,
+.stage-card.selected .stage-preview svg {
+  filter: saturate(0.92) contrast(1.05);
+  transform: scale(1.04);
+}
+/* LZ番号タグ: 識別子=情報のため11px確保(major #21) */
+.stage-no {
+  position: absolute;
+  top: 7px;
+  left: 9px;
+  z-index: 3;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+.stage-card.selected .stage-no {
+  color: var(--ember-ink);
+}
+.stage-card-body {
+  min-height: 0; /* 旧150px固定撤去。3列化で密度up */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px 13px 16px; /* 左16px=点火バー3px+13px */
+}
+/* 20x8px豆粒チップ→プレビュー直下の全幅パレット帯 */
+.stage-swatch {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  margin: 0 -12px 4px -16px;
+}
+.stage-swatch i {
+  flex: 1;
+  width: auto;
+  height: 6px;
+  border-radius: 0;
+}
+.stage-name {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.stage-sub {
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  text-wrap: pretty;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 意思決定情報(広さ/BOT数/障害物)のためink-soft+11px(major #22) */
+.stage-meta {
+  margin-top: auto;
+  padding-top: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+.stage-seed {
+  color: var(--signal); /* プロシージャル種別=計器色 */
+  margin-right: 8px;
+  letter-spacing: 0.12em;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   4. ARMORYタブ: 装備リスト+武器祭壇(sticky計器プレート)
+   ══════════════════════════════════════════════════════════════ */
+.armory-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 42%);
+  gap: 20px;
+  align-items: start;
+}
+.armory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: 66vh;
+  overflow-y: auto;
+  padding-right: 10px;
+  scrollbar-gutter: stable;
+}
+.armory-list::-webkit-scrollbar {
+  width: 4px;
+}
+.armory-list::-webkit-scrollbar-thumb:hover {
+  background: var(--ember);
+}
+
+/* クラス見出し: sticky計器帯。backdrop-filterは使わない(major #27:
+   スクロール1フレームごとに8見出し分のblur再サンプリングが走る)→ 0.97不透明で分離 */
+.weapon-class-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin-top: 12px;
+  padding: 6px 8px 5px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em; /* 和文クラス名(アサルトライフル等) */
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--rule);
+  background: linear-gradient(180deg, rgba(11, 14, 17, 0.97) 70%, rgba(11, 14, 17, 0.88));
+}
+.weapon-class-head::before {
+  /* 左チックは計器色(3px ember=選択専用の規律 major #12) */
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 11px;
+  background: var(--signal);
+}
+.weapon-list > .weapon-class-head:first-child {
+  margin-top: 0;
+}
+
+/* 武器祭壇: ig-panel+ig-scan併用(HTML側で付与済み)。
+   blocker 6: canvasが常時rAF描画のためfilter/backdrop-filterは絶対に載せない */
+.armory-preview {
+  position: sticky;
+  top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--glass-heavy);
+  border: none;
+  border-radius: 0;
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+  filter: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* 3Dキャンバス: 台座光+ホログリッド+ビネットの多層背景(WebGLはalpha:true透過) */
+.weapon-canvas {
+  width: 100%;
+  height: clamp(240px, 30vh, 340px);
+  display: block;
+  border-radius: 0;
+  touch-action: none;
+  cursor: grab;
+  border: 1px solid var(--rule);
+  background:
+    radial-gradient(120% 92% at 50% 44%, transparent 52%, rgba(7, 9, 11, 0.82) 100%),
+    radial-gradient(46% 15% at 50% 84%, var(--ember-wash-2), transparent 72%),
+    linear-gradient(
+      180deg,
+      transparent calc(84% - 1px),
+      var(--signal-dim) calc(84% - 1px) 84%,
+      transparent 84%
+    ),
+    radial-gradient(58% 44% at 50% 38%, var(--signal-wash), transparent 75%),
+    linear-gradient(color-mix(in srgb, var(--signal) 10%, transparent) 1px, transparent 1px) 0 0 /
+      28px 28px,
+    linear-gradient(90deg, color-mix(in srgb, var(--signal) 10%, transparent) 1px, transparent 1px)
+      0 0 / 28px 28px,
+    #0a0d11;
+}
+.weapon-canvas:active {
+  cursor: grabbing;
+}
+
+/* 武器名: 和文名(カエデAR等)のためsans W8+0.04em。「//」は火花の署名 */
+.armory-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.armory-wname {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 8px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  border-bottom: 1px solid var(--rule);
+}
+.armory-wname::before {
+  content: '//';
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: -0.1em;
+  color: var(--ember);
+}
+
+/* 6軸バー: ig-bar計器言語(6px 尖り端+4分割ティック+glow) */
+.armory-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.stat-row {
+  display: grid;
+  grid-template-columns: 46px 1fr 26px;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em; /* 和文軸名(威力/連射…) */
+  color: var(--ink-soft);
+  margin-top: 0;
+}
+.stat-bar {
+  position: relative;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rule-strong) 85%, transparent);
+  overflow: hidden;
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%);
+}
+.stat-bar i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  background: linear-gradient(90deg, var(--ember-deep), var(--ember));
+  box-shadow: 0 0 6px var(--ember-glow);
+  transition: transform 0.45s var(--ease-out);
+}
+.stat-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(25% - 1px),
+    rgba(0, 0, 0, 0.7) calc(25% - 1px) 25%
+  );
+}
+.stat-num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--signal);
+  text-align: right;
+}
+
+/* 数値4種: 2×2計器セル(1px罫線グリッド) */
+.armory-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.armory-stats span {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--base-2);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.armory-stats b {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--signal);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+.armory-hint {
+  margin: 2px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink-soft); /* 操作説明=情報のためink-faint禁止(major #22) */
+}
+.armory-hint::before {
+  content: '⟲';
+  margin-right: 6px;
+  color: var(--signal);
+  font-size: 12px;
+}
+
+/* アタッチメント: pill全廃→右尖り計器チップ。スロット名は2px signalチック */
+.attach-row {
+  grid-template-columns: 76px 1fr;
+}
+.attach-slot {
+  position: relative;
+  padding: 8px 0 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em; /* 和文スロット名(サイト等) */
+  text-transform: none;
+  color: var(--ink-soft);
+}
+.attach-slot::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  width: 2px;
+  height: 10px;
+  background: var(--signal);
+}
+.attach-btn {
+  padding: 5px 14px 5px 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em; /* 和文パーツ名 */
+  color: var(--ink-soft);
+  background: transparent;
+  clip-path: var(--chip-cut);
+  transition:
+    color 0.12s var(--ease),
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+.attach-btn:not(.locked):hover {
+  border-color: var(--glass-edge-lit);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+}
+/* チップ(高さ≤30pxの小面積)のみ塗り許可=スタンプ(選択3層規約の但し書き major #15) */
+.attach-btn.selected {
+  border-color: var(--ember);
+  background: var(--ember);
+  color: #140b08;
+  font-weight: 800;
+}
+.attach-btn.locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.03) 0 1px,
+    transparent 1px 9px
+  );
+}
+
+/* 投擲物の所持数チップ */
+.grenade-carry {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px 1px 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+  border: 1px solid var(--rule-strong);
+  font-variant-numeric: tabular-nums;
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%);
+}
+.grenade-desc {
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   5. CAMPAIGNタブ: 司令部バナー+章プレート+ミッションチップ
+   ══════════════════════════════════════════════════════════════ */
+.campaign-screen {
+  gap: var(--sp-3);
+  padding: var(--sp-1) 2px;
+}
+.campaign-head {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--sp-3);
+  padding: 10px 0 12px 14px;
+  border-bottom: 1px solid var(--rule-strong);
+}
+/* 作戦全体の達成度を示す点火バー: 「選択以外でemberバーを灯す唯一の例外」(major #12) */
+.campaign-head::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 12px;
+  width: 3px;
+  background: linear-gradient(180deg, var(--ember), var(--ember-deep));
+  box-shadow: 0 0 8px var(--ember-glow);
+}
+.campaign-op {
+  display: block;
+  font-family: var(--mono);
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--signal);
+  margin-bottom: 4px;
+}
+.campaign-op i {
+  font-style: normal;
+  color: var(--ember); /* 「//」マークは常にember=火花の署名(major #13) */
+  letter-spacing: 0;
+}
+.campaign-title strong {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.04em; /* 和文作戦名 */
+  color: var(--ink);
+}
+.campaign-title span {
+  margin-left: 12px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.campaign-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.campaign-stat b {
+  color: var(--ember); /* 達成カウント=ember(major #13) */
+  font-size: 15px;
+  font-weight: 700;
+}
+.campaign-bar {
+  width: 190px;
+  height: 6px;
+}
+
+.chapter-list {
+  gap: 12px;
+  counter-reset: ch;
+}
+
+/* 章プレート: base-2+右上18pxカット。斜辺線は::after(疑似要素が空いている) */
+.chapter-card {
+  position: relative;
+  counter-increment: ch;
+  background: var(--base-2);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  overflow: hidden;
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--cut-plate)) 0,
+    100% var(--cut-plate),
+    100% 100%,
+    0 100%
+  );
+}
+.chapter-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  --edge-color: var(--rule-strong);
+  background: var(--edge-diag) top right / var(--cut-plate) var(--cut-plate) no-repeat;
+}
+.chapter-card.locked {
+  opacity: 1; /* 旧0.5の全面減光をやめ、ハッチング+CLASSIFIEDで封鎖を語る */
+  background-color: var(--base);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.03) 0 1px,
+    transparent 1px 9px
+  );
+}
+/* CLASSIFIEDスタンプ: 透過合成はコントラスト不合格(major #24)→不透過threat+影 */
+.chapter-card.locked::before {
+  content: 'CLASSIFIED';
+  position: absolute;
+  right: 42px;
+  top: 50%;
+  transform: translateY(-50%) rotate(-4deg);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--threat);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  border: 1px solid color-mix(in srgb, var(--threat) 60%, transparent);
+  padding: 3px 10px 3px 13px;
+  pointer-events: none;
+}
+
+/* 章ヘッダー: 左標は計器言語(3px emberは選択専用のため rule-strong へ振替 major #12) */
+.chapter-card-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'no prog' 'sub prog';
+  gap: 2px 16px;
+  padding: 12px 16px 11px 18px;
+  border-left: 3px solid var(--rule-strong);
+  background: none;
+}
+.chapter-card.locked .chapter-card-head {
+  border-left-color: var(--rule);
+}
+.chapter-card.locked .chapter-card-head .chapter-no,
+.chapter-card.locked .chapter-sub {
+  color: var(--ink-faint);
+}
+.chapter-no {
+  grid-area: no;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.chapter-no::before {
+  content: 'CH.' counter(ch, decimal-leading-zero) ' // ';
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: var(--signal);
+  margin-right: 8px;
+  vertical-align: 1px;
+}
+.chapter-sub {
+  grid-area: sub;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft); /* 章サブタイトル=情報(major #22) */
+}
+.chapter-prog {
+  grid-area: prog;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.chapter-prog b {
+  color: var(--ember); /* 達成カウントはember統一(major #13) */
+  font-weight: 700;
+}
+/* 8ミッション=8分割ティックバー。fillはscaleX(リフローゼロ major #30) */
+.chapter-prog-bar {
+  position: relative;
+  width: 84px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rule-strong) 85%, transparent);
+  clip-path: polygon(0 0, calc(100% - 4px) 0, 100% 50%, calc(100% - 4px) 100%, 0 100%);
+  overflow: hidden;
+}
+.chapter-prog-bar i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  background: linear-gradient(90deg, var(--ember-deep), var(--ember));
+  box-shadow: 0 0 6px var(--ember-glow);
+  transition: transform 0.45s var(--ease-out);
+}
+.chapter-prog-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(12.5% - 1px),
+    rgba(0, 0, 0, 0.7) calc(12.5% - 1px) 12.5%
+  );
+}
+
+.mission-grid {
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
+  padding: 12px 16px 16px 18px;
+}
+
+/* ミッションチップ: hover移動禁止(照準精度の世界観)→点火バー+ブルームで補償 */
+.mission-chip {
+  --edge-color: var(--rule);
+  position: relative;
+  gap: 3px;
+  padding: 11px 12px 10px 16px;
+  border: 1px solid var(--edge-color);
+  border-radius: 0;
+  background:
+    var(--edge-diag) top right / var(--cut-s) var(--cut-s) no-repeat,
+    var(--base-2);
+  clip-path: polygon(0 0, calc(100% - var(--cut-s)) 0, 100% var(--cut-s), 100% 100%, 0 100%);
+  transition:
+    background-color 0.12s var(--ease),
+    border-color 0.12s var(--ease),
+    filter 0.16s var(--ease);
+}
+.mission-chip::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    var(--ember) 8px,
+    var(--ember) calc(100% - 8px),
+    transparent
+  );
+  transform: scaleY(0);
+  transform-origin: center;
+  transition:
+    transform 0.18s var(--ease-out),
+    box-shadow 0.18s var(--ease);
+}
+.mission-chip:hover:not(:disabled) {
+  --edge-color: var(--rule-strong);
+  background-color: var(--raise);
+  transform: none; /* 旧translateY(-2px)の撤去 */
+  filter: drop-shadow(0 0 8px var(--ember-halo));
+}
+.mission-chip:hover:not(:disabled)::before,
+.mission-chip:focus-visible::before {
+  transform: scaleY(1);
+  box-shadow: 0 0 8px var(--ember-glow);
+}
+.mission-chip:active {
+  transform: translateY(1px);
+}
+.mission-chip.locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background:
+    var(--edge-diag) top right / var(--cut-s) var(--cut-s) no-repeat,
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 9px),
+    var(--base-2);
+}
+.mission-idx {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--signal);
+}
+.mission-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.mission-sub {
+  font-size: 11px;
+  color: var(--ink-soft);
+  letter-spacing: 0.02em;
+}
+/* 星: 獲得=ember発光 / 未獲得☆は非テキスト3:1確保(major #24) */
+.mission-stars {
+  margin-top: 4px;
+  font-size: 12.5px;
+  letter-spacing: 0.14em;
+  color: color-mix(in srgb, var(--ink) 45%, transparent);
+}
+.mission-stars b {
+  font-weight: 400;
+  color: var(--ember);
+  filter: drop-shadow(0 0 4px var(--ember-glow));
+}
+.mission-lock {
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+/* ── ブリーフィング(作戦司令室) ── */
+.menu-screen.menu-briefing {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: transparent; /* #space-bg透過。暗幕はビネットのみ */
+}
+.menu-briefing::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 90% at 50% 40%, transparent 40%, rgba(4, 6, 8, 0.72) 100%);
+}
+
+/* 外枠=装飾(ダイアログ2層構造の外側)。スクロールは内側.brief-panelが担う(major #10) */
+.brief-frame {
+  --cut: var(--cut-l);
+  --edge-color: var(--glass-edge);
+  position: relative;
+  width: min(720px, 94vw);
+  max-height: 90vh;
+  display: flex;
+  z-index: 2;
+  /* backdrop-filterは不使用: 祖先にbackdrop-rootが無く、blurが常時rAFの#space-bg
+     星野を毎フレーム再計算してしまう(armory-previewと同じ回避)。--glass-heavyは
+     84%不透明なので板の可読性はblur無しで成立する */
+  background: var(--glass-heavy);
+  clip-path: var(--frame-cut);
+}
+.brief-frame::before {
+  /* 外周1px線+走査線+フィルムグレイン(ノイズはSVG内opacityで減衰済み)。
+     z:-1=パネル背景の上・本文の下(clip-pathがスタッキング文脈を作るため安全) */
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  clip-path: inherit;
+  border: 1px solid var(--glass-edge);
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 2px, rgba(0, 0, 0, 0.05) 2px 3px),
+    var(--noise-img);
+}
+.brief-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0.85;
+  background: var(--frame-lines);
+}
+.brief-panel {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  max-height: none;
+  overflow-y: auto;
+  padding: 26px 32px 28px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  position: relative;
+  z-index: 3;
+}
+
+/* SORTIE ORDERスタンプ(英字チップ=塗り許可の但し書き対象) */
+.brief-chapter {
+  display: inline-block;
+  margin: 0 0 10px;
+  padding: 4px 14px 4px 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: #140b08;
+  background: var(--ember);
+  clip-path: var(--chip-cut);
+}
+/* ミッション名は和文 → displayでなくsans W8(混植・合成ボールド回避 major #20) */
+.brief-panel h1 {
+  margin: 2px 0 4px;
+  font-size: clamp(28px, 3.8vw, 40px);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+  background: linear-gradient(180deg, #fff 30%, #c9ced2 60%, #8a9299 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.55));
+}
+.brief-subtitle {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em; /* 和文サブタイトル */
+  color: var(--signal);
+}
+
+/* 戦術マップ(全CSS描画・pointer-events:none): 同心円レーダー+ホログリッド+LZ菱形 */
+.brief-map {
+  position: relative;
+  height: 118px;
+  margin: 14px 0 16px;
+  border: 1px solid var(--rule);
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle at 62% 46%,
+      transparent 0 23px,
+      var(--signal-dim) 23px 24px,
+      transparent 24px 47px,
+      color-mix(in srgb, var(--signal) 30%, transparent) 47px 48px,
+      transparent 48px 71px,
+      color-mix(in srgb, var(--signal) 18%, transparent) 71px 72px,
+      transparent 72px
+    ),
+    linear-gradient(color-mix(in srgb, var(--signal) 14%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--signal) 14%, transparent) 1px, transparent 1px);
+  background-size:
+    auto,
+    28px 28px,
+    28px 28px;
+  mask-image: radial-gradient(85% 120% at 50% 50%, #000 40%, transparent 100%);
+  -webkit-mask-image: radial-gradient(85% 120% at 50% 50%, #000 40%, transparent 100%);
+}
+.brief-map::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(46% - 0.5px);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--signal-dim) 30% 70%, transparent);
+  box-shadow: 0 0 6px var(--signal-glow);
+}
+.brief-map::after {
+  /* LZマーカー菱形 */
+  content: '';
+  position: absolute;
+  top: calc(46% - 4px);
+  left: calc(62% - 4px);
+  width: 8px;
+  height: 8px;
+  background: var(--ember);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  filter: drop-shadow(0 0 6px var(--ember-glow));
+}
+
+.brief-body {
+  margin: 2px 0 4px;
+}
+.brief-body p {
+  position: relative;
+  margin: 7px 0;
+  padding-left: 18px;
+  line-height: 1.75;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+.brief-body p::before {
+  content: '>';
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--signal);
+}
+
+/* 計器メタ表: 罫線分節+signalチック+極薄ホログリッド下地 */
+.brief-meta {
+  display: grid;
+  gap: 0;
+  margin: 18px 0;
+  padding: 4px 14px;
+  background-color: var(--glass);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--signal) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--signal) 6%, transparent) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+.brief-meta div {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0 10px 12px;
+  position: relative;
+  font-size: 13px;
+  border-top: 1px solid var(--rule);
+}
+.brief-meta div:first-child {
+  border-top: none;
+}
+.brief-meta div::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 12px;
+  background: var(--signal);
+}
+.brief-meta dt {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+}
+.brief-meta dd {
+  font-size: 13px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* インテル: signal左罫+ハッチング(機密文書の質感) */
+.brief-intel {
+  margin: 16px 0;
+  padding: 10px 12px 10px 14px;
+  border-left: 2px solid var(--signal);
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.025) 0 1px,
+    transparent 1px 9px
+  );
+}
+.brief-intel h3 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em; /* 和文「インテル」 */
+  color: var(--signal);
+  text-transform: none;
+}
+.brief-intel h3::before {
+  content: '// ';
+  color: var(--ember);
+  letter-spacing: 0;
+  margin-right: 4px;
+}
+.brief-intel p {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  line-height: 1.65;
+  font-style: normal;
+}
+
+/* 武器選択セレクト: OSネイティブ排除(チャンファー+CSSシェブロン) */
+.brief-weapon-select {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background-color: var(--base-2);
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  padding: 5px 26px 5px 10px;
+  max-width: 100%;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%),
+    linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 55%,
+    calc(100% - 9px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  transition:
+    border-color 0.12s var(--ease),
+    color 0.12s var(--ease);
+}
+.brief-weapon-select:hover {
+  border-color: var(--glass-edge-lit);
+}
+.brief-weapon-select option {
+  background: var(--base-2);
+}
+
+.brief-buttons {
+  display: flex;
+  gap: 12px;
+  margin-top: 22px;
+  align-items: stretch;
+}
+.brief-buttons .menu-start {
+  flex: 1;
+  width: auto;
+  margin-top: 0;
+}
+.brief-buttons .menu-quiet {
+  width: auto;
+  flex: none;
+  margin-top: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   6. SYSTEMタブ: OSネイティブ部品の全カスタム化(blocker 8)+ポーズ画面
+   ══════════════════════════════════════════════════════════════ */
+.setting-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(130px, 150px) 1fr 52px;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  padding: 11px 10px;
+  border-top: 1px solid var(--rule);
+  transition: background 0.12s var(--ease);
+}
+.setting-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.setting-row:focus-within {
+  background: linear-gradient(90deg, var(--ember-wash) 0%, transparent 55%);
+}
+/* フォーカス行のみ点火バー(操作中の行を計器的に指す) */
+.setting-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    var(--ember) 4px,
+    var(--ember) calc(100% - 4px),
+    transparent
+  );
+  transform: scaleY(0);
+  transform-origin: center;
+  transition:
+    transform 0.18s var(--ease-out),
+    box-shadow 0.18s var(--ease);
+}
+.setting-row:focus-within::before {
+  transform: scaleY(1);
+  box-shadow: 0 0 8px var(--ember-glow);
+}
+.setting-row > span:first-child {
+  color: var(--ink-soft);
+}
+
+/* スライダー: accent-color頼みのOSネイティブ→ember塗りトラック+菱形サム。
+   --fillはmenu.ts slider()がinputごとに書く(未設定でも50%で成立) */
+.setting-row input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  accent-color: auto;
+  width: 100%;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.setting-row input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 calc(10% - 1px),
+      var(--base) calc(10% - 1px) 10%
+    ),
+    linear-gradient(90deg, var(--ember) var(--fill, 50%), var(--rule-strong) var(--fill, 50%));
+}
+.setting-row input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5.5px;
+  background: var(--ink);
+  border-radius: 0;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  transition:
+    background 0.12s var(--ease),
+    filter 0.16s var(--ease);
+}
+.setting-row input[type='range']:hover::-webkit-slider-thumb,
+.setting-row input[type='range']:focus-visible::-webkit-slider-thumb {
+  background: var(--ember-ink);
+  filter: drop-shadow(0 0 6px var(--ember-glow));
+}
+.setting-row input[type='range']::-moz-range-track {
+  height: 3px;
+  background: var(--rule-strong);
+}
+.setting-row input[type='range']::-moz-range-progress {
+  height: 3px;
+  background: var(--ember);
+}
+.setting-row input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 0;
+  background: var(--ink);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
+/* トグル: ネイティブ16px角→38x20の計器スイッチ(DOM順=input先頭のままCSSで右端へ) */
+.setting-check {
+  grid-template-columns: 1fr auto;
+}
+.setting-check > span {
+  grid-column: 1;
+  grid-row: 1;
+}
+.setting-check input[type='checkbox'] {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+#menu input[type='checkbox'] {
+  -webkit-appearance: none;
+  appearance: none;
+  accent-color: auto;
+  width: 38px;
+  height: 20px;
+  position: relative;
+  margin: 0;
+  border: 1px solid var(--rule-strong);
+  background: var(--base-2);
+  border-radius: 0;
+  cursor: pointer;
+  transition:
+    background 0.15s var(--ease),
+    border-color 0.15s var(--ease);
+}
+#menu input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  background: var(--ink-faint);
+  transition:
+    transform 0.15s var(--ease-out),
+    background 0.15s var(--ease);
+}
+#menu input[type='checkbox']:checked {
+  border-color: var(--ember);
+  background: var(--ember-wash);
+}
+#menu input[type='checkbox']:checked::after {
+  transform: translateX(18px);
+  background: var(--ember);
+  box-shadow: 0 0 6px var(--ember-glow);
+}
+
+/* セレクト: appearance:none+CSSシェブロン(radius 6px撤廃) */
+.setting-row select {
+  grid-column: 2 / 4;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background-color: var(--base-2);
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  padding: 6px 26px 6px 9px;
+  appearance: none;
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%),
+    linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 55%,
+    calc(100% - 9px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  transition:
+    border-color 0.12s var(--ease),
+    background-color 0.12s var(--ease);
+}
+.setting-row select:hover {
+  border-color: var(--glass-edge-lit);
+  background-color: var(--raise);
+}
+.setting-row select option {
+  background: var(--base-2);
+}
+
+/* 値表示: signalテレメトリ(T8) */
+.setting-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  font-size: 12.5px;
+  text-align: right;
+  color: var(--signal);
+  border: 1px solid var(--rule);
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+/* グループ見出し: 左signalチック+右端に系統コード(data-code=F0x) */
+.settings-subhead {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  margin: 26px 2px 2px;
+  padding: 6px 0 5px 14px;
+  border-top: none;
+  border-bottom: 1px solid var(--rule);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em; /* 和文見出し(照準/音響…) */
+  text-transform: none;
+  color: var(--ink-soft);
+}
+.settings-subhead::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 11px;
+  background: var(--signal);
+}
+.settings-subhead::after {
+  content: attr(data-code);
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--ink-faint);
+}
+.settings-panel > .settings-subhead:first-child {
+  margin-top: 0;
+}
+
+.setting-note {
+  margin: 8px 0 2px 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--rule);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+/* 既定リセット=危険操作(ig-btn-quietの--threat変種 blocker 8) */
+.setting-reset {
+  margin-top: 20px;
+  padding: 9px 18px;
+  font: inherit;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  border-radius: 0;
+  color: color-mix(in srgb, var(--threat) 70%, var(--ink));
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--threat) 55%, var(--rule-strong));
+  clip-path: var(--quiet-cut);
+  transition:
+    color 0.12s var(--ease),
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+.setting-reset:hover {
+  color: var(--ink);
+  border-color: var(--threat);
+  background: color-mix(in srgb, var(--threat) 12%, transparent);
+}
+
+/* リバインド表: 枠付き計器表+チャンファーキーキャップ */
+.rebind-table {
+  --edge-color: var(--rule);
+  margin-top: 10px;
+  border: 1px solid var(--rule);
+  background:
+    var(--edge-diag) top right / var(--cut-s) var(--cut-s) no-repeat,
+    color-mix(in srgb, var(--base-2) 70%, transparent);
+  clip-path: polygon(0 0, calc(100% - var(--cut-s)) 0, 100% var(--cut-s), 100% 100%, 0 100%);
+}
+.rebind-row {
+  gap: 12px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  border-top: 1px solid var(--rule);
+  transition: background 0.12s var(--ease);
+}
+.rebind-table > .rebind-row:first-child {
+  border-top: none;
+}
+.rebind-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.rebind-glyph {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--signal);
+  background: var(--base-2);
+  border: 1px solid var(--rule);
+  padding: 3px 9px;
+  min-width: 64px;
+  text-align: center;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+.rebind-btn {
+  font: inherit;
+  font-size: 11.5px;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  padding: 5px 12px;
+  cursor: pointer;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  transition:
+    color 0.12s var(--ease),
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+.rebind-btn:hover {
+  color: var(--ink);
+  border-color: var(--glass-edge-lit);
+  background: rgba(255, 255, 255, 0.04);
+}
+/* 捕捉中: 既存rebind-pulse(reduce時はL870で停止)にemberハローを加算 */
+.rebind-btn.capturing {
+  color: var(--ember);
+  border-color: var(--ember);
+  background: var(--ember-wash);
+  box-shadow: 0 0 10px var(--ember-halo);
+}
+.rebind-note {
+  color: var(--ember-ink);
+}
+
+/* 操作一覧: キーをsignalテレメトリ化 */
+.controls-grid .control-key {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--signal);
+}
+
+/* ── ポーズ画面 ── */
+.menu-pause {
+  background: radial-gradient(120% 90% at 50% 30%, rgba(7, 9, 12, 0.5), rgba(7, 9, 12, 0.86));
+  backdrop-filter: blur(8px) saturate(0.65) brightness(0.8);
+  -webkit-backdrop-filter: blur(8px) saturate(0.65) brightness(0.8);
+  display: grid;
+  place-items: start center;
+  overflow-y: auto;
+}
+@supports not (backdrop-filter: blur(8px)) {
+  .menu-pause {
+    background: rgba(7, 9, 12, 0.93);
+  }
+}
+.menu-pause::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(0, 0, 0, 0.06) 2px 3px);
+}
+/* ダイアログ本体: radius 14px撤去→22pxチャンファーガラス板(暗幕がblur済みのため
+   パネル自身のbackdrop-filterは持たない=blur予算1画面1枚 major #28) */
+.pause-panel {
+  --cut: var(--cut-l);
+  --edge-color: var(--glass-edge);
+  position: relative;
+  width: min(560px, calc(100vw - 40px));
+  margin: 7vh 0 48px;
+  padding: 28px 32px 32px;
+  background: var(--glass-heavy);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  clip-path: var(--frame-cut);
+}
+.pause-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1; /* パネル背景の上・本文の下 */
+  pointer-events: none;
+  clip-path: inherit;
+  border: 1px solid var(--glass-edge);
+  background-image: var(--noise-img);
+}
+.pause-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0.85;
+  background: var(--frame-lines);
+}
+/* 見出し: 和文「一時停止」はsans W8、英字コードは::beforeのmicrotagへ分離 */
+.pause-panel h1 {
+  position: relative;
+  font-family: var(--sans);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.1;
+  margin-bottom: 22px;
+  padding-bottom: 14px;
+}
+.pause-panel h1::before {
+  content: '// COMBAT PAUSED';
+  display: block;
+  margin-bottom: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--ember);
+}
+.pause-panel h1::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--ember) 0 32px, var(--rule) 32px);
+}
+.pause-panel .menu-section {
+  margin: 22px 0 10px;
+}
+/* 設定一式をスクロール計器窓へ。下端はフェードで「まだ続く」ことを示す */
+.pause-panel .settings-panel {
+  max-height: min(44vh, 480px);
+  overflow-y: auto;
+  padding-right: 8px;
+  mask-image: linear-gradient(180deg, #000 calc(100% - 24px), transparent);
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 24px), transparent);
+}
+
+/* セカンダリボタン(戦役へ戻る/メニューに戻る等): radius 8px→ig-btn-quiet言語。
+   既存セレクタへ直接当てるためHTML変更ゼロで全画面に波及する(major #35) */
+.menu-quiet {
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px;
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  clip-path: var(--quiet-cut);
+  transition:
+    border-color 0.12s var(--ease),
+    color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+.menu-quiet:hover {
+  border-color: var(--glass-edge-lit);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   7. INTELタブ: 戦績・任務の計器化(blocker 8)
+   ══════════════════════════════════════════════════════════════ */
+.profile-xpbar {
+  position: relative;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rule-strong) 85%, transparent);
+  overflow: hidden;
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%);
+}
+.profile-xpbar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--ember-deep), var(--ember));
+  box-shadow: 0 0 6px var(--ember-glow);
+  transition: width 0.6s var(--ease-out);
+}
+.profile-xpbar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(10% - 1px),
+    rgba(0, 0, 0, 0.7) calc(10% - 1px) 10%
+  );
+}
+/* 記録の書き出し/読み込み: 下線テキスト→ig-btn-quietチップ */
+.profile-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  clip-path: var(--quiet-cut);
+  transition:
+    color 0.12s var(--ease),
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+.profile-btn:hover,
+.profile-btn:focus-visible {
+  color: var(--ink);
+  border-color: var(--glass-edge-lit);
+  background: rgba(255, 255, 255, 0.04);
+}
+.challenge-bar {
+  position: relative;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rule-strong) 85%, transparent);
+  overflow: hidden;
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%);
+}
+.challenge-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--ember-deep), var(--ember));
+  box-shadow: 0 0 6px var(--ember-glow);
+  transition: width 0.6s var(--ease-out);
+}
+.challenge-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(25% - 1px),
+    rgba(0, 0, 0, 0.7) calc(25% - 1px) 25%
+  );
+}
+.challenge-xp {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   8. リザルト+ミッションリザルト: BO2式スコアボードと点火の瞬間
+   ══════════════════════════════════════════════════════════════ */
+/* 暗幕: 暖色黒(#080705)→寒色voidへ統一(major #33)。blurは暗幕1枚のみ */
+.menu-result {
+  background: color-mix(in srgb, var(--void) 78%, transparent);
+  backdrop-filter: blur(7px) saturate(0.8);
+  -webkit-backdrop-filter: blur(7px) saturate(0.8);
+  display: grid;
+  place-items: start center;
+  position: relative;
+}
+/* 勝敗ティント: 勝利=下からemberの放射 / 敗北=冷たい鋼のビネット */
+.menu-result::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    90% 70% at 50% 108%,
+    color-mix(in srgb, #5a6570 14%, transparent),
+    transparent 70%
+  );
+}
+.menu-result.result-won::before {
+  background:
+    radial-gradient(85% 60% at 50% 110%, var(--ember-wash-2), transparent 65%),
+    radial-gradient(60% 40% at 50% -10%, var(--signal-wash), transparent 70%);
+}
+
+/* パネル: radius 14px撤去→22pxチャンファー+ブラケット(非スクロールダイアログは直装飾) */
+.result-panel {
+  --cut: var(--cut-l);
+  --edge-color: var(--glass-edge);
+  position: relative;
+  width: min(600px, calc(100vw - 40px));
+  margin: 7vh 0 48px;
+  background: var(--glass-heavy);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  clip-path: var(--frame-cut);
+  padding: 30px 34px 26px;
+  text-align: left;
+}
+.result-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1; /* パネル背景の上・本文の下 */
+  pointer-events: none;
+  clip-path: inherit;
+  border: 1px solid var(--glass-edge);
+  background-image: var(--noise-img);
+}
+.result-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0.85;
+  background: var(--frame-lines);
+}
+/* 敗北時はブラケットも無彩へ落とす(祝祭色を残さない) */
+.menu-result:not(.result-won) .result-panel {
+  --bk-tl: var(--rule-strong);
+  --bk-br: var(--rule-strong);
+}
+
+/* モード名: 和文のためmicrotag字間は使わず「//」署名のみ */
+.result-mode {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--ink-soft);
+  margin-bottom: 12px;
+}
+.result-mode::before {
+  content: '// ';
+  font-family: var(--mono);
+  color: var(--ember);
+  letter-spacing: 0;
+}
+
+/* 勝敗ヒーロー: 英字T1(::before=attr(data-en))+和文サブ。serif 46px廃止。
+   敗北(既定)=冷えた鋼グラデ / 勝利=白熱→emberの点火グラデ+ブルーム */
+.result-panel h1 {
+  font-family: var(--sans);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  color: var(--ink-soft);
+  margin-bottom: 16px;
+}
+.result-panel h1::before {
+  content: attr(data-en);
+  display: block;
+  font-family: var(--display);
+  font-size: clamp(44px, 7vw, 64px);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 0.9;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  background: linear-gradient(180deg, #aeb6bd 15%, #6d7681 60%, #454e57 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.7));
+}
+.menu-result.result-won .result-panel h1 {
+  color: var(--ink);
+}
+.menu-result.result-won .result-panel h1::before {
+  background: linear-gradient(180deg, #fff 18%, var(--ember-ink) 52%, var(--ember-deep) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  filter: drop-shadow(0 0 22px var(--ember-glow)) drop-shadow(0 2px 8px rgba(0, 0, 0, 0.6));
+}
+
+/* チームスコア: T3計器数字 */
+.result-teamscore {
+  font-family: var(--mono);
+  font-size: 44px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  margin: -4px 0 16px;
+  color: var(--ink-faint);
+}
+.result-teamscore .ts-mine {
+  color: var(--ember-ink);
+}
+.result-teamscore .ts-enemy {
+  color: var(--ink-soft);
+}
+
+/* 星評価: 1個ずつ捺印される(menu.tsでspan分割+--i付与済み) */
+.result-stars {
+  display: flex;
+  gap: 10px;
+  font-size: 32px;
+  line-height: 1;
+  letter-spacing: 0;
+  margin: 2px 0 14px;
+  color: var(--ember);
+}
+.result-stars span.on {
+  color: var(--ember);
+  filter: drop-shadow(0 0 10px var(--ember-glow));
+}
+.result-stars span.off {
+  color: color-mix(in srgb, var(--ink) 45%, transparent); /* 未獲得も3:1確保(major #24) */
+  filter: none;
+}
+
+.result-chapter-unlock {
+  color: var(--ember-ink);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.result-firstclear {
+  color: var(--ok);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 4px;
+}
+.result-mvp {
+  color: var(--ink);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+/* 統計ストリップ: monoセルを縦罫線で分節 */
+.result-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 0;
+  margin: 10px 0 20px;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  padding: 8px 0;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+.result-stats .stat-cell {
+  padding: 0 14px;
+  border-left: 1px solid var(--rule);
+}
+.result-stats .stat-cell:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+.result-stats .stat-cell b {
+  color: var(--signal);
+  font-weight: 700;
+  margin-left: 6px;
+}
+
+/* スコアボード: BO2自行グラデ帯+左3px点火バー */
+.result-table {
+  margin-bottom: 20px;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+}
+.result-table th {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em; /* 和文見出し(名前/キル/デス) */
+  text-transform: none;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--rule-strong);
+}
+.result-table .score-you {
+  color: var(--ember-ink);
+  font-weight: 700;
+  background: linear-gradient(90deg, var(--ember-wash-2), transparent 75%);
+  box-shadow: inset 3px 0 0 var(--ember);
+}
+.result-table .score-ally td {
+  color: var(--ally);
+}
+
+/* 進行度(XP/レベル) */
+.result-progress {
+  border-top: 1px solid var(--rule);
+  padding-top: 16px;
+  margin-bottom: 20px;
+}
+.result-xp-list {
+  margin-bottom: 10px;
+}
+.result-xp-list li {
+  padding: 4px 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--rule) 60%, transparent);
+}
+.result-xp-list .xp-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ok);
+  font-weight: 700;
+}
+.result-xp-total {
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 15px;
+  margin: 8px 0 14px;
+}
+.result-xp-total [data-id='xptotal'] {
+  color: var(--ember-ink);
+  font-size: 20px;
+}
+.result-level {
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: var(--signal);
+}
+/* XPバーはリザルトでは主役級 → 8px+10分割へ拡張(共通6pxの上書き) */
+.result-levelrow .profile-xpbar {
+  flex: 1;
+  height: 8px;
+}
+/* レベルアップ・スタンプ: 和文のためsans、emberチップに捺印 */
+.result-levelup {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #140b08;
+  background: var(--ember);
+  border-radius: 0;
+  clip-path: var(--chip-cut);
+  padding: 5px 16px 5px 10px;
+  margin-bottom: 10px;
+  filter: drop-shadow(0 0 10px var(--ember-halo));
+}
+.result-unlocks li {
+  position: relative;
+  color: var(--ember-ink);
+  padding: 3px 0 3px 14px;
+}
+.result-unlocks li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 11px;
+  background: var(--ember);
+}
+.result-record {
+  color: var(--warn);
+}
+.result-rating {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.rating-up {
+  color: var(--ok);
+  font-weight: 800;
+}
+.rating-down {
+  color: var(--enemy);
+  font-weight: 800;
+}
+
+/* ボタン列 */
+.result-buttons {
+  gap: 10px;
+  margin-top: 4px;
+}
+.result-buttons .menu-start {
+  margin-top: 0;
+}
+.result-buttons .menu-quiet {
+  margin-top: 0;
+}
+[data-id='next-mission']::before {
+  content: 'NEXT OP \25B8';
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  opacity: 0.75;
+  margin-right: 10px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   9. モーション: transform/opacity/filterのみ。新規keyframeは
+   @media (prefers-reduced-motion) + :root.reduce-motion の二重ゲート、
+   opacity:0開始は全てboth指定(reduce時は終了状態へ即着地)
+   ══════════════════════════════════════════════════════════════ */
+/* 旧入場アニメの撤去(ベゼル1発+リストstaggerへ一本化。二重入場のもたつき解消) */
+.menu-main .menu-header,
+.menu-main .menu-section,
+.menu-main .menu-controls {
+  animation: none;
+}
+.pause-panel,
+.result-panel {
+  animation: none;
+}
+
+@keyframes panel-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes mfd-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes listitem-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes overlay-dim {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes stat-ignite {
+  from {
+    transform: scaleX(0);
+  }
+  /* to省略=インラインstyleのscaleX値へ収束 */
+}
+@keyframes chip-ignite {
+  0% {
+    filter: none;
+  }
+  40% {
+    filter: drop-shadow(0 0 10px var(--ember-glow)) brightness(1.25);
+  }
+  100% {
+    filter: none;
+  }
+}
+@keyframes brief-type {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 -2% 0 0);
+  }
+}
+@keyframes brief-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes map-boot {
+  from {
+    opacity: 0;
+    filter: brightness(2.2) saturate(0.4);
+  }
+  to {
+    opacity: 1;
+    filter: none;
+  }
+}
+@keyframes stamp-in {
+  from {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes verdict-wipe {
+  from {
+    clip-path: inset(0 100% 0 0);
+    opacity: 0.4;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+}
+@keyframes star-pop {
+  from {
+    opacity: 0;
+    transform: scale(2.2) rotate(-8deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+@keyframes xp-sweep {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* 画面入場: ベゼル1発のみ(0.32s) */
+  :root:not(.reduce-motion) .menu-main .console-bezel {
+    animation: panel-rise 0.32s var(--ease-out) both;
+  }
+  /* MFDタブ切替: setMfdPage()のhidden切替だけでCSSが再発火する */
+  :root:not(.reduce-motion) .mfd-page:not([hidden]) {
+    animation: mfd-page-in 0.22s var(--ease-out) both;
+  }
+  /* リスト入場: 右から8pxスライド(MW2019)。--iはstagger()付与。
+     長リストでも総delayが0.3s規約を超えないようmin()で頭打ち */
+  :root:not(.reduce-motion)
+    .menu-main
+    :is(
+      .stage-card,
+      .weapon-card,
+      .mode-card,
+      .difficulty-card,
+      .grenade-card,
+      .mission-chip,
+      .challenge-row
+    ) {
+    animation: listitem-in 0.18s var(--ease-out) both;
+    animation-delay: min(calc(0.03s + var(--i, 0) * 0.022s), 0.29s);
+  }
+  :root:not(.reduce-motion) .menu-main .stage-grid .stage-card {
+    animation-delay: min(calc(0.03s + var(--i, 0) * 0.013s), 0.29s);
+  }
+  /* ダイアログ入場(brief/pause/result統一。briefの欠落を解消) */
+  :root:not(.reduce-motion) :is(.pause-panel, .result-panel, .brief-frame) {
+    animation: panel-rise 0.32s var(--ease-out) both;
+  }
+  :root:not(.reduce-motion) :is(.menu-pause, .menu-result) {
+    animation: overlay-dim 0.2s var(--ease-out) both;
+  }
+  /* ARMORY 6軸バー点火: 武器切替のたびinnerHTML再生成→毎回scaleX(0)から着火 */
+  :root:not(.reduce-motion) .stat-bar i {
+    animation: stat-ignite 0.5s var(--ease-out);
+  }
+  :root:not(.reduce-motion) .armory-bars .stat-row:nth-child(2) .stat-bar i {
+    animation-delay: 0.04s;
+  }
+  :root:not(.reduce-motion) .armory-bars .stat-row:nth-child(3) .stat-bar i {
+    animation-delay: 0.08s;
+  }
+  :root:not(.reduce-motion) .armory-bars .stat-row:nth-child(4) .stat-bar i {
+    animation-delay: 0.12s;
+  }
+  :root:not(.reduce-motion) .armory-bars .stat-row:nth-child(5) .stat-bar i {
+    animation-delay: 0.16s;
+  }
+  :root:not(.reduce-motion) .armory-bars .stat-row:nth-child(6) .stat-bar i {
+    animation-delay: 0.2s;
+  }
+  /* アタッチメント確定の火花ブルーム(クラスtoggleのみ=付与瞬間に1回だけ) */
+  :root:not(.reduce-motion) .attach-btn.selected {
+    animation: chip-ignite 0.26s var(--ease-out);
+  }
+  /* ブリーフィング: タイプライター(デコード風)+有限回カーソル+CRTブート */
+  :root:not(.reduce-motion) .brief-body p {
+    animation: brief-type 0.55s steps(26, end) both;
+    animation-delay: calc(0.4s + var(--i, 0) * 0.32s);
+  }
+  :root:not(.reduce-motion) .brief-body p:last-child::after {
+    content: '▍';
+    margin-left: 2px;
+    color: var(--signal);
+    animation: brief-caret 0.7s steps(1) 6 both;
+    animation-delay: calc(0.4s + var(--i, 0) * 0.32s + 0.55s);
+  }
+  :root:not(.reduce-motion) .brief-map {
+    animation: map-boot 0.5s var(--ease-out) 0.25s both;
+  }
+  :root:not(.reduce-motion) .brief-chapter {
+    animation: stamp-in 0.2s var(--ease-snap) 0.1s both;
+  }
+  /* リザルト演出タイムライン: 0ms panel-rise → 100ms 見出しワイプ → 160-280ms 統計 →
+     450ms 星 → 500ms XPスイープ → 900ms LEVEL UP。全て1.2s以内に収束 */
+  :root:not(.reduce-motion) .result-panel h1 {
+    animation: verdict-wipe 0.36s var(--ease-out) 0.1s both;
+  }
+  :root:not(.reduce-motion)
+    .result-panel
+    :is(.result-stats, .result-teamscore, .result-mvp, .result-table tbody tr) {
+    animation: listitem-in 0.18s var(--ease-out) both;
+  }
+  :root:not(.reduce-motion) .result-teamscore,
+  :root:not(.reduce-motion) .result-mvp {
+    animation-delay: 0.16s;
+  }
+  :root:not(.reduce-motion) .result-stats {
+    animation-delay: 0.2s;
+  }
+  /* スコアボード行: 6行目以降は同時入場(0.3s収束規約の意図的打ち切り) */
+  :root:not(.reduce-motion) .result-table tbody tr {
+    animation-delay: calc(0.24s + var(--row, 0) * 0.045s);
+  }
+  :root:not(.reduce-motion) .result-table tbody tr:nth-child(1) {
+    --row: 0;
+  }
+  :root:not(.reduce-motion) .result-table tbody tr:nth-child(2) {
+    --row: 1;
+  }
+  :root:not(.reduce-motion) .result-table tbody tr:nth-child(3) {
+    --row: 2;
+  }
+  :root:not(.reduce-motion) .result-table tbody tr:nth-child(4) {
+    --row: 3;
+  }
+  :root:not(.reduce-motion) .result-table tbody tr:nth-child(5) {
+    --row: 4;
+  }
+  :root:not(.reduce-motion) .result-table tbody tr:nth-child(n + 6) {
+    --row: 5;
+  }
+  :root:not(.reduce-motion) .result-xp-list li {
+    animation: listitem-in 0.18s var(--ease-out) both;
+    animation-delay: min(calc(0.28s + var(--i, 0) * 0.05s), 0.55s);
+  }
+  :root:not(.reduce-motion) .result-stars span {
+    animation: star-pop 0.34s var(--ease-snap) both;
+    animation-delay: calc(0.45s + var(--i, 0) * 0.22s);
+  }
+  :root:not(.reduce-motion) .result-levelrow .profile-xpbar i {
+    animation: xp-sweep 0.7s var(--ease-out) 0.5s both;
+  }
+  :root:not(.reduce-motion) .result-levelup {
+    animation: stamp-in 0.3s var(--ease-snap) 0.9s both;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   10. フォーカスリング規約(blocker 2/4/9)
+   clip-path付き要素では外向きoutline/box-shadowがペイントごと切り落とされる。
+   → insetリング2重+クリップ後形状に追従するdrop-shadowで統一。
+   非clip要素(select/checkbox/range)は既存の外向きoutlineを維持する。
+   ══════════════════════════════════════════════════════════════ */
+#menu
+  :is(
+    .menu-start,
+    .weapon-card,
+    .mode-card,
+    .difficulty-card,
+    .grenade-card,
+    .attach-btn,
+    .stage-card,
+    .mission-chip,
+    .menu-quiet,
+    .setting-reset,
+    .rebind-btn,
+    .brief-weapon-select,
+    .profile-btn
+  ):focus,
+#menu
+  :is(
+    .menu-start,
+    .weapon-card,
+    .mode-card,
+    .difficulty-card,
+    .grenade-card,
+    .attach-btn,
+    .stage-card,
+    .mission-chip,
+    .menu-quiet,
+    .setting-reset,
+    .rebind-btn,
+    .brief-weapon-select,
+    .profile-btn
+  ):focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 2px var(--ember),
+    inset 0 0 0 5px var(--ember-halo);
+  filter: drop-shadow(0 0 8px var(--ember-glow));
+}
+/* ember塗り面(CTA・選択済みチップ)ではemberリングが消えるため暗色リングへ反転 */
+#menu .menu-start:focus,
+#menu .menu-start:focus-visible,
+#menu .attach-btn.selected:focus,
+#menu .attach-btn.selected:focus-visible {
+  box-shadow:
+    inset 0 0 0 2px rgba(9, 7, 5, 0.9),
+    inset 0 0 0 4px rgba(9, 7, 5, 0.4);
+}
+/* reduce-motion時も位置表示は生命線: 既存の box-shadow:none(L4003)を
+   insetリングで上書きし、発光(filter)だけを落とす */
+:root.reduce-motion
+  #menu
+  :is(
+    .menu-start,
+    .weapon-card,
+    .mode-card,
+    .difficulty-card,
+    .grenade-card,
+    .attach-btn,
+    .stage-card,
+    .mission-chip,
+    .menu-quiet,
+    .setting-reset,
+    .rebind-btn,
+    .brief-weapon-select,
+    .profile-btn
+  ):focus {
+  box-shadow:
+    inset 0 0 0 2px var(--ember),
+    inset 0 0 0 5px var(--ember-halo);
+  filter: none;
+}
+:root.reduce-motion #menu .menu-start:focus,
+:root.reduce-motion #menu .attach-btn.selected:focus {
+  box-shadow:
+    inset 0 0 0 2px rgba(9, 7, 5, 0.9),
+    inset 0 0 0 4px rgba(9, 7, 5, 0.4);
+  filter: none;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   11. レスポンシブ再定義
+   (基底を後勝ちで上書きしたため、旧@media内の同項目もここで再宣言する)
+   ══════════════════════════════════════════════════════════════ */
+@media (max-width: 980px) {
+  .menu-main .menu-header.telemetry-rail {
+    grid-template-columns: auto 1fr;
+    row-gap: 12px;
+  }
+  .nav-readout {
+    grid-column: 1 / -1;
+    justify-self: start;
+    flex-wrap: wrap;
+  }
+  .sys-lamps {
+    grid-column: 1 / -1;
+  }
+  .deployment-briefing {
+    position: static;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .briefing-loadout {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .briefing-loadout div:first-child {
+    border-left: none;
+  }
+}
+@media (max-width: 900px) {
+  .mfd-cols--deploy {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'stages' 'modes' 'threat';
+  }
+  .stage-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    max-height: none;
+    overflow: visible;
+  }
+}
+@media (max-width: 760px) {
+  .armory-layout {
+    grid-template-columns: 1fr;
+  }
+  .armory-preview {
+    position: static;
+  }
+  .armory-list {
+    max-height: none;
+    overflow: visible;
+  }
+  .weapon-canvas {
+    height: clamp(200px, 34vw, 260px);
+  }
+}
+@media (max-width: 640px) {
+  .result-panel {
+    padding: 24px 20px 20px;
+    margin-top: 4vh;
+  }
+  .result-panel h1::before {
+    font-size: clamp(36px, 11vw, 52px);
+  }
+  .result-stats .stat-cell {
+    padding: 0 10px;
+  }
+}
+@media (max-width: 560px) {
+  .setting-row {
+    grid-template-columns: 110px 1fr 44px;
+    gap: 10px;
+  }
+  .briefing-loadout {
+    grid-template-columns: 1fr 1fr;
+  }
+  .briefing-loadout div {
+    padding: 8px 10px;
+    border-top: 1px solid var(--rule);
+  }
+  .briefing-loadout div:nth-child(odd) {
+    border-left: none;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   R10: IGNITION FRAME HUD LAYER(戦闘HUD中核+戦闘フィードバック)
+   原則: 四隅=計器クラスタ / 中央=クロスヘア聖域(±180pxに恒常UIを置かない) /
+   上中央=戦況ホロストリップ。左列=signal(環境情報)、右列=ember(行動情報)。
+   可読性: 全テキストに --hud-tsh(黒縁二重ハロー)か --glass-heavy 面を敷き、
+   明戦域(雪原/真昼)と暗戦域(夜市)の両方で計器が読めることを最優先する。
+   GPU規律: 戦闘HUDは backdrop-filter 全廃(パネルは84%不透明の glass-heavy 単板。
+   Three.jsの毎フレーム描画の上に blur を重ねない)。blur予算はスコアボード1枚のみ。
+   canvas/SVG計器(レーダー)を包む要素へ filter を載せない。
+   モーション: 出現系は0.3s以内のワンショット(both/forwards)。常時ループは既存許可枠
+   (lowpulse/ultpulse/ammopulse/radar-sweep)のみで新規追加なし。reduceMotionは
+   既存の全停止ブロック+@mediaゲートの二重ゲート下に置く。
+   スコープ(sc-*)はR8のBO2準拠実装のため本レイヤーでは一切触らない。
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── H0. HUD共通: 明暗両戦域の可読性基盤 ── */
+#hud {
+  /* 二重ハロー: 密着黒縁(明所で文字を立てる)+広がる暗幕(輝面上のコントラスト確保) */
+  --hud-tsh:
+    0 0 1px rgba(0, 0, 0, 0.9), 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 12px rgba(0, 0, 0, 0.45);
+  /* パネル外に浮くゲージの暗トラック+内郭線(雪原でも分母=バー全長が読める) */
+  --hud-track: rgba(7, 9, 12, 0.55);
+  --hud-track-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+/* ── H1. 計器プレート3枚(.ig-panel のHUD変種。hud.tsはクラス追記のみ) ── */
+.ig-panel--hud {
+  --cut: var(--cut-m);
+  --bk-len: 14px;
+  --bk-br: var(--signal); /* 既定は計器色。武器プレートのみ --ember へ上書き */
+  position: absolute;
+  padding: 12px 16px 13px;
+  border: none;
+  background: var(--glass-heavy);
+  /* 戦闘中の毎フレームblur禁止(GPU予算)。84%不透明の単板で成立させる */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  filter: none;
+}
+.ig-panel--hud::after {
+  opacity: 0.55;
+}
+/* 武器プレート(右下)だけ右下ブラケットをember=行動色に */
+.ig-panel--ember {
+  --bk-br: var(--ember);
+}
+
+/* 配置とセーフエリア(全周22px規約) */
+.hud-top-left {
+  top: 22px;
+  left: 22px;
+  min-width: 200px;
+}
+.hud-bottom-left {
+  left: 22px;
+  bottom: 22px;
+  min-width: 260px;
+}
+.hud-bottom-right {
+  right: 22px;
+  bottom: 22px;
+  min-width: 272px;
+  text-align: right;
+}
+
+/* ── H2. TL 戦況計器 ── */
+.hud-match-chip {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--glass-edge);
+  color: var(--ink-soft);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em; /* 和文モード名: 字間上限0.06em */
+  text-shadow: var(--hud-tsh);
+}
+.hud-match-chip i {
+  flex: none;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--ember) 45%, transparent);
+  color: var(--ember-ink);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%);
+}
+.hud-score {
+  gap: 16px;
+  margin-top: 10px;
+}
+.hud-score strong {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 26px;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: var(--hud-tsh);
+}
+.hud-score small {
+  color: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+}
+.hud-streak {
+  position: relative;
+  margin-top: 9px;
+  padding: 7px 0 0 10px;
+  border-top: 1px solid var(--glass-edge);
+  color: var(--ember-ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-shadow:
+    0 0 10px var(--ember-glow),
+    var(--hud-tsh);
+}
+.hud-streak::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 1px;
+  width: 3px;
+  background: var(--ember);
+  box-shadow: 0 0 8px var(--ember-glow);
+}
+
+/* ── H3. 上中央ストリップ: コンパス+タイマー ── */
+.hud-top-center {
+  top: 22px;
+}
+.hud-compass {
+  width: min(380px, 44vw);
+  height: 28px;
+  border-top: 1px solid var(--signal-dim);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, rgba(7, 9, 12, 0.5), rgba(7, 9, 12, 0.2));
+  mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent);
+}
+.hud-compass-strip span {
+  top: 3px;
+  font-family: var(--mono);
+  letter-spacing: 0.04em; /* 和文方位(北/南東) */
+  text-shadow: var(--hud-tsh);
+}
+.hud-compass-strip .hud-compass-major {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.hud-compass-strip .hud-compass-minor {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+/* 目盛りはラベル追従の疑似要素で描く(JSのtransformと一緒に動く) */
+.hud-compass-strip span::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  width: 1.5px;
+  height: 5px;
+  background: var(--signal);
+  opacity: 0.7;
+  transform: translateX(-50%);
+}
+.hud-compass-needle {
+  width: 0;
+  height: 0;
+  background: none;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 6px solid var(--ember);
+  filter: drop-shadow(0 0 4px var(--ember-glow));
+}
+.hud-timer {
+  width: 118px;
+  min-height: 32px;
+  margin: 6px auto 0;
+  padding: 6px 12px;
+  border: none;
+  background: var(--glass-heavy);
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 100%, 0 100%);
+}
+.hud-timer small {
+  color: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+}
+.hud-timer strong {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: var(--hud-tsh);
+}
+
+/* ── H4. 目標エリア: 先取スコア / 拠点 / ミッション / ボスバー ── */
+.hud-teamscore {
+  gap: 12px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 20px;
+  text-shadow: var(--hud-tsh);
+}
+.ts-target {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em; /* 和文「先取」 */
+  color: var(--ink-soft);
+}
+.hud-zone-pill {
+  width: 28px;
+  height: 19px;
+  border-radius: 0;
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--hud-track);
+  box-shadow: var(--hud-track-edge);
+  text-shadow: var(--hud-tsh);
+}
+/* 所有状態はソリッド面+濃色文字のため黒縁ハローを外す */
+.hud-zone-pill.zone-mine,
+.hud-zone-pill.zone-enemy {
+  text-shadow: none;
+}
+/* 争奪中: 旧outlineはclip-pathで切り落とされるためinsetリングへ置換 */
+.hud-zone-pill.zone-contested {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+}
+.hud-mission {
+  gap: 4px;
+}
+.hud-mission-obj {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  text-shadow: var(--hud-tsh);
+}
+.hud-mission-bar {
+  position: relative;
+  width: 200px;
+  height: 8px;
+  border-radius: 0;
+  background: var(--hud-track);
+  box-shadow: var(--hud-track-edge);
+  clip-path: polygon(0 0, calc(100% - 4px) 0, 100% 50%, calc(100% - 4px) 100%, 0 100%);
+  overflow: hidden;
+}
+.hud-mission-bar i {
+  background: linear-gradient(90deg, var(--ember-deep), var(--ember));
+  box-shadow: 0 0 6px var(--ember-glow);
+}
+.hud-mission-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(25% - 1px),
+    rgba(0, 0, 0, 0.7) calc(25% - 1px) 25%
+  );
+}
+.hud-mission-wave {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.26em;
+  color: var(--ink-soft);
+  text-shadow: var(--hud-tsh);
+}
+/* ボスバー: Titanfall2セグメント+Lブラケット端(threat=accent非連動の純警告赤) */
+.hud-boss {
+  position: relative;
+  margin-top: 6px;
+  padding: 3px 14px 4px;
+}
+.hud-boss::before,
+.hud-boss::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  border: 1.5px solid var(--threat);
+  opacity: 0.9;
+  pointer-events: none;
+}
+.hud-boss::before {
+  left: 0;
+  border-right: none;
+}
+.hud-boss::after {
+  right: 0;
+  border-left: none;
+}
+.hud-boss-name {
+  font-family: var(--sans); /* ボス名は和文(--displayはかなグリフ非搭載) */
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-indent: 0.06em;
+  color: var(--threat);
+  text-shadow:
+    0 0 12px color-mix(in srgb, var(--threat) 55%, transparent),
+    var(--hud-tsh);
+}
+.hud-boss-bar {
+  position: relative;
+  width: min(320px, 42vw);
+  height: 12px;
+  border: 1px solid rgba(255, 90, 77, 0.5);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.hud-boss-bar i {
+  background: linear-gradient(90deg, #c62a22, var(--threat) 60%, #ff9a70);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--threat) 50%, transparent);
+}
+.hud-boss-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(20% - 1px),
+    rgba(0, 0, 0, 0.8) calc(20% - 1px) 20%
+  );
+}
+
+/* ── H5. クロスヘア聖域(装飾禁止。過渡表現のみ中心+48px/+64pxに許可) ── */
+.ch-dot,
+.ch-bar {
+  /* 明所でも黒縁で立つ(スプレッドリング+密着シャドウ) */
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.6),
+    0 0 3px rgba(0, 0, 0, 0.9);
+}
+.hud-crosshair[data-reticle='circle']::after {
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.6),
+    0 0 3px rgba(0, 0, 0, 0.9);
+}
+.hud-cook {
+  top: calc(50% + 48px);
+}
+.hud-cook-bar {
+  width: 96px;
+  height: 5px;
+  border-radius: 0;
+  background: var(--hud-track);
+  box-shadow: var(--hud-track-edge);
+  clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 50%, calc(100% - 3px) 100%, 0 100%);
+}
+.hud-cook-bar div.cook-danger {
+  background: var(--threat);
+}
+.hud-reload {
+  top: calc(50% + 64px);
+  font-size: 10px;
+  letter-spacing: 0.06em; /* 和文「リロード中」 */
+  color: var(--ink-soft);
+  text-shadow: var(--hud-tsh);
+}
+.hud-reload-bar {
+  width: 140px;
+  height: 5px;
+  border-radius: 0;
+  background: var(--hud-track);
+  box-shadow: var(--hud-track-edge);
+  clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 50%, calc(100% - 3px) 100%, 0 100%);
+}
+.hud-reload-bar div {
+  background: linear-gradient(90deg, var(--ember-deep), var(--ember));
+  box-shadow: 0 0 6px var(--ember-glow);
+}
+
+/* ── H6. BL バイタル計器 ── */
+.hud-vitals-heading {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--glass-edge);
+  color: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-shadow: var(--hud-tsh);
+}
+.hud-vitals-heading small {
+  color: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+.hud-vitals-row {
+  grid-template-columns: 64px 1fr;
+  gap: 14px;
+  margin-top: 10px;
+}
+.hud-hp-num {
+  font-family: var(--mono);
+  font-size: 34px;
+  line-height: 1;
+  text-shadow: var(--hud-tsh);
+}
+.hud-hp-bar {
+  position: relative;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%);
+  overflow: hidden;
+}
+.hud-hp-bar div {
+  background: var(--signal);
+  box-shadow: 0 0 8px var(--signal-glow);
+}
+.hud-hp-bar div.hp-low {
+  background: var(--threat);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--threat) 55%, transparent);
+}
+.hud-hp-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(25% - 1px),
+    rgba(0, 0, 0, 0.7) calc(25% - 1px) 25%
+  );
+}
+
+/* ── H7. BR 武器計器 ── */
+.hud-weapon-row {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--glass-edge);
+}
+.hud-weapon-row > span {
+  color: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.26em;
+}
+.hud-weapon {
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em; /* 和文武器名 */
+  text-shadow: var(--hud-tsh);
+}
+.hud-ammo-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+  margin-top: 8px;
+}
+.hud-ammo {
+  font-family: var(--mono);
+  font-feature-settings: 'tnum' 1;
+  font-size: 48px;
+  line-height: 0.9;
+  text-align: left;
+  text-shadow: var(--hud-tsh);
+}
+.hud-ammo .hud-ammo-low,
+.hud-ammo-low {
+  color: var(--threat);
+  text-shadow:
+    0 0 14px color-mix(in srgb, var(--threat) 60%, transparent),
+    var(--hud-tsh);
+}
+.hud-reserve {
+  font-size: 18px;
+  font-weight: 600;
+  margin-left: 7px;
+}
+.hud-mode {
+  margin-bottom: 6px;
+  padding: 3px 12px 3px 8px;
+  border: 1px solid var(--rule-strong);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em; /* 和文発射モード(単発/フルオート) */
+  color: var(--ink-soft);
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 0 100%);
+  text-shadow: var(--hud-tsh);
+}
+.hud-grenade {
+  margin-top: 7px;
+  padding-top: 8px;
+  border-top: 1px solid var(--glass-edge);
+  color: var(--ink-soft);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-shadow: var(--hud-tsh);
+}
+.hud-grenade > span:first-child {
+  color: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.26em;
+}
+.hud-gcount {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* ── H8. レーダー移設: 右中央→左下(バイタル直上の左列計器タワー) ── */
+.hud-radar {
+  top: auto;
+  right: auto;
+  left: 22px;
+  bottom: 140px;
+  width: 128px;
+  height: 128px;
+  transform: none;
+}
+.radar-ring {
+  fill: rgba(7, 9, 12, 0.62);
+  stroke: var(--signal);
+  stroke-opacity: 0.55;
+}
+.radar-ring-inner {
+  fill: none;
+  stroke-opacity: 0.22;
+}
+.radar-sweep {
+  background: conic-gradient(from 0deg, var(--signal-glow), transparent 70deg);
+}
+
+/* ── H9. KILLFEED: MW2019浮遊行+右端3px点火バー+左上チャンファー ── */
+.hud-feed {
+  top: 22px;
+  right: 22px;
+  gap: 4px;
+}
+.hud-feed-row {
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 14px;
+  border-right: 3px solid var(--ember);
+  background: linear-gradient(
+    270deg,
+    var(--ember-wash) 0%,
+    var(--glass-heavy) 30%,
+    var(--glass-heavy) 100%
+  );
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  clip-path: polygon(var(--cut-s) 0, 100% 0, 100% 100%, 0 100%, 0 var(--cut-s));
+  font-size: 12.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-shadow: var(--hud-tsh);
+  animation: feed-slide 0.18s var(--ease-out) both;
+}
+/* 旧HS/近接の左ボーダー方式を右端バー1本に統合 */
+.hud-feed-row[data-kind='hs'],
+.hud-feed-row[data-kind='melee'] {
+  border-left: none;
+  padding-left: 14px;
+}
+.hud-feed-row[data-kind='hs'] {
+  border-right-color: var(--warn);
+}
+.hud-feed-row[data-kind='melee'] {
+  border-right-color: var(--medal-red);
+}
+.feed-you {
+  color: var(--ember-ink);
+  font-weight: 800;
+}
+.feed-name {
+  color: var(--ink);
+  font-weight: 600;
+  max-width: 11em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 武器名を計器チップ化(アセットレスの武器アイコン表現) */
+.feed-weapon {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+  padding: 2px 9px 2px 7px;
+  border: 1px solid var(--rule-strong);
+  background: rgba(255, 255, 255, 0.04);
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%);
+}
+.feed-hs {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--warn) 55%, transparent);
+}
+/* ヘッドショットレティクル(CSS描画の◉) */
+.hud-feed-row[data-kind='hs'] .feed-weapon::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  vertical-align: -1px;
+  border-radius: 50%;
+  border: 1.5px solid var(--warn);
+  background: radial-gradient(circle, var(--warn) 0 32%, transparent 34%);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--warn) 60%, transparent);
+}
+.hud-feed-row[data-kind='melee'] .feed-weapon {
+  color: var(--medal-red);
+  border-color: color-mix(in srgb, var(--medal-red) 55%, transparent);
+}
+/* 自分が関与した行だけ点火(BO2自行帯)。:has()非対応環境は装飾欠落のみで無害 */
+.hud-feed-row:has(> .feed-you:first-child) {
+  border-right-color: var(--ember);
+  box-shadow: inset -8px 0 14px -8px var(--ember-glow);
+  background: linear-gradient(
+    270deg,
+    var(--ember-wash-2) 0%,
+    var(--glass-heavy) 34%,
+    var(--glass-heavy) 100%
+  );
+}
+
+/* ── H10. アナウンス帯: 両端signalティック+グラデ帯(計器情報=signal) ── */
+.hud-announce {
+  top: 22%;
+  gap: 6px;
+}
+.hud-announce-row {
+  position: relative;
+  padding: 7px 28px;
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em; /* 和文上限0.06em準拠 */
+  color: var(--ink);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.85);
+  background:
+    linear-gradient(180deg, var(--signal) 0 100%) left center / 2px 62% no-repeat,
+    linear-gradient(180deg, var(--signal) 0 100%) right center / 2px 62% no-repeat,
+    linear-gradient(
+      90deg,
+      transparent,
+      var(--glass-heavy) 16%,
+      var(--glass-heavy) 84%,
+      transparent
+    );
+  animation: announce-in 0.28s var(--ease-out) both;
+}
+@keyframes announce-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── H11. キルストリークバナー: T2 display+点火ルール掃引(2段0.42s) ── */
+.hud-banner {
+  gap: 8px;
+}
+.hud-banner-row {
+  position: relative;
+  padding-bottom: 8px;
+  font-family: var(--display);
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-indent: 0.08em;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 22px var(--ember-glow),
+    0 2px 8px rgba(0, 0, 0, 0.9);
+  animation: ig-bannerin 0.28s var(--ease-out) both;
+}
+.hud-banner-row::after {
+  content: '';
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--ember) 18%, var(--ember) 82%, transparent);
+  box-shadow: 0 0 8px var(--ember-glow);
+  animation: banner-rule 0.34s var(--ease-out) 0.08s both;
+}
+/* R10固有名(基底の同名bannerin(L2654)との名前空間衝突・死にコードを避けるため改名) */
+@keyframes ig-bannerin {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+    letter-spacing: 0.3em;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+    letter-spacing: 0.08em;
+  }
+}
+@keyframes banner-rule {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+/* ── H12. ヒットマーカー: 4ティックX+種別発光(hit白/head warn/kill ember/snipe白+signal) ── */
+.hud-hitmarker span {
+  width: 2px;
+  height: 9px;
+  background: #fff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+}
+.hud-hitmarker.show {
+  animation: ig-hitmark 0.22s var(--ease-out);
+}
+.hud-hitmarker.hm-head span {
+  background: var(--warn);
+  box-shadow:
+    0 0 5px color-mix(in srgb, var(--warn) 60%, transparent),
+    0 0 3px rgba(0, 0, 0, 0.9);
+}
+.hud-hitmarker.hm-kill span {
+  background: var(--ember);
+  width: 2.5px;
+  height: 11px;
+  box-shadow:
+    0 0 6px var(--ember-glow),
+    0 0 3px rgba(0, 0, 0, 0.9);
+}
+.hud-hitmarker.hm-kill.show,
+.hud-hitmarker.hm-snipe.show {
+  animation-duration: 0.3s;
+}
+.hud-hitmarker.hm-snipe span {
+  background: #fff;
+  width: 2.5px;
+  height: 14px;
+  box-shadow:
+    0 0 6px var(--signal-glow),
+    0 0 12px var(--signal-glow);
+}
+/* R10固有名(基底の同名hitmark(L1693)との名前空間衝突・死にコードを避けるため改名) */
+@keyframes ig-hitmark {
+  0% {
+    opacity: 1;
+    transform: scale(1.32);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+/* キル確定リング: 色をember系へ(既存@mediaゲート・JSゲートは不変) */
+.hud-kill-ring {
+  border-color: color-mix(in srgb, var(--ember) 70%, #fff);
+  box-shadow:
+    0 0 12px var(--ember-glow),
+    inset 0 0 8px var(--ember-halo);
+}
+.hud-kill-ring--snipe {
+  border-color: #dff0ff;
+  box-shadow:
+    0 0 14px var(--signal-glow),
+    inset 0 0 8px var(--signal-glow);
+}
+
+/* ── H13. ダメージ方向: Titanfall2弧セグメント(三角wedge廃止)+被弾ビネット ── */
+.hud-incoming-wedge {
+  left: -60px;
+  top: -60px;
+  width: 120px;
+  height: 120px;
+  background: none;
+  border-radius: 50%;
+  border: 4px solid transparent;
+  border-top-color: var(--threat);
+  clip-path: none;
+  opacity: 1;
+  -webkit-mask: conic-gradient(from -32deg at 50% 50%, #000 0 64deg, transparent 64deg);
+  mask: conic-gradient(from -32deg at 50% 50%, #000 0 64deg, transparent 64deg);
+  filter: drop-shadow(0 0 9px color-mix(in srgb, var(--threat) 60%, transparent));
+  animation: incoming-in 0.12s var(--ease-out) both;
+}
+@keyframes incoming-in {
+  from {
+    opacity: 0;
+    transform: scale(1.18);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.hud-vignette {
+  background: radial-gradient(
+    ellipse at center,
+    transparent 52%,
+    color-mix(in srgb, var(--threat) 52%, transparent) 100%
+  );
+}
+.hud-vignette.low {
+  background: radial-gradient(
+    ellipse at center,
+    transparent 40%,
+    color-mix(in srgb, var(--threat) 70%, transparent) 100%
+  );
+}
+.hud-flash {
+  background: color-mix(in srgb, var(--threat) 20%, transparent);
+}
+.hud-flash.show {
+  animation: flash 0.26s ease-out;
+}
+
+/* ── H14. ダメージ数字: monoタブラー+種別スケール ── */
+.hud-dmg-num {
+  font-family: var(--mono);
+  font-feature-settings: 'tnum' 1;
+}
+.hud-dmg-num--head {
+  text-shadow:
+    0 0 8px color-mix(in srgb, var(--warn) 55%, transparent),
+    0 1px 3px rgba(0, 0, 0, 0.85);
+}
+.hud-dmg-num--kill {
+  color: var(--ember-ink);
+  text-shadow:
+    0 0 10px var(--ember-glow),
+    0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+/* ── H15. スコアイベント(+100トースト): BO2即時報酬(聖域外58%へ) ── */
+.hud-score-toast {
+  top: 58%;
+}
+.score-toast-row b {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--warn);
+  text-shadow:
+    0 0 10px color-mix(in srgb, var(--warn) 50%, transparent),
+    0 1px 3px rgba(0, 0, 0, 0.8);
+}
+.score-toast-row span {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em; /* 和文ラベル(キル/ヘッドショット) */
+  color: var(--ink-soft);
+  text-shadow: var(--hud-tsh);
+}
+
+/* ── H16. メダル(左テキスト)+バッジ(初解放カード) ── */
+.hud-medal {
+  position: relative;
+  padding-left: 14px;
+  font-family: var(--display); /* メダル名は英字(DOUBLE KILL等) */
+  font-size: 32px;
+  letter-spacing: 0.05em;
+}
+.hud-medal::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 14%;
+  bottom: 14%;
+  width: 3px;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+.hud-medal i {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.hud-medal.show {
+  animation: medal-pop 0.24s var(--ease-snap) forwards;
+}
+.badge-name {
+  font-family: var(--display);
+  font-size: 20px;
+  letter-spacing: 0.06em;
+}
+.badge-tag {
+  font-family: var(--sans);
+  font-weight: 700;
+  letter-spacing: 0.06em; /* 和文「実績解放」: 0.36em字間を規約準拠へ */
+}
+
+/* ── H17. 移動状態+ULT(中央下帯。聖域r=180px外) ── */
+.hud-move-state {
+  font-size: 11px;
+  text-shadow:
+    0 0 14px var(--ember-glow),
+    var(--hud-tsh);
+}
+.hud-move-state::before {
+  content: '[';
+  margin-right: 0.5em;
+  color: var(--ink-faint);
+}
+.hud-move-state::after {
+  content: ']';
+  margin-left: 0.14em;
+  color: var(--ink-faint);
+}
+.hud-move-bar {
+  width: 120px;
+  height: 5px;
+  background: var(--hud-track);
+  box-shadow: var(--hud-track-edge);
+  clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 50%, calc(100% - 3px) 100%, 0 100%);
+}
+.hud-ult-bar {
+  position: relative;
+  width: 180px;
+  height: 10px;
+  border: none;
+  background: var(--hud-track);
+  box-shadow: var(--hud-track-edge);
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+}
+.hud-ult-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(25% - 1px),
+    rgba(0, 0, 0, 0.7) calc(25% - 1px) 25%
+  );
+}
+.hud-ult-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em; /* 和文「準備完了」混在のため字間上限準拠 */
+  text-shadow: var(--hud-tsh);
+}
+
+/* ── H18. 死亡画面 ── */
+.hud-death {
+  background: color-mix(in srgb, var(--void) 55%, transparent);
+}
+.hud-death-title {
+  /* 「やられた」=和文: --displayはかな非搭載のためserif演出を維持し56pxへ拡大 */
+  font-size: 56px;
+  letter-spacing: 0.12em;
+  text-indent: 0.12em;
+  text-shadow:
+    0 0 24px var(--ember-glow),
+    0 2px 10px rgba(0, 0, 0, 0.9);
+  animation: death-reveal 0.32s var(--ease-out) both;
+}
+@keyframes death-reveal {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+.hud-death-sub {
+  text-shadow: var(--hud-tsh);
+}
+.hud-killcam {
+  padding: 4px 14px 4px 10px;
+  border-radius: 0;
+  border: 1px solid color-mix(in srgb, var(--ember) 45%, transparent);
+  background: var(--glass-heavy);
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 0 100%);
+  font-size: 11px;
+  letter-spacing: 0.06em; /* 和文「キルカメラ」 */
+  text-shadow: var(--hud-tsh);
+}
+
+/* ── H19. スコアボード: BO2自行グラデ帯+チャンファー ──
+   交戦中にTab保持で表示され、その間ライブ3D面が毎フレーム描画される。backdrop-filter
+   だと板領域を60fpsで再ブラーし低スペックiGPUを圧迫するため、blurを外して不透明暗幕で
+   可読性を確保する(--glass-heavyの上に暗色層を重ねる) */
+.hud-scoreboard {
+  border: none;
+  background: linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)), var(--glass-heavy);
+  clip-path: polygon(
+    0 0,
+    calc(100% - 22px) 0,
+    100% 22px,
+    100% 100%,
+    22px 100%,
+    0 calc(100% - 22px)
+  );
+}
+.hud-scoreboard::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  clip-path: inherit;
+  border: 1px solid var(--glass-edge-lit);
+}
+.hud-scoreboard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.85;
+  --cut: var(--cut-l);
+  --edge-color: var(--glass-edge-lit);
+  background: var(--frame-lines);
+}
+.hud-scoreboard header {
+  border-bottom: 1px solid var(--glass-edge);
+}
+.hud-scoreboard header strong {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+.hud-scoreboard th {
+  color: var(--ink-soft);
+  font-size: 10.5px;
+  letter-spacing: 0.06em; /* 和文見出し(名前/キル/デス) */
+}
+.hud-scoreboard td:not(:first-child) {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.hud-scoreboard tr.score-you {
+  background: linear-gradient(90deg, var(--ember-wash-2), transparent 75%);
+  box-shadow: inset 3px 0 0 var(--ember);
+}
+
+/* ── H20. モーション: HUD入場+ボスバー出現(reduce二重ゲート内) ── */
+@keyframes hud-in-l {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes hud-in-r {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* .hud-top-center は translateX(-50%) でセンタリングするため、入場アニメでも
+   その水平中央寄せを保存する(transform:none で終わるとセンタリングが外れ右へずれる) */
+@keyframes hud-in-t {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+}
+@keyframes boss-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes feed-slide {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not(.reduce-motion) #hud:not([hidden]) .hud-top-left,
+  :root:not(.reduce-motion) #hud:not([hidden]) .hud-bottom-left {
+    animation: hud-in-l 0.28s var(--ease-out) both;
+  }
+  :root:not(.reduce-motion) #hud:not([hidden]) .hud-bottom-right,
+  :root:not(.reduce-motion) #hud:not([hidden]) .hud-feed {
+    animation: hud-in-r 0.28s var(--ease-out) both;
+  }
+  :root:not(.reduce-motion) #hud:not([hidden]) .hud-top-center {
+    animation: hud-in-t 0.28s var(--ease-out) both;
+  }
+  :root:not(.reduce-motion) .hud-boss:not([hidden]) {
+    animation: boss-in 0.32s var(--ease-out) both;
+  }
+}
+
+/* ── H21. レスポンシブ(基底@mediaを後勝ちで潰したためここで再宣言) ── */
+@media (max-width: 980px) {
+  .hud-radar {
+    width: 100px;
+    height: 100px;
+    bottom: 132px;
+  }
+}
+@media (max-width: 900px) and (pointer: fine) {
+  .hud-top-left {
+    min-width: 170px;
+  }
+  .hud-bottom-left {
+    min-width: 210px;
+  }
+  .hud-bottom-right {
+    min-width: 232px;
+  }
+  .hud-feed {
+    max-width: 240px;
+  }
+  .hud-compass {
+    width: 260px;
+  }
+  .hud-ammo {
+    font-size: 40px;
+  }
+  .hud-boss-bar {
+    width: min(280px, 44vw);
   }
 }

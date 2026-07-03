@@ -251,12 +251,25 @@ function shadeHex(hex: string, dL: number): string {
 // id→SVG文字列のメモ化(generateStageは決定論)。LRU上限でlocalStorage非依存に肥大を防ぐ
 const stageSvgCache = new Map<string, string>();
 
+// R10 IGNITION FRAME: 盾型ベゼル2層+十字計器+発光スパークの多層エンブレム。
+// viewBox / role / aria-label / .spark クラスは旧ロゴと同一に保ち、CSSフックを壊さない
 const LOGO_SVG = `
 <svg viewBox="0 0 64 64" width="56" height="56" role="img" aria-label="hibanaのロゴ">
   <title>hibana</title>
-  <circle cx="32" cy="32" r="20" fill="none" stroke="currentColor" stroke-width="3" opacity="0.55"/>
-  <path d="M32 4v12M32 48v12M4 32h12M48 32h12" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
-  <path class="spark" d="M32 22l3.2 6.8L42 32l-6.8 3.2L32 42l-3.2-6.8L22 32l6.8-3.2z"/>
+  <defs>
+    <linearGradient id="lg-ring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#8a9299" stop-opacity="0.5"/>
+    </linearGradient>
+    <filter id="lg-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="1.6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <path d="M32 3 55 12v20c0 13-9 24-23 29C18 56 9 45 9 32V12z" fill="none" stroke="url(#lg-ring)" stroke-width="2" opacity="0.85"/>
+  <path d="M32 8 50 15v16c0 10-7 19-18 23-11-4-18-13-18-23V15z" fill="rgba(255,255,255,0.04)" stroke="currentColor" stroke-width="1" opacity="0.5"/>
+  <path d="M32 14v8M32 42v8M18 32h8M38 32h8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+  <path class="spark" filter="url(#lg-glow)" d="M32 20l3.6 7.6L43 32l-7.4 3.4L32 44l-3.6-8.6L21 32l7.4-4.4z"/>
 </svg>`;
 
 export class Menu {
@@ -461,6 +474,7 @@ export class Menu {
     this.root.innerHTML = `
       <div class="menu-screen menu-main">
         <div class="console-bezel">
+          <i class="bezel-grain" aria-hidden="true"></i>
           <header class="menu-header telemetry-rail">
             <span class="sys-lamps" aria-hidden="true">
               <i data-sys="O2"><b></b>O2</i><i data-sys="PWR"><b></b>PWR</i>
@@ -469,14 +483,14 @@ export class Menu {
             <span class="menu-logo">${LOGO_SVG}</span>
             <div class="wordmark">
               <h1>hibana</h1>
-              <p class="menu-tagline">Orbital Dropdeck · 軌道降下管制盤</p>
+              <p class="menu-tagline"><span lang="en">Orbital Dropdeck</span><span lang="ja">軌道降下管制盤</span></p>
             </div>
             <div class="nav-readout" aria-hidden="true">
-              <span>ALT <b>408</b>KM</span><span>VEL <b>7.62</b>KM·S⁻¹</span><span class="nav-eta">DROP WINDOW <b>T-00:43</b></span>
+              <span class="nav-opr">OPR <b>LV.${this.playerLevel()}</b></span><span>ALT <b>408</b>KM</span><span>VEL <b>7.62</b>KM·S⁻¹</span><span class="nav-eta">DROP WINDOW <b>T-00:43</b></span>
             </div>
           </header>
           <p class="menu-touchnote">この作品はキーボードとマウスで操作します。スマートフォンやタブレットでは遊べません。PCで開いてください。</p>
-          <section class="deployment-briefing" aria-label="出撃構成">
+          <section class="deployment-briefing ig-scan" aria-label="出撃構成">
             <div class="briefing-heading">
               <span>Deployment briefing</span>
               <strong>出撃構成</strong>
@@ -512,12 +526,12 @@ export class Menu {
                 <div class="campaign-screen" data-id="campaign"></div>
               </section>
               <section class="mfd-page" data-page="deploy" role="tabpanel" id="mfd-panel-deploy" aria-labelledby="mfd-tab-deploy">
-                <div class="mfd-hero" aria-hidden="true">
+                <div class="mfd-hero ig-scan--live" aria-hidden="true">
                   <div class="hero-limb"></div>
                   <div class="hero-readout"><span>ORBIT <b>412</b>KM</span><span>ATMO <b>1.0</b>G</span><span>LZ <b>SECURE</b></span></div>
                   <div class="hero-grid"></div>
                 </div>
-                <div class="mfd-cols">
+                <div class="mfd-cols mfd-cols--deploy">
                   <section class="menu-section">
                     <h2>降下目標</h2>
                     <div class="stage-grid" data-id="stages"></div>
@@ -552,7 +566,7 @@ export class Menu {
                       <div class="grenade-list" data-id="grenades"></div>
                     </section>
                   </div>
-                  <aside class="armory-preview">
+                  <aside class="armory-preview ig-panel ig-scan">
                     <canvas class="weapon-canvas" data-id="weapon-canvas"></canvas>
                     <div class="armory-readout">
                       <div class="armory-wname" data-id="armory-wname"></div>
@@ -590,7 +604,7 @@ export class Menu {
             </div>
           </div>
           <footer class="console-status" aria-hidden="true">
-            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span>hibana // tactical sim</span>
+            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span class="status-opr">OPR <b>LV.${this.playerLevel()}</b></span><span class="status-fill"></span><span>hibana // tactical sim · BUILD R10</span>
           </footer>
         </div>
       </div>
@@ -623,8 +637,8 @@ export class Menu {
     const cleared = camp.clearedMissions.length;
     host.innerHTML = `
       <div class="campaign-head">
-        <div class="campaign-title"><strong>軌道に灯る火種</strong><span>CINDER 鎮圧作戦</span></div>
-        <div class="campaign-stat">制圧 <b>${cleared}</b>/48 ・ ★<b>${totalStars}</b>/144</div>
+        <div class="campaign-title"><em class="campaign-op">OPERATION <i>//</i> CINDER</em><strong>軌道に灯る火種</strong><span>CINDER 鎮圧作戦</span></div>
+        <div class="campaign-stat">制圧 <b>${cleared}</b>/48 ・ ★<b>${totalStars}</b>/144<span class="campaign-bar ig-bar" aria-hidden="true"><i style="transform:scaleX(${(cleared / 48).toFixed(3)})"></i></span></div>
       </div>
       <div class="chapter-list" data-id="chapter-list"></div>
     `;
@@ -640,7 +654,7 @@ export class Menu {
       head.innerHTML = `
         <span class="chapter-no">${chapter.title}</span>
         <span class="chapter-sub">${unlocked ? chapter.subtitle : '機密 — 前章の制圧で解放'}</span>
-        <span class="chapter-prog">${chClear}/${chapter.missions.length}</span>
+        <span class="chapter-prog"><b>${chClear}</b>/${chapter.missions.length}<span class="chapter-prog-bar" aria-hidden="true"><i style="transform:scaleX(${(chClear / chapter.missions.length).toFixed(3)})"></i></span></span>
       `;
       card.appendChild(head);
       if (unlocked) {
@@ -649,6 +663,7 @@ export class Menu {
         for (const mission of chapter.missions) {
           grid.appendChild(this.missionChip(mission));
         }
+        this.stagger(grid); // チップ入場(listitem-in)の--i付与
         card.appendChild(grid);
       }
       list.appendChild(card);
@@ -665,8 +680,8 @@ export class Menu {
     btn.className = unlocked ? 'mission-chip' : 'mission-chip locked';
     btn.disabled = !unlocked;
     const starHtml = unlocked
-      ? `<span class="mission-stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</span>`
-      : '<span class="mission-lock">🔒</span>';
+      ? `<span class="mission-stars"><b>${'★'.repeat(stars)}</b>${'☆'.repeat(3 - stars)}</span>`
+      : '<span class="mission-lock">LOCKED</span>';
     btn.innerHTML = `
       <span class="mission-idx">${mission.chapterId.toUpperCase()}-${mission.index + 1}</span>
       <span class="mission-name">${mission.title}</span>
@@ -690,26 +705,30 @@ export class Menu {
       'elite-swarm': '精鋭過多',
     };
     const mods = mission.modifiers.map((m) => modLabels[m] ?? m).join(' / ') || 'なし';
-    const briefLines = mission.brief.map((b) => `<p>${b}</p>`).join('');
+    // --i はタイプライター(brief-type)のstagger用。reduce-motion時はCSS側で即着地する
+    const briefLines = mission.brief.map((b, i) => `<p style="--i:${i}">${b}</p>`).join('');
     const intel = mission.intel?.length
       ? `<div class="brief-intel"><h3>インテル</h3>${mission.intel.map((i) => `<p>${i}</p>`).join('')}</div>`
       : '';
     this.root.innerHTML = `
       <div class="menu-screen menu-briefing">
-        <div class="brief-panel" role="dialog" aria-modal="true" aria-label="ミッションブリーフィング">
-          <p class="brief-chapter">${mission.chapterId.toUpperCase()}-${mission.index + 1}</p>
-          <h1>${mission.title}</h1>
-          <p class="brief-subtitle">${mission.subtitle}</p>
-          <div class="brief-body">${briefLines}</div>
-          <dl class="brief-meta">
-            <div><dt>目的</dt><dd>${mission.objective.label}</dd></div>
-            <div><dt>武器</dt><dd><select class="brief-weapon-select" data-id="brief-weapon-select" aria-label="出撃武器の選択"></select></dd></div>
-            <div><dt>特殊条件</dt><dd>${mods}</dd></div>
-          </dl>
-          ${intel}
-          <div class="brief-buttons">
-            <button class="menu-start" data-id="deploy-mission"><span>出撃する</span></button>
-            <button class="menu-quiet" data-id="brief-back">戦役へ戻る</button>
+        <div class="brief-frame">
+          <div class="brief-panel" role="dialog" aria-modal="true" aria-label="ミッションブリーフィング">
+            <p class="brief-chapter">${mission.chapterId.toUpperCase()}-${mission.index + 1} // SORTIE ORDER</p>
+            <h1>${mission.title}</h1>
+            <p class="brief-subtitle">${mission.subtitle}</p>
+            <div class="brief-map" aria-hidden="true"></div>
+            <div class="brief-body">${briefLines}</div>
+            <dl class="brief-meta">
+              <div><dt>目的</dt><dd>${mission.objective.label}</dd></div>
+              <div><dt>武器</dt><dd><select class="brief-weapon-select" data-id="brief-weapon-select" aria-label="出撃武器の選択"></select></dd></div>
+              <div><dt>特殊条件</dt><dd>${mods}</dd></div>
+            </dl>
+            ${intel}
+            <div class="brief-buttons">
+              <button class="menu-start" data-id="deploy-mission"><span>出撃する</span></button>
+              <button class="menu-quiet" data-id="brief-back">戦役へ戻る</button>
+            </div>
           </div>
         </div>
       </div>
@@ -746,13 +765,21 @@ export class Menu {
     const mission = missionById(progress.missionId);
     const won = result.won;
     const stars = progress.stars;
+    // 星は1個ずつspan分割し--iを付与(star-popの捺印stagger用)。読み上げはrole=imgに集約
     const starHtml = won
-      ? `<div class="result-stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</div>`
+      ? `<div class="result-stars" role="img" aria-label="評価 ${stars} / 3">${[0, 1, 2]
+          .map(
+            (i) =>
+              `<span class="${i < stars ? 'on' : 'off'}" style="--i:${i}" aria-hidden="true">${i < stars ? '★' : '☆'}</span>`,
+          )
+          .join('')}</div>`
       : '';
     const unlockNote = progress.chapterUnlocked
       ? `<p class="result-chapter-unlock">新章解放: ${CAMPAIGN.find((c) => c.id === progress.chapterUnlocked)?.title ?? ''}</p>`
       : '';
-    const firstNote = progress.firstClear ? '<p class="result-firstclear">初制圧ボーナス +800 XP</p>' : '';
+    const firstNote = progress.firstClear
+      ? '<p class="result-firstclear">初制圧ボーナス +800 XP</p>'
+      : '';
     const nextId = mission && won ? nextMissionId(mission.id) : null;
     const nextUnlocked = nextId ? isMissionUnlocked(this.profile, nextId) : false;
     const nextBtn =
@@ -763,11 +790,15 @@ export class Menu {
       <div class="menu-screen menu-result${won ? ' result-won' : ''}">
         <div class="result-panel" role="dialog" aria-modal="true" aria-label="ミッション結果">
           <p class="result-mode">${mission?.title ?? 'ミッション'}</p>
-          <h1>${won ? 'ミッション達成' : 'ミッション失敗'}</h1>
+          <h1 data-en="${won ? 'MISSION COMPLETE' : 'MISSION FAILED'}">${won ? 'ミッション達成' : 'ミッション失敗'}</h1>
           ${starHtml}
           ${unlockNote}
           ${firstNote}
-          <p class="result-stats">自己ベスト ${Math.floor(progress.missionBest?.bestTimeS ?? 0)}s / 命中率 ${(result.accuracy * 100).toFixed(1)}% / ヘッドショット ${result.headshots}</p>
+          <p class="result-stats">
+            <span class="stat-cell">BEST<b>${Math.floor(progress.missionBest?.bestTimeS ?? 0)}s</b></span>
+            <span class="stat-cell">ACC<b>${(result.accuracy * 100).toFixed(1)}%</b></span>
+            <span class="stat-cell">HS<b>${result.headshots}</b></span>
+          </p>
           ${this.progressHtml(progress)}
           <div class="result-buttons">
             ${nextBtn}
@@ -778,8 +809,11 @@ export class Menu {
       </div>
     `;
     this.countUp(this.query('xptotal'), progress.xpTotal);
+    this.staggerXpList();
     if (nextId && nextUnlocked) {
-      this.query('next-mission').addEventListener('click', () => this.callbacks.onStartMission(nextId));
+      this.query('next-mission').addEventListener('click', () =>
+        this.callbacks.onStartMission(nextId),
+      );
     }
     this.query('retry-mission').addEventListener('click', () => this.callbacks.onRestart());
     this.query('to-campaign').addEventListener('click', () => {
@@ -787,7 +821,7 @@ export class Menu {
       this.callbacks.onQuit();
       this.setMfdPage('campaign');
     });
-    (this.query(nextId && nextUnlocked ? 'next-mission' : 'to-campaign')).focus({
+    this.query(nextId && nextUnlocked ? 'next-mission' : 'to-campaign').focus({
       preventScroll: true,
     });
   }
@@ -908,10 +942,13 @@ export class Menu {
       <div class="menu-screen menu-result${result.won ? ' result-won' : ''}">
         <div class="result-panel" role="dialog" aria-modal="true" aria-label="試合結果">
           <p class="result-mode">${result.modeName}</p>
-          <h1>${result.won ? '勝利' : '敗北'}</h1>
+          <h1 data-en="${result.won ? 'VICTORY' : 'DEFEAT'}">${result.won ? '勝利' : '敗北'}</h1>
           ${teamScoreHtml}
           <p class="result-mvp">MVP: ${mvp ? mvp.name : '-'}</p>
-          <p class="result-stats">命中率 ${(result.accuracy * 100).toFixed(1)}% / ヘッドショット ${result.headshots}</p>
+          <p class="result-stats">
+            <span class="stat-cell">ACC<b>${(result.accuracy * 100).toFixed(1)}%</b></span>
+            <span class="stat-cell">HS<b>${result.headshots}</b></span>
+          </p>
           <table class="result-table">
             <thead><tr><th>名前</th><th>キル</th><th>デス</th></tr></thead>
             <tbody>${rowsHtml}</tbody>
@@ -927,6 +964,7 @@ export class Menu {
     this.query('restart').addEventListener('click', () => this.callbacks.onRestart());
     this.query('menu').addEventListener('click', () => this.callbacks.onQuit());
     this.countUp(this.query('xptotal'), progress.xpTotal);
+    this.staggerXpList();
     if (result.teamScores) {
       this.countUp(this.query('tsmine'), result.teamScores.mine, 650);
       this.countUp(this.query('tsenemy'), result.teamScores.enemy, 650);
@@ -1017,15 +1055,21 @@ export class Menu {
     });
   }
 
+  // リザルトのXP内訳行に入場staggerを与える(listitem-inのanimation-delayが--iを参照)
+  private staggerXpList(): void {
+    const xpList = this.root.querySelector<HTMLElement>('.result-xp-list');
+    if (xpList) this.stagger(xpList);
+  }
+
   private renderStages(): void {
     const grid = this.query('stages');
-    STAGES.forEach((stage) => {
+    STAGES.forEach((stage, idx) => {
       const card = document.createElement('button');
       card.className = 'stage-card';
       card.dataset.stage = stage.id;
       const palette = stage.palette;
       card.innerHTML = `
-        <span class="stage-preview">${this.stagePreview(stage)}</span>
+        <span class="stage-preview">${this.stagePreview(stage)}<span class="stage-no" aria-hidden="true">LZ ${String(idx + 1).padStart(2, '0')}</span></span>
         <span class="stage-card-body">
           <span class="stage-swatch" aria-hidden="true">
             <i style="background:${palette.floor}"></i><i style="background:${palette.wall}"></i>
@@ -1033,7 +1077,7 @@ export class Menu {
           </span>
           <span class="stage-name">${stage.name}</span>
           <span class="stage-sub">${stage.subtitle}</span>
-          <span class="stage-meta">${stage.size}m 四方 / BOT ${stage.botCount}体 / 障害物 ${stage.obstacleCount}</span>
+          <span class="stage-meta"><span class="stage-seed">SEED ${stage.seed}</span>${stage.size}m 四方 / BOT ${stage.botCount}体 / 障害物 ${stage.obstacleCount}</span>
         </span>
       `;
       card.addEventListener('click', () => {
@@ -1149,6 +1193,7 @@ export class Menu {
       list.appendChild(head);
       for (const id of ids) list.appendChild(this.weaponCard(id, 'primary'));
     }
+    this.stagger(list); // 入場アニメ(listitem-in)の--i付与。見出し→カードの順に流れる
     this.markSelected(list, 'weapon', this.selection.primaryId);
     this.previewWeapon(this.currentPrimaryDef());
   }
@@ -1157,8 +1202,10 @@ export class Menu {
     const list = this.query('secondaries');
     list.innerHTML = '';
     const level = this.playerLevel();
-    if (!isUnlocked('weapon', this.selection.secondaryId, level)) this.selection.secondaryId = 'suzume';
+    if (!isUnlocked('weapon', this.selection.secondaryId, level))
+      this.selection.secondaryId = 'suzume';
     for (const id of SECONDARY_IDS) list.appendChild(this.weaponCard(id, 'secondary'));
+    this.stagger(list);
     this.markSelected(list, 'weapon2', this.selection.secondaryId);
   }
 
@@ -1172,7 +1219,11 @@ export class Menu {
     const key = slot === 'primary' ? 'weapon' : 'weapon2';
     card.dataset[key] = id;
     const mode =
-      def.mode === 'auto' ? 'フルオート' : def.mode === 'burst' ? `バースト${def.burstCount}` : '単発';
+      def.mode === 'auto'
+        ? 'フルオート'
+        : def.mode === 'burst'
+          ? `バースト${def.burstCount}`
+          : '単発';
     const lockNote = unlocked
       ? ''
       : `<span class="locked-note">Lv ${unlockLevelOf('weapon', id)} で解放</span>`;
@@ -1460,13 +1511,35 @@ export class Menu {
     // 画面差し替えで捕捉中だったリバインドは無効化する(コールバック・keydownリスナを残さない)
     this.endCapture();
     container.innerHTML = '';
+    // R10: 設定を系統別(F01照準/F02音響/F03表示/F04交戦規定/F05操縦)に分節する。
+    // 見出しh3は非focusableなのでゲームパッドのフォーカス巡回順には影響しない
     container.append(
+      this.subhead('照準 / AIM', 'F01'),
       this.slider('マウス感度', 0.2, 3, 0.05, this.settings.sensitivity, (v) => {
         this.settings.sensitivity = v;
+      }),
+      this.slider('ADS感度倍率', 0.3, 1.5, 0.05, this.settings.adsSensMul, (v) => {
+        this.settings.adsSensMul = v;
       }),
       this.slider('視野角(FOV)', 60, 110, 1, this.settings.fov, (v) => {
         this.settings.fov = v;
       }),
+      this.checkbox('Y軸を反転する', this.settings.invertY, (v) => {
+        this.settings.invertY = v;
+      }),
+      this.checkbox('ADSをトグルにする', this.settings.adsToggle, (v) => {
+        this.settings.adsToggle = v;
+      }),
+      this.checkbox('しゃがみをトグルにする', this.settings.crouchToggle, (v) => {
+        this.settings.crouchToggle = v;
+      }),
+      this.checkbox('エイムアシスト', this.settings.aimAssist, (v) => {
+        this.settings.aimAssist = v;
+      }),
+      this.slider('エイムアシスト強度', 0, 1, 0.05, this.settings.aimAssistStrength, (v) => {
+        this.settings.aimAssistStrength = v;
+      }),
+      this.subhead('音響 / AUDIO', 'F02'),
       this.slider('全体音量', 0, 1, 0.05, this.settings.volMaster, (v) => {
         this.settings.volMaster = v;
       }),
@@ -1476,20 +1549,15 @@ export class Menu {
       this.slider('UI音量', 0, 1, 0.05, this.settings.volUi, (v) => {
         this.settings.volUi = v;
       }),
+      this.slider('アナウンサー音量', 0, 1, 0.05, this.settings.announcerVolume, (v) => {
+        this.settings.announcerVolume = v;
+      }),
+      this.checkbox('戦闘BGM(動的)', this.settings.musicEnabled, (v) => {
+        this.settings.musicEnabled = v;
+      }),
+      this.subhead('表示 / INTERFACE', 'F03'),
       this.slider('UIの大きさ', 0.8, 1.3, 0.05, this.settings.uiScale, (v) => {
         this.settings.uiScale = v;
-      }),
-      this.checkbox('ADSをトグルにする', this.settings.adsToggle, (v) => {
-        this.settings.adsToggle = v;
-      }),
-      this.checkbox('しゃがみをトグルにする', this.settings.crouchToggle, (v) => {
-        this.settings.crouchToggle = v;
-      }),
-      this.checkbox('Y軸を反転する', this.settings.invertY, (v) => {
-        this.settings.invertY = v;
-      }),
-      this.checkbox('画面の揺れを軽減する', this.settings.reduceMotion, (v) => {
-        this.settings.reduceMotion = v;
       }),
       this.select(
         'UIのアクセント',
@@ -1508,35 +1576,6 @@ export class Menu {
         },
       ),
       this.select(
-        '試合時間',
-        MATCH_LENGTHS.map((m) => ({ value: String(m.value), label: m.label })),
-        String(this.settings.matchLengthS),
-        (v) => {
-          this.settings.matchLengthS = Number(v);
-        },
-      ),
-      this.checkbox('エイムアシスト', this.settings.aimAssist, (v) => {
-        this.settings.aimAssist = v;
-      }),
-      this.slider('エイムアシスト強度', 0, 1, 0.05, this.settings.aimAssistStrength, (v) => {
-        this.settings.aimAssistStrength = v;
-      }),
-      this.slider('ADS感度倍率', 0.3, 1.5, 0.05, this.settings.adsSensMul, (v) => {
-        this.settings.adsSensMul = v;
-      }),
-      this.slider('画面の揺れ', 0, 1, 0.05, this.settings.screenShake, (v) => {
-        this.settings.screenShake = v;
-      }),
-      this.checkbox('簡易レーダーを表示', this.settings.radarEnabled, (v) => {
-        this.settings.radarEnabled = v;
-      }),
-      this.slider('アナウンサー音量', 0, 1, 0.05, this.settings.announcerVolume, (v) => {
-        this.settings.announcerVolume = v;
-      }),
-      this.checkbox('戦闘BGM(動的)', this.settings.musicEnabled, (v) => {
-        this.settings.musicEnabled = v;
-      }),
-      this.select(
         'レティクル形状',
         RETICLE_STYLES.map((r) => ({ value: r.id, label: r.name })),
         this.settings.reticleStyle,
@@ -1550,6 +1589,24 @@ export class Menu {
         this.settings.reticleColor,
         (v) => {
           this.settings.reticleColor = v;
+        },
+      ),
+      this.checkbox('簡易レーダーを表示', this.settings.radarEnabled, (v) => {
+        this.settings.radarEnabled = v;
+      }),
+      this.slider('画面の揺れ', 0, 1, 0.05, this.settings.screenShake, (v) => {
+        this.settings.screenShake = v;
+      }),
+      this.checkbox('画面の揺れを軽減する', this.settings.reduceMotion, (v) => {
+        this.settings.reduceMotion = v;
+      }),
+      this.subhead('交戦規定 / MATCH', 'F04'),
+      this.select(
+        '試合時間',
+        MATCH_LENGTHS.map((m) => ({ value: String(m.value), label: m.label })),
+        String(this.settings.matchLengthS),
+        (v) => {
+          this.settings.matchLengthS = Number(v);
         },
       ),
     );
@@ -1600,7 +1657,8 @@ export class Menu {
     section.className = 'gamepad-settings';
     const heading = document.createElement('h3');
     heading.className = 'settings-subhead';
-    heading.textContent = 'ゲームパッド';
+    heading.textContent = '操縦系統 / GAMEPAD';
+    heading.dataset.code = 'F05'; // 見出し右端の系統コード(CSSのattr()で描画)
     section.appendChild(heading);
     const intro = document.createElement('p');
     intro.className = 'setting-note';
@@ -1679,9 +1737,7 @@ export class Menu {
       this.settings.gamepadLayout = id;
       // プリセットへ切替: そのプリセットを複製して実バインドへ反映。customは現状維持(複製)
       this.settings.gamepadBindings =
-        id === 'custom'
-          ? cloneBindings(this.settings.gamepadBindings)
-          : cloneBindings(PRESETS[id]);
+        id === 'custom' ? cloneBindings(this.settings.gamepadBindings) : cloneBindings(PRESETS[id]);
       this.bindNote = '';
       saveSettings(this.settings);
       this.callbacks.onSettingsChanged();
@@ -1777,6 +1833,15 @@ export class Menu {
       : '';
   }
 
+  // SYSTEM設定のグループ見出し。data-codeはCSSのattr()で右端に描く装飾コード
+  private subhead(label: string, code: string): HTMLElement {
+    const h = document.createElement('h3');
+    h.className = 'settings-subhead';
+    h.dataset.code = code;
+    h.textContent = label;
+    return h;
+  }
+
   private slider(
     label: string,
     min: number,
@@ -1795,6 +1860,12 @@ export class Menu {
     input.max = String(max);
     input.step = String(step);
     input.value = String(value);
+    // カスタムトラックの塗り比率(--fill)。CSS側はlinear-gradientの境界に使う
+    const syncFill = (): void => {
+      const ratio = max > min ? ((Number(input.value) - min) / (max - min)) * 100 : 0;
+      input.style.setProperty('--fill', `${ratio.toFixed(1)}%`);
+    };
+    syncFill();
     const display = document.createElement('span');
     display.className = 'setting-value';
     display.textContent = String(value);
@@ -1802,6 +1873,7 @@ export class Menu {
       const v = Number(input.value);
       apply(v);
       display.textContent = String(v);
+      syncFill();
       saveSettings(this.settings);
       this.callbacks.onSettingsChanged();
     });
