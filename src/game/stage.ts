@@ -3,7 +3,9 @@ import { mulberry32 } from '../core/rng';
 // ── 映画的アトモスフィア(R11): THREE非依存の純型。render/atmosphere.ts と共有する ──
 export type MoodId = 'day' | 'dusk' | 'night' | 'overcast' | 'snow';
 export type GrassKind = 'none' | 'blade' | 'dry' | 'reed' | 'snowtuft';
-export type ParticleKind = 'none' | 'snow' | 'dust' | 'ember' | 'firefly';
+// 'lava'(溶岩の火の粉/加算) と 'ash'(降灰/非加算) は ⑥ゾンビ荒廃ステージ用に追加。
+// atmosphere.ts 側の PARTICLE_SPECS へ対応エントリを追加するまでは exhaustive Record が赤くなる(別担当対応)。
+export type ParticleKind = 'none' | 'snow' | 'dust' | 'ember' | 'firefly' | 'lava' | 'ash';
 export type SilhouetteKind = 'none' | 'mountain' | 'ridge' | 'skyline';
 
 // カラーグレードのパラメータ束(表示前段の色収差/ビネット/グレイン/コントラスト/彩度/ティント)。

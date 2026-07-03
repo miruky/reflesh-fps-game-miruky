@@ -144,10 +144,15 @@ function launch(config: MatchConfig): void {
   dprStep = 0;
   renderer.setPixelRatio(BASE_DPR);
   sounds.setReverb(deriveReverbPreset(config.stage));
-  // BGMをステージのムード別プロファイルへ(夜市yoichiのみネオン特化)。かっこいい軍事エレクトロニカ
+  // BGMをステージのムード別プロファイルへ。ゾンビは専用の不穏→高揚プロファイル、
+  // 夜市yoichiのみネオン特化。それ以外はステージのムード。かっこいい軍事エレクトロニカ
   const bgmMood = resolveMood(config.stage.palette);
   const bgmKey: BgmProfileKey =
-    bgmMood === 'night' && config.stage.id === 'yoichi' ? 'night-neon' : bgmMood;
+    config.mode === 'zombie'
+      ? 'zombie'
+      : bgmMood === 'night' && config.stage.id === 'yoichi'
+        ? 'night-neon'
+        : bgmMood;
   sounds.setMusicProfile(bgmKey);
   sounds.startAmbience(config.stage);
   match?.dispose();

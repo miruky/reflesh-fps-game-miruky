@@ -95,6 +95,14 @@ import {
   type ZoneSnapshot,
 } from './modes';
 import { Player } from './player';
+import {
+  ZOMBIE_MAX_ALIVE,
+  zombieEliteRate,
+  zombieHp,
+  zombieRunRate,
+  zombieSpawnGap,
+  zombieTotal,
+} from './zombie';
 import type { MatchSummary } from './progression';
 import { generateStage, type StageDef } from './stage';
 import { teamPalette, type TeamPalette } from './teamcolors';
@@ -163,6 +171,25 @@ const ALERT_RADIUS_SUPPRESSED = 9;
 const COOK_SAFETY_S = 0.25;
 const FIRE_TICK_S = 0.5;
 
+// ── R16 spot-time 知覚FSM(matchが積分する。calcSpotRateはraycast無しで毎フレーム)──
+const BOT_CENTRAL_COS = Math.cos((22 * Math.PI) / 180); // 中心視野(この内側でconeFactor=1)
+const SPOTTED_TH = 0.9; // 発見メータがこの値でSPOTTED(=combat)
+const LOST_TH = 0.15; // この値まで下がるとLOST(=patrol)
+const SPOT_DECAY = 0.55; // 非可視時の発見メータ減衰(/s)
+const ENGAGE_GRACE_S = 0.6; // 見失い直後に lkp へ撃ち/寄り続ける猶予
+const PAIN_SECTOR_COS = Math.cos((120 * Math.PI) / 180); // humanoid被弾時の±120°扇形(=-0.5)
+const PLAYER_UID = -2; // 発見候補のプレイヤー識別(-1はBot既定の「対象なし」と衝突させない)
+const ALERT_SPOT_MUL = 3.5; // 銃声を聞いた(alert)時の発見加速。既存モードの初弾遅延を+0.3s以内に保つ
+const PAIN_SPOT_MUL = 5; // 撃たれた(pain)時は基準×この係数で即発見に近づける
+
+// ── R16 ゾンビモード ──
+const ZOMBIE_MOVE_MUL = 0.72; // 基準速度に対するシャンブル倍率(走行個体は updateZombie で×1.6)
+const ZOMBIE_MELEE_GLOBAL_GAP = 0.35; // 何体いても近接ダメージはこの間隔以上(同フレーム多段一撃回避)
+const ZOMBIE_IFRAME = 0.5; // 近接被弾後のプレイヤー無敵時間
+const ZOMBIE_ROUND_COOLDOWN = 4.5; // ラウンドクリア後、次ラウンドまでの小休止
+const ZOMBIE_SPAWN_RING_MIN = 18; // 湧きリング内径(プレイヤーからの距離)
+const ZOMBIE_SPAWN_RING_MAX = 32; // 湧きリング外径
+
 // キルカメラの「KILLED BY」カードに出す、倒した相手の武器/機種ラベル
 function killcamWeaponFor(killer: Bot): string {
   switch (killer.kind) {
@@ -176,6 +203,8 @@ function killcamWeaponFor(killer: Bot): string {
       return '戦車砲';
     case 'turret':
       return '固定砲台';
+    case 'zombie':
+      return 'ゾンビの爪';
     default: {
       const _exhaustive: never = killer.kind;
       return _exhaustive;
@@ -326,6 +355,11 @@ export interface MatchSnapshot {
   waveIndex?: number; // 現在の波(1始まり)
   waveTotal?: number; // 総波数
   bossHp01?: number; // ボスの残りHP割合(0..1)。ボス不在なら undefined
+  // ── R16 ゾンビ(mode!=='zombie'では undefined。HUD/menuはこれで round HUD を分岐)──
+  zombieRound?: number; // 現在のラウンド(1始まり。0=開始前)
+  zombieKills?: number; // 累計撃破数
+  zombiePoints?: number; // 累計ポイント(命中10/キル60/HSキル100)
+  playerDowns?: number; // プレイヤーがダウンした回数(ゲームオーバー確定)
   incoming: number[]; // 被弾方向(カメラ基準の角度rad)
   tookDamage: boolean;
   scoreboard: ScoreRow[];
@@ -357,6 +391,15 @@ interface SmokeZone {
   pos: THREE.Vector3;
   radius: number;
   until: number;
+}
+
+// spot-time知覚の発見候補(距離+コーンを通過した最も近い敵対エンティティ)
+interface SpotCand {
+  eye: THREE.Vector3; // 目/頭の位置(発見完了で targetEye として供給)
+  dist: number;
+  coneDot: number; // bot facing との内積(視野中心度)
+  isPlayer: boolean;
+  uid: number; // プレイヤーは PLAYER_UID(-2)
 }
 
 interface FirePatch {
@@ -504,6 +547,24 @@ export class Match {
   private envRT: THREE.WebGLRenderTarget | null = null; // 空から焼いたIBL(per-Matchで解放)
   private readonly sunDir = new THREE.Vector3(); // 太陽方向の単一の真実(空/日光/影を駆動)
 
+  // ── R16 spot-time知覚: setup時にpaletteから保持(Matchはpalette非保持=fog/ambientが必要)──
+  private stageFogDensity = 0;
+  private stageAmbient = 1;
+  private botFrameIdx = 0; // uid%3 のLOSバケット(観測者を間引いてO(N^2)castRayを~1/3に)
+  // ── R16 ゾンビディレクタ(mode==='zombie'のみ稼働。matchが唯一の状態保持者)──
+  private zombieRound = 0;
+  private zombieKills = 0;
+  private zombiePoints = 0;
+  private zombieQueue = 0; // このラウンドの残り湧き数
+  private zombieSpawnTimer = 0; // 次のドリップ湧きまでの残り秒
+  private zombieRoundCooldown = 0; // ラウンド間の小休止
+  private zombieTierCap = ZOMBIE_MAX_ALIVE.medium; // 同時生存上限(tier連動)
+  private zombieMeleeGlobal = 0; // 近接ダメージのグローバル次回許可時刻(elapsed基準)
+  private zombieMeleeIframe = 0; // プレイヤーi-frameの終了時刻(elapsed基準)
+  private zombieShadowTimer = 0; // 近接影LODの周期トグル
+  private zombieSpawnColor = 0x4c5a30; // ゾンビ本体の腐敗色(setupで確定)
+  private playerDowns = 0;
+
   constructor(
     readonly config: MatchConfig,
     private readonly settings: Settings,
@@ -559,6 +620,9 @@ export class Match {
 
     if (this.mission) {
       this.setupMission(this.mission);
+    } else if (config.mode === 'zombie') {
+      // ゾンビ: 通常のBOTは湧かせず、ディレクタが初回updateでラウンド1を開始する
+      this.setupZombie();
     } else {
       // 通常対戦: チーム戦は人数の少ない側にプレイヤーが入る
       const botCount = config.stage.botCount;
@@ -673,6 +737,10 @@ export class Match {
     // Sky.js を可視背景にするため background は使わない
     this.scene.background = null;
     this.scene.fog = new THREE.FogExp2(palette.fog, palette.fogDensity);
+    // R16: calcSpotRate(霧/暗所ほど発見が遅い)用にpaletteの霧密度・環境光を保持する
+    // (Matchはpaletteを持たずthis.colorsのみ格納し、fog/ambientは適用後に破棄するため)
+    this.stageFogDensity = palette.fogDensity;
+    this.stageAmbient = palette.ambientIntensity;
 
     // 太陽方向の単一の真実(空・日光・影カメラ・フォグの暖寒を1本のベクトルが駆動)
     const elevation = palette.elevation ?? 35;
@@ -1378,19 +1446,23 @@ export class Match {
     if (this.over) return;
     this.elapsed += dt;
     this.tracker.tick(dt);
-    this.timeLeft -= dt;
-    if (this.timeLeft <= 0) {
-      this.timeLeft = 0;
-      // R14: 時間到達と同フレームに目的が達成される場合(extract/eliminate等)を敗北にしないよう、
-      // 失敗確定の前にミッションを一度評価して勝利を拾う(updateMission自身が pending 以外で早期return)
-      if (this.mission && this.missionOutcome === 'pending') this.updateMission(dt);
-      // ミッションは時間到達で勝敗確定: survive/defend は勝利、その他の目的は時間切れ=失敗
-      if (this.mission && this.missionOutcome === 'pending') {
-        const k = this.mission.objective.kind;
-        this.missionOutcome = k === 'survive' || k === 'defend' ? 'won' : 'lost';
+    // ゾンビは「ダウンするまで無限ウェーブ」。共通試合タイマーで強制終了させない(致命バグ回避)。
+    // over は zombieMelee のプレイヤー死亡でのみ立てる(handleRespawns)。timeLeftはHUD非表示。
+    if (this.config.mode !== 'zombie') {
+      this.timeLeft -= dt;
+      if (this.timeLeft <= 0) {
+        this.timeLeft = 0;
+        // R14: 時間到達と同フレームに目的が達成される場合(extract/eliminate等)を敗北にしないよう、
+        // 失敗確定の前にミッションを一度評価して勝利を拾う(updateMission自身が pending 以外で早期return)
+        if (this.mission && this.missionOutcome === 'pending') this.updateMission(dt);
+        // ミッションは時間到達で勝敗確定: survive/defend は勝利、その他の目的は時間切れ=失敗
+        if (this.mission && this.missionOutcome === 'pending') {
+          const k = this.mission.objective.kind;
+          this.missionOutcome = k === 'survive' || k === 'defend' ? 'won' : 'lost';
+        }
+        this.over = true;
+        return;
       }
-      this.over = true;
-      return;
     }
 
     this.meleeCooldown = Math.max(0, this.meleeCooldown - dt);
@@ -1571,6 +1643,7 @@ export class Match {
     this.physics.step();
     this.syncCamera();
     this.handleRespawns();
+    if (this.config.mode === 'zombie') this.updateZombieDirector(dt);
 
     // プレイヤー死亡の立ち下がりでメダル連続系をリセット(復讐対象=直近のkiller)
     if (this.lastAlive && !this.player.alive) {
@@ -1591,6 +1664,8 @@ export class Match {
     let heat = this.aimAssistEngaged ? 0.4 : 0;
     heat += Math.min(1, this.shakeTrauma) * 0.3;
     heat += Math.min(1, 1 - this.player.hp / this.player.maxHp) * 0.3;
+    // ゾンビ: ラウンドが進むほど恐怖から高揚へ。最低でも 0.2+round/12 の底上げで常時緊張感を出す
+    if (this.config.mode === 'zombie') heat = Math.max(heat, 0.2 + this.zombieRound / 12);
     this.sounds.setCombatHeat(Math.min(1, heat));
     // 瀕死の聴覚こもり(差分ガードはSoundKit側。死亡中は解除して観戦を明瞭に)
     this.sounds.setHealthState(this.player.alive ? this.player.hp / this.player.maxHp : 1);
@@ -2420,7 +2495,18 @@ export class Match {
   ): boolean {
     // takeDamage前の満タン判定(one-shotメダル用)
     const fullHp = bot.hp >= bot.maxHp;
-    const died = bot.takeDamage(damage);
+    // painDir: humanoidが被弾方向へ振り向く材料(bot→射手=プレイヤー)。tank/turret/droneは
+    // 全周維持なので影響なし、方向不明経路も takeDamage 側で全周フォールバック
+    const died = bot.takeDamage(damage, this.player.eyePosition.clone().sub(bot.position));
+    // ゾンビ経済(最小): 命中10 / キル60 / ヘッドショットキル100。HUDの zombiePoints へ
+    if (bot.kind === 'zombie') {
+      if (died) {
+        this.zombieKills += 1;
+        this.zombiePoints += headshot ? 100 : 60;
+      } else {
+        this.zombiePoints += 10;
+      }
+    }
     this.effects.hitPuff(point);
     // ヘッドショットは専用の金色フレアと微カメラキックで差別化
     if (headshot) {
@@ -2533,6 +2619,7 @@ export class Match {
     // 歩き/しゃがみは無音なので、静かに近づけば背後を取れる
     const noisy = this.player.alive && (this.player.sprinting || this.player.sliding);
     const playerPos = this.player.position;
+    this.botFrameIdx = (this.botFrameIdx + 1) % 3; // 今フレームにLOSを走らせる観測者バケット
     for (const bot of this.bots) {
       if (
         noisy &&
@@ -2543,65 +2630,176 @@ export class Match {
         bot.alert = Math.max(bot.alert, 1.5);
         bot.alertPos = playerPos.clone();
       }
-      const targetEye = bot.alive && bot.blind <= 0 ? this.findTargetFor(bot) : null;
+      let targetEye: THREE.Vector3 | null = null;
+      if (bot.alive) {
+        if (bot.kind === 'zombie') {
+          // 近接群れ: LOSレイを一切撃たず、生存プレイヤーを直接ターゲット(0 rays / spot-time無し)
+          targetEye = this.player.alive ? this.player.eyePosition : null;
+        } else if (bot.blind <= 0) {
+          targetEye = this.perceive(bot, dt); // spot-time知覚FSMで積分してから供給
+        }
+      }
       bot.update(dt, {
         targetEye,
         objective: bot.alive ? this.objectiveFor(bot) : null,
         tuning: bot.tuning,
         rand: this.rand,
         onShoot: (origin, dir) => this.botShoot(bot, origin, dir),
+        onMelee: (b) => this.zombieMelee(b),
       });
     }
   }
 
-  // 視界内で最も近い敵対エンティティの目の位置。誰も見えなければnull
-  private findTargetFor(bot: Bot): THREE.Vector3 | null {
-    const head = bot.headPosition();
-    let best: THREE.Vector3 | null = null;
-    let bestDist = bot.tuning.viewDistM;
+  // spot-time 知覚FSM。生の可視性(距離+コーン+LOS)をゲートに calcSpotRate(raycast無し)で
+  // 発見メータを毎フレーム積分し、0.9でSPOTTED(=combat)して初めて targetEye を供給する。
+  // これにより「高速で視界の端を横切っただけでは即バレしない」を保証する(下の数値参照)。
+  private perceive(bot: Bot, dt: number): THREE.Vector3 | null {
+    const cands = this.nearestConeCandidates(bot); // 安価な距離+コーン前段ゲート(ray無し)
+    let cand: SpotCand | null = null;
+    let rawVisible = false;
+    if (cands.length > 0) {
+      // 前回の対象がまだコーン内なら継続、無ければ最至近。LOSは uid%3 バケットで間引く
+      const cached = cands.find((c) => c.uid === bot.lastCandidateUid) ?? null;
+      const runLos = bot.uid % 3 === this.botFrameIdx || cached === null;
+      if (runLos) {
+        // 近い順にLOSを試し、最初に通った候補を採用(遮蔽された最至近に固着しない)
+        for (const c of cands) {
+          if (this.hasLineOfSight(bot, c)) {
+            cand = c;
+            rawVisible = true;
+            break;
+          }
+        }
+        if (cand === null) cand = cached ?? cands[0]!; // 全て遮蔽=対象保持(rawVisible=false)
+        bot.lastRawVisible = rawVisible;
+        if (rawVisible) bot.lastTargetEye = cand.eye.clone();
+      } else {
+        cand = cached; // 非担当フレームは前回可視候補を再利用
+        rawVisible = bot.lastRawVisible;
+      }
+      if (cand && bot.lastCandidateUid !== cand.uid) {
+        bot.spotAwareness *= 0.4; // 対象切替で覚醒を移譲しない(FFA/TDMの千里眼防止)
+        bot.lastCandidateUid = cand.uid;
+      }
+    } else {
+      bot.lastRawVisible = false;
+    }
 
-    if (this.player.alive && bot.team !== PLAYER_TEAM) {
-      const eye = this.player.eyePosition;
-      const dist = head.distanceTo(eye);
-      if (dist < bestDist && this.botCanSee(bot, head, eye, null)) {
-        best = eye;
-        bestDist = dist;
+    if (rawVisible && cand) {
+      bot.spotAwareness = Math.min(1.3, bot.spotAwareness + this.calcSpotRate(bot, cand) * dt);
+      bot.lkp = cand.eye.clone();
+      bot.engageGrace = ENGAGE_GRACE_S;
+      // 発見途中(SPOTTED未満)は脅威方向へ振り向かせて自然に気づかせる(視線が外れて発見が止まらない)
+      if (bot.spotAwareness < SPOTTED_TH && bot.alert <= 0) {
+        bot.alert = 1.0;
+        bot.alertPos = cand.eye.clone();
       }
+    } else {
+      bot.spotAwareness = Math.max(0, bot.spotAwareness - SPOT_DECAY * dt);
+      bot.engageGrace = Math.max(0, bot.engageGrace - dt);
     }
-    for (const other of this.bots) {
-      if (other === bot || !other.alive || other.team === bot.team) continue;
-      const eye = other.headPosition();
-      const dist = head.distanceTo(eye);
-      if (dist < bestDist && this.botCanSee(bot, head, eye, other)) {
-        best = eye;
-        bestDist = dist;
-      }
-    }
-    return best;
+
+    // FSM遷移
+    if (bot.spotAwareness >= SPOTTED_TH) bot.aiState = 'combat';
+    else if (bot.spotAwareness <= LOST_TH) bot.aiState = 'patrol';
+    else if (bot.aiState === 'combat') bot.aiState = 'search';
+
+    // targetEye供給: combat かつ 生可視 → 実位置(壁ハック防止)。
+    // 見失い直後は engageGrace の間だけ lkp へ撃ち/寄り続ける(自然な追撃、千里眼にはしない)
+    if (bot.aiState === 'combat' && rawVisible && cand) return cand.eye;
+    if (bot.aiState !== 'patrol' && bot.engageGrace > 0 && bot.lkp) return bot.lkp;
+    return null;
   }
 
-  // targetBotがnullならプレイヤーを対象として視線判定する
-  private botCanSee(
-    bot: Bot,
-    head: THREE.Vector3,
-    eye: THREE.Vector3,
-    targetBot: Bot | null,
-  ): boolean {
-    if (this.smokeBlocks(head, eye)) return false;
-    const toTarget = eye.clone().sub(head);
-    const distance = toTarget.length();
-    const dirNorm = toTarget.normalize();
-    // 視野: 被弾直後(pain)のみ全周。警戒中は少し広がるが千里眼にはしない。
-    // 背後からの静かな接近は「見えない」を貫き、自然なステルスを成立させる
-    const inCone =
-      bot.pain > 0 ||
-      bot.facing().dot(dirNorm) > (bot.alert > 0 ? BOT_ALERT_CONE_COS : BOT_VIEW_CONE_COS);
-    if (!inCone) return false;
-    const hit = this.castRay(head, dirNorm, distance - 0.2, bot.body);
+  // 距離+コーンだけで最も近い敵対候補を選ぶ(ray無し)。painDir扇形はhumanoid限定、
+  // tank/turret/droneは従来どおりpain全周(R8ボスが背面射撃へ反撃できる非回帰保証)。
+  private nearestConeCandidates(bot: Bot): SpotCand[] {
+    const head = bot.headPosition();
+    const facing = bot.facing();
+    const viewDist = bot.tuning.viewDistM;
+    const cands: SpotCand[] = [];
+    const consider = (eye: THREE.Vector3, isPlayer: boolean, uid: number): void => {
+      const dx = eye.x - head.x;
+      const dy = eye.y - head.y;
+      const dz = eye.z - head.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist >= viewDist || dist < 1e-3) return;
+      const inv = 1 / dist;
+      const dot = facing.x * dx * inv + facing.y * dy * inv + facing.z * dz * inv;
+      let ok: boolean;
+      if (bot.pain > 0) {
+        ok =
+          bot.kind === 'humanoid' && bot.painDir
+            ? bot.painDir.x * dx * inv + bot.painDir.y * dy * inv + bot.painDir.z * dz * inv >
+              PAIN_SECTOR_COS
+            : true; // tank/turret/drone or 方向不明 = 全周(無反応化を絶対に避ける)
+      } else {
+        ok = dot > (bot.alert > 0 ? BOT_ALERT_CONE_COS : BOT_VIEW_CONE_COS);
+      }
+      if (!ok) return;
+      cands.push({ eye, dist, coneDot: dot, isPlayer, uid });
+    };
+    if (this.player.alive && bot.team !== PLAYER_TEAM) {
+      consider(this.player.eyePosition, true, PLAYER_UID);
+    }
+    for (const other of this.bots) {
+      if (other === bot || !other.alive || other.team === bot.team || other.kind === 'zombie') continue;
+      consider(other.headPosition(), false, other.uid);
+    }
+    // R16修正: 最至近だけにLOSを引くと遮蔽物越しの最至近に固着し露出した遠方敵を無視する。
+    // 近い順の上位3候補を返し、perceive が近い順にLOSを試して最初に通った候補を採る
+    cands.sort((a, b) => a.dist - b.dist);
+    return cands.slice(0, 3);
+  }
+
+  // 候補への遮蔽レイ1本(距離/コーンは呼び出し側で通過済み)。スモークも遮る。
+  private hasLineOfSight(bot: Bot, cand: SpotCand): boolean {
+    const head = bot.headPosition();
+    if (this.smokeBlocks(head, cand.eye)) return false;
+    const to = cand.eye.clone().sub(head);
+    const dist = to.length();
+    if (dist < 1e-3) return true;
+    const dir = to.multiplyScalar(1 / dist);
+    const hit = this.castRay(head, dir, dist - 0.2, bot.body);
     if (hit === null) return true;
     const tag = this.tags.get(hit.collider.handle);
-    if (targetBot === null) return tag?.kind === 'player';
-    return tag?.kind === 'bot' && tag.bot === targetBot;
+    if (cand.isPlayer) return tag?.kind === 'player';
+    return tag?.kind === 'bot' && tag.bot.uid === cand.uid;
+  }
+
+  // 発見速度(/s)。raycast無し=毎フレーム安価に呼べる。base=1/spotTimeSを、距離・視野中心度・
+  // プレイヤー移動速度・霧/暗所で減衰し、銃声(alert)/被弾(pain)で加速する。
+  private calcSpotRate(bot: Bot, cand: SpotCand): number {
+    const base = 1 / Math.max(0.2, bot.tuning.spotTimeS);
+    const distFactor = THREE.MathUtils.clamp(1 - cand.dist / Math.max(1, bot.tuning.viewDistM), 0.1, 1);
+    // 視野中心度: 中心(cos22°)で1、周辺(cos75°)で0.25へlerp、外は0(alert/pain中のみ0.35拾う)
+    let coneFactor: number;
+    if (cand.coneDot >= BOT_CENTRAL_COS) coneFactor = 1;
+    else if (cand.coneDot > BOT_VIEW_CONE_COS)
+      coneFactor = THREE.MathUtils.mapLinear(cand.coneDot, BOT_VIEW_CONE_COS, BOT_CENTRAL_COS, 0.25, 1);
+    else coneFactor = bot.alert > 0 || bot.pain > 0 ? 0.35 : 0;
+    const moveFactor = cand.isPlayer ? this.playerSpotMoveFactor() : 1;
+    // R16修正: 係数40は過大で中距離でも敵が実質盲目化(撃たれるまで撃ち返さない)する重大回帰だった。
+    // 距離減衰は distFactor が担うので fogFactor は霧/暗所の緩やかな追加減衰に留め、下限0.35で
+    // 中距離(10〜25m)を数秒で発見できるようにする(視覚フォグとの1000倍乖離を解消)
+    const fogFactor =
+      Math.max(0.35, Math.exp(-cand.dist * this.stageFogDensity * 2.5)) * Math.max(0.5, this.stageAmbient);
+    let rate = base * distFactor * coneFactor * moveFactor * fogFactor;
+    if (bot.alert > 0) rate *= ALERT_SPOT_MUL; // 銃声を聞いた=戦闘文脈では素早く発見
+    if (bot.pain > 0) rate = Math.max(rate, base * PAIN_SPOT_MUL); // 撃たれた=即発見に近づく
+    return rate;
+  }
+
+  // プレイヤーの移動状態で発見速度が変わる。高速移動ほど速く見つかるが「即」ではない
+  // (積分が数フレーム要るため)。静止/しゃがみは遅く=背後の忍び寄りが成立する。
+  private playerSpotMoveFactor(): number {
+    if (!this.player.alive) return 1;
+    if (this.player.sliding) return 2.0;
+    if (this.player.wallRunning) return 1.5;
+    if (this.player.sprinting) return 1.6;
+    const moving = this.player.speed > 0.5;
+    if (this.player.crouching) return moving ? 0.4 : 0.12;
+    return moving ? 1.0 : 0.18;
   }
 
   // エイムアシスト対象: 視認できる敵のうち、照準に最も近い(なす角が最小の)1体。
@@ -2801,7 +2999,8 @@ export class Match {
     }
 
     if (tag?.kind === 'bot' && tag.bot.alive && tag.bot.team !== bot.team) {
-      const died = tag.bot.takeDamage(damage);
+      // painDir: 被弾したbotが射手(bot)方向へ振り向く材料(victim→attacker)
+      const died = tag.bot.takeDamage(damage, bot.position.clone().sub(tag.bot.position));
       if (died) {
         bot.kills += 1;
         this.addKillScore(bot.team);
@@ -3042,20 +3241,26 @@ export class Match {
     }
 
     if (!this.player.alive && this.player.respawnIn <= 0) {
-      this.player.respawnAt(this.pickSpawn(this.playerSpawns, this.hostilesOf(PLAYER_TEAM)));
-      // リスポーンでは両武器の弾倉を満タンに補給し、投擲物も初期装備へ戻す
-      for (const weapon of this.weapons) weapon.resupply();
-      this.activeWeapon.raise();
-      this.refillGrenades();
-      this.shakeTrauma = 0;
-      this.deathPos = null;
-      this.killer = null;
-      this.killcamTimer = 0;
+      if (this.config.mode === 'zombie') {
+        // ゾンビはダウン=無限ウェーブ終了(復活しない)。over は zombie の唯一の終了条件
+        this.playerDowns += 1;
+        this.over = true;
+      } else {
+        this.player.respawnAt(this.pickSpawn(this.playerSpawns, this.hostilesOf(PLAYER_TEAM)));
+        // リスポーンでは両武器の弾倉を満タンに補給し、投擲物も初期装備へ戻す
+        for (const weapon of this.weapons) weapon.resupply();
+        this.activeWeapon.raise();
+        this.refillGrenades();
+        this.shakeTrauma = 0;
+        this.deathPos = null;
+        this.killer = null;
+        this.killcamTimer = 0;
+      }
     }
-    // ストーリーでは敵を復活させない(撃破で波が確実に減る)
+    // ストーリー/ゾンビでは敵を復活させない(撃破で波/ラウンドが確実に減る。ゾンビはディレクタが管理)
     if (!this.mission) {
       for (const bot of this.bots) {
-        if (!bot.alive && bot.respawnIn <= 0) {
+        if (!bot.alive && bot.respawnIn <= 0 && bot.kind !== 'zombie') {
           const spawns = bot.team === PLAYER_TEAM ? this.playerSpawns : this.botSpawns;
           bot.respawnAt(this.pickSpawn(spawns, this.hostilesOf(bot.team)));
         }
@@ -3100,6 +3305,173 @@ export class Match {
       if (b.alive && b.team === ENEMY_TEAM && b.kind !== 'turret') n += 1;
     }
     return n;
+  }
+
+  // ── R16 BO2式ラウンド制ゾンビディレクタ ─────────────────────────
+  // 同時生存上限をtierへ連動させる(多数描画/物理予算を守る主レバー)
+  private setupZombie(): void {
+    const tier = resolveGraphicsTier(
+      this.settings.graphicsQuality,
+      this.renderer.capabilities.isWebGL2,
+    );
+    this.zombieTierCap =
+      tier === 'high'
+        ? ZOMBIE_MAX_ALIVE.high
+        : tier === 'medium'
+          ? ZOMBIE_MAX_ALIVE.medium
+          : ZOMBIE_MAX_ALIVE.low;
+  }
+
+  private aliveZombieCount(): number {
+    let n = 0;
+    for (const b of this.bots) if (b.kind === 'zombie' && b.alive) n += 1;
+    return n;
+  }
+
+  private startZombieRound(r: number): void {
+    this.zombieRound = r;
+    this.zombieQueue = zombieTotal(r);
+    this.zombieSpawnTimer = 0;
+    this.announcements.push(`ラウンド ${r}`);
+  }
+
+  // 毎フレーム(handleRespawns後): 死体解放→影LOD→ラウンド進行(ドリップ湧き/クリア判定)
+  private updateZombieDirector(dt: number): void {
+    // 死体解放を最初に(Rapier handle再利用でnewゾンビが無敵化するのを防ぐ)
+    this.cleanupDeadZombies();
+    // 近接影LOD: nearest≤8のみ castShadow。mapSize churnを避けるため周期(0.25s)トグル
+    this.zombieShadowTimer -= dt;
+    if (this.zombieShadowTimer <= 0) {
+      this.updateZombieShadowLOD();
+      this.zombieShadowTimer = 0.25;
+    }
+    if (this.over) return;
+
+    if (this.zombieRoundCooldown > 0) {
+      this.zombieRoundCooldown -= dt;
+      if (this.zombieRoundCooldown <= 0) this.startZombieRound(this.zombieRound + 1);
+      return;
+    }
+    if (this.zombieRound === 0) {
+      this.startZombieRound(1);
+      return;
+    }
+    const aliveZ = this.aliveZombieCount();
+    // ドリップ湧き(同時生存上限まで)
+    if (this.zombieQueue > 0 && aliveZ < this.zombieTierCap) {
+      this.zombieSpawnTimer -= dt;
+      if (this.zombieSpawnTimer <= 0) {
+        if (this.spawnOneZombie()) this.zombieQueue -= 1;
+        this.zombieSpawnTimer = zombieSpawnGap(this.zombieRound);
+      }
+    }
+    // ラウンドクリア: 湧き残0 && 生存0 → 小休止して次ラウンドへ
+    if (this.zombieQueue === 0 && aliveZ === 0) {
+      this.zombieRoundCooldown = ZOMBIE_ROUND_COOLDOWN;
+    }
+  }
+
+  // 湧きリング(プレイヤーの18〜32m外周・フラスタム外)へ1体。HP/速度は tuning に載せて渡す
+  // (KIND_TUNING.zombieに maxHp/moveSpeedMul を入れると spawnBot merge で後勝ち上書きされる致命バグ回避)
+  private spawnOneZombie(): boolean {
+    const spawn = this.zombieSpawnPoint();
+    if (!spawn) return false; // 有効な湧き点が無ければ次フレーム再試行(queueは減らさない)
+    const r = this.zombieRound;
+    const elite = this.rand() < zombieEliteRate(r);
+    const run = this.rand() < zombieRunRate(r);
+    const base = tuningFor('normal', this.config.difficulty);
+    const tuning: BotTuning = {
+      ...base,
+      maxHp: zombieHp(r) * (elite ? 1.6 : 1),
+      moveSpeedMul: ZOMBIE_MOVE_MUL * (elite ? 1.15 : 1),
+    };
+    const color = elite ? 0x6d7d3a : this.zombieSpawnColor;
+    const name = BOT_NAMES[Math.floor(this.rand() * BOT_NAMES.length)] ?? 'ゾンビ';
+    const bot = this.spawnBot(name, spawn, color, ENEMY_TEAM, tuning, 'normal', 'zombie');
+    bot.zombieRunMul = run ? 1.6 : 1; // 走行個体はローカル倍率で加速(moveSpeedはreadonly)
+    return true;
+  }
+
+  // 地面Yを下向きレイで確定し、フラスタム外の湧き点を返す(目前でのポップインを避ける)
+  private zombieSpawnPoint(): THREE.Vector3 | null {
+    const size = this.config.stage.size;
+    const bound = size / 2 - 2;
+    const around = this.player.alive ? this.player.position : new THREE.Vector3();
+    const down = new THREE.Vector3(0, -1, 0);
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const ang = this.rand() * Math.PI * 2;
+      const rad =
+        ZOMBIE_SPAWN_RING_MIN + this.rand() * (ZOMBIE_SPAWN_RING_MAX - ZOMBIE_SPAWN_RING_MIN);
+      const x = THREE.MathUtils.clamp(around.x + Math.cos(ang) * rad, -bound, bound);
+      const z = THREE.MathUtils.clamp(around.z + Math.sin(ang) * rad, -bound, bound);
+      const hit = this.castRay(new THREE.Vector3(x, 8, z), down, 20, null);
+      const groundY = hit ? 8 - hitToi(hit) : 0;
+      const p = new THREE.Vector3(x, groundY + 0.05, z);
+      // フラスタム内(=プレイヤーの目前)はポップインになるので避ける。最終試行は妥協して返す
+      if (attempt < 10 && this.isInView(p)) continue;
+      return p;
+    }
+    return null;
+  }
+
+  private isInView(pos: THREE.Vector3): boolean {
+    const m = new THREE.Matrix4().multiplyMatrices(
+      this.camera.projectionMatrix,
+      this.camera.matrixWorldInverse,
+    );
+    return new THREE.Frustum().setFromProjectionMatrix(m).containsPoint(pos);
+  }
+
+  // ゾンビ近接: 何体密着していても、グローバル間隔 + プレイヤーi-frameで律速し、
+  // 同フレームに5体×22=110で即死させない(BO2の複数被弾でも一撃死しない設計)
+  private zombieMelee(bot: Bot): void {
+    if (bot.kind !== 'zombie' || !this.player.alive) return;
+    const now = this.elapsed;
+    if (now < this.zombieMeleeIframe || now < this.zombieMeleeGlobal) return;
+    const dmg = bot.tuning.damage;
+    const died = this.player.takeDamage(dmg);
+    this.tookDamage = true;
+    this.haptic(90, 0.5, 0.6);
+    this.addShake(0.18);
+    this.addUltCharge(dmg * ULT_ON_DAMAGE_PER_HP);
+    this.incoming.push(this.incomingAngle(bot.position));
+    this.sounds.hurt();
+    this.zombieMeleeGlobal = now + ZOMBIE_MELEE_GLOBAL_GAP;
+    this.zombieMeleeIframe = now + ZOMBIE_IFRAME;
+    if (died) {
+      this.feed.push({ killer: bot.name, victim: PLAYER_NAME, weapon: 'ゾンビの爪', headshot: false });
+      this.sounds.death();
+      this.notePlayerDeath(bot);
+    }
+  }
+
+  // 死んで演出も終わったゾンビを解放する。厳密順序: tags削除 → dispose(body/collider/geom/mat解放)
+  // → scene除去 → splice(逆順ループで添字ズレ回避)。tagsを先に消さないと解放済みhandleの
+  // 再利用で旧タグが新ゾンビのcolliderを死亡済み旧Botへ解決し、新ゾンビが実質無敵化する
+  private cleanupDeadZombies(): void {
+    for (let i = this.bots.length - 1; i >= 0; i -= 1) {
+      const b = this.bots[i]!;
+      if (b.kind !== 'zombie' || !b.corpseCleared) continue;
+      this.tags.delete(b.bodyCollider.handle);
+      this.tags.delete(b.headCollider.handle);
+      for (const c of b.extraColliders) this.tags.delete(c.handle);
+      b.dispose();
+      this.scene.remove(b.group);
+      this.bots.splice(i, 1);
+    }
+  }
+
+  // 近接≤8体のみ影を落とす(多数の影パス/mapSize churnを抑える距離LOD)
+  private updateZombieShadowLOD(): void {
+    const zs: Bot[] = [];
+    for (const b of this.bots) if (b.kind === 'zombie' && b.alive) zs.push(b);
+    if (zs.length <= 8) {
+      for (const z of zs) z.setCastShadow(true);
+      return;
+    }
+    const cam = this.camera.position;
+    zs.sort((a, b) => a.position.distanceToSquared(cam) - b.position.distanceToSquared(cam));
+    for (let i = 0; i < zs.length; i += 1) zs[i]!.setCastShadow(i < 8);
   }
 
   // ミッション開始時の準備: 濃霧・脱出地点・第1波
@@ -3479,6 +3851,11 @@ export class Match {
       waveIndex: this.mission ? this.waveIndex : undefined,
       waveTotal: this.mission ? this.mission.waves.length : undefined,
       bossHp01: this.mission ? this.bossHp01() : undefined,
+      // ── R16 ゾンビ(mode!=='zombie'では undefined)──
+      zombieRound: this.config.mode === 'zombie' ? this.zombieRound : undefined,
+      zombieKills: this.config.mode === 'zombie' ? this.zombieKills : undefined,
+      zombiePoints: this.config.mode === 'zombie' ? this.zombiePoints : undefined,
+      playerDowns: this.config.mode === 'zombie' ? this.playerDowns : undefined,
     };
     this.feed = [];
     this.hits = [];

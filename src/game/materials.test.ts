@@ -52,8 +52,8 @@ describe('deriveSurfaceMaterials 代表ステージ', () => {
 });
 
 describe('deriveSurfaceMaterials 全域の健全性', () => {
-  it('全20ステージで floor/wall が7材質のいずれかに落ちる', () => {
-    expect(STAGES).toHaveLength(20);
+  it('全30ステージで floor/wall が7材質のいずれかに落ちる', () => {
+    expect(STAGES).toHaveLength(30);
     for (const stage of STAGES) {
       const set = deriveSurfaceMaterials(stage.palette);
       expect(ALL_MATERIALS).toContain(set.floor);

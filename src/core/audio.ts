@@ -410,26 +410,33 @@ export function bgmNoteHz(semitone: number, octave = 0, rootHz = BGM_ROOT_HZ): n
 }
 
 // combat-heatに応じた各レイヤーの音量(0..1)。
-// R14: 旧設計は低heat(探索中)でパッドのみ鳴り「ヒーリング音楽」に聞こえていた。
-// 探索中でも駆動ベース+キック+ハット+アルペジオが常時鳴るグルーヴ主体へ作り替え、
-// パッドは支配的な主旋律でなく薄いベッドに降格。歪みリードは交戦ピーク(heat>0.6)専用のまま。
+// R16: 「ヒーリング脱却」の抜本改訂。heat=0 で既に“完成された駆動トラック”が鳴り、
+// heat は密度/攻撃性のみを増やす設計へ。
+//  - pad は 0.18 起点の薄いベッドに更に降格(主張させない)。
+//  - bass/perc は 0.55 起点で heat=0 から芯のあるグルーヴ。
+//  - hat/arp は起点を上げて早く立つ(0.4/0.5 起点)=探索中も推進力。
+//  - sub は新設の sub-drone 層のスケール(0.55→1.0 単調)。低heatから軍事的な地響き。
+//  - lead は歪みリードの全体指標(閾値を h-0.6/0.2 → h-0.3/0.25 へ前倒し)。実際の
+//    立ち上がり heat は profile.leadStartHeat が個別に決める(tickBgm 参照)。
 export function layerGains(heat: number): {
   pad: number;
   bass: number;
   perc: number;
   hat: number;
   arp: number;
+  sub: number;
   lead: number;
 } {
   const c = (x: number): number => Math.max(0, Math.min(1, x));
   const h = c(heat);
   return {
-    pad: 0.25 + 0.35 * h, // ベッド(主張しすぎない)。0.25→0.6
-    bass: 0.5 + 0.5 * h, // 駆動ベースは常時。0.5→1.0
-    perc: 0.42 + 0.58 * h, // キック/ビートも常時。0.42→1.0
-    hat: c(0.2 + h * 0.9), // 0.2→1.0
-    arp: c(0.3 + h * 0.7), // クールな旋律のアルペジオを常時。0.3→1.0
-    lead: c((h - 0.6) / 0.2), // 歪みリードは交戦ピーク専用(heat>0.6で立つ)
+    pad: 0.18 + 0.28 * h, // ベッド(更に降格)。0.18→0.46
+    bass: 0.55 + 0.45 * h, // 駆動ベースは常時。0.55→1.0
+    perc: 0.55 + 0.45 * h, // 3層パンチキック/スネアも常時。0.55→1.0
+    hat: c(0.4 + h * 0.6), // 早く立つ。0.4→1.0
+    arp: c(0.5 + h * 0.5), // クールな旋律のアルペジオを常時。0.5→1.0
+    sub: 0.55 + 0.45 * h, // sub-drone 層。0.55→1.0(単調)
+    lead: c((h - 0.3) / 0.25), // 歪みリード指標(heat>0.3で立ち上がり、0.55で満杯)
   };
 }
 
@@ -438,7 +445,7 @@ export function layerGains(heat: number): {
 // 「移調だけ」に潰れないよう {rootHz, padType, arpType, bpm帯} を各ムードで違えて
 // 音色/リズムで識別させる。全キー(MoodId + 'night-neon')網羅で tsc が漏れを検出する。
 // ═══════════════════════════════════════════════════════════════════
-export type BgmProfileKey = MoodId | 'night-neon';
+export type BgmProfileKey = MoodId | 'night-neon' | 'zombie';
 
 export interface BgmProfile {
   progression: readonly (readonly number[])[]; // rootからの半音オフセット3和音×4小節
@@ -455,6 +462,13 @@ export interface BgmProfile {
   sparse?: boolean; // snow: kick/hat/arpを半減し half-time の冷たい間合いに
   bassMode?: 'root' | 'drive'; // drive=chord[0]の8分連打(低heatからグルーヴを出す)
   lpQ?: number; // パッドLPのレゾナンス(ムード音色識別)
+  // ── R16 攻撃的音色設計(ヒーリング脱却) ──
+  kickDrive: number; // 3層パンチキックのボディ tanh 飽和量(パンチの芯)
+  subMode: 'drone' | 'off'; // 'drone'=oct0 saw×2→LPF→tanh の sub-drone 層を鳴らす
+  subDrive: number; // sub-drone の tanh 歪み量(倍音を生み小型スピーカーでも地響きを知覚)
+  leadStartHeat: number; // 歪みリードが立ち上がり始める heat(profile 個別の攻撃性)
+  riserEnabled: boolean; // 戦況/ラウンドの高揚エッジでライザーを鳴らすか
+  snareSnap: number; // スネア上の超高域トランジェント量(0=無し..1=鋭い)
 }
 
 // 進行(rootからの半音オフセット)。ムード毎に和声色を変え、移調のみの反復を避ける。
@@ -488,9 +502,17 @@ const PROG_NEON: readonly (readonly number[])[] = [
   [8, 11, 15], // VI
   [10, 13, 17], // VII
 ];
+// ゾンビ: 半音クラスタ(0,1)と三全音(6)を含む不協和で不穏さを作る。解決させず、
+// heat上昇でグルーヴ/リードが露出しても和声は終始「病んだ」ままにする。
+const PROG_ZOMBIE: readonly (readonly number[])[] = [
+  [0, 1, 6], // 短2度クラスタ + 増4度(悪魔の音程)
+  [11, 0, 5], // 半音でぶつける
+  [8, 11, 3], // 増和音めいた宙吊り
+  [7, 10, 2], // 沈み込む(解決しない)
+];
 
 export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
-  // 昼: 刷新。E2の明るい長調リフト+sawパッド+square arp。idleでもパッドを密に張る。
+  // 昼: 明るい長調リフト(E2)でも sub-drone とパンチキックで「爽やか止まり」を回避。
   day: {
     progression: PROG_DAY,
     rootHz: 82.41, // E2
@@ -500,92 +522,152 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     bassType: 'triangle',
     arpType: 'square',
     leadType: 'square',
-    leadDrive: 0.5,
+    leadDrive: 0.8,
     hatBrightHz: 7000,
     padWet: 0.03,
     bassMode: 'drive',
-    lpQ: 0.6,
+    lpQ: 0.8,
+    kickDrive: 2.6,
+    subMode: 'drone',
+    subDrive: 1.8,
+    leadStartHeat: 0.35,
+    riserEnabled: true,
+    snareSnap: 0.55,
   },
-  // 夕: 王道の物悲しい進行(D2)。sine arp で丸く、リードは控えめに歌う。
+  // 夕: 物悲しい進行(D2)でも駆動ベース+sub-droneで推進力を持たせ、湿っぽさを断つ。
   dusk: {
     progression: BGM_PROGRESSION,
     rootHz: 73.42, // D2
-    bpmBase: 76,
+    bpmBase: 78,
     bpmRange: 54,
     padType: 'sawtooth',
     bassType: 'triangle',
     arpType: 'sine',
-    leadType: 'triangle',
-    leadDrive: 0.8,
-    hatBrightHz: 6000,
+    leadType: 'sawtooth',
+    leadDrive: 1.1,
+    hatBrightHz: 6400,
     padWet: 0.045,
     bassMode: 'drive',
-    lpQ: 0.9,
+    lpQ: 1.0,
+    kickDrive: 2.4,
+    subMode: 'drone',
+    subDrive: 1.9,
+    leadStartHeat: 0.35,
+    riserEnabled: true,
+    snareSnap: 0.45,
   },
   // 夜: 緊迫。C2の暗い進行+drive bass(8分連打)+square arp+歪みリードで攻撃的。
   night: {
     progression: PROG_NIGHT,
     rootHz: 65.41, // C2
-    bpmBase: 92,
+    bpmBase: 94,
     bpmRange: 50,
     padType: 'sawtooth',
     bassType: 'sawtooth',
     arpType: 'square',
     leadType: 'sawtooth',
-    leadDrive: 1.3,
+    leadDrive: 1.4,
     hatBrightHz: 8200,
     padWet: 0.04,
     bassMode: 'drive',
-    lpQ: 1.6,
+    lpQ: 1.7,
+    kickDrive: 3.2,
+    subMode: 'drone',
+    subDrive: 2.4,
+    leadStartHeat: 0.28,
+    riserEnabled: true,
+    snareSnap: 0.7,
   },
-  // 曇: 沈鬱。B1の低い基準+triangleパッド+低cutoffで暗く籠らせ、リード無し。
+  // 曇: 沈鬱(B1)だが sawパッド+sub-drone+高heatリードで「暗く重い推進」へ尖らせる。
   overcast: {
     progression: PROG_OVERCAST,
     rootHz: 61.74, // B1
-    bpmBase: 76,
-    bpmRange: 46,
+    bpmBase: 78,
+    bpmRange: 48,
     padType: 'sawtooth',
-    bassType: 'triangle',
+    bassType: 'sawtooth',
     arpType: 'triangle',
-    leadType: 'triangle',
-    leadDrive: 0.6,
-    hatBrightHz: 4800,
+    leadType: 'sawtooth',
+    leadDrive: 0.9,
+    hatBrightHz: 5200,
     padWet: 0.05,
     bassMode: 'drive',
-    lpQ: 0.5,
+    lpQ: 0.6,
+    kickDrive: 2.8,
+    subMode: 'drone',
+    subDrive: 2.1,
+    leadStartHeat: 0.42,
+    riserEnabled: true,
+    snareSnap: 0.5,
   },
-  // 雪: 疎。G2で開離和音、sparse=half-time、高オクターブ短triangleのFM風arpで冷たい輝き。
+  // 雪: 疎(G2・開離和音・half-time)の冷たい個性は保つが、パンチキックと鋭いスネアで
+  // 「治癒」感を断つ。sub-drone は空白を埋めないよう off にして austere な間合いを守る。
   snow: {
     progression: PROG_SNOW,
     rootHz: 98.0, // G2
-    bpmBase: 66,
-    bpmRange: 40,
+    bpmBase: 68,
+    bpmRange: 42,
     padType: 'triangle',
     bassType: 'sine',
     arpType: 'triangle',
-    leadType: 'sine',
-    leadDrive: 0.5,
+    leadType: 'sawtooth',
+    leadDrive: 0.7,
     hatBrightHz: 9000,
     padWet: 0.05,
     sparse: true,
     bassMode: 'drive',
-    lpQ: 0.5,
+    lpQ: 0.6,
+    kickDrive: 2.2,
+    subMode: 'off',
+    subDrive: 1.5,
+    leadStartHeat: 0.4,
+    riserEnabled: false,
+    snareSnap: 0.35,
   },
   // 夜市(ネオン): 最も攻撃的。A1の深い基準+反復進行+drive bass+高leadDrive+高hat。
   'night-neon': {
     progression: PROG_NEON,
     rootHz: 55.0, // A1
-    bpmBase: 98,
+    bpmBase: 100,
     bpmRange: 54,
     padType: 'sawtooth',
     bassType: 'sawtooth',
     arpType: 'sawtooth',
     leadType: 'sawtooth',
-    leadDrive: 1.6,
+    leadDrive: 1.7,
     hatBrightHz: 9500,
     padWet: 0.035,
     bassMode: 'drive',
-    lpQ: 2.0,
+    lpQ: 2.1,
+    kickDrive: 3.6,
+    subMode: 'drone',
+    subDrive: 2.6,
+    leadStartHeat: 0.24,
+    riserEnabled: true,
+    snareSnap: 0.85,
+  },
+  // ゾンビ: 地を這う超低音(46.25Hz)の sub-drone を土台に、半音クラスタの不穏なベッド。
+  // heat(=ラウンド進行)が上がるほど groove が露出→ホラー→高揚(早いリード+ライザー)。
+  zombie: {
+    progression: PROG_ZOMBIE,
+    rootHz: 46.25, // ≈F#1: 不穏な地響き
+    bpmBase: 64, // 低heatは重く遅い間合い
+    bpmRange: 44, // 64→108(ラウンド進行で加速)
+    padType: 'sawtooth',
+    bassType: 'sawtooth',
+    arpType: 'square',
+    leadType: 'sawtooth',
+    leadDrive: 2.4,
+    hatBrightHz: 5800,
+    padWet: 0.05,
+    bassMode: 'drive',
+    lpQ: 1.8,
+    kickDrive: 3.8,
+    subMode: 'drone',
+    subDrive: 2.6,
+    leadStartHeat: 0.15, // 早い段階から歪みリードで高揚へ
+    riserEnabled: true,
+    snareSnap: 0.75,
   },
 };
 
@@ -656,11 +738,15 @@ export class SoundKit {
 
   // ── 動的BGM(combat-heat連動のアダプティブ・レイヤー。音源ファイル不要) ──
   private bgmBus: GainNode | null = null;
+  private bgmComp: DynamicsCompressorNode | null = null; // BGM専用グルーコンプ(duckBus前)
+  private readonly bgmBusGain = 1.4; // V16: SFXの-8〜-10dB下に定位する実効レベル(専用コンプで纏める)
   private combatHeat = 0; // 0(静)..1(交戦)
   private musicEnabled = true;
   private nextBeatTime = 0; // look-aheadスケジューラの次拍時刻(ctx基準)
   private beatIndex = 0;
   private bgmStopped = true; // stopBgm()の冪等ガード
+  private prevHeat = 0; // ライザーのエッジ検出用(tick末で1回だけ更新)
+  private lastRiserS = 0; // ライザーのクールダウン(連発防止)
   private profileKey: BgmProfileKey = 'day'; // 現在のステージ/ムード別プロファイル
   private profile: BgmProfile = BGM_PROFILES.day;
 
@@ -709,12 +795,21 @@ export class SoundKit {
     this.uiBus = this.ctx.createGain();
     this.uiBus.gain.value = this.uiVol;
     this.uiBus.connect(this.master);
-    // BGM: bgmBus → duckBus(発砲で沈むサイドチェイン風) → master
+    // BGM: bgmBus → bgmComp(専用グルーコンプ) → duckBus(発砲で沈むサイドチェイン風) → master。
+    // 専用コンプは共有マスターリミッターの手前で BGM のピークだけを纏め、銃声トランジェントを
+    // マスターで潰さない(SFXの抜けを保ちつつ、BGMを一段大きく前へ出す)。
     this.bgmBus = this.ctx.createGain();
-    this.bgmBus.gain.value = 1.25; // V9: SFX比-15dB程度の実効レベル(0.5では装飾未満だった)
+    this.bgmBus.gain.value = this.bgmBusGain;
+    this.bgmComp = this.ctx.createDynamicsCompressor();
+    this.bgmComp.threshold.value = -12;
+    this.bgmComp.knee.value = 6;
+    this.bgmComp.ratio.value = 4;
+    this.bgmComp.attack.value = 0.005;
+    this.bgmComp.release.value = 0.14;
     this.duckBus = this.ctx.createGain();
     this.duckBus.gain.value = 1;
-    this.bgmBus.connect(this.duckBus);
+    this.bgmBus.connect(this.bgmComp);
+    this.bgmComp.connect(this.duckBus);
     this.duckBus.connect(this.master);
     // アンビエンス: コンプを迂回(銃声で戦場の空気がポンピングしないように)
     this.ambBus = this.ctx.createGain();
@@ -1366,6 +1461,8 @@ export class SoundKit {
     this.bgmStopped = true;
     this.nextBeatTime = 0;
     this.beatIndex = 0;
+    this.prevHeat = 0; // ライザーのエッジ検出をリセット(再開直後の誤発火防止)
+    this.lastRiserS = 0;
     if (this.ctx && this.bgmBus && this.duckBus) {
       const now = this.ctx.currentTime;
       // パッドの鳴り残りを畳み、ダッキング残留もリセット
@@ -1383,8 +1480,9 @@ export class SoundKit {
     if (this.bgmStopped) {
       // 再開: ミュートを解く
       this.bgmStopped = false;
+      this.prevHeat = this.combatHeat; // 再開直後の立ち上がりをライザー誤発火にしない
       this.bgmBus.gain.cancelScheduledValues(now);
-      this.bgmBus.gain.setTargetAtTime(1.25, now, 0.05);
+      this.bgmBus.gain.setTargetAtTime(this.bgmBusGain, now, 0.05);
     }
     // 初回/取り残し時は現在時刻へ寄せ直す(過去拍の取り戻しによるノード洪水を防ぐ)
     if (this.nextBeatTime === 0 || this.nextBeatTime < now) this.nextBeatTime = now + 0.1;
@@ -1394,57 +1492,72 @@ export class SoundKit {
     const beatDur = 60 / bpm;
     const g = layerGains(heat);
     const sparse = p.sparse === true;
+    // 歪みリードの実効ゲインは profile.leadStartHeat から立ち上がる(g.lead は全体指標)。
+    // これで zombie/night-neon は早く、day/overcast は交戦ピークでのみリードが尖る。
+    const leadGain =
+      p.leadDrive > 0 ? Math.max(0, Math.min(1, (heat - p.leadStartHeat) / 0.25)) : 0;
+    // ライザー: 戦況/ラウンドの高揚(heat上昇エッジ)を beatループの外=tickレベルで一度検出。
+    // ほとんどのフレームは0拍しか予約しないため、拍ループ内でエッジを見ると取りこぼす。
+    if (p.riserEnabled && heat - this.prevHeat > 0.22) this.fireRiser();
     let made = 0;
     while (this.nextBeatTime < now + 0.2 && made < 8) {
       const delay = this.nextBeatTime - now;
       const beatInBar = this.beatIndex % 4;
       const bar = Math.floor(this.beatIndex / 4) % p.progression.length;
       const chord = p.progression[bar]!;
-      // キック(全拍・percレイヤー。sparseは1拍目のみでhalf-time化)
+      // ステレオ幅: hats/arp/lead を拍パリティで ±0.3 に振る。キック/ベース/sub基音はセンター。
+      const wide = this.beatIndex % 2 === 0 ? -0.3 : 0.3;
+      // 3層パンチキック(全拍・percレイヤー。sparseは1拍目のみでhalf-time化)
       if (g.perc > 0.01 && (!sparse || beatInBar === 0)) {
-        this.tone({ freq: 58, endFreq: 30, durationS: 0.12, type: 'sine', gain: 0.085 * g.perc, delayS: delay, bus: this.bgmBus });
+        this.bgmKick(delay, g.perc);
       }
-      // スネア(通常は2・4拍、sparseは3拍目のみ=half-time)
+      // スネア(通常は2・4拍、sparseは3拍目のみ=half-time)+ snareSnap の超高域トランジェント
       const snareHit = sparse ? beatInBar === 2 : beatInBar === 1 || beatInBar === 3;
       if (snareHit && g.perc > 0.01) {
-        this.noiseBurst({ durationS: 0.05, filterHz: 1800, filterType: 'bandpass', q: 4, gain: 0.2 * g.perc, delayS: delay, bus: this.bgmBus });
-        this.noiseBurst({ durationS: 0.012, filterHz: 3000, filterType: 'highpass', gain: 0.08 * g.perc, delayS: delay, attackS: 0.001, bus: this.bgmBus });
-      }
-      // ハット(8分×2。sparseは表拍のみに半減)。明るさは profile.hatBrightHz で識別
-      if (g.hat > 0.01) {
-        this.noiseBurst({ durationS: 0.02, filterHz: p.hatBrightHz, filterType: 'highpass', gain: 0.018 * g.hat, delayS: delay, bus: this.bgmBus });
-        if (!sparse) {
-          this.noiseBurst({ durationS: 0.016, filterHz: p.hatBrightHz, filterType: 'highpass', gain: 0.012 * g.hat, delayS: delay + beatDur / 2, bus: this.bgmBus });
+        this.noiseBurst({ durationS: 0.05, filterHz: 1800, filterType: 'bandpass', q: 4, gain: 0.22 * g.perc, delayS: delay, bus: this.bgmBus });
+        this.noiseBurst({ durationS: 0.012, filterHz: 3000, filterType: 'highpass', gain: 0.09 * g.perc, delayS: delay, attackS: 0.001, bus: this.bgmBus });
+        if (p.snareSnap > 0.01) {
+          this.noiseBurst({ durationS: 0.006, filterHz: 5400, filterType: 'highpass', gain: 0.07 * g.perc * p.snareSnap, delayS: delay, attackS: 0.0005, bus: this.bgmBus });
         }
       }
-      // ベース: drive=chord[0]の8分連打(低heatからグルーヴ)、root=1・3拍のルート
+      // ハット(8分×2。sparseは表拍のみに半減)。明るさは profile.hatBrightHz、L/Rで拍パリティ
+      if (g.hat > 0.01) {
+        this.noiseBurst({ durationS: 0.02, filterHz: p.hatBrightHz, filterType: 'highpass', gain: 0.018 * g.hat, delayS: delay, pan: wide, bus: this.bgmBus });
+        if (!sparse) {
+          this.noiseBurst({ durationS: 0.016, filterHz: p.hatBrightHz, filterType: 'highpass', gain: 0.012 * g.hat, delayS: delay + beatDur / 2, pan: -wide, bus: this.bgmBus });
+        }
+      }
+      // ベース: drive=chord[0]の8分連打(低heatからグルーヴ)、root=1・3拍のルート。センター維持
       if (g.bass > 0.01) {
         if (p.bassMode === 'drive') {
           for (let k = 0; k < 2; k += 1) {
-            this.tone({ freq: bgmNoteHz(chord[0]!, 0, p.rootHz), durationS: beatDur * 0.45, type: p.bassType, gain: 0.05 * g.bass, delayS: delay + (k * beatDur) / 2, bus: this.bgmBus });
+            this.tone({ freq: bgmNoteHz(chord[0]!, 0, p.rootHz), durationS: beatDur * 0.45, type: p.bassType, gain: 0.055 * g.bass, delayS: delay + (k * beatDur) / 2, bus: this.bgmBus });
           }
         } else if (beatInBar === 0 || beatInBar === 2) {
-          this.tone({ freq: bgmNoteHz(chord[0]!, 0, p.rootHz), durationS: beatDur * 0.9, type: p.bassType, gain: 0.055 * g.bass, delayS: delay, bus: this.bgmBus });
+          this.tone({ freq: bgmNoteHz(chord[0]!, 0, p.rootHz), durationS: beatDur * 0.9, type: p.bassType, gain: 0.06 * g.bass, delayS: delay, bus: this.bgmBus });
         }
       }
-      // アルペジオ(8分でコードトーン巡回。sparseは1音/拍・高オクターブ短音のFM風で冷たく)
+      // アルペジオ(8分でコードトーン巡回。sparseは1音/拍・高オクターブ短音のFM風で冷たく)。
+      // 音ごとに L/R を交互に振ってステレオの動きを作る。
       if (g.arp > 0.01) {
         const arpN = sparse ? 1 : 2;
         const arpOct = sparse ? 3 : 2;
         const arpDur = sparse ? 0.06 : 0.09;
         for (let k = 0; k < arpN; k += 1) {
           const idx = (this.beatIndex * 2 + k) % 3;
-          this.tone({ freq: bgmNoteHz(chord[idx]!, arpOct, p.rootHz), durationS: arpDur, type: p.arpType, gain: 0.03 * g.arp, delayS: delay + (k * beatDur) / 2, detuneCents: sparse ? 8 : undefined, bus: this.bgmBus });
+          this.tone({ freq: bgmNoteHz(chord[idx]!, arpOct, p.rootHz), durationS: arpDur, type: p.arpType, gain: 0.03 * g.arp, delayS: delay + (k * beatDur) / 2, detuneCents: sparse ? 8 : undefined, pan: (this.beatIndex + k) % 2 === 0 ? -0.3 : 0.3, bus: this.bgmBus });
         }
       }
-      // 歪みリード(driveプロファイル・高heat時、1・3拍。arp直下)。chord[2]の上オクターブ
+      // 歪みリード(driveプロファイル・leadGain時、1・3拍。arp直下)。chord[2]の上オクターブ
       // (=パッドoct1の1オクターブ上)を使い協和させ、持続和音との短2度衝突を避ける。
-      if (p.leadDrive > 0 && g.lead > 0.01 && (beatInBar === 0 || beatInBar === 2)) {
-        this.tone({ freq: bgmNoteHz(chord[2]!, 2, p.rootHz), durationS: beatDur * 0.85, type: p.leadType, gain: 0.03 * g.lead, delayS: delay, attackS: 0.006, drive: 2 + p.leadDrive * 3, curve: 'tanh', detuneCents: (this.rng() * 2 - 1) * 6, bus: this.bgmBus });
+      if (leadGain > 0.01 && (beatInBar === 0 || beatInBar === 2)) {
+        this.tone({ freq: bgmNoteHz(chord[2]!, 2, p.rootHz), durationS: beatDur * 0.85, type: p.leadType, gain: 0.032 * leadGain, delayS: delay, attackS: 0.006, drive: 2 + p.leadDrive * 3, curve: 'tanh', detuneCents: (this.rng() * 2 - 1) * 6, pan: beatInBar === 0 ? -0.22 : 0.22, bus: this.bgmBus });
       }
-      // パッド(小節頭で3和音×2osc)。低heat(<0.4)非sparseは半小節頭にも重ねidleの空白を埋める
+      // パッド(小節頭で3和音)+ sub-drone(小節頭で地響きの持続層)。
+      // 低heat(<0.4)非sparseは半小節頭にもパッドを重ねidleの空白を埋める
       if (beatInBar === 0) {
         this.padVoice(chord, beatDur * 4, g.pad, delay);
+        this.subDroneVoice(chord, beatDur * 4, g.sub, delay);
       } else if (beatInBar === 2 && heat < 0.4 && !sparse) {
         this.padVoice(chord, beatDur * 2, g.pad * 0.85, delay);
       }
@@ -1452,22 +1565,59 @@ export class SoundKit {
       this.beatIndex += 1;
       made += 1;
     }
+    // prevHeat は tick 末で1回だけ更新(次tickのエッジ検出の基準)
+    this.prevHeat = heat;
   }
 
-  // パッド: コード3音×デチューン2oscを共有LPへ通し、0.4sで立ち上げ小節末で解放。
-  // heatが上がるとLPが開いて明るくなる(戦闘の高揚)。音色/残響は profile 依存:
-  // triangleパッドは低cutoffで籠らせ、lpQでレゾナンスを識別、padWetで手動リバーブsend。
+  // 3層パンチキック: ビーター(アタックの芯)+ ボディ(tanh飽和のパンチ)+ サブ(重量)。
+  // すべてセンター定位。profile.kickDrive がパンチの飽和量を決める。
+  private bgmKick(delayS: number, perc: number): void {
+    const bus = this.bgmBus ?? undefined;
+    this.noiseBurst({ durationS: 0.01, filterHz: 3200, filterType: 'bandpass', q: 2, gain: 0.05 * perc, delayS, attackS: 0.0005, bus });
+    this.tone({ freq: 125, endFreq: 46, durationS: 0.09, type: 'triangle', gain: 0.09 * perc, delayS, drive: this.profile.kickDrive, curve: 'tanh', bus });
+    this.tone({ freq: 52, endFreq: 26, durationS: 0.14, type: 'sine', gain: 0.075 * perc, delayS, bus });
+  }
+
+  // ライザー: 上昇するノイズスイープ + 上昇サブトーン → 到達で軽いブーム。戦況の高揚を橋渡し。
+  // tickBgm のエッジ検出から呼ばれ、クールダウンで連発を防ぐ。全ノードは onended/長尺登録で回収。
+  private fireRiser(): void {
+    if (!this.ctx || !this.bgmBus) return;
+    const now = this.ctx.currentTime;
+    if (now - this.lastRiserS < 3) return;
+    this.lastRiserS = now;
+    const p = this.profile;
+    this.noiseBurst({ durationS: 1.6, filterHz: 400, filterEndHz: 6000, filterType: 'bandpass', q: 1.2, gain: 0.12, attackS: 0.8, bus: this.bgmBus });
+    this.tone({ freq: bgmNoteHz(0, 0, p.rootHz), endFreq: bgmNoteHz(0, 1, p.rootHz), durationS: 1.6, type: 'sawtooth', gain: 0.05, attackS: 0.9, drive: 2, curve: 'tanh', bus: this.bgmBus });
+    this.tone({ freq: 60, endFreq: 30, durationS: 0.4, type: 'sine', gain: 0.14, delayS: 1.55, drive: 3, curve: 'asym', bus: this.bgmBus });
+    this.noiseBurst({ durationS: 0.5, filterHz: 2000, filterType: 'highpass', gain: 0.1, delayS: 1.55, bus: this.bgmBus });
+  }
+
+  // パッド: コード3音×デチューン2osc。デチューン -6 を左・+6 を右の独立LPへ分けて
+  // ±0.35 のステレオ幅(「広いデチューンパッド」)を作り、env/pump は L/R 共通で纏める。
+  // 0.4sで立ち上げ小節末で解放。heatが上がるとLPが開いて明るくなる(戦闘の高揚)。音色/残響は
+  // profile 依存: triangleパッドは低cutoffで籠らせ、lpQでレゾナンスを識別、padWetで手動send。
   private padVoice(chord: readonly number[], barDurS: number, padGain: number, delayS: number): void {
     if (!this.ctx || !this.bgmBus) return;
     const p = this.profile;
     const ctx = this.ctx;
     const t0 = ctx.currentTime + delayS;
     const beatDur = barDurS / 4;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
     const triPad = p.padType === 'triangle';
-    lp.frequency.value = (triPad ? 600 : 900) + this.combatHeat * (triPad ? 900 : 1400);
-    lp.Q.value = p.lpQ ?? 0.4;
+    const lpFreq = (triPad ? 600 : 900) + this.combatHeat * (triPad ? 900 : 1400);
+    const lpQ = p.lpQ ?? 0.4;
+    // L/R 独立のLP→パンで検波前にデコリレーションを保ち、広いステレオ像を得る
+    const lpL = ctx.createBiquadFilter();
+    lpL.type = 'lowpass';
+    lpL.frequency.value = lpFreq;
+    lpL.Q.value = lpQ;
+    const lpR = ctx.createBiquadFilter();
+    lpR.type = 'lowpass';
+    lpR.frequency.value = lpFreq;
+    lpR.Q.value = lpQ;
+    const panL = ctx.createStereoPanner();
+    panL.pan.value = -0.35;
+    const panR = ctx.createStereoPanner();
+    panR.pan.value = 0.35;
     const env = ctx.createGain();
     env.gain.setValueAtTime(0.0001, t0);
     env.gain.linearRampToValueAtTime(0.016 * padGain, t0 + 0.4);
@@ -1484,7 +1634,10 @@ export class SoundKit {
       pump.gain.setValueAtTime(depth, t0 + beatDur * 2);
       pump.gain.linearRampToValueAtTime(1, t0 + beatDur * 2 + beatDur * 0.6);
     }
-    lp.connect(env);
+    lpL.connect(panL);
+    lpR.connect(panR);
+    panL.connect(env);
+    panR.connect(env);
     env.connect(pump);
     pump.connect(this.bgmBus);
     // リバーブは手動send。bgmBus経路では routeOut の wet: が捨てられ無効なため、
@@ -1504,7 +1657,7 @@ export class SoundKit {
         osc.type = p.padType;
         osc.frequency.value = bgmNoteHz(semi, 1, p.rootHz);
         osc.detune.value = det;
-        osc.connect(lp);
+        osc.connect(det < 0 ? lpL : lpR);
         osc.start(t0);
         osc.stop(t0 + barDurS + 0.6);
         oscs.push(osc);
@@ -1516,10 +1669,94 @@ export class SoundKit {
       last.onended = () => {
         try {
           for (const o of oscs) o.disconnect();
-          lp.disconnect();
+          lpL.disconnect();
+          lpR.disconnect();
+          panL.disconnect();
+          panR.disconnect();
           env.disconnect();
           pump.disconnect();
           if (send) send.disconnect();
+        } catch {
+          /* already disconnected */
+        } finally {
+          last.onended = null;
+        }
+      };
+    }
+  }
+
+  // sub-drone: oct0 の saw×2 → HPF(subsonic除去/スピーカー保護) → LPF(heatで開く) →
+  // tanh 歪み(subDriveで倍音を作り小型スピーカーでも地響きを知覚)→ 擬似サイドチェイン(DRY)。
+  // 基音はセンター定位(低域は絶対に振らない)。軍事エレクトロニカの「攻撃的な床」を作る中核。
+  // profile.subMode==='off'(雪の疎な間合い)では鳴らさない。全ノードは onended で確実に切断する。
+  private subDroneVoice(chord: readonly number[], barDurS: number, subGain: number, delayS: number): void {
+    if (!this.ctx || !this.bgmBus) return;
+    const p = this.profile;
+    if (p.subMode !== 'drone' || subGain <= 0.01) return;
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime + delayS;
+    const beatDur = barDurS / 4;
+    // HPF ~42Hz: DC/超低域の暴れを断ち、スピーカーを保護(zombie 46.25Hz の基音はほぼ通す)
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 42;
+    hp.Q.value = 0.7;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 170 + this.combatHeat * 300; // heatで開いて攻撃的に
+    lp.Q.value = 0.9;
+    // tanh 歪み段(preGain=subDrive → 共有tanhカーブ)。onendedで pre/shaper を切断
+    if (!this.tanhCurve) this.tanhCurve = makeTanhCurveData(3);
+    const pre = ctx.createGain();
+    pre.gain.value = p.subDrive;
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = this.tanhCurve;
+    shaper.oversample = 'none';
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t0);
+    env.gain.linearRampToValueAtTime(0.05 * subGain, t0 + 0.25);
+    env.gain.setTargetAtTime(0.0001, t0 + barDurS - 0.12, 0.3);
+    // 擬似サイドチェイン(DRY): kick拍(0/2)で沈めてポンプ感=推進力。sparseは平滑
+    const pump = ctx.createGain();
+    if (p.sparse === true) {
+      pump.gain.value = 1;
+    } else {
+      const depth = 0.55;
+      pump.gain.setValueAtTime(depth, t0);
+      pump.gain.linearRampToValueAtTime(1, t0 + beatDur * 0.55);
+      pump.gain.setValueAtTime(depth, t0 + beatDur * 2);
+      pump.gain.linearRampToValueAtTime(1, t0 + beatDur * 2 + beatDur * 0.55);
+    }
+    hp.connect(lp);
+    lp.connect(pre);
+    pre.connect(shaper);
+    shaper.connect(env);
+    env.connect(pump);
+    pump.connect(this.bgmBus);
+    const base = bgmNoteHz(chord[0]!, 0, p.rootHz);
+    const oscs: OscillatorNode[] = [];
+    for (const det of [-7, 7]) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = base;
+      osc.detune.value = det; // わずかなデチューンで唸りの厚み(定位はセンター)
+      osc.connect(hp);
+      osc.start(t0);
+      osc.stop(t0 + barDurS + 0.5);
+      oscs.push(osc);
+    }
+    this.voiceLog.push(t0 + barDurS + 0.55);
+    const last = oscs[oscs.length - 1];
+    if (last) {
+      last.onended = () => {
+        try {
+          for (const o of oscs) o.disconnect();
+          hp.disconnect();
+          lp.disconnect();
+          pre.disconnect();
+          shaper.disconnect();
+          env.disconnect();
+          pump.disconnect();
         } catch {
           /* already disconnected */
         } finally {

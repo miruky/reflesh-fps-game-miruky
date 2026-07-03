@@ -30,7 +30,8 @@ function makePalette(over: Partial<StagePalette>): StagePalette {
   };
 }
 
-// 設計 適用マップに沿ってオーサリングした 20 ステージの期待ムード(回帰ロック)
+// 設計 適用マップに沿ってオーサリングした 30 ステージの期待ムード(回帰ロック)。
+// z01-z10 は R16 ゾンビステージ(荒廃した溶岩/灰の戦域): z03/z09 は曇天、他は夜。
 const STAGE_MOOD: Record<string, MoodId> = {
   kunren: 'day',
   souko: 'overcast',
@@ -52,6 +53,16 @@ const STAGE_MOOD: Record<string, MoodId> = {
   kohan: 'overcast',
   kuko: 'dusk',
   onsengai: 'dusk',
+  z01: 'night',
+  z02: 'night',
+  z03: 'overcast',
+  z04: 'night',
+  z05: 'night',
+  z06: 'night',
+  z07: 'night',
+  z08: 'night',
+  z09: 'overcast',
+  z10: 'night',
 };
 
 const BIOME_MOOD: Record<string, MoodId> = {

@@ -1,6 +1,6 @@
 // ゲームモードのルール定義と進行計算。描画・物理に依存しない
 // 'story'=キャンペーン(目的駆動・scoreTarget無効) / 'score'=スコアアタック(時間内キル数)
-export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score';
+export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie';
 
 export type TeamId = number;
 
@@ -52,10 +52,17 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
     teamBased: false,
     scoreTarget: Infinity, // 時間切れまで戦い、最終キル数で記録更新
   },
+  zombie: {
+    id: 'zombie',
+    name: 'ゾンビ',
+    desc: '銃を持たぬゾンビの無限ウェーブ。ラウンドごとに数と体力が増す',
+    teamBased: false,
+    scoreTarget: Infinity, // ラウンド制。ダウンするまで無限
+  },
 };
 
-// メニューで選べる対戦モード。'story' は専用UI、'score' はスコアアタックとして選択可
-export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'score'];
+// メニューで選べる対戦モード。'story' は専用UI、'zombie' は専用ラウンドUI
+export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'score', 'zombie'];
 
 const CAPTURE_PER_S = 0.35;
 const DECAY_PER_S = 0.2;

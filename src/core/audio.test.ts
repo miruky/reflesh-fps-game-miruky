@@ -242,16 +242,19 @@ describe('R9 ミキシング/BGM理論', () => {
     expect(h05).toBeGreaterThanOrEqual(800);
   });
 
-  it('layerGains: heatに対し単調・全て0..1、低heatでもグルーヴ、leadは最後に立つ', () => {
+  it('layerGains: heatに対し単調・全て0..1、heat=0で完成した駆動トラック、sub層追加、leadは前倒し', () => {
     let prev = layerGains(0);
-    // R14: 探索中(heat=0)でもベース/ビート/アルペジオが鳴る(ヒーリング化回避)。パッドはベッドへ降格
-    expect(prev.pad).toBeCloseTo(0.25, 5);
-    expect(prev.bass).toBeGreaterThan(0.3); // 駆動ベースは常時
-    expect(prev.arp).toBeGreaterThan(0.2); // アルペジオも常時
-    expect(prev.lead).toBe(0); // heat=0 では歪みリードは無音
+    // R16: heat=0 で既に完成した駆動トラック(ヒーリング脱却)。パッドは 0.18 のベッドへ更に降格。
+    expect(prev.pad).toBeCloseTo(0.18, 5);
+    expect(prev.bass).toBeGreaterThanOrEqual(0.5); // 駆動ベースは heat=0 から芯がある
+    expect(prev.perc).toBeGreaterThanOrEqual(0.5); // 3層キック/スネアも heat=0 から
+    expect(prev.hat).toBeGreaterThanOrEqual(0.4); // ハットは早く立つ
+    expect(prev.arp).toBeGreaterThanOrEqual(0.5); // アルペジオも常時
+    expect(prev.sub).toBeGreaterThanOrEqual(0.5); // sub-drone 層は heat=0 から地響き
+    expect(prev.lead).toBe(0); // heat=0 では歪みリード指標は無音
     for (const h of [0.2, 0.4, 0.6, 0.8, 1]) {
       const g = layerGains(h);
-      for (const k of ['pad', 'bass', 'perc', 'hat', 'arp', 'lead'] as const) {
+      for (const k of ['pad', 'bass', 'perc', 'hat', 'arp', 'sub', 'lead'] as const) {
         expect(g[k]).toBeGreaterThanOrEqual(prev[k]);
         expect(g[k]).toBeGreaterThanOrEqual(0);
         expect(g[k]).toBeLessThanOrEqual(1);
@@ -259,8 +262,12 @@ describe('R9 ミキシング/BGM理論', () => {
       prev = g;
     }
     expect(layerGains(1).arp).toBe(1);
+    expect(layerGains(1).sub).toBe(1);
     expect(layerGains(1).lead).toBe(1);
-    expect(layerGains(0.6).lead).toBe(0); // lead は heat>0.6 で初めて立ち上がる
+    // lead 指標は heat>0.3 で立ち上がり(前倒し)、0.55 で満杯
+    expect(layerGains(0.3).lead).toBe(0);
+    expect(layerGains(0.55).lead).toBeCloseTo(1, 5);
+    expect(layerGains(0.6).lead).toBe(1);
   });
 
   it('BGM_PROGRESSION: 4小節×3和音、bgmNoteHzはD2基準のオクターブ倍', () => {
@@ -284,7 +291,7 @@ describe('R9 ミキシング/BGM理論', () => {
 });
 
 describe('R12 ステージ/ムード別 BGMプロファイル', () => {
-  const KEYS: BgmProfileKey[] = ['day', 'dusk', 'night', 'overcast', 'snow', 'night-neon'];
+  const KEYS: BgmProfileKey[] = ['day', 'dusk', 'night', 'overcast', 'snow', 'night-neon', 'zombie'];
 
   it('BGM_PROFILES: 全キー(MoodId + night-neon)が存在し、各progressionは4小節×3和音', () => {
     for (const key of KEYS) {
@@ -329,6 +336,38 @@ describe('R12 ステージ/ムード別 BGMプロファイル', () => {
     expect(BGM_PROFILES.snow.leadDrive).toBeGreaterThan(0);
     // R14: 全ムードのベースを駆動(root廃止)で、探索中もグルーヴが出る
     for (const k of KEYS) expect(BGM_PROFILES[k].bassMode).toBe('drive');
+  });
+
+  it('BGM_PROFILES: R16攻撃的音色フィールド(kickDrive/subMode/subDrive/leadStartHeat/riserEnabled/snareSnap)が健全', () => {
+    for (const key of KEYS) {
+      const p = BGM_PROFILES[key];
+      expect(p.kickDrive).toBeGreaterThan(0); // 3層パンチキックの飽和量
+      expect(['drone', 'off']).toContain(p.subMode);
+      expect(p.subDrive).toBeGreaterThan(0);
+      expect(p.leadStartHeat).toBeGreaterThanOrEqual(0);
+      expect(p.leadStartHeat).toBeLessThanOrEqual(1);
+      expect(typeof p.riserEnabled).toBe('boolean');
+      expect(p.snareSnap).toBeGreaterThanOrEqual(0);
+      expect(p.snareSnap).toBeLessThanOrEqual(1);
+    }
+    // 攻撃性の順序: night-neon が最も歪み・鋭く、雪は sub-drone off で疎な間合いを守る
+    expect(BGM_PROFILES['night-neon'].kickDrive).toBeGreaterThan(BGM_PROFILES.day.kickDrive);
+    expect(BGM_PROFILES.snow.subMode).toBe('off');
+    expect(BGM_PROFILES.snow.riserEnabled).toBe(false);
+  });
+
+  it('BGM_PROFILES.zombie: 最低rootHz・sub-drone・早いlead・ライザー有効の不穏プロファイル', () => {
+    const z = BGM_PROFILES.zombie;
+    expect(z.rootHz).toBeCloseTo(46.25, 2); // 全ムード中で最低音
+    const roots = KEYS.filter((k) => k !== 'zombie').map((k) => BGM_PROFILES[k].rootHz);
+    expect(Math.min(...roots)).toBeGreaterThan(z.rootHz);
+    expect(z.subMode).toBe('drone');
+    expect(z.subDrive).toBeGreaterThan(0);
+    expect(z.leadStartHeat).toBeLessThan(0.3); // 早い段階から高揚のリード
+    expect(z.riserEnabled).toBe(true);
+    expect(z.bassMode).toBe('drive');
+    // 半音クラスタ(短2度)を含む不協和な進行
+    expect(z.progression[0]).toEqual([0, 1, 6]);
   });
 
   it('setMusicProfile: 全キーで例外なく切替でき、同一キー/未再生では安全(AudioContext不要)', () => {

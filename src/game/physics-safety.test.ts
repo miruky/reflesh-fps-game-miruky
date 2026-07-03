@@ -31,10 +31,12 @@ describe('applyGravityStep(終端速度クランプ)', () => {
 });
 
 describe('終端速度と床/snap の不変条件(値の回帰防止)', () => {
-  it('1フレーム変位が snapToGround(0.4) と床コライダー半厚(0.5)を超えない', () => {
+  it('1フレーム変位が snapToGround(0.4) と床コライダー半厚(1.0)を超えない', () => {
+    // 床コライダーは match.buildStageScene で cuboid(_, 1.0, _) @ y=-1(下面-2)。半厚は 0.5 ではなく 1.0。
+    // 終端変位 24/60=0.4m << 1.0 なので純垂直トンネリングは物理的に不可能(床抜けはKCC由来=安全網で救済)
     const disp = MAX_FALL_SPEED * DT;
     expect(disp).toBeLessThanOrEqual(0.4);
-    expect(disp).toBeLessThan(0.5);
+    expect(disp).toBeLessThan(1.0);
   });
 
   it('終端速度はウォールラン落下上限(2)より大きい(競合しない)', () => {

@@ -47,7 +47,7 @@ import {
   type Profile,
 } from '../game/progression';
 import { generateStage } from '../game/stage';
-import { STAGES } from '../game/stages';
+import { STAGES, stagesForMode } from '../game/stages';
 import { TEAM_PALETTES } from '../game/teamcolors';
 import type { SpaceBg } from './menu-bg';
 import { WeaponPreview } from '../render/weapon-preview';
@@ -1343,7 +1343,13 @@ export class Menu {
 
   private renderStages(): void {
     const grid = this.query('stages');
-    STAGES.forEach((stage, idx) => {
+    // R16: モード別のステージ一覧(ゾンビは z01〜z10 のみ)。モード切替で作り直す
+    grid.replaceChildren();
+    const list = stagesForMode(this.selection.mode);
+    if (!list.some((s) => s.id === this.selection.stageId)) {
+      this.selection.stageId = list[0]?.id ?? this.selection.stageId;
+    }
+    list.forEach((stage, idx) => {
       const card = document.createElement('button');
       card.className = 'stage-card';
       card.dataset.stage = stage.id;
@@ -1682,6 +1688,8 @@ export class Menu {
       card.addEventListener('click', () => {
         this.selection.mode = id;
         this.markSelected(list, 'mode', id);
+        // R16: モード別のステージ一覧を作り直す(ゾンビ⇔通常でステージ集合が変わる)
+        this.renderStages();
         this.renderBriefing();
       });
       list.appendChild(card);

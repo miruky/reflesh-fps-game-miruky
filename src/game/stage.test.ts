@@ -34,9 +34,9 @@ describe('generateStage', () => {
     }
   });
 
-  it('ステージは20個あり、idが重複しない', () => {
-    expect(STAGES).toHaveLength(20);
-    expect(new Set(STAGES.map((s) => s.id)).size).toBe(20);
+  it('ステージは30個あり、idが重複しない', () => {
+    expect(STAGES).toHaveLength(30);
+    expect(new Set(STAGES.map((s) => s.id)).size).toBe(30);
   });
 
   it('seedが重複しない(レイアウトの独自性を保証)', () => {

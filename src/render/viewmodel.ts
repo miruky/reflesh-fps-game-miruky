@@ -978,11 +978,16 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
       gun.add(d);
     };
     // 後照星の「耳」2本(黒ポストを外へロール)+ 基部の琥珀点(参考画像の耳の付け根の光)。
-    // bead機(ショットガン)は前ビードがバレル上(高い)で耳と挟まないため耳を出さず単ビード構成に。
+    // ①R16: 枠を広めに開き超見やすく — 耳を左右へ広げ(X 0.028)・強くロール(0.34)・大きく(h0.04/w0.010)、
+    // 基部の琥珀点も外・上へ(x0.022/y0.060/r0.003)。bead機(ショットガン)は前ビードがバレル上(高い)で
+    // 耳と挟まないため耳を出さず単ビード構成に。
     if (det.iron !== 'bead') {
+      // full-rail機は耳を少し上げて上端レール線に枠を揃える。0.078まで上げると前ビード(y=0.062)が
+      // 枠の底に突く(底突き)ため 0.072 で止める。他機は 0.066。
+      const earPy = det.railTop === 'full' ? 0.072 : 0.066;
       for (const sx of [-1, 1] as const) {
-        boxP(metalParts, C_DARK, 0.007, 0.03, 0.01, sx * 0.014, 0.066, -recD - 0.006, 0, 0, sx * 0.24);
-        amberDot(sx * 0.011, 0.055, -recD - 0.009, 0.0022);
+        boxP(metalParts, C_DARK, 0.01, 0.04, 0.01, sx * 0.028, earPy, -recD - 0.006, 0, 0, sx * 0.34);
+        amberDot(sx * 0.022, 0.06, -recD - 0.009, 0.003);
       }
     }
     if (det.iron === 'bead') {
@@ -991,9 +996,10 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
       bakeAt(polishParts, bead, C_BRASS, 0, BARREL_Y + gauge * 0.6, barFrontZ + 0.02, 0, 0, 0, 'flat');
       amberDot(0, BARREL_Y + gauge * 0.6, barFrontZ + 0.024, 0.0026);
     } else if (det.iron !== 'none') {
-      // 前照星の小ポスト(黒)+ 小さな琥珀ビード(狙点=resolveSightY 0.062 に一致させる)
-      boxP(metalParts, C_DARK, 0.005, 0.018, 0.007, 0, 0.056, 0.14);
-      amberDot(0, 0.062, 0.14, 0.0026);
+      // 前照星の小ポスト(黒・やや太く0.006)+ 目立つ琥珀ビード(0.0032)。狙点=resolveSightY 0.062 に一致・
+      // 凍結(x0/y0.062/z0.14 は不変)。広げた耳の間に中央で載る。
+      boxP(metalParts, C_DARK, 0.006, 0.018, 0.007, 0, 0.056, 0.14);
+      amberDot(0, 0.062, 0.14, 0.0032);
     }
   }
 

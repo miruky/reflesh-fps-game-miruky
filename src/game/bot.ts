@@ -51,13 +51,20 @@ const TURRET_SWEEP_RATE = 0.9; // 非交戦時の首振り(rad/s)
 // tank/turretは砲身が目標へ向くまで発砲を保留する角度。旋回上限を
 // 「側面へ回れば撃たれない」という実際の攻略窓にする(設計検証のfix反映)
 const AIM_GATE_RAD = 0.22;
+// humanoid/drone: 機械的slew aimDir がこの角度内に収束するまで発砲を保留する
+// (≈0.10rad/5.7°。初弾がピクセルパーフェクトにならず、動く標的では追従遅れで外す)
+const AIM_FIRE_COS = Math.cos(0.1);
+// ゾンビ近接。個体クールダウン(match側でグローバルrate-limit + i-frameを重ねる)
+const ZOMBIE_MELEE_RANGE = 2.3;
+const ZOMBIE_MELEE_CD = 1.1;
 const TANK_SMOKE_OPACITY = 0.85;
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
 // 敵の階層。normal=通常兵、elite=精鋭(高HP/俊敏)、boss=章末の超強敵
 export type BotTier = 'normal' | 'elite' | 'boss';
-// 敵のアーキタイプ。humanoid=従来の人型、drone=飛行、tank=大型戦車、turret=固定砲台
-export type BotKind = 'humanoid' | 'drone' | 'tank' | 'turret';
+// 敵のアーキタイプ。humanoid=従来の人型、drone=飛行、tank=大型戦車、turret=固定砲台、
+// zombie=BO2式ラウンド制の近接群れ(銃無し・前傾シャンブル)
+export type BotKind = 'humanoid' | 'drone' | 'tank' | 'turret' | 'zombie';
 
 export interface BotTuning {
   spreadDeg: number;
@@ -71,12 +78,17 @@ export interface BotTuning {
   scale: number; // 見た目スケール(当たり判定との乖離を避けるため原則1)
   headOffset: number; // 頭コライダー/頭位置の高さ
   viewDistM: number; // 索敵可能距離(m)
+  // ── R16: spot-time 知覚 + 機械的エイム(matchのperceive/updateShootingが参照)──
+  // 静止プレイヤーを中心視野で発見するまでの基準秒。moveFactor/cone/距離/霧で実効速度が変わる
+  spotTimeS: number;
+  // 照準(aimDir)を目標へ寄せる角速度(rad/s)。小さいほど初弾が甘く追従が遅れる=機械的
+  aimSlewRadS: number;
 }
 
 export const DIFFICULTY: Record<Difficulty, BotTuning> = {
-  easy: { spreadDeg: 5.5, reactionS: 0.6, damage: 8, burstPauseMin: 1.0, burstPauseMax: 1.6, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 55 },
-  normal: { spreadDeg: 3.2, reactionS: 0.38, damage: 11, burstPauseMin: 0.7, burstPauseMax: 1.2, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 60 },
-  hard: { spreadDeg: 1.9, reactionS: 0.22, damage: 14, burstPauseMin: 0.5, burstPauseMax: 0.9, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 68 },
+  easy: { spreadDeg: 5.5, reactionS: 0.6, damage: 8, burstPauseMin: 1.0, burstPauseMax: 1.6, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 55, spotTimeS: 1.8, aimSlewRadS: 2.6 },
+  normal: { spreadDeg: 3.2, reactionS: 0.38, damage: 11, burstPauseMin: 0.7, burstPauseMax: 1.2, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 60, spotTimeS: 1.1, aimSlewRadS: 4.2 },
+  hard: { spreadDeg: 1.9, reactionS: 0.22, damage: 14, burstPauseMin: 0.5, burstPauseMax: 0.9, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 68, spotTimeS: 0.6, aimSlewRadS: 6.3 },
 };
 
 // 階層ごとの上書き差分。base(難度)へスプレッドして合成する。
@@ -88,6 +100,8 @@ export const ELITE_TUNING: Partial<BotTuning> = {
   spreadDeg: 1.8,
   damage: 15,
   viewDistM: 75,
+  spotTimeS: 0.45,
+  aimSlewRadS: 7.0,
 };
 export const BOSS_TUNING: Partial<BotTuning> = {
   maxHp: 900,
@@ -99,6 +113,8 @@ export const BOSS_TUNING: Partial<BotTuning> = {
   viewDistM: 90,
   burstPauseMin: 0.35,
   burstPauseMax: 0.7,
+  spotTimeS: 0.3,
+  aimSlewRadS: 8.5,
 };
 
 // 難度×階層から実効 BotTuning を合成する(単一の真実)。base配列を破壊しない新オブジェクト。
@@ -113,7 +129,7 @@ export function tuningFor(tier: BotTier, difficulty: Difficulty): BotTuning {
 // さらにスプレッドして合成する想定(ELITE/BOSS_TUNINGと同じ流儀)。
 export const KIND_TUNING: Record<BotKind, Partial<BotTuning>> = {
   humanoid: {},
-  drone: { maxHp: 60, moveSpeedMul: 1.4, viewDistM: 70 },
+  drone: { maxHp: 60, moveSpeedMul: 1.4, viewDistM: 70, spotTimeS: 0.4 },
   tank: {
     maxHp: 2200,
     damage: 26,
@@ -122,8 +138,14 @@ export const KIND_TUNING: Record<BotKind, Partial<BotTuning>> = {
     reactionS: 0.5,
     burstPauseMin: 1.6,
     burstPauseMax: 2.4,
+    spotTimeS: 0.4,
+    aimSlewRadS: 1.4,
   },
-  turret: { maxHp: 160, moveSpeedMul: 0, viewDistM: 65 },
+  turret: { maxHp: 160, moveSpeedMul: 0, viewDistM: 65, spotTimeS: 0.4, aimSlewRadS: 1.2 },
+  // ゾンビは銃を持たず近接のみ。HP/速度は spawnZombie が tuning に載せて渡す(致命バグ回避=
+  // spawnBot merge で KIND_TUNING が後勝ちになるため maxHp/moveSpeedMul は絶対に入れない)。
+  // damage=爪の一撃, reactionS/burstPause は発砲経路に入らないので実質未使用。
+  zombie: { viewDistM: 120, reactionS: 0, damage: 22, burstPauseMin: 99, burstPauseMax: 99 },
 };
 
 // アーキタイプごとの体格(コンストラクタ/respawnAtの単一の真実)
@@ -132,6 +154,7 @@ const KIND_FEET_OFFSET: Record<BotKind, number> = {
   drone: 0, // 浮遊するので足元オフセットなし
   tank: TANK_HALF_H,
   turret: TURRET_BODY_HALF + TURRET_BODY_RADIUS,
+  zombie: CENTER_TO_FEET, // 人型と同じカプセル体格
 };
 // humanoid以外は頭(弱点)コライダーの高さを体格で固定する(tuningと乖離させない)
 const KIND_HEAD_OFFSET: Record<BotKind, number> = {
@@ -139,13 +162,15 @@ const KIND_HEAD_OFFSET: Record<BotKind, number> = {
   drone: DRONE_HEAD_OFFSET,
   tank: TANK_HEAD_Y,
   turret: TURRET_HEAD_OFFSET,
+  zombie: HEAD_OFFSET,
 };
-// 死亡演出の長さ(s)。humanoidは膝崩れ→前傾横倒しの2段演出のため 0.6 に延長
+// 死亡演出の長さ(s)。humanoid/zombieは膝崩れ→前傾横倒しの2段演出のため 0.6 に延長
 const KIND_DEATH_S: Record<BotKind, number> = {
   humanoid: 0.6,
   drone: 1.1,
   tank: 1.4,
   turret: 0.5,
+  zombie: 0.6,
 };
 
 export const BOT_NAMES = [
@@ -167,6 +192,8 @@ export interface BotContext {
   tuning: BotTuning;
   rand: Rand;
   onShoot: (origin: THREE.Vector3, dir: THREE.Vector3) => void;
+  // ゾンビの近接ヒット通知(match側でグローバルrate-limit + i-frameを適用して多段一撃を防ぐ)
+  onMelee?: (bot: Bot) => void;
 }
 
 // 角度を上限付きで目標へ寄せる(tank車体/砲塔・turretヘッドのslew制御)
@@ -383,9 +410,30 @@ export class Bot {
   alert = 0;
   // 警戒の対象位置(銃声/被弾の方向)。調査行動でここへ振り向く
   alertPos: THREE.Vector3 | null = null;
-  // 被弾直後の短い戦闘覚醒。この間だけ全周検知(撃たれたら振り向くのは自然)
+  // 被弾直後の短い戦闘覚醒。この間だけ扇形/全周検知(撃たれたら振り向くのは自然)
   pain = 0;
+  // 被弾方向(bot→射手)。humanoidはこの±120°扇形のみpain検知(千里眼を防ぐ)。
+  // tank/turret/droneは painDir を見ず従来どおり pain 全周(R8ボス非回帰)
+  painDir: THREE.Vector3 | null = null;
   blind = 0; // フラッシュで目が眩んでいる残り秒数
+
+  // ── R16 spot-time 知覚FSM(matchのperceiveが積分・遷移を駆動する共有状態)──
+  spotAwareness = 0; // 発見メータ 0..1.3。0.9でSPOTTED / 0.15でLOST
+  aiState: 'patrol' | 'search' | 'combat' = 'patrol';
+  lkp: THREE.Vector3 | null = null; // 最後に視認した位置(last known position)
+  engageGrace = 0; // 見失い直後に lkp へ撃ち/寄り続ける猶予(壁越し千里眼にしない自然減衰)
+  lastTargetEye: THREE.Vector3 | null = null;
+  lastCandidateUid = -1; // 対象切替の検出(FFA/TDMで覚醒を移譲しない)
+  lastRawVisible = false; // uid%3バケットの非担当フレームでLOS結果を再利用
+
+  // ── R16 機械的エイム: aimDirを目標へ aimSlewRadS で寄せ、updateShootingはこの方向へ撃つ ──
+  readonly aimDir = new THREE.Vector3();
+
+  // ── R16 ゾンビ ──
+  zombieRunMul = 1; // 走行個体のローカル速度倍率(moveSpeedは readonly のため別持ち)
+  private meleeTimer = 0; // 個体の近接クールダウン
+  private reactionJitter = 1; // 反応時間の個体差倍率(constructorで名前ハッシュから確定)
+  private fireOnset = 0; // 交戦開始時の追加発砲遅延(s)
 
   private readonly controller: RAPIER.KinematicCharacterController;
   private heading = 0;
@@ -529,7 +577,12 @@ export class Bot {
     if (kind === 'drone') this.buildDroneMesh(color, tier);
     else if (kind === 'tank') this.buildTankMesh(color, tier);
     else if (kind === 'turret') this.buildTurretMesh(color, tier);
+    else if (kind === 'zombie') this.buildZombieMesh(color);
     else this.buildMesh(color, tier);
+    // 名前ハッシュ由来の決定論的な反応個体差(0.7〜1.4)と初弾オンセット(0〜0.35s)。
+    // 分隊の同時発砲を desync し、機械的な一斉射撃を自然に散らす(spot-timeとは別系統)
+    this.reactionJitter = 0.7 + ((phase * 13) % 71) / 71 * 0.7;
+    this.fireOnset = ((phase * 7) % 53) / 53 * 0.35;
     // 当たり判定は固定のまま、見た目だけ階層スケール(原則1.0なので無害)
     if (tuning.scale !== 1) this.group.scale.setScalar(tuning.scale);
   }
@@ -683,6 +736,118 @@ export class Bot {
       this.rig.scale.setScalar(1.12);
       this.rig.position.y += 0.8 * 0.12;
     }
+    this.group.add(this.rig);
+  }
+
+  // 腐敗色の低ポリ人型ゾンビ。銃/armRigのライフルは持たず、前へ垂らした両腕と
+  // シャンブル脚(legL/legR/kneeL/kneeR)を持つ。多数描画のため部位は最小限に絞り、
+  // mergeByMaterialで (armor/dark/glow)×(cast/no-cast) へ畳む(1体≈3〜4ドローコール)。
+  // 影を落とすシルエットは胴と腿のみ。no-cast片は userData.noShadow=true を焼き、
+  // 距離LOD/近接影トグル(setCastShadow)が誤って影を点けないようにする。
+  private buildZombieMesh(color: number): void {
+    const c = new THREE.Color(color);
+    const armor = new THREE.MeshStandardMaterial({
+      color: c,
+      roughness: 0.85,
+      metalness: 0.05,
+      vertexColors: true,
+    });
+    this.armorMat = armor;
+    this.tierGlowBase = 0;
+    const dark = new THREE.MeshStandardMaterial({
+      color: c.clone().multiplyScalar(0.4),
+      roughness: 0.9,
+      metalness: 0.02,
+      vertexColors: true,
+    });
+    // 腐った眼光。bloomThresholdでおもちゃ化しないよう低強度(≤0.5)に抑える
+    const glow = new THREE.MeshStandardMaterial({
+      color: 0x0a0d07,
+      emissive: new THREE.Color(0x8fbf4a),
+      emissiveIntensity: 0.42,
+      roughness: 0.4,
+    });
+    this.glowMats.push({ mat: glow, base: 0.42 });
+
+    const P = (
+      root: THREE.Object3D,
+      geo: THREE.BufferGeometry,
+      mat: THREE.Material,
+      x: number,
+      y: number,
+      z: number,
+      cast: boolean,
+      rx = 0,
+      ry = 0,
+      rz = 0,
+    ): void => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      if (rx !== 0 || ry !== 0 || rz !== 0) m.rotation.set(rx, ry, rz);
+      m.castShadow = cast;
+      root.add(m);
+    };
+    // 畳んで縦AOを焼き、no-cast片には noShadow を記録(setCastShadowのLODが尊重する)
+    const finalize = (root: THREE.Object3D, target: THREE.Object3D, restY: number): void => {
+      const meshes = mergeByMaterial(root);
+      for (const mesh of meshes) {
+        applyAO(mesh.geometry, -0.85 - restY, 1.1 - restY, 0.55);
+        if (!mesh.castShadow) mesh.userData.noShadow = true;
+        target.add(mesh);
+      }
+    };
+
+    // ── 胴・頭(影を落とすシルエット + no-shadowディテール)──
+    const bodyRoot = new THREE.Group();
+    P(bodyRoot, taperPrism(0.24, 0.2, 0.58, 7, 0.66), armor, 0, 0.16, 0, true); // やせ細った胴
+    P(bodyRoot, chamferBox(0.34, 0.24, 0.13, 0.03), armor, 0, 0.31, -0.05, true); // 露出した肋骨帯
+    P(bodyRoot, taperPrism(0.2, 0.16, 0.18, 7, 0.7), dark, 0, -0.2, 0, false); // 腰
+    P(bodyRoot, new THREE.CylinderGeometry(0.055, 0.07, 0.14, 8), dark, 0.02, 0.56, -0.02, false, 0.18, 0, 0.12); // 傾いた首
+    P(bodyRoot, new THREE.SphereGeometry(0.16, 12, 10), dark, 0.03, 0.72, -0.05, false); // うなだれた頭
+    P(bodyRoot, chamferBox(0.16, 0.05, 0.05, 0.02), dark, 0.03, 0.7, -0.18, false); // 顎
+    // 落ちくぼんだ眼光(左右)
+    P(bodyRoot, new THREE.SphereGeometry(0.026, 8, 6), glow, -0.05, 0.74, -0.17, false);
+    P(bodyRoot, new THREE.SphereGeometry(0.026, 8, 6), glow, 0.1, 0.74, -0.17, false);
+    P(bodyRoot, new THREE.BoxGeometry(0.16, 0.03, 0.02), glow, 0.02, 0.22, -0.16, false); // 胸の腐敗発光帯
+    finalize(bodyRoot, this.rig, 0);
+
+    // ── 前へ垂らした両腕(armRig。銃は持たない)──
+    const armRig = new THREE.Group();
+    armRig.position.set(0, 0.4, 0);
+    this.armRig = armRig;
+    const armRoot = new THREE.Group();
+    const buildArm = (sx: number, reach: number): void => {
+      const g = new THREE.Group();
+      g.position.set(sx * 0.26, 0.05, -0.02);
+      g.rotation.x = -1.35 - reach; // ほぼ水平に前へ突き出す
+      g.rotation.z = -sx * 0.12;
+      P(g, chamferBox(0.09, 0.27, 0.09, 0.02), armor, 0, -0.13, 0, false); // 上腕
+      P(g, chamferBox(0.075, 0.27, 0.075, 0.02), dark, 0, -0.36, 0.01, false); // 前腕
+      P(g, chamferBox(0.07, 0.06, 0.11, 0.02), dark, 0, -0.5, 0.03, false); // 手
+      armRoot.add(g);
+    };
+    buildArm(-1, 0.18);
+    buildArm(1, 0.05); // 左右非対称の伸ばしで不気味さを出す
+    finalize(armRoot, armRig, armRig.position.y);
+    this.rig.add(armRig);
+
+    // ── 脚(股関節ピボット + 膝ピボット)。humanoidと同じ骨格でシャンブル歩容 ──
+    const buildLeg = (pivot: THREE.Group, knee: THREE.Group, sx: number): void => {
+      pivot.position.set(sx, -0.16, 0);
+      knee.position.set(0, -0.3, 0);
+      const thighRoot = new THREE.Group();
+      P(thighRoot, chamferBox(0.13, 0.32, 0.14, 0.03), armor, 0, -0.15, 0, true); // 腿(影)
+      finalize(thighRoot, pivot, pivot.position.y);
+      const shinRoot = new THREE.Group();
+      P(shinRoot, chamferBox(0.11, 0.3, 0.12, 0.03), dark, 0, -0.15, 0, false); // 脛
+      P(shinRoot, chamferBox(0.13, 0.08, 0.24, 0.03), dark, 0, -0.3, -0.04, false); // 足(底≈-0.80)
+      finalize(shinRoot, knee, pivot.position.y + knee.position.y);
+      pivot.add(knee);
+      this.rig.add(pivot);
+    };
+    buildLeg(this.legL, this.kneeL, -0.11);
+    buildLeg(this.legR, this.kneeR, 0.11);
+
     this.group.add(this.rig);
   }
 
@@ -968,6 +1133,15 @@ export class Bot {
     if (this.flinch > 0) this.flinch = Math.max(0, this.flinch - dt);
     const engaged = ctx.targetEye !== null;
 
+    // ゾンビ: 銃を持たず近接のみ。'zombie' も !=='humanoid' なので、この直後の
+    // not-humanoid分岐(updateTurret→updateShooting=砲台化して発砲)へ落ちる前に捌く
+    if (this.kind === 'zombie') {
+      this.anim += dt;
+      this.updateZombie(dt, ctx);
+      this.syncMesh();
+      return;
+    }
+
     // ── kind別ディスパッチ(humanoid以外は専用の移動体系を持つ)──
     if (this.kind !== 'humanoid') {
       if (this.kind === 'drone') this.updateDrone(dt, ctx);
@@ -980,6 +1154,10 @@ export class Bot {
 
     // humanoidは呼吸/腕スウェイの位相にanimを使う(この経路では未加算だった)
     this.anim += dt;
+    // 機械的エイム: 交戦中は毎フレーム aimDir を目標へ寄せる(reaction中も回すので
+    // 反応が明けた頃には概ね収束=既存モードの初弾タイミングをほぼ維持しつつ、
+    // 動く標的への追従は遅れて初弾がピクセルパーフェクトにならない)
+    if (ctx.targetEye) this.slewAim(dt, ctx.targetEye, ctx.tuning.aimSlewRadS);
 
     let wishX = 0;
     let wishZ = 0;
@@ -1076,6 +1254,7 @@ export class Bot {
   // それ以外は緩い旋回徘徊。壁は実移動方向へのレイ1本(自身除外)で回避する。
   private updateDrone(dt: number, ctx: BotContext): void {
     this.anim += dt;
+    if (ctx.targetEye) this.slewAim(dt, ctx.targetEye, ctx.tuning.aimSlewRadS);
     const pos = this.position;
     let vx = 0;
     let vz = 0;
@@ -1252,22 +1431,116 @@ export class Bot {
     this.heading = stepAngle(this.heading, desired, rate * dt);
   }
 
+  // 機械的エイム: aimDirを目標方向へ最大 slewRadS*dt だけ回す(小ステップの
+  // lerp+normalizeは1フレームの微小回転ではslerpの実用近似)。update/updateDroneが
+  // 毎フレーム(reaction中も含め)呼ぶので、収束は反応時間と並走する。
+  private slewAim(dt: number, targetEye: THREE.Vector3, slewRadS: number): void {
+    const origin = this.headPosition();
+    const want = targetEye.clone().sub(origin);
+    if (want.lengthSq() < 1e-8) return;
+    want.normalize();
+    if (this.aimDir.lengthSq() < 1e-8) {
+      this.aimDir.copy(want);
+      return;
+    }
+    const cur = this.aimDir.clone().normalize();
+    const dot = THREE.MathUtils.clamp(cur.dot(want), -1, 1);
+    const angle = Math.acos(dot);
+    if (angle < 1e-4) {
+      this.aimDir.copy(want);
+      return;
+    }
+    // R16修正: 一気にスナップさせず、1フレームで最大0.8までしか寄せない。これにより
+    // 動く標的には持続的な追従遅れが残り、初弾がピクセルパーフェクトに当たりすぎない
+    // (静止標的には幾何級数的に数フレームで収束)。fireゲート(aimDir方向で角度判定)が実効化する
+    const maxStep = slewRadS * dt;
+    const t = Math.min(0.8, maxStep / angle);
+    this.aimDir.copy(cur).lerp(want, t).normalize();
+  }
+
+  // ゾンビ: 目標(=近接群れなのでプレイヤー位置を直接供給)へ前傾シャンブルで詰め、
+  // 射程内で個体クールダウンが明けたら match へ近接ヒットを通知する。発砲経路には入らない。
+  private updateZombie(dt: number, ctx: BotContext): void {
+    const pos = this.position;
+    let wishX = 0;
+    let wishZ = 0;
+    const target = ctx.targetEye;
+    this.meleeTimer = Math.max(0, this.meleeTimer - dt);
+    if (target) {
+      const to = target.clone().sub(pos);
+      to.y = 0;
+      const dist = to.length();
+      if (dist > 1e-3) to.normalize();
+      this.heading = Math.atan2(-to.x, -to.z);
+      const spd = this.moveSpeed * this.zombieRunMul;
+      wishX = to.x * spd;
+      wishZ = to.z * spd;
+      if (dist <= ZOMBIE_MELEE_RANGE) {
+        wishX *= 0.15; // 密着で押し込みすぎない(重なり回避)
+        wishZ *= 0.15;
+        if (this.meleeTimer <= 0 && ctx.onMelee) {
+          ctx.onMelee(this);
+          this.meleeTimer = ZOMBIE_MELEE_CD;
+        }
+      }
+    } else {
+      // 通常はplayerを常に追うので稀。目標喪失時はゆっくり徘徊
+      this.headingTimer -= dt;
+      if (this.headingTimer <= 0) {
+        this.heading = ctx.rand() * Math.PI * 2;
+        this.headingTimer = 1.5 + ctx.rand() * 2;
+      }
+      const f = this.facing();
+      wishX = f.x * this.moveSpeed * 0.4;
+      wishZ = f.z * this.moveSpeed * 0.4;
+    }
+
+    this.velY = applyGravityStep(this.velY, 1, dt);
+    const movement = { x: wishX * dt, y: this.velY * dt, z: wishZ * dt };
+    this.controller.computeColliderMovement(this.bodyCollider, movement);
+    const moved = this.controller.computedMovement();
+    if (this.controller.computedGrounded() && this.velY < 0) this.velY = -0.5;
+    // 壁で詰まったら横へ回り込む(群れが壁際で団子にならないように)
+    const wishLen = Math.hypot(movement.x, movement.z);
+    const movedLen = Math.hypot(moved.x, moved.z);
+    if (wishLen > 0.001 && movedLen < wishLen * 0.3) {
+      this.heading += (ctx.rand() - 0.5) * 1.6;
+    }
+    const t = this.body.translation();
+    this.body.setNextKinematicTranslation({ x: t.x + moved.x, y: t.y + moved.y, z: t.z + moved.z });
+    const step = Math.hypot(moved.x, moved.z);
+    const targetAmp = Math.min(1, step / Math.max(1e-4, this.moveSpeed * dt));
+    this.walkAmp += (targetAmp - this.walkAmp) * Math.min(1, dt * 8);
+    this.walkPhase += step * 8;
+  }
+
   private updateShooting(dt: number, ctx: BotContext, engaged: boolean): void {
     if (!engaged || !ctx.targetEye) {
-      this.reaction = ctx.tuning.reactionS;
+      // 反応時間 = 難度reactionS × 個体差(0.7〜1.4) + 交戦開始オンセット(0〜0.35s)
+      this.reaction = ctx.tuning.reactionS * this.reactionJitter + this.fireOnset;
       this.burstLeft = 0;
       return;
     }
     this.reaction -= dt;
     if (this.reaction > 0) return;
 
-    // tank/turretは砲身が目標へ向くまで発砲を保留する。
-    // 旋回上限が「側面へ回り込めば撃たれない」という実際の攻略窓になる
+    const origin = this.headPosition();
+    // 発砲方向: humanoid/droneは機械的slew aimDir、tank/turretは目標直行(旋回で律速)
+    let fireDir: THREE.Vector3;
     if (this.kind === 'tank' || this.kind === 'turret') {
+      // 砲身が目標へ向くまで発砲保留。旋回上限=「側面へ回り込めば撃たれない」攻略窓
       const to = ctx.targetEye.clone().sub(this.position);
       const wantYaw = Math.atan2(-to.x, -to.z);
       const aimYaw = this.kind === 'tank' ? this.turretYaw : this.heading;
       if (Math.abs(wrapAngle(wantYaw - aimYaw)) > AIM_GATE_RAD) return;
+      fireDir = ctx.targetEye.clone().sub(origin).normalize();
+    } else {
+      // aimDirが目標へ十分寄るまで撃たない(初弾ピクセルパーフェクト回避)。
+      // reaction中もupdate/updateDroneがslewしているので通常は既に収束済み
+      const toTarget = ctx.targetEye.clone().sub(origin).normalize();
+      if (this.aimDir.lengthSq() < 1e-8) this.aimDir.copy(toTarget);
+      fireDir = this.aimDir.clone().normalize();
+      if (fireDir.dot(toTarget) < AIM_FIRE_COS) return;
     }
 
     if (this.burstLeft <= 0) {
@@ -1289,8 +1562,7 @@ export class Bot {
         ctx.rand() * (ctx.tuning.burstPauseMax - ctx.tuning.burstPauseMin);
     }
 
-    const origin = this.headPosition();
-    const dir = ctx.targetEye.clone().sub(origin).normalize();
+    const dir = fireDir.clone();
     const spread = (ctx.tuning.spreadDeg * Math.PI) / 180;
     const r = spread * Math.sqrt(ctx.rand());
     const theta = ctx.rand() * Math.PI * 2;
@@ -1409,6 +1681,24 @@ export class Bot {
       if (this.turretGroup) this.turretGroup.rotation.y = wrapAngle(this.turretYaw - this.heading);
       return;
     }
+    if (this.kind === 'zombie') {
+      // シャンブル歩容: 前傾 + 左右のよろめき + 逆位相の脚スイング + 前へ垂らした腕の揺れ。
+      // humanoidの歩行コードへ落とすと armRig をライフル把持ポーズで毎フレーム上書きしてしまう
+      const zs = Math.sin(this.walkPhase);
+      const zswing = zs * this.walkAmp * 0.65;
+      this.legL.rotation.x = zswing;
+      this.legR.rotation.x = -zswing;
+      this.kneeL.rotation.x = Math.max(0, -zs) * this.walkAmp * 0.9;
+      this.kneeR.rotation.x = Math.max(0, zs) * this.walkAmp * 0.9;
+      this.rig.rotation.x = 0.26 + Math.sin(this.anim * 3.1) * 0.045; // 常時前傾+上下よろめき
+      this.rig.rotation.z = Math.sin(this.anim * 1.7 + this.bobPhase) * 0.07; // 左右のよろめき
+      this.rig.position.y = Math.abs(Math.cos(this.walkPhase)) * this.walkAmp * 0.03;
+      if (this.armRig) {
+        this.armRig.rotation.x = Math.sin(this.anim * 2.3) * 0.12; // 前へ突き出した腕を揺らす
+        this.armRig.rotation.z = Math.sin(this.anim * 1.3 + this.bobPhase) * 0.05;
+      }
+      return;
+    }
     // 歩行サイクル: 左右の脚を逆位相でスイングし、接地脚側の膝を曲げ、胴を上下させる
     const s = Math.sin(this.walkPhase);
     const swing = s * this.walkAmp * 0.8;
@@ -1429,12 +1719,21 @@ export class Bot {
     }
   }
 
-  takeDamage(amount: number): boolean {
+  // fromDir = 本体→射手の方向(match が射手原点から供給)。humanoidは pain 中この
+  // ±120°扇形のみ検知して脅威方向へ振り向く(千里眼防止)。tank/turret/drone は painDir を
+  // 見ず従来どおり全周(R8ボスが背面射撃へ反撃できる根拠=非回帰)。無指定は全周フォールバック。
+  takeDamage(amount: number, fromDir?: THREE.Vector3): boolean {
     if (!this.alive) return false;
     this.hp -= amount;
     this.alert = 5;
-    // 撃たれた本人は短時間だけ全周検知(撃たれて振り向くのは自然な反応)
+    // 撃たれた本人は短時間だけ扇形/全周検知(撃たれて振り向くのは自然な反応)
     this.pain = 2.0;
+    if (fromDir && fromDir.lengthSq() > 1e-8) {
+      this.painDir = fromDir.clone().setY(0).normalize();
+      this.alertPos = this.position.clone().addScaledVector(this.painDir, 6);
+    } else {
+      this.painDir = null;
+    }
     this.hitFlash = 0.12;
     this.flinch = 0.14;
     if (this.hp <= 0) {
@@ -1483,7 +1782,18 @@ export class Bot {
     this.alert = 0;
     this.alertPos = null;
     this.pain = 0;
+    this.painDir = null;
     this.blind = 0;
+    // 知覚FSM / 機械的エイム / 近接をリセット(VOID_Y救済やリスポーン再利用で持ち越さない)
+    this.spotAwareness = 0;
+    this.aiState = 'patrol';
+    this.engageGrace = 0;
+    this.lkp = null;
+    this.lastTargetEye = null;
+    this.lastCandidateUid = -1;
+    this.lastRawVisible = false;
+    this.aimDir.set(0, 0, 0);
+    this.meleeTimer = 0;
     this.group.visible = true;
     this.group.rotation.x = 0;
     this.group.rotation.z = 0; // drone墜落/turret転倒のリセット
@@ -1528,5 +1838,35 @@ export class Bot {
     for (const c of this.extraColliders) c.setEnabled(true);
     this.body.setTranslation({ x: spawn.x, y: spawn.y + this.feetOffset, z: spawn.z }, true);
     this.syncMesh();
+  }
+
+  // 死んで死亡演出も終わった(=解放してよい)か。ゾンビの死体回収(cleanupDeadZombies)の判定。
+  get corpseCleared(): boolean {
+    return !this.alive && this.dyingTimer <= 0;
+  }
+
+  // 近接影LOD: 遠いゾンビの castShadow を止める(mapSize churnを避け周期トグルされる)。
+  // 元々no-shadowだったディテール(userData.noShadow)は点け直さない。
+  setCastShadow(on: boolean): void {
+    this.rig.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) obj.castShadow = on && obj.userData.noShadow !== true;
+    });
+  }
+
+  // 単体除去(ゾンビ死体の解放)。RigidBody除去で付随colliderも自動解放され、
+  // group配下の(merge済み一意)geometry/materialを解放する。共有寸法キャッシュは
+  // mergeByMaterialがcloneして焼くのでここには含まれず、破棄対象にならない。
+  dispose(): void {
+    // R16修正: KinematicCharacterController も解放(無限ゾンビモードでの青天井リーク防止)
+    this.world.removeCharacterController(this.controller);
+    this.world.removeRigidBody(this.body);
+    this.group.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.geometry.dispose();
+        const mat = obj.material;
+        if (Array.isArray(mat)) for (const m of mat) m.dispose();
+        else mat.dispose();
+      }
+    });
   }
 }

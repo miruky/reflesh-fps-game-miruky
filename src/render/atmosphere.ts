@@ -309,6 +309,11 @@ const PARTICLE_SPECS: Record<Exclude<ParticleKind, 'none'>, ParticleSpec> = {
   dust: { color: '#b8b0a2', fall: 0.15, drift: [0.2, 0.2], additive: false, size: 4, opacity: 0.45, pulse: 0, box: 60 },
   ember: { color: '#ff8a3c', fall: -0.4, drift: [0.3, 0.3], additive: true, size: 5, opacity: 0.9, pulse: 1, box: 40 },
   firefly: { color: '#c8ff6a', fall: 0.0, drift: [0.6, 0.6], additive: true, size: 6, opacity: 0.9, pulse: 2, box: 26 },
+  // ⑥ゾンビ用: 溶岩の火の粉。emberより赤く強く、下から上へ舞い上がる(fall負=上昇)。
+  // 加算+ember明滅(pulse=1)で溶岩の熱を表現。色は #ff3a12(全面赤グレードを避けるため点は小さめ)。
+  lava: { color: '#ff3a12', fall: -0.5, drift: [0.35, 0.4], additive: true, size: 5, opacity: 0.95, pulse: 1, box: 40 },
+  // ⑥ゾンビ用: 灰。暗い温グレーがゆっくり降る(fall正・低速)。非加算で沈む陰鬱なムード。
+  ash: { color: '#4a443d', fall: 0.22, drift: [0.24, 0.2], additive: false, size: 4, opacity: 0.5, pulse: 0, box: 55 },
 };
 
 interface GrassSpec {

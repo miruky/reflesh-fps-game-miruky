@@ -117,6 +117,10 @@ export class Player {
   private readonly controller: RAPIER.KinematicCharacterController;
   private readonly vel = new THREE.Vector3();
   private velY = 0;
+  // R16: 床抜け(トンネリング)/落下の安全網。接地時に安全なbody中心位置を記録し、
+  // OOB(床を突き抜けて落下)を検知したらここへ復帰させる(ゲーム破壊バグ=地面下落下の解消)
+  private readonly lastGroundedPos = new THREE.Vector3();
+  private hasGroundedPos = false;
   private sinceGrounded = 99;
   private jumpBuffered = 0;
   private sinceDamage = 99;
@@ -408,11 +412,24 @@ export class Player {
     }
 
     const t = this.body.translation();
-    this.body.setNextKinematicTranslation({
-      x: t.x + moved.x,
-      y: t.y + moved.y,
-      z: t.z + moved.z,
-    });
+    let nx = t.x + moved.x;
+    let ny = t.y + moved.y;
+    let nz = t.z + moved.z;
+    // R16 安全網: 接地していて妥当な高さなら安全なbody中心位置を記録
+    if (this.grounded && ny > -3) {
+      this.lastGroundedPos.set(nx, ny, nz);
+      this.hasGroundedPos = true;
+    }
+    // OOB検知: 床を突き抜けて落下(絶対-7以下 or 直近接地から25m超落下)→ 安全位置へ復帰。
+    // これにより高速移動/スライド/壁ラン/坂での床抜けでも地面下へ落ち続けない
+    if (this.hasGroundedPos && (ny < -7 || ny < this.lastGroundedPos.y - 25)) {
+      nx = this.lastGroundedPos.x;
+      ny = this.lastGroundedPos.y + 0.5;
+      nz = this.lastGroundedPos.z;
+      this.velY = 0;
+      this.vel.set(0, 0, 0);
+    }
+    this.body.setNextKinematicTranslation({ x: nx, y: ny, z: nz });
 
     if (this.grounded && !this.sliding) {
       this.stepDistance += Math.hypot(moved.x, moved.z);

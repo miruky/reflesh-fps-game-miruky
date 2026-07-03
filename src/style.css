@@ -4017,6 +4017,43 @@ tr.score-ally td {
   gap: 3px;
   margin-top: 2px;
 }
+/* R16 ゾンビHUD: BO2風の血赤ラウンド計数 + キル/ポイント */
+.hud-zombie {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+}
+.hud-zombie-round {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+.hud-zombie-round small {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.42em;
+  color: color-mix(in srgb, #ff5a3c 70%, #fff);
+  text-indent: 0.42em;
+}
+.hud-zombie-round strong {
+  font-family: var(--display);
+  font-size: 40px;
+  font-weight: 900;
+  color: #e8352a;
+  text-shadow: 0 0 14px rgba(220, 30, 20, 0.7);
+}
+.hud-zombie-stat {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--ink-soft, #a9afb1);
+}
+.hud-zombie-stat span {
+  color: #f4c05a;
+}
 .hud-mission-obj {
   font-size: 13px;
   letter-spacing: 0.04em;

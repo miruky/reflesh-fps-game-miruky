@@ -102,6 +102,10 @@ export class Hud {
             <div class="hud-mission-bar"><i data-id="obj-bar"></i></div>
             <div class="hud-mission-wave" data-id="obj-wave"></div>
           </div>
+          <div class="hud-zombie" data-id="zombie" hidden>
+            <div class="hud-zombie-round"><small>ROUND</small><strong data-id="zround">1</strong></div>
+            <div class="hud-zombie-stat"><span data-id="zkills">0</span> KILLS · <span data-id="zpoints">0</span> PTS</div>
+          </div>
           <div class="hud-boss" data-id="boss" hidden>
             <div class="hud-boss-name" data-id="boss-name">BOSS</div>
             <div class="hud-boss-bar"><i data-id="boss-bar"></i></div>
@@ -390,9 +394,27 @@ export class Hud {
       streak.textContent = `連続キル ${snap.streak}`;
     }
 
-    const minutes = Math.floor(snap.timeLeft / 60);
-    const seconds = Math.floor(snap.timeLeft % 60);
-    this.text('timer', `${minutes}:${String(seconds).padStart(2, '0')}`);
+    // R16: ゾンビモードはタイマー/チームスコアを隠し、ラウンド/キル/ポイントを表示する
+    const zombie = this.el['zombie'];
+    const inZombie = snap.zombieRound !== undefined;
+    if (zombie) zombie.hidden = !inZombie;
+    if (inZombie) {
+      const teamscore = this.el['teamscore'];
+      if (teamscore) teamscore.hidden = true;
+    }
+    const timerEl = this.el['timer'];
+    if (timerEl && timerEl.parentElement) {
+      (timerEl.parentElement as HTMLElement).style.display = inZombie ? 'none' : '';
+    }
+    if (inZombie) {
+      this.text('zround', String(snap.zombieRound ?? 1));
+      this.text('zkills', String(snap.zombieKills ?? 0));
+      this.text('zpoints', String(snap.zombiePoints ?? 0));
+    } else {
+      const minutes = Math.floor(snap.timeLeft / 60);
+      const seconds = Math.floor(snap.timeLeft % 60);
+      this.text('timer', `${minutes}:${String(seconds).padStart(2, '0')}`);
+    }
 
     this.updateCompass(snap.yaw, width);
     this.updateCrosshair(snap, height);

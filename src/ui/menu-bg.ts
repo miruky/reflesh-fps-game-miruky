@@ -208,24 +208,32 @@ void main(){
 `;
 
 // 星野: ShaderMaterial化して uDim(減光)を uniform で受け、uTime で微かに瞬かせる。
-// 頂点色/位相/サイズは属性で持ち、加減はGPU側。sizeAttenuation相当は uPixelRatio で吸収。
+// 頂点色/位相/サイズ/瞬き周波数は属性で持ち、加減はGPU側。sizeAttenuation相当は uPixelRatio で吸収。
+// ⑤自然化: gl_PointSize は max(1.0,…) で床止め(WebGLはサブピクセル点を落とす=機械的シマーの原因)。
+// 瞬きは aFreq で星ごとに独立させ、振幅を 0.72〜1.0 の浅い帯へ(消えない/派手すぎない)。
 const STAR_VERT = /* glsl */ `
-attribute vec3 aColor; attribute float aPhase; attribute float aSize;
+attribute vec3 aColor; attribute float aPhase; attribute float aSize; attribute float aFreq;
 uniform float uTime; uniform float uPixelRatio;
-varying vec3 vCol; varying float vTw;
+varying vec3 vCol; varying float vTw; varying float vSize;
 void main(){
   vCol=aColor;
-  vTw=0.62+0.38*sin(uTime*1.6+aPhase);
+  // 星ごとに独立した周波数/位相で瞬く(同期した機械的な明滅を排除)。振幅0.72〜1.0。
+  vTw=0.86+0.14*sin(uTime*aFreq+aPhase);
+  vSize=aSize;
   gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
-  gl_PointSize=aSize*uPixelRatio;
+  // サブピクセル点はGPUが間引いてチラつくため最低1pxを保証する
+  gl_PointSize=max(1.0, aSize*uPixelRatio);
 }
 `;
 const STAR_FRAG = /* glsl */ `
-uniform float uDim; varying vec3 vCol; varying float vTw;
+uniform float uDim; varying vec3 vCol; varying float vTw; varying float vSize;
 void main(){
   vec2 pc=gl_PointCoord-0.5;
   float d2=dot(pc,pc);
-  float a=smoothstep(0.25,0.02,d2); // 丸い柔らかな点
+  // 芯: 全星に鋭い丸コア。ハロ: 明星(vSize大)だけ広い柔らかなグロー=自然な等級差。
+  float core=smoothstep(0.25,0.015,d2);
+  float halo=smoothstep(0.25,0.0,d2)*clamp((vSize-1.6)*0.3, 0.0, 0.45);
+  float a=clamp(core+halo, 0.0, 1.0);
   gl_FragColor=vec4(vCol*vTw, a*uDim);
 }
 `;
@@ -372,14 +380,18 @@ export class SpaceBg {
     const colors = new Float32Array(STAR_COUNT * 3);
     const phases = new Float32Array(STAR_COUNT);
     const sizes = new Float32Array(STAR_COUNT);
-    // 純白を避け、わずかにシアン/アンバーへ振った星色(--ink/--signal/--ember-ink相当)
+    const freqs = new Float32Array(STAR_COUNT);
+    // ⑤自然化: 色温度8色パレット(青白い高温→白→黄→橙赤の低温)。白系を厚めにし、
+    // シアン/アンバーの寒暖アクセントを少数散らす。palette[0] の null合体ガードは維持。
     const palette = [
-      new THREE.Color(0xf0f1ee),
-      new THREE.Color(0xf0f1ee),
-      new THREE.Color(0xf0f1ee),
-      new THREE.Color(0x9fd6e8),
-      new THREE.Color(0xbcdcff),
-      new THREE.Color(0xffb9a8),
+      new THREE.Color(0xf4f6ff), // 高温の青白
+      new THREE.Color(0xeef2ff), // 白(A型)
+      new THREE.Color(0xf0f1ee), // 中間の白
+      new THREE.Color(0xfdf6e8), // 暖白(F/G型・太陽似)
+      new THREE.Color(0xd6e6ff), // 青みの白(B型)
+      new THREE.Color(0x9fd6e8), // シアン寄り
+      new THREE.Color(0xffdca8), // 琥珀(K型)
+      new THREE.Color(0xffb9a8), // 橙赤(M型)
     ];
     for (let i = 0; i < STAR_COUNT; i += 1) {
       // 遠方の球殻に配置(半径500-900)。手前の惑星(z≈-3〜-110)が星に隠れないよう
@@ -392,18 +404,24 @@ export class SpaceBg {
       positions[i * 3 + 1] = u * r;
       positions[i * 3 + 2] = Math.sin(phi) * s * r;
       const c = palette[Math.floor(Math.random() * palette.length)] ?? palette[0]!;
-      const b = 0.5 + Math.random() * 0.5;
+      // 明るさは対数寄り(べき乗)の分布: 大多数を暗く、少数だけ明るく(実際の等級分布)
+      const rb = Math.random();
+      const b = 0.3 + 0.7 * rb * rb;
       colors[i * 3] = c.r * b;
       colors[i * 3 + 1] = c.g * b;
       colors[i * 3 + 2] = c.b * b;
       phases[i] = Math.random() * Math.PI * 2;
-      sizes[i] = 1.1 + Math.random() * 1.7; // 明星は少し大きく瞬く
+      // サイズはべき乗分布(0.9〜3.3px相当)。多くは最小級、稀に大きな明星。床止めはシェーダ側。
+      sizes[i] = 0.9 + Math.pow(Math.random(), 2.2) * 2.4;
+      // 瞬き周波数を星ごとに独立(0.4〜2.0)=同期しない自然なシンチレーション
+      freqs[i] = 0.4 + Math.random() * 1.6;
     }
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     this.geometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
     this.geometry.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
     this.geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+    this.geometry.setAttribute('aFreq', new THREE.BufferAttribute(freqs, 1));
     this.starUniforms = {
       uTime: { value: 0 },
       uDim: { value: 0.95 },
