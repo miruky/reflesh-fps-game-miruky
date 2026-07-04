@@ -373,8 +373,13 @@ const loop = new GameLoop(
           }
         }
       }
-      adaptResolution(dt, performance.now());
-      match.render();
+      // R17: ポーズ/リザルト中はゲームを再描画しない(直前フレームで画面が静止する)。
+      // ライブなWebGLキャンバスの上にポーズ幕の backdrop-filter が載ると、明るい空の
+      // ステージで白く破綻する既知の禁止パターン(=白飛びバグ)を根絶する。GPUも節約。
+      if (mode === 'playing') {
+        adaptResolution(dt, performance.now());
+        match.render();
+      }
     }
     input.endFrame();
   },

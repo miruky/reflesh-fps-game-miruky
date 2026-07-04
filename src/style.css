@@ -963,8 +963,10 @@ button {
 
 .menu-pause,
 .menu-result {
-  background: rgba(8, 7, 5, 0.72);
-  backdrop-filter: blur(3px);
+  /* R17: ゲームキャンバスの上に載る幕。backdrop-filter はライブ/明るいWebGLキャンバス上で
+     白く破綻する(=白飛びバグ・全ステージ)ため撤去し、暗幕を濃くして減光する。
+     (メモリの既知ブロッカー: canvas上にfilter/backdrop-filterは絶対に載せない) */
+  background: rgba(8, 7, 5, 0.86);
   display: grid;
   place-items: start center;
 }
