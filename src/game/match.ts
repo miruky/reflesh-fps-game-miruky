@@ -3528,18 +3528,38 @@ export class Match {
   }
 
   private handleRespawns(): void {
+    // reserved: このフレームで確保済みのスポーン位置。同フレーム複数リスポーンで
+    // 同一地点を選ばないよう pickSpawn へ渡し、occupancy チェックの起点にする。
+    const reserved: THREE.Vector3[] = [];
+    // 生存中の全キャラ位置(チーム不問。ally/enemyとも近くに湧かない)
+    const allAlive: THREE.Vector3[] = [];
+    if (this.player.alive) allAlive.push(this.player.position);
+    for (const b of this.bots) if (b.alive) allAlive.push(b.position);
+
     // ── 奈落セーフティネット(無限落下の構造的封じ込め)──
     // 床抜けはレベル設計でなくエンジン由来のアーティファクトなので、K/D・ストリークを
     // 罰さず非致死で安全スポーンへ再配置する。物理ステップ後の最新座標で判定する。
     if (this.player.alive && this.player.position.y < VOID_Y) {
-      this.player.respawnAt(this.pickSpawn(this.playerSpawns, this.hostilesOf(PLAYER_TEAM)));
+      const sp = this.pickSpawn(
+        this.playerSpawns,
+        this.hostilesOf(PLAYER_TEAM),
+        [...allAlive, ...reserved],
+      );
+      this.player.respawnAt(sp);
+      reserved.push(sp);
       for (const weapon of this.weapons) weapon.resupply();
       this.refillGrenades();
     }
     for (const bot of this.bots) {
       if (bot.alive && bot.position.y < VOID_Y) {
         const spawns = bot.team === PLAYER_TEAM ? this.playerSpawns : this.botSpawns;
-        bot.respawnAt(this.pickSpawn(spawns, this.hostilesOf(bot.team)));
+        const sp = this.pickSpawn(
+          spawns,
+          this.hostilesOf(bot.team),
+          [...allAlive, ...reserved],
+        );
+        bot.respawnAt(sp);
+        reserved.push(sp);
       }
     }
 
@@ -3549,7 +3569,13 @@ export class Match {
         this.playerDowns += 1;
         this.over = true;
       } else {
-        this.player.respawnAt(this.pickSpawn(this.playerSpawns, this.hostilesOf(PLAYER_TEAM)));
+        const sp = this.pickSpawn(
+          this.playerSpawns,
+          this.hostilesOf(PLAYER_TEAM),
+          [...allAlive, ...reserved],
+        );
+        this.player.respawnAt(sp);
+        reserved.push(sp);
         // リスポーンでは両武器の弾倉を満タンに補給し、投擲物も初期装備へ戻す
         for (const weapon of this.weapons) weapon.resupply();
         this.activeWeapon.raise();
@@ -3565,7 +3591,13 @@ export class Match {
       for (const bot of this.bots) {
         if (!bot.alive && bot.respawnIn <= 0 && bot.kind !== 'zombie') {
           const spawns = bot.team === PLAYER_TEAM ? this.playerSpawns : this.botSpawns;
-          bot.respawnAt(this.pickSpawn(spawns, this.hostilesOf(bot.team)));
+          const sp = this.pickSpawn(
+            spawns,
+            this.hostilesOf(bot.team),
+            [...allAlive, ...reserved],
+          );
+          bot.respawnAt(sp);
+          reserved.push(sp);
         }
       }
     }
@@ -3695,12 +3727,18 @@ export class Match {
     return true;
   }
 
-  // 地面Yを下向きレイで確定し、フラスタム外の湧き点を返す(目前でのポップインを避ける)
+  // 地面Yを下向きレイで確定し、フラスタム外の湧き点を返す(目前でのポップインを避ける)。
+  // R21修正: 生存中ゾンビとの最小間隔(1.2m)も確保し、リング湧きでの重なりスタックを防ぐ。
   private zombieSpawnPoint(): THREE.Vector3 | null {
     const size = this.config.stage.size;
     const bound = size / 2 - 2;
     const around = this.player.alive ? this.player.position : new THREE.Vector3();
     const down = new THREE.Vector3(0, -1, 0);
+    // 生存中ゾンビの現在位置(近接スポーンで重なるのを防ぐ)
+    const aliveZombiePos = this.bots
+      .filter((b) => b.kind === 'zombie' && b.alive)
+      .map((b) => b.position);
+    const MIN_ZOMBIE_GAP = 1.2;
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const ang = this.rand() * Math.PI * 2;
       const rad =
@@ -3710,8 +3748,12 @@ export class Match {
       const hit = this.castRay(new THREE.Vector3(x, 8, z), down, 20, null);
       const groundY = hit ? 8 - hitToi(hit) : 0;
       const p = new THREE.Vector3(x, groundY + 0.05, z);
-      // フラスタム内(=プレイヤーの目前)はポップインになるので避ける。最終試行は妥協して返す
-      if (attempt < 10 && this.isInView(p)) continue;
+      if (attempt < 10) {
+        // フラスタム内(=プレイヤーの目前)はポップインになるので避ける
+        if (this.isInView(p)) continue;
+        // 直近スポーンゾンビとの重なりを避ける(最終2試行は妥協)
+        if (aliveZombiePos.some((zp) => zp.distanceTo(p) < MIN_ZOMBIE_GAP)) continue;
+      }
       return p;
     }
     return null;
@@ -3987,18 +4029,42 @@ export class Match {
     return positions;
   }
 
-  // 敵から最も離れた地点に湧く
-  private pickSpawn(candidates: THREE.Vector3[], enemies: THREE.Vector3[]): THREE.Vector3 {
-    let best = candidates[0] ?? new THREE.Vector3();
+  // 敵から最も離れた地点に湧く。occupants(生存中の全キャラ+このフレームで既に確保済みの
+  // スポーン位置)との最小距離が MIN_SPAWN_GAP 未満の候補は除外し、同フレーム同時リスポーンで
+  // 複数 bot が同じ地点に重なるスタックバグを根治する。全候補が占有済みのフォールバックでは
+  // 敵最遠の地点に決定論的な小オフセットを加えて重なりを散らす。
+  private pickSpawn(
+    candidates: THREE.Vector3[],
+    enemies: THREE.Vector3[],
+    occupants: THREE.Vector3[] = [],
+  ): THREE.Vector3 {
+    const MIN_SPAWN_GAP = 1.2; // 生存キャラ・直前スポーンからの必要最小距離(m)
+    let best: THREE.Vector3 | null = null;
     let bestScore = -Infinity;
-    for (const candidate of candidates) {
-      const score = enemies.length ? Math.min(...enemies.map((e) => e.distanceTo(candidate))) : 1;
-      if (score > bestScore) {
-        bestScore = score;
-        best = candidate;
+    let fallback: THREE.Vector3 | null = null;
+    let fallbackScore = -Infinity;
+    for (const c of candidates) {
+      const enemyScore = enemies.length ? Math.min(...enemies.map((e) => e.distanceTo(c))) : 1;
+      const minOcc = occupants.length
+        ? Math.min(...occupants.map((o) => o.distanceTo(c)))
+        : Infinity;
+      if (minOcc >= MIN_SPAWN_GAP && enemyScore > bestScore) {
+        bestScore = enemyScore;
+        best = c;
+      }
+      if (enemyScore > fallbackScore) {
+        fallbackScore = enemyScore;
+        fallback = c;
       }
     }
-    return best;
+    if (best) return best;
+    // 全候補が近接占有 → 敵最遠の地点に決定論的な小オフセットを加えてスタックを散らす
+    const base = fallback ?? candidates[0] ?? new THREE.Vector3();
+    return new THREE.Vector3(
+      base.x + (this.rand() - 0.5) * 0.8,
+      base.y,
+      base.z + (this.rand() - 0.5) * 0.8,
+    );
   }
 
   private castRay(

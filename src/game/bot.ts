@@ -67,6 +67,14 @@ const ZOMBIE_CLIMB_COOLDOWN = 1.2; // 上限まで登っても越えられない
 const ZOMBIE_CLIMB_PROBE = 0.7; // 前方の障害物検出レイ長(m)。カプセル半径(0.35)+余白
 const ZOMBIE_CLIMB_BLOCK = 0.4; // moved/wish がこれ未満なら「前進を阻まれた」と判定
 const ZOMBIE_CLIMB_RAY_YS = [-0.4, 0.1] as const; // 前方レイの高さ(体中心基準=膝〜胸)
+// R21修正: 登坂フェーズ化で縁チャタリングを根治。最小継続時間でblocked解消≠乗り上げ完了の
+// 誤終了を防ぎ、最大継続時間で無限上昇の安全弁を維持する。
+const ZOMBIE_CLIMB_MIN_S = 0.4; // 登坂の最小継続時間(縁でblocked解消しても乗り上げまで続ける)
+const ZOMBIE_CLIMB_MAX_S = 2.5; // 登坂の最大継続時間(それ以上は必ず打ち切り)
+// humanoid アンスタック(R21新規)
+const HUMANOID_STUCK_TH = 0.8;  // 前進不能がこの秒数続いたらアンスタック発動
+const HUMANOID_UNSTUCK_S = 0.6; // 横ステア/heading転換のラッチ時間
+const HUMANOID_PROBE_D = 0.9;   // アンスタック用サイドレイ長(m)
 const TANK_SMOKE_OPACITY = 0.85;
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -445,6 +453,15 @@ export class Bot {
   private climbing = false; // 登坂アシスト作動中(前フレームのブロック検知で点火)
   private climbBaseY = 0; // 登坂開始時の足元中心Y。上限高さ判定の起点(青天井防止)
   private climbCooldownS = 0; // 越えられない壁で登坂を封じる残り時間(2.4m浮遊バウンド防止)
+  private climbMinS = 0;          // R21: 登坂の最小継続残り時間(縁チャタリング防止)
+  private climbElapsedS = 0;      // R21: 今回の登坂セッション経過時間(最大継続時間の起点)
+  // humanoid アンスタック(R21新規)
+  private stuckTimer = 0;         // 前進不能の累積時間(HUMANOID_STUCK_TH 超えで発動)
+  private unstuckSteerS = 0;      // 横ステア/heading転換のラッチ残り時間
+  private unstuckStrafeOverride: number | null = null; // 戦闘中の strafe 方向上書き(null=通常)
+  // horizSpeedMps 用
+  private _prevBodyPos = new THREE.Vector3(); // 前フレームの剛体位置
+  private _horizSpeed = 0;        // 直近フレームの水平速度(m/s)
   private reactionJitter = 1; // 反応時間の個体差倍率(constructorで名前ハッシュから確定)
   private fireOnset = 0; // 交戦開始時の追加発砲遅延(s)
 
@@ -1134,11 +1151,26 @@ export class Bot {
     return new THREE.Vector3(-Math.sin(this.heading), 0, -Math.cos(this.heading));
   }
 
+  /** 直近フレームの水平移動速度(m/s)。全kindで有効。足音システム等から参照する */
+  get horizSpeedMps(): number {
+    return this._horizSpeed;
+  }
+
   update(dt: number, ctx: BotContext): void {
     if (!this.alive) {
+      this._horizSpeed = 0;
       this.respawnIn -= dt;
       if (this.dyingTimer > 0) this.updateDying(dt);
       return;
+    }
+
+    // horizSpeedMps: 全kind共通の水平速度を毎フレーム更新(剛体位置差分。足音実装等が参照)
+    {
+      const _t = this.body.translation();
+      const _hdx = _t.x - this._prevBodyPos.x;
+      const _hdz = _t.z - this._prevBodyPos.z;
+      this._horizSpeed = dt > 0 ? Math.hypot(_hdx, _hdz) / dt : 0;
+      this._prevBodyPos.set(_t.x, _t.y, _t.z);
     }
 
     this.alert = Math.max(0, this.alert - dt);
@@ -1192,7 +1224,9 @@ export class Bot {
         this.strafeSign *= -1;
         this.strafeTimer = 1 + ctx.rand() * 2;
       }
-      const side = new THREE.Vector3(-toTarget.z, 0, toTarget.x).multiplyScalar(this.strafeSign);
+      // アンスタック発動中は strafeOverride が strafe 方向を一時乗っ取る(combatのみ)
+      const effectiveStrafeSign = this.unstuckStrafeOverride ?? this.strafeSign;
+      const side = new THREE.Vector3(-toTarget.z, 0, toTarget.x).multiplyScalar(effectiveStrafeSign);
       // 9〜20mの交戦距離を保つ
       const approach = dist > 20 ? 1 : dist < 9 ? -1 : 0;
       wishX = (side.x * 0.8 + toTarget.x * approach) * this.moveSpeed;
@@ -1242,13 +1276,40 @@ export class Bot {
     const moved = this.controller.computedMovement();
     if (this.controller.computedGrounded() && this.velY < 0) this.velY = -0.5;
 
-    // 壁に引っかかったら進路を変える
+    // ── アンスタック: 進捗監視+側方ステア(戦闘=strafeOverride、非戦闘=heading転換)──
+    // 直前の移動結果で「前進できているか」を評価し、0.8s 以上詰まっていたら発動する。
+    // 戦闘中は heading が毎フレーム target へ向くため heading 書き換えは無効 → strafe 方向を
+    // 乗っ取る。非戦闘は開いている側へ heading を向け直す(headingTimer でラッチ)。
+    // ラッチ中は毎フレーム heading 再計算しないため、バウンドループが起きない。
     const wishLen = Math.hypot(movement.x, movement.z);
     const movedLen = Math.hypot(moved.x, moved.z);
-    if (wishLen > 0.001 && movedLen < wishLen * 0.25) {
-      this.heading = ctx.rand() * Math.PI * 2;
-      this.headingTimer = 1.5;
-      this.strafeSign *= -1;
+    this.unstuckSteerS = Math.max(0, this.unstuckSteerS - dt);
+    if (this.unstuckSteerS <= 0) this.unstuckStrafeOverride = null;
+    if (this.unstuckSteerS <= 0) {
+      if (wishLen > 0.001 && movedLen < wishLen * 0.25) {
+        this.stuckTimer += dt;
+        if (this.stuckTimer > HUMANOID_STUCK_TH) {
+          const stuckP = this.position;
+          const leftBlocked = this.probeDirection(stuckP, this.heading + Math.PI / 2);
+          const rightBlocked = this.probeDirection(stuckP, this.heading - Math.PI / 2);
+          if (ctx.targetEye) {
+            // 戦闘中: strafeOverride で詰まっていない側へ誘導
+            if (rightBlocked && !leftBlocked) this.unstuckStrafeOverride = -1;
+            else if (leftBlocked && !rightBlocked) this.unstuckStrafeOverride = 1;
+            else this.unstuckStrafeOverride = ctx.rand() < 0.5 ? 1 : -1;
+          } else {
+            // 非戦闘: 開いている側へ heading を向け直す
+            if (!leftBlocked) this.heading += Math.PI / 2;
+            else if (!rightBlocked) this.heading -= Math.PI / 2;
+            else this.heading += Math.PI;
+            this.headingTimer = HUMANOID_UNSTUCK_S;
+          }
+          this.unstuckSteerS = HUMANOID_UNSTUCK_S;
+          this.stuckTimer = 0;
+        }
+      } else {
+        this.stuckTimer = Math.max(0, this.stuckTimer - dt * 2); // 進捗あれば急速リセット
+      }
     }
 
     const t = this.body.translation();
@@ -1536,24 +1597,41 @@ export class Bot {
     if (grounded && this.velY < 0) this.velY = -0.5;
     // 接地して登坂していない間だけ登坂の基準足元Yを追従(上限高さ判定の起点=青天井防止)
     if (grounded && !canRise) this.climbBaseY = pos.y;
-    // 前進を阻まれたか(moved が wish よりかなり小さい)を評価し、次フレームの登坂可否を決める
+    // ── 登坂状態機械(R21フェーズ化で縁チャタリングを根治)──
+    // 前進を阻まれたか(moved が wish よりかなり小さい)を評価する
     const wishLen = Math.hypot(movement.x, movement.z);
     const movedLen = Math.hypot(moved.x, moved.z);
     const blocked = wishLen > 0.001 && movedLen < wishLen * ZOMBIE_CLIMB_BLOCK;
     const underCap = pos.y - this.climbBaseY < ZOMBIE_CLIMB_MAX_H;
     this.climbCooldownS = Math.max(0, this.climbCooldownS - dt);
-    if (this.climbCooldownS <= 0 && blocked && target && underCap && this.obstacleAhead(pos)) {
-      // 標的を追って障害物に詰まり、前方に実体があり、まだ登れる高さ → 次フレーム登坂
-      this.climbing = true;
+    this.climbMinS = Math.max(0, this.climbMinS - dt);
+
+    if (this.climbing) {
+      this.climbElapsedS += dt;
+      // 強制終了: 上限高さを超えた or 最大継続時間を超過
+      if (!underCap || this.climbElapsedS >= ZOMBIE_CLIMB_MAX_S) {
+        if (!underCap) this.climbCooldownS = ZOMBIE_CLIMB_COOLDOWN; // 超高壁は再登坂を封じる
+        else this.climbCooldownS = 0.3; // タイムアウト: 短いクールダウンで再試行可
+        this.climbing = false;
+        this.climbMinS = 0;
+        this.climbElapsedS = 0;
+        if (blocked) this.heading += (ctx.rand() - 0.5) * 1.6;
+      } else if (this.climbMinS <= 0 && grounded && !blocked) {
+        // 最小継続時間を過ぎ、接地でき、前進を妨げられていない → 乗り上げ完了
+        this.climbing = false;
+        this.climbElapsedS = 0;
+      }
+      // それ以外(最小時間内 / 空中 / まだ blocked): 登坂継続
     } else {
-      // V20修正: 上限まで登ったのに越えられない壁(underCap=false)で登坂を諦めた時は、
-      // 一定時間登坂を封じる。さもないと落下→再点火→再上昇を繰り返し2.4m地点で浮遊バウンドする。
-      // その間は接地して壁を押す通常挙動(横ジッタで回り込みも継続)。
-      if (this.climbing && !underCap) this.climbCooldownS = ZOMBIE_CLIMB_COOLDOWN;
-      // 登り切れない高い壁 / 障害物なし / 前進できている → 登坂終了。
-      // 詰まっているだけなら従来どおり横へ回り込む(壁際で団子にならないように)
-      this.climbing = false;
-      if (blocked) this.heading += (ctx.rand() - 0.5) * 1.6;
+      this.climbElapsedS = 0;
+      // 点火条件: クールダウン明け + 前進ブロック + 目標あり + 上限未満 + 前方に実体あり
+      if (this.climbCooldownS <= 0 && blocked && target && underCap && this.obstacleAhead(pos)) {
+        this.climbing = true;
+        this.climbMinS = ZOMBIE_CLIMB_MIN_S; // 最小継続時間を設定(縁チャタリング防止)
+      } else if (blocked) {
+        // 登坂しない: クールダウン中/目標なし/上限超過/障害物なし → 横へ回り込む
+        this.heading += (ctx.rand() - 0.5) * 1.6;
+      }
     }
     const t = this.body.translation();
     this.body.setNextKinematicTranslation({ x: t.x + moved.x, y: t.y + moved.y, z: t.z + moved.z });
@@ -1561,6 +1639,15 @@ export class Bot {
     const targetAmp = Math.min(1, step / Math.max(1e-4, this.moveSpeed * dt));
     this.walkAmp += (targetAmp - this.walkAmp) * Math.min(1, dt * 8);
     this.walkPhase += step * 8;
+  }
+
+  // アンスタック用: 指定角度の水平方向へ短いレイを撃ち、障害物があれば true を返す(humanoid専用)。
+  // kinematic を含む全コライダーを対象とし、wallやpropへの引っかかり両方を検出する。
+  private probeDirection(pos: THREE.Vector3, angle: number, dist = HUMANOID_PROBE_D): boolean {
+    const dx = -Math.sin(angle);
+    const dz = -Math.cos(angle);
+    const ray = new RAPIER.Ray({ x: pos.x, y: pos.y, z: pos.z }, { x: dx, y: 0, z: dz });
+    return this.world.castRay(ray, dist, true, undefined, undefined, undefined, this.body) !== null;
   }
 
   // 登坂アシスト用: 進行方向(=heading)前方に「静的地形/障害物」があるかを短いレイで確認する。
@@ -1871,6 +1958,15 @@ export class Bot {
     this.climbing = false;
     this.climbBaseY = spawn.y + this.feetOffset;
     this.climbCooldownS = 0;
+    this.climbMinS = 0;
+    this.climbElapsedS = 0;
+    // humanoidアンスタック状態もリセット
+    this.stuckTimer = 0;
+    this.unstuckSteerS = 0;
+    this.unstuckStrafeOverride = null;
+    // horizSpeedMps: スポーン地点を前フレーム位置として初期化(最初のフレームでスパイクしない)
+    this._horizSpeed = 0;
+    this._prevBodyPos.set(spawn.x, spawn.y + this.feetOffset, spawn.z);
     this.group.visible = true;
     this.group.rotation.x = 0;
     this.group.rotation.z = 0; // drone墜落/turret転倒のリセット
