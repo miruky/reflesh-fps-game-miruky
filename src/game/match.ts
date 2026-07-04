@@ -1245,6 +1245,16 @@ export class Match {
       u.mieCoefficient.value = mieCoefficient;
       u.mieDirectionalG.value = mieDirectionalG;
       u.sunPosition.value.copy(this.sunDir);
+      // R18修正: Sky.js の太陽ディスクは vSunE*19000 で桁外れに明るく(HDR~5万)、露出~1.0だと
+      // トーンマップ後も巨大な白い塊に飛ぶ(=「太陽が異常に白くなる」バグ)。空の出力HDRを上限
+      // クランプ(2.6)し、太陽を「明るいが白飛びしない」円盤+柔らかな発光に抑える。空の階調は保持。
+      sky.material.onBeforeCompile = (shader) => {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          'gl_FragColor = vec4( retColor, 1.0 );',
+          'gl_FragColor = vec4( min( retColor, vec3( 2.6 ) ), 1.0 );',
+        );
+      };
+      sky.material.needsUpdate = true;
     };
 
     // ── プロシージャル大気(Sky.js, 大気散乱)を可視背景にする ──
