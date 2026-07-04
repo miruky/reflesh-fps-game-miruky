@@ -1257,29 +1257,33 @@ export class Match {
     const rayleigh = palette.rayleigh ?? 2;
     const mieCoefficient = palette.mieCoefficient ?? 0.005;
     const mieDirectionalG = palette.mieDirectionalG ?? 0.8;
-    const applySky = (sky: Sky): void => {
+    // scale=空HDRの全体倍率(可視空の明るさ)、clampMax=太陽ディスク等の上限。
+    const applySky = (sky: Sky, scale: number, clampMax: number): void => {
       const u = sky.material.uniforms as unknown as SkyUniforms;
       u.turbidity.value = turbidity;
       u.rayleigh.value = rayleigh;
       u.mieCoefficient.value = mieCoefficient;
       u.mieDirectionalG.value = mieDirectionalG;
       u.sunPosition.value.copy(this.sunDir);
-      // R18修正: Sky.js の太陽ディスクは vSunE*19000 で桁外れに明るく(HDR~5万)、露出~1.0だと
-      // トーンマップ後も巨大な白い塊に飛ぶ(=「太陽が異常に白くなる」バグ)。空の出力HDRを上限
-      // クランプ(2.6)し、太陽を「明るいが白飛びしない」円盤+柔らかな発光に抑える。空の階調は保持。
+      // R18: Sky.js の太陽ディスクは vSunE*19000 で桁外れに明るく(HDR~5万)、白い塊に飛ぶ。
+      // 空フラグメントの出力を「全体を scale 倍 + clampMax で上限クランプ」して抑える。
+      const s = scale.toFixed(3);
+      const c = clampMax.toFixed(3);
       sky.material.onBeforeCompile = (shader) => {
         shader.fragmentShader = shader.fragmentShader.replace(
           'gl_FragColor = vec4( retColor, 1.0 );',
-          'gl_FragColor = vec4( min( retColor, vec3( 2.6 ) ), 1.0 );',
+          `gl_FragColor = vec4( min( retColor * ${s}, vec3( ${c} ) ), 1.0 );`,
         );
       };
       sky.material.needsUpdate = true;
     };
 
     // ── プロシージャル大気(Sky.js, 大気散乱)を可視背景にする ──
+    // R19: 可視の空(=太陽/日差し)は極限まで暗める(scale0.35/clamp0.9)。ステージ全体の明るさは
+    // シーンのライト(sun/Hemi/IBL)が担い、下のenvSky(IBLベイク)は据え置くので地面は暗くならない。
     const sky = new Sky();
     sky.scale.setScalar(Math.max(10000, size * 40));
-    applySky(sky);
+    applySky(sky, 0.35, 0.9);
     this.scene.add(sky);
 
     // ステージ別の露出(明暗の演出)
@@ -1290,7 +1294,9 @@ export class Match {
     const envScene = new THREE.Scene();
     const envSky = new Sky();
     envSky.scale.setScalar(10000);
-    applySky(envSky);
+    // IBLベイク用は据え置き(scale1.0/clamp2.6)。ここを暗めると金属反射/環境光=ステージの
+    // 明るさが落ちてしまう。可視空だけ暗め、地面の明るさは維持する(ユーザー要望)。
+    applySky(envSky, 1.0, 2.6);
     envScene.add(envSky);
     this.envRT = pmrem.fromScene(envScene, 0, 0.1, 1000);
     this.scene.environment = this.envRT.texture;
