@@ -103,6 +103,19 @@ import {
   zombieSpawnGap,
   zombieTotal,
 } from './zombie';
+import {
+  generateShopLayout,
+  purchasePerk,
+  buyResult,
+  rollMysteryBox,
+  canBuy,
+  PERKS,
+  POINTS,
+  MYSTERY_BOX_COST,
+  type ShopLayout,
+  type ShopSlot,
+  type ZombiePerkId,
+} from './zombie-economy';
 import type { MatchSummary } from './progression';
 import { generateStage, type StageDef } from './stage';
 import { StreakManager, STREAK_DEFS, type StreakIndex } from './scorestreaks';
@@ -415,6 +428,11 @@ export interface MatchSnapshot {
   zombieKills?: number; // 累計撃破数
   zombiePoints?: number; // 累計ポイント(命中10/キル60/HSキル100)
   playerDowns?: number; // プレイヤーがダウンした回数(ゲームオーバー確定)
+  // ── ゾンビ経済(shop/perks/floats) ──
+  zombieShopPrompt?: { label: string; canAfford: boolean; cost: number };
+  zombiePerks?: readonly ZombiePerkId[];
+  zombiePointFloats?: Array<{ amount: number; world: THREE.Vector3 }>;
+  zombieReviveFlash?: number; // 0..1
   incoming: number[]; // 被弾方向(カメラ基準の角度rad)
   tookDamage: boolean;
   scoreboard: ScoreRow[];
@@ -525,6 +543,7 @@ export class Match {
   private resScale = 1; // 現在の解像度スケール 0.6..1
   private hitFlashEnv = 0; // 被弾フラッシュのエンベロープ 0..1
   private killSurgeEnv = 0; // R20: キル確定サージのエンベロープ 0..1(キルで1へ、毎フレーム減衰)
+  private postfxGrade = 0; // R21: Teal & Orange グレーディング強度(high=0.3, low/mid=0)
   private readonly hitDir = new THREE.Vector2(0, 0); // R20: 被弾方向(画面空間の単位ベクトル・平滑)
   // キルカメラ補間: 死亡時に固定するアンカー + 現在の補間カメラ姿勢(exp damping)
   private readonly killcamAnchorHead = new THREE.Vector3(); // 死亡時のkiller頭位置(固定)
@@ -631,6 +650,24 @@ export class Match {
   private zombieShadowTimer = 0; // 近接影LODの周期トグル
   private zombieSpawnColor = 0x4c5a30; // ゾンビ本体の腐敗色(setupで確定)
   private playerDowns = 0;
+  // ── ゾンビ経済(R??) ──
+  private zombieShopLayout: ShopLayout | null = null;
+  private readonly zombieShopGroups: THREE.Group[] = [];
+  private zombieBoxPositions: THREE.Vector3[] = [];
+  private zombieBoxCurrentIdx = 0;
+  private zombieOwnedPerks = new Set<ZombiePerkId>();
+  private zombiePerkFireRateMul = 1;
+  private zombiePerkReloadMul = 1;
+  private zombiePerkDamageMul = 1;
+  private zombiePerkMoveMul = 1;
+  private zombieQuickReviveCharges = 0;
+  private zombieShopPrompt: { label: string; canAfford: boolean; cost: number } | null = null;
+  private zombiePointFloats: Array<{ amount: number; world: THREE.Vector3 }> = [];
+  private zombieReviveFlash = 0;
+  private zombieBoxAnimTimer = 0;
+  private zombieBoxAnimMesh: THREE.Mesh | null = null;
+  private zombieBoxPendingWeapon: string | null = null;
+  private zombieBoxPendingMove = false; // boxMovesロール中(演出終了時に箱を移動+アナウンス)
 
   // ── BO2 スコアストリーク ──
   private readonly streakManager = new StreakManager();
@@ -729,7 +766,10 @@ export class Match {
       (config.secondaryId && SECONDARY_IDS.includes(config.secondaryId)
         ? WEAPON_DEFS[config.secondaryId]
         : undefined) ?? WEAPON_DEFS['suzume']!;
-    this.weapons = [new Weapon(primaryDef), new Weapon(secDef)];
+    // 副武器defも per-Match のクローンにする(applyAttachments が deep-clone を返す)。
+    // ゾンビ経済のパーク(スピードコーラ/ダブルタップ)が def.rpm/reloadMs を直接補正するため、
+    // 共有の WEAPON_DEFS を掴んだままだと購入がグローバル定義を汚染し全モードへ波及する
+    this.weapons = [new Weapon(primaryDef), new Weapon(applyAttachments(secDef, []))];
 
     this.grenadeKind = config.grenade;
     this.grenadeCounts = {
@@ -830,6 +870,11 @@ export class Match {
     });
     composer.addPass(postfx);
     this.postfx = postfx;
+    // R21: Teal & Orange グレーディング。high tier のみ 0.3 を設定し常時1パス(予算内)
+    if (tier === 'high') {
+      postfx.setGrade(0.3);
+      this.postfxGrade = 0.3;
+    }
     this.composer = composer;
   }
 
@@ -1762,7 +1807,9 @@ export class Match {
       crouch: this.settings.crouchToggle ? this.crouchLatch : this.input.isDown('crouch'),
       crouchPressed,
       sprint: this.input.isDown('sprint'),
-      lean: (this.input.isDown('leanright') ? 1 : 0) - (this.input.isDown('leanleft') ? 1 : 0),
+      lean: this.config.mode === 'zombie'
+        ? -(this.input.isDown('leanleft') ? 1 : 0)
+        : (this.input.isDown('leanright') ? 1 : 0) - (this.input.isDown('leanleft') ? 1 : 0),
     };
     this.player.update(dt, moveInput, weapon.adsProgress, this.sounds);
     // 移動由来のカメラシェイク(着地・ブースト)+ビューモデルの着地インパルス
@@ -1774,6 +1821,7 @@ export class Match {
 
     this.handleWeaponSwitch();
     this.handleMelee();
+    if (this.config.mode === 'zombie') this.handleZombieInteract();
     this.handleGrenadeInput(dt);
 
     // ── 素手(武器なし)の技: コンボ窓の減衰と、空中しゃがみ→ダイブスラム ──
@@ -1895,11 +1943,13 @@ export class Match {
     // 遷移黒幕/突入フラッシュは死亡ゲート外で無条件減衰(リスポーン後の黒画面固着を防ぐ)
     this.deathVeil = Math.max(0, this.deathVeil - dt * 4);
     this.killcamFlash = Math.max(0, this.killcamFlash - dt * 5.5);
+    this.zombieReviveFlash = Math.max(0, this.zombieReviveFlash - dt * 2.5);
     // キルカメラのカメラ姿勢を固定dtで前進(時間前進はここ1箇所に集約=冪等)
     this.advanceKillcam(dt);
 
-    // BO2 スコアストリーク: 入力受付 + UAV/HK/LS/Turret の毎フレーム処理
-    if (this.config.mode !== 'zombie' && this.player.alive) {
+    // BO2 スコアストリーク: UAV/HK/LS/Turret は死亡中も進行(タイマー凍結防止)。
+    // 入力受付(発動キー)は updateStreaks 内で alive ゲート済み。
+    if (this.config.mode !== 'zombie') {
       this.updateStreaks(dt);
     }
     this.updateBots(dt);
@@ -1907,6 +1957,10 @@ export class Match {
     this.syncCamera();
     this.handleRespawns();
     if (this.config.mode === 'zombie') this.updateZombieDirector(dt);
+    if (this.config.mode === 'zombie') {
+      this.updateZombieShopProximity();
+      this.updateZombieBoxAnim(dt);
+    }
 
     // ファイナルキルカム: 3 tick ごと 20 Hz でキーフレームをリングバッファへ記録
     if (this.config.mode !== 'zombie') {
@@ -1917,6 +1971,28 @@ export class Match {
     // プレイヤー死亡の立ち下がりでメダル連続系をリセット(復讐対象=直近のkiller)
     if (this.lastAlive && !this.player.alive) {
       this.tracker.onPlayerDeath(this.killer?.uid ?? null);
+      // クイックリバイブ: ゾンビモードでチャージがあれば即その場復活
+      if (this.config.mode === 'zombie' && this.zombieQuickReviveCharges > 0) {
+        this.zombieQuickReviveCharges -= 1;
+        this.zombieOwnedPerks.delete('quick-revive');
+        // position はカプセル中心。respawnAt は足元座標を期待するため足元へ変換して
+        // 「その場」復活させる(中心のまま渡すと約1m浮いた位置に湧いて落下する)
+        const revivePos = this.player.position.clone();
+        revivePos.y -= PLAYER_FEET_OFFSET;
+        this.player.respawnAt(revivePos);
+        this.player.hp = Math.max(1, Math.floor(this.player.maxHp * 0.5));
+        this.zombieMeleeIframe = this.elapsed + 2; // 2秒無敵
+        for (const weapon of this.weapons) weapon.resupply();
+        this.activeWeapon.raise();
+        this.shakeTrauma = 0;
+        this.deathPos = null;
+        this.killer = null;
+        this.killcamTimer = 0;
+        this.deathVeil = 0;
+        this.zombieReviveFlash = 1;
+        this.announcements.push('クイックリバイブ');
+        this.sounds.announceMedal(1, this.settings.announcerVolume);
+      }
     }
     this.lastAlive = this.player.alive;
 
@@ -2174,8 +2250,8 @@ export class Match {
         ? Math.max(0, Math.min(1, (0.38 - healthRatio) / 0.38))
         : 0;
       const killSurge = rm ? 0 : this.killSurgeEnv;
-      // idleゲート: いずれかの封筒が閾値超えのフレームだけ pass.enabled(low tier=postfx無し)
-      this.postfx.enabled = pulse > 0.002 || killSurge > 0.002 || lowHpEnv > 0.01;
+      // idleゲート: grade>0(high tier)は常時enabled。それ以外は封筒ゼロ時コストゼロ
+      this.postfx.enabled = this.postfxGrade > 0 || pulse > 0.002 || killSurge > 0.002 || lowHpEnv > 0.01;
       this.postfx.setHitPulse(pulse);
       this.postfx.setCombat(this.hitDir.x, this.hitDir.y, healthRatio, killSurge, rm ? 0 : 1);
       this.postfx.setTime(this.elapsed);
@@ -2788,16 +2864,22 @@ export class Match {
   ): boolean {
     // takeDamage前の満タン判定(one-shotメダル用)
     const fullHp = bot.hp >= bot.maxHp;
+    const finalDamage = (this.config.mode === 'zombie' && bot.kind === 'zombie' && this.zombiePerkDamageMul > 1)
+      ? damage * this.zombiePerkDamageMul
+      : damage;
     // painDir: humanoidが被弾方向へ振り向く材料(bot→射手=プレイヤー)。tank/turret/droneは
     // 全周維持なので影響なし、方向不明経路も takeDamage 側で全周フォールバック
-    const died = bot.takeDamage(damage, this.player.eyePosition.clone().sub(bot.position));
-    // ゾンビ経済(最小): 命中10 / キル60 / ヘッドショットキル100。HUDの zombiePoints へ
+    const died = bot.takeDamage(finalDamage, this.player.eyePosition.clone().sub(bot.position));
+    // ゾンビ経済: 命中+10 / キル+60 / HSキル+110 / 近接キル+130
     if (bot.kind === 'zombie') {
       if (died) {
         this.zombieKills += 1;
-        this.zombiePoints += headshot ? 100 : 60;
+        const isMelee = weaponName === '近接';
+        const gain = isMelee ? POINTS.melee : headshot ? POINTS.hskill : POINTS.kill;
+        this.zombiePoints += gain;
+        this.zombiePointFloats.push({ amount: gain, world: point.clone() });
       } else {
-        this.zombiePoints += 10;
+        this.zombiePoints += POINTS.hit;
       }
     }
     this.effects.hitPuff(point);
@@ -2811,7 +2893,7 @@ export class Match {
     const freeze = this.settings.reduceMotion ? (died ? 0.03 : 0.02) : died ? 0.06 : 0.04;
     this.hitFreezeS = Math.max(this.hitFreezeS, freeze);
     this.damageNumbers.push({
-      amount: Math.round(damage),
+      amount: Math.round(finalDamage),
       world: point.clone(),
       kind: died ? 'kill' : headshot ? 'head' : 'body',
     });
@@ -2929,17 +3011,21 @@ export class Match {
   private updateStreaks(dt: number): void {
     const vol = this.settings.announcerVolume;
 
-    // ── キー入力 → 対応ストリークを tryConsume ────
-    const activationMap: Array<['streak1' | 'streak2' | 'streak3' | 'streak4', StreakIndex]> = [
-      ['streak1', 0],
-      ['streak2', 1],
-      ['streak3', 2],
-      ['streak4', 3],
-    ];
-    for (const [action, idx] of activationMap) {
-      if (this.input.wasPressed(action)) {
-        if (this.streakManager.tryConsume(idx)) {
-          this.activateStreak(idx, vol);
+    // ── キー入力 → 対応ストリークを tryConsume (生存中のみ) ────
+    if (this.player.alive) {
+      const activationMap: Array<['streak1' | 'streak2' | 'streak3' | 'streak4', StreakIndex]> = [
+        ['streak1', 0],
+        ['streak2', 1],
+        ['streak3', 2],
+        ['streak4', 3],
+      ];
+      for (const [action, idx] of activationMap) {
+        if (this.input.wasPressed(action)) {
+          // HK(idx=1): 標的不在なら消費しない(バンクを無駄に使わない)
+          if (idx === 1 && !this.findNearestEnemyBot()) continue;
+          if (this.streakManager.tryConsume(idx)) {
+            this.activateStreak(idx, vol);
+          }
         }
       }
     }
@@ -3169,6 +3255,11 @@ export class Match {
         onShoot: (origin, dir) => this.botShoot(bot, origin, dir),
         onMelee: (b) => this.zombieMelee(b),
       });
+      // 死亡ボットの足音フェーズを即解放(生存ボットのみが足音を持つ)
+      if (!bot.alive) {
+        this.botStepPhase.delete(bot.uid);
+        continue;
+      }
 
       // ── 敵足音 ── (生存ボットのみ。遠距離25m超/歩行ゼロはスキップ)
       if (bot.alive && this.player.alive) {
@@ -3645,7 +3736,7 @@ export class Match {
     // 落下死などnotePlayerDeathを通らない経路も含めて確実に解除する
     if (!this.player.alive) {
       this.ultActive = 0;
-      this.player.speedMul = 1;
+      this.player.speedMul = this.zombiePerkMoveMul;
       this.player.damageResist = 0;
       return;
     }
@@ -3663,10 +3754,10 @@ export class Match {
 
     if (this.ultActive > 0) {
       this.ultActive = Math.max(0, this.ultActive - dt);
-      this.player.speedMul = OVERDRIVE_SPEED_MUL;
+      this.player.speedMul = OVERDRIVE_SPEED_MUL * this.zombiePerkMoveMul;
       this.player.damageResist = OVERDRIVE_RESIST;
     } else {
-      this.player.speedMul = 1;
+      this.player.speedMul = this.zombiePerkMoveMul;
       this.player.damageResist = 0;
     }
 
@@ -3950,7 +4041,7 @@ export class Match {
     // ストーリー/ゾンビでは敵を復活させない(撃破で波/ラウンドが確実に減る。ゾンビはディレクタが管理)
     if (!this.mission) {
       for (const bot of this.bots) {
-        if (!bot.alive && bot.respawnIn <= 0 && bot.kind !== 'zombie') {
+        if (!bot.alive && bot.respawnIn <= 0 && bot.kind !== 'zombie' && bot.kind !== 'turret') {
           const spawns = bot.team === PLAYER_TEAM ? this.playerSpawns : this.botSpawns;
           const sp = this.pickSpawn(
             spawns,
@@ -4016,6 +4107,7 @@ export class Match {
         : tier === 'medium'
           ? ZOMBIE_MAX_ALIVE.medium
           : ZOMBIE_MAX_ALIVE.low;
+    this.buildZombieShop();
   }
 
   private aliveZombieCount(): number {
@@ -4588,6 +4680,10 @@ export class Match {
       zombieKills: this.config.mode === 'zombie' ? this.zombieKills : undefined,
       zombiePoints: this.config.mode === 'zombie' ? this.zombiePoints : undefined,
       playerDowns: this.config.mode === 'zombie' ? this.playerDowns : undefined,
+      zombieShopPrompt: this.config.mode === 'zombie' ? (this.zombieShopPrompt ?? undefined) : undefined,
+      zombiePerks: this.config.mode === 'zombie' ? Array.from(this.zombieOwnedPerks) : undefined,
+      zombiePointFloats: this.config.mode === 'zombie' ? this.zombiePointFloats : undefined,
+      zombieReviveFlash: this.config.mode === 'zombie' && this.zombieReviveFlash > 0 ? this.zombieReviveFlash : undefined,
       // ── BO2 スコアストリーク ──
       streakProgress: this.streakManager.state.progress,
       streakBanked: this.streakManager.state.banked,
@@ -4606,6 +4702,7 @@ export class Match {
     this.announcements = [];
     this.scoreEvents = [];
     this.medals = [];
+    this.zombiePointFloats = [];
     return snapshot;
   }
 
@@ -4636,7 +4733,7 @@ export class Match {
 
   // ── ミニマップ用データ ────────────────────────────────────────────────────────────────
 
-  /** ミニマ��プ上の敵ドット(UAV スナップショット)を返す。プレイヤー相対座標 */
+  /** ミニマップ上の敵ドット(UAV スナップショット)を返す。プレイヤー相対座標 */
   private computeMinimapEnemies(): Array<{ relX: number; relZ: number; opacity: number }> {
     if (this.uavTimer <= 0) return [];
     const px = this.player.position.x;
@@ -4765,6 +4862,13 @@ export class Match {
   startFinalKillcam(): boolean {
     if (this.config.mode === 'zombie') return false;
     if (this.fkFill === 0 || this.fkKillElapsed === -Infinity) return false;
+    // キルカム開始時に飛行中のHKメッシュを全て除去(凍結表示を防ぐ)
+    for (const hk of this.hkEntities) {
+      this.scene.remove(hk.mesh);
+      hk.geo.dispose();
+      (hk.mesh.material as THREE.Material).dispose();
+    }
+    this.hkEntities.length = 0;
     const killT  = this.fkKillElapsed;
     const oldIdx = (this.fkHead - this.fkFill + FK_MAX_FRAMES) % FK_MAX_FRAMES;
     const oldest = this.fkTimeArr[oldIdx]!;
@@ -5017,6 +5121,349 @@ export class Match {
     };
   }
 
+  // ── ゾンビ経済: ショップ構築 ──────────────────────────────────────────
+  private buildZombieShop(): void {
+    const layout = generateShopLayout(this.config.stage.seed);
+    this.zombieShopLayout = layout;
+    const total = layout.slots.length;
+    const size = this.config.stage.size;
+
+    // ミステリーボックス移動先候補を5点生成(種ベース+オフセット)
+    this.zombieBoxPositions = [];
+    const boxAngles = [0.1, 1.3, 2.5, 3.8, 5.1];
+    for (const a of boxAngles) {
+      this.zombieBoxPositions.push(
+        this.findShopGroundPos(a + this.config.stage.seed * 0.01, size * 0.15),
+      );
+    }
+
+    for (const slot of layout.slots) {
+      const baseAngle = (slot.slotIndex / total) * Math.PI * 2 + this.config.stage.seed * 0.01;
+      let radius: number;
+      if (slot.kind === 'wall-buy') radius = size * 0.36;
+      else if (slot.kind === 'perk-machine') radius = size * 0.26;
+      else radius = size * 0.16;
+
+      const group = this.buildShopVisual(slot);
+      group.position.copy(this.findShopGroundPos(baseAngle, radius));
+      this.scene.add(group);
+      this.zombieShopGroups.push(group);
+    }
+
+    // ミステリーボックス: 初期位置を最後の boxPositions[0] に設定
+    this.zombieBoxCurrentIdx = 0;
+    const boxSlot = layout.slots[layout.slots.length - 1];
+    if (boxSlot?.kind === 'mystery-box' && this.zombieBoxPositions[0]) {
+      const grp = this.zombieShopGroups[this.zombieShopGroups.length - 1];
+      if (grp) grp.position.copy(this.zombieBoxPositions[0]);
+    }
+  }
+
+  private snapToGround(origin: THREE.Vector3): number {
+    const down = new THREE.Vector3(0, -1, 0);
+    const hit = this.castRay(origin, down, 40, this.player.body);
+    return hit ? origin.y - hitToi(hit) : 0;
+  }
+
+  // 決定論的な接地点探索: 基準角の周辺(±0.22/±0.44rad)を走査し、最も低い接地Yの候補を選ぶ。
+  // 障害物の天面(高所)にラック/自販機が乗って実質購入不能になるのを避ける。
+  // レイキャストのみでコライダーは一切足さない=ゾンビのナビ/スタックに影響ゼロ
+  private findShopGroundPos(baseAngle: number, radius: number): THREE.Vector3 {
+    const offsets = [0, 0.22, -0.22, 0.44, -0.44];
+    let best: THREE.Vector3 | null = null;
+    for (const off of offsets) {
+      const x = Math.cos(baseAngle + off) * radius;
+      const z = Math.sin(baseAngle + off) * radius;
+      const y = this.snapToGround(new THREE.Vector3(x, 20, z));
+      if (y <= 0.5) return new THREE.Vector3(x, y, z); // 床レベル=即採用
+      if (!best || y < best.y) best = new THREE.Vector3(x, y, z);
+    }
+    return best ?? new THREE.Vector3(Math.cos(baseAngle) * radius, 0, Math.sin(baseAngle) * radius);
+  }
+
+  private buildShopVisual(slot: ShopSlot): THREE.Group {
+    const group = new THREE.Group();
+    (group as unknown as { _shopSlotIndex: number })._shopSlotIndex = slot.slotIndex;
+
+    if (slot.kind === 'wall-buy') {
+      const rackGeo = new THREE.BoxGeometry(1.0, 1.6, 0.12);
+      const rackMat = new THREE.MeshBasicMaterial({ color: 0x4a9eff, wireframe: true });
+      const rack = new THREE.Mesh(rackGeo, rackMat);
+      rack.position.y = 0.8;
+      group.add(rack);
+      const barGeo = new THREE.BoxGeometry(0.65, 0.06, 0.06);
+      const barMat = new THREE.MeshBasicMaterial({ color: 0x88ddff });
+      const bar = new THREE.Mesh(barGeo, barMat);
+      bar.position.set(0, 1.1, 0.07);
+      group.add(bar);
+      const ringGeo = new THREE.RingGeometry(0.3, 0.35, 16);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0x4a9eff, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.02;
+      group.add(ring);
+    } else if (slot.kind === 'perk-machine') {
+      const perkColors: Record<ZombiePerkId, number> = {
+        juggernog: 0xff2222,
+        'speed-cola': 0x22ffdd,
+        'double-tap': 0xff8822,
+        'stamin-up': 0xffee22,
+        'quick-revive': 0x2244ff,
+      };
+      const col = perkColors[slot.perkId as ZombiePerkId] ?? 0xffffff;
+      const bodyGeo = new THREE.BoxGeometry(0.65, 1.9, 0.55);
+      const bodyMat = new THREE.MeshStandardMaterial({
+        color: col,
+        emissive: new THREE.Color(col),
+        emissiveIntensity: 0.35,
+        roughness: 0.6,
+        metalness: 0.3,
+      });
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.position.y = 0.95;
+      group.add(body);
+      const panelGeo = new THREE.BoxGeometry(0.5, 0.08, 0.01);
+      const panelMat = new THREE.MeshBasicMaterial({ color: col });
+      for (let i = 0; i < 3; i++) {
+        const panel = new THREE.Mesh(panelGeo, panelMat);
+        panel.position.set(0, 0.6 + i * 0.4, 0.28);
+        group.add(panel);
+      }
+    } else {
+      const crateGeo = new THREE.BoxGeometry(0.82, 0.62, 0.62);
+      const crateMat = new THREE.MeshStandardMaterial({
+        color: 0xffd700,
+        emissive: new THREE.Color(0xffaa00),
+        emissiveIntensity: 0.7,
+        roughness: 0.4,
+        metalness: 0.5,
+      });
+      const crate = new THREE.Mesh(crateGeo, crateMat);
+      crate.position.y = 0.31;
+      group.add(crate);
+      const lidGeo = new THREE.BoxGeometry(0.82, 0.06, 0.62);
+      const lid = new THREE.Mesh(lidGeo, crateMat.clone());
+      lid.position.set(0, 0.62, -0.15);
+      lid.rotation.x = 0.25;
+      group.add(lid);
+      const ringGeo = new THREE.RingGeometry(0.28, 0.34, 20);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd700, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.02;
+      group.add(ring);
+    }
+    return group;
+  }
+
+  private updateZombieShopProximity(): void {
+    if (!this.zombieShopLayout || !this.player.alive) {
+      this.zombieShopPrompt = null;
+      return;
+    }
+    const ppos = this.player.position;
+    let bestDist = 2.2;
+    let bestSlot: ShopSlot | null = null;
+
+    for (let i = 0; i < this.zombieShopGroups.length; i++) {
+      const grp = this.zombieShopGroups[i];
+      if (!grp) continue;
+      const slot = this.zombieShopLayout.slots[i];
+      if (!slot) continue;
+      const dist = grp.position.distanceTo(ppos);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestSlot = slot;
+      }
+    }
+
+    if (!bestSlot) {
+      this.zombieShopPrompt = null;
+      return;
+    }
+
+    const label = this.zombieShopSlotLabel(bestSlot);
+    const canAfford = canBuy(this.zombiePoints, bestSlot.cost);
+    this.zombieShopPrompt = { label, canAfford, cost: bestSlot.cost };
+  }
+
+  private zombieShopSlotLabel(slot: ShopSlot): string {
+    if (slot.kind === 'wall-buy') {
+      const wdef = WEAPON_DEFS[slot.weaponId ?? ''];
+      const name = wdef?.name ?? slot.weaponId ?? '?';
+      return `[E] ${name}  ${slot.cost}pt`;
+    }
+    if (slot.kind === 'perk-machine') {
+      const perkDef = slot.perkId ? PERKS[slot.perkId] : null;
+      return `[E] ${perkDef?.name ?? slot.perkId ?? '?'}  ${slot.cost}pt`;
+    }
+    return `[E] ミステリーボックス  ${slot.cost}pt`;
+  }
+
+  private handleZombieInteract(): void {
+    if (!this.input.wasPressed('interact')) return;
+    if (!this.player.alive || !this.zombieShopLayout) return;
+    if (this.zombieBoxAnimTimer > 0) return;
+
+    const ppos = this.player.position;
+    let bestDist = 2.2;
+    let bestSlotIdx = -1;
+
+    for (let i = 0; i < this.zombieShopGroups.length; i++) {
+      const grp = this.zombieShopGroups[i];
+      if (!grp) continue;
+      const dist = grp.position.distanceTo(ppos);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestSlotIdx = i;
+      }
+    }
+
+    if (bestSlotIdx < 0) return;
+    const slot = this.zombieShopLayout.slots[bestSlotIdx];
+    if (!slot) return;
+
+    if (!canBuy(this.zombiePoints, slot.cost)) {
+      return;
+    }
+
+    if (slot.kind === 'wall-buy') {
+      try {
+        this.zombiePoints = buyResult(this.zombiePoints, slot.cost);
+      } catch {
+        return;
+      }
+      this.switchPrimaryWeapon(slot.weaponId ?? '');
+      this.sounds.uiClick();
+    } else if (slot.kind === 'perk-machine') {
+      if (!slot.perkId) return;
+      const result = purchasePerk(this.zombieOwnedPerks, slot.perkId, this.zombiePoints);
+      if (!result.ok) return;
+      this.zombiePoints = result.remainingPoints;
+      this.zombieOwnedPerks.add(slot.perkId);
+      this.applyZombiePerk(slot.perkId);
+      this.announcements.push(PERKS[slot.perkId].name + ' 取得');
+      this.sounds.uiClick();
+    } else if (slot.kind === 'mystery-box') {
+      try {
+        this.zombiePoints = buyResult(this.zombiePoints, MYSTERY_BOX_COST);
+      } catch {
+        return;
+      }
+      const result = rollMysteryBox(Math.random.bind(Math));
+      this.zombieBoxPendingWeapon = result.weaponId;
+      this.zombieBoxAnimTimer = 1.2;
+      const grp = this.zombieShopGroups[bestSlotIdx];
+      if (grp) {
+        const pillarGeo = new THREE.CylinderGeometry(0.08, 0.08, 5, 8, 1, true);
+        const pillarMat = new THREE.MeshBasicMaterial({
+          color: 0xffd700,
+          transparent: true,
+          opacity: 0.55,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        this.zombieBoxAnimMesh = new THREE.Mesh(pillarGeo, pillarMat);
+        this.zombieBoxAnimMesh.position.set(grp.position.x, grp.position.y + 2.5, grp.position.z);
+        this.scene.add(this.zombieBoxAnimMesh);
+      }
+      if (result.boxMoves) {
+        // 移動は演出(1.2s)終了時に適用する。フラグを立てないと毎ロールで
+        // 「移動した」アナウンスが誤発火する
+        this.zombieBoxCurrentIdx = (this.zombieBoxCurrentIdx + 1) % this.zombieBoxPositions.length;
+        this.zombieBoxPendingMove = true;
+      }
+      this.sounds.uiClick();
+    }
+  }
+
+  private updateZombieBoxAnim(dt: number): void {
+    if (this.zombieBoxAnimTimer <= 0) return;
+    this.zombieBoxAnimTimer = Math.max(0, this.zombieBoxAnimTimer - dt);
+
+    if (this.zombieBoxAnimMesh) {
+      const t = this.zombieBoxAnimTimer / 1.2;
+      (this.zombieBoxAnimMesh.material as THREE.MeshBasicMaterial).opacity = 0.55 * Math.sin(t * Math.PI);
+    }
+
+    if (this.zombieBoxAnimTimer <= 0) {
+      if (this.zombieBoxPendingWeapon) {
+        // 期待感の答え合わせ: 排出武器名をアナウンス(BO2のロール演出の締め)
+        const wname =
+          WEAPON_DEFS[this.zombieBoxPendingWeapon]?.name ?? this.zombieBoxPendingWeapon;
+        this.switchPrimaryWeapon(this.zombieBoxPendingWeapon);
+        this.announcements.push(`${wname} を引き当てた！`);
+        this.zombieBoxPendingWeapon = null;
+      }
+      if (this.zombieBoxAnimMesh) {
+        this.scene.remove(this.zombieBoxAnimMesh);
+        (this.zombieBoxAnimMesh.geometry as THREE.BufferGeometry).dispose();
+        (this.zombieBoxAnimMesh.material as THREE.Material).dispose();
+        this.zombieBoxAnimMesh = null;
+      }
+      // boxMoves のロールだった時だけ箱を次候補へ移す(元位置は消灯=グループごと移動)
+      if (this.zombieBoxPendingMove) {
+        this.zombieBoxPendingMove = false;
+        const lastGrp = this.zombieShopGroups[this.zombieShopGroups.length - 1];
+        const newPos = this.zombieBoxPositions[this.zombieBoxCurrentIdx];
+        if (lastGrp && newPos) {
+          lastGrp.position.copy(newPos);
+          this.announcements.push('ミステリーボックスが移動した！');
+        }
+      }
+    }
+  }
+
+  private applyZombiePerk(perkId: ZombiePerkId): void {
+    const effect = PERKS[perkId].effect;
+    if (effect.maxHpMultiplier !== undefined) {
+      // 現在の maxHp に対する倍率(通常100→250)。基準100を固定しない=クナイ装備(maxHp300)で
+      // 購入すると 250 へ「減る」逆転を防ぐ(300→750)。purchasePerk が二重購入を弾くため非累積
+      const ratio = this.player.maxHp > 0 ? this.player.hp / this.player.maxHp : 1;
+      const newMax = Math.round(this.player.maxHp * effect.maxHpMultiplier);
+      this.player.maxHp = newMax;
+      this.player.hp = Math.max(1, Math.round(newMax * ratio));
+    }
+    if (effect.reloadMultiplier !== undefined) {
+      this.zombiePerkReloadMul *= effect.reloadMultiplier;
+      for (const w of this.weapons) {
+        w.def.reloadTacticalMs = Math.round(w.def.reloadTacticalMs * effect.reloadMultiplier);
+        w.def.reloadEmptyMs = Math.round(w.def.reloadEmptyMs * effect.reloadMultiplier);
+      }
+    }
+    if (effect.fireRateMultiplier !== undefined) {
+      this.zombiePerkFireRateMul *= effect.fireRateMultiplier;
+      for (const w of this.weapons) {
+        w.def.rpm = Math.round(w.def.rpm * effect.fireRateMultiplier);
+      }
+    }
+    if (effect.damageMultiplier !== undefined) {
+      this.zombiePerkDamageMul *= effect.damageMultiplier;
+    }
+    if (effect.moveMultiplier !== undefined) {
+      this.zombiePerkMoveMul *= effect.moveMultiplier;
+    }
+    if (effect.selfReviveCharges !== undefined) {
+      this.zombieQuickReviveCharges += effect.selfReviveCharges;
+    }
+  }
+
+  private switchPrimaryWeapon(weaponId: string): void {
+    const baseDef = WEAPON_DEFS[weaponId] ?? WEAPON_DEFS['kaede-ar']!;
+    const newDef = applyAttachments(baseDef, []);
+    if (this.zombiePerkFireRateMul !== 1) newDef.rpm = Math.round(newDef.rpm * this.zombiePerkFireRateMul);
+    if (this.zombiePerkReloadMul !== 1) {
+      newDef.reloadTacticalMs = Math.round(newDef.reloadTacticalMs * this.zombiePerkReloadMul);
+      newDef.reloadEmptyMs = Math.round(newDef.reloadEmptyMs * this.zombiePerkReloadMul);
+    }
+    const newWeapon = new Weapon(newDef);
+    newWeapon.raise();
+    (this.weapons as Weapon[])[0] = newWeapon;
+    this.activeIndex = 0;
+    this.viewModel.setWeapon(newWeapon.def);
+    this.adsLatch = false;
+  }
+
   dispose(): void {
     // BO2 ストリーク: HK エンティティを解放(scene.traverse前に手動removeが必要)
     for (const hk of this.hkEntities) {
@@ -5027,6 +5474,27 @@ export class Match {
     this.hkEntities.length = 0;
     this.atmosphere?.dispose(); // 草/フォグ/粒子/遠景/リムライトを解放(scene.traverse前)
     this.atmosphere = null;
+    // ゾンビショップオブジェクトを解放
+    for (const grp of this.zombieShopGroups) {
+      this.scene.remove(grp);
+      grp.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          if (Array.isArray(obj.material)) {
+            for (const m of obj.material) m.dispose();
+          } else {
+            obj.material.dispose();
+          }
+        }
+      });
+    }
+    this.zombieShopGroups.length = 0;
+    if (this.zombieBoxAnimMesh) {
+      this.scene.remove(this.zombieBoxAnimMesh);
+      (this.zombieBoxAnimMesh.geometry as THREE.BufferGeometry).dispose();
+      (this.zombieBoxAnimMesh.material as THREE.Material).dispose();
+      this.zombieBoxAnimMesh = null;
+    }
     this.effects.dispose();
     this.viewModel.dispose();
     for (const item of this.thrown) {

@@ -1668,7 +1668,7 @@ export class ViewModel {
     this.muzzle.add(this.flashLight);
     this.captureRig();
     // サプレッサー装着状態をキャッシュ(fire() フラッシュ減光で参照する)
-    this.isSuppressed = (def.attachmentIds ?? []).includes('suppressor');
+    this.isSuppressed = !!def.suppressed || (def.attachmentIds ?? []).includes('suppressor');
     // 各武器のサイト高さを ADS 収束 Y へ反映(attachmentIds 可変にも追従)。キャッシュ両経路後。
     this.adsY = -resolveSightY(def);
     this.adsTarget.set(ADS_X, this.adsY, ADS_Z);

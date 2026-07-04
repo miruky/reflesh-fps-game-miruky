@@ -33,6 +33,8 @@ const POSTFX_SHADER = {
     uHealth: { value: 1 }, // HP比 0..1(死へ向かうほど脱色+赤エッジ)
     uKillSurge: { value: 0 }, // キル確定サージ封筒 0..1
     uMotion: { value: 1 }, // 1=通常 / 0=省モーション(時間依存の脈動を凍結)
+    // R21 Teal & Orange カラーグレーディング(0=完全no-op・high tier のみ 0.3 を設定)
+    uGrade: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -44,7 +46,7 @@ const POSTFX_SHADER = {
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
     uniform float uTime, uVigInner, uVigOuter, uGrain, uAberration, uDesat, uHitPulse;
-    uniform float uHealth, uKillSurge, uMotion;
+    uniform float uHealth, uKillSurge, uMotion, uGrade;
     uniform vec2 uHitDir;
     uniform vec3 uHitTint;
     varying vec2 vUv;
@@ -88,6 +90,24 @@ const POSTFX_SHADER = {
         float whiteEdge = smoothstep(0.5, 1.0, r) * ks;
         col += min(whiteEdge * 0.12, 0.1);            // キャップで白飛び回避
       }
+      // R21 Teal & Orange カラーグレーディング(uGrade=0 → 完全no-op。乗算/加算がゼロで消える式)
+      // shadows→teal / highlights→warm / pow0.96コントラスト / +3%彩度
+      if (uGrade > 0.0) {
+        float gLum = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        // shadows teal: 暗部(lum<0.25)へ teal を加算
+        float shadowW = clamp(1.0 - gLum * 4.0, 0.0, 1.0);
+        col += vec3(0.0, 0.05, 0.08) * shadowW * uGrade;
+        // highlights warm: 明部(lum>0.7)へ warm を加算(白飛び防止・控えめ値)
+        float highlightW = clamp((gLum - 0.7) / 0.3, 0.0, 1.0);
+        col += vec3(0.08, 0.04, 0.0) * highlightW * uGrade;
+        // pow 0.96 コントラスト(uGrade=0 で col に縮退)
+        vec3 contrasted = pow(max(col, 0.0001), vec3(0.96));
+        col = mix(col, contrasted, uGrade);
+        // +3% 彩度(mix係数 1.03 で外挿, uGrade=0 → 係数1.0=col)
+        float gLum2 = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        col = mix(vec3(gLum2), col, 1.0 + uGrade * 0.10);
+        col = clamp(col, 0.0, 1.0); // 白飛び完全防止
+      }
       // フィルムグレイン(大係数のhashで擬似高周波、uResolution不要)
       col += (hash(vUv * 1873.0 + uTime) - 0.5) * uGrain;
       gl_FragColor = vec4(max(col, 0.0), 1.0);
@@ -130,5 +150,10 @@ export class PostFXPass extends ShaderPass {
 
   setTime(t: number): void {
     this.uniforms['uTime']!.value = t;
+  }
+
+  // R21 Teal & Orange グレーディング強度(0=no-op, high tier では 0.3 を設定)
+  setGrade(v: number): void {
+    this.uniforms['uGrade']!.value = v;
   }
 }

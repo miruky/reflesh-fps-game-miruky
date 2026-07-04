@@ -83,6 +83,7 @@ export const BO3_DEFAULT: GamepadBindings = {
   streak2: [],
   streak3: [],
   streak4: [],
+  interact: [],
   fire: [{ kind: 'trigger', index: GP.R2, threshold: TRIGGER_FIRE }],
   ads: [{ kind: 'trigger', index: GP.L2, threshold: TRIGGER_ADS }],
   weaponswitch: btn(GP.TRIANGLE),

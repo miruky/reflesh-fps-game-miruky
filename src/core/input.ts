@@ -34,7 +34,8 @@ export type Action =
   | 'streak1'
   | 'streak2'
   | 'streak3'
-  | 'streak4';
+  | 'streak4'
+  | 'interact';
 
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   forward: ['KeyW'],
@@ -54,6 +55,7 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   streak2: ['Digit4'],
   streak3: ['Digit5'],
   streak4: ['Digit6'],
+  interact: ['KeyE'],
   leanleft: ['KeyQ'],
   leanright: ['KeyE'],
   ultimate: ['KeyF'],

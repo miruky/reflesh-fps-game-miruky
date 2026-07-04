@@ -2,7 +2,7 @@ import { RADAR_RANGE_M, RETICLE_COLORS } from '../core/settings';
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
 import { MOVE_SPEEDS } from '../game/player';
-import { SUPPRESS_BADGE, ALWAYS_BADGE, starPoints, type MedalEvent } from '../game/medals';
+import { SUPPRESS_BADGE, ALWAYS_BADGE, starPoints, type MedalEvent, type MedalId } from '../game/medals';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -55,6 +55,33 @@ const DIRECTIONS: Array<[number, string]> = [
 const FEED_LIFETIME_MS = 4200;
 const PX_PER_DEG = 2.2;
 
+// ── R21 マルチキルバナー ──────────────────────────────────────────────────────────────────
+// マルチキル系メダルID(これらはバナーへルーティングし、pushMedalText/pushBadgeを出さない)
+const MULTI_KILL_IDS: ReadonlySet<MedalId> = new Set<MedalId>([
+  'double-kill', 'triple-kill', 'fury-kill', 'frenzy-kill',
+  'super-kill', 'mega-kill', 'ultra-kill', 'kill-chain',
+]);
+
+type MkCfg = {
+  pips: number;
+  color: string;
+  slamScale: number; // スラムインの強度(scale 値, 大きいほど強い)
+  chromaPx: number;  // クロマ収差のtext-shadowずれ幅(px)
+  lifetimeMs: number; // バナー表示時間(ms)
+};
+
+// 段ごとの迫力設定: white→blue→orange→red→gold へ段階的に色/強度が上がる
+const MK_CFG: Partial<Record<MedalId, MkCfg>> = {
+  'double-kill':  { pips: 2, color: '#eef2f6', slamScale: 1.20, chromaPx: 0,   lifetimeMs: 2200 },
+  'triple-kill':  { pips: 3, color: '#4ea8ff', slamScale: 1.25, chromaPx: 0.8, lifetimeMs: 2200 },
+  'fury-kill':    { pips: 4, color: '#ff9a3c', slamScale: 1.30, chromaPx: 1.4, lifetimeMs: 2400 },
+  'frenzy-kill':  { pips: 5, color: '#ff5a3c', slamScale: 1.35, chromaPx: 2.0, lifetimeMs: 2600 },
+  'super-kill':   { pips: 6, color: '#ff3a2c', slamScale: 1.38, chromaPx: 2.3, lifetimeMs: 2800 },
+  'mega-kill':    { pips: 7, color: '#ffcf4d', slamScale: 1.40, chromaPx: 2.5, lifetimeMs: 3000 },
+  'ultra-kill':   { pips: 8, color: '#ffcf4d', slamScale: 1.40, chromaPx: 2.5, lifetimeMs: 3200 },
+  'kill-chain':   { pips: 9, color: '#ffd700', slamScale: 1.40, chromaPx: 3.0, lifetimeMs: 3600 },
+};
+
 // 円形HPリングの可視弧長。r=38 の円周(2π·38≈238.76)の 240°/360°=2/3 が見える弧。
 // stroke-dasharray '159.17 238.76' と対で使い、offset=ARC*(1-hp比) で満欠を描く。
 const HP_ARC_LEN = 159.17;
@@ -75,6 +102,10 @@ export class Hud {
   private lastPipMag = -1; // 弾ピップの生成済み本数(=装弾数)。変化時のみ作り直す
   private lastPipAmmo = -1; // 弾ピップの点灯本数(=残弾)。変化時のみ点灯を更新
   private lastSsStreak = -1; // スコアストリーク段の直近キル数(変化時のみ更新)
+  private lastZombiePerks: string = '';
+  // ── R21 マルチキルバナー ──
+  private mkBannerMs = 0;   // Date.now() at last multi-kill banner show(upgrade window 判定用)
+  private mkTimerId = 0;    // setTimeout handle(自動消去・中断再設定用)
   // ── BO2 ミニマップ ──
   private minimapCtx: CanvasRenderingContext2D | null = null;
   private minimapStageSize = 60;
@@ -228,6 +259,7 @@ export class Hud {
           </div>
         </div>
       </div>
+      <div class="hud-zperks" data-id="zperks" hidden></div>
       <div class="hud-bottom-right ig-panel ig-panel--hud ig-panel--ember">
         <div class="hud-weapon-row"><span data-id="weaponslot">PRIMARY</span><strong class="hud-weapon" data-id="weapon"></strong></div>
         <div class="hud-ammo-row">
@@ -275,6 +307,13 @@ export class Hud {
         <div class="hud-move-bar"><div data-id="speedfill"></div></div>
       </div>
       <div class="hud-banner" data-id="banner"></div>
+      <!-- R21 マルチキルバナー: 画面中央上寄り。single要素再利用・スカルピップ計数器付き -->
+      <div class="hud-multikill-banner" data-id="mkbanner" hidden>
+        <div class="mk-inner">
+          <div class="mk-label" data-id="mklabel"></div>
+          <div class="mk-pips" data-id="mkpips" aria-hidden="true"></div>
+        </div>
+      </div>
       <div class="hud-medal-stack" data-id="medalstack"></div>
       <div class="hud-badge-stack" data-id="badgestack"></div>
       <div class="hud-ult" data-id="ult">
@@ -286,6 +325,7 @@ export class Hud {
         <div class="hud-ss-slot" data-id="ss1"><i class="ss-fill" data-id="ss1f"></i><b>5</b></div>
         <div class="hud-ss-slot" data-id="ss2"><i class="ss-fill" data-id="ss2f"></i><b>7</b></div>
       </div>
+      <div class="hud-zbuy" data-id="zbuy" hidden></div>
       <div class="hud-death" data-id="death" hidden>
         <div class="hud-death-title">やられた</div>
         <div class="hud-death-sub">リスポーンまで <span data-id="respawn">0.0</span> 秒</div>
@@ -310,6 +350,7 @@ export class Hud {
           <tbody data-id="scorerows"></tbody>
         </table>
       </div>
+      <div class="hud-zrevive-flash" data-id="zreviveflash"></div>
     `;
     root.querySelectorAll<HTMLElement>('[data-id]').forEach((node) => {
       this.el[node.dataset.id ?? ''] = node;
@@ -415,6 +456,19 @@ export class Hud {
     this.scopeOn = false;
     this.wasSteady = false;
     this.lastSsStreak = -1; // 段の再描画を次フレームで強制(前試合の残値を持ち越さない)
+    this.lastZombiePerks = '';
+    const zperks = this.el['zperks'];
+    if (zperks) { zperks.innerHTML = ''; zperks.hidden = true; }
+    const zbuy = this.el['zbuy'];
+    if (zbuy) { zbuy.hidden = true; zbuy.textContent = ''; }
+    // R21 マルチキルバナーのリセット(前試合の残表示・タイマーを完全クリア)
+    if (this.mkTimerId) { window.clearTimeout(this.mkTimerId); this.mkTimerId = 0; }
+    this.mkBannerMs = 0;
+    const mkbanner = this.el['mkbanner'];
+    if (mkbanner) {
+      mkbanner.hidden = true;
+      mkbanner.classList.remove('mk-enter', 'mk-punch', 'mk-exit');
+    }
     // R11 キルカメラ状態の完全クリア(試合開始/離脱で黒幕やビネットを残さない)
     document.body.classList.remove('killcam-active');
     // ファイナルキルカム オーバーレイもクリア
@@ -496,6 +550,9 @@ export class Hud {
     this.updateUlt(snap);
     this.updateScorestreak(snap);
     this.updateBO2Streaks(snap);
+    this.updateZombieShopHud(snap);
+    this.pushZombiePointFloats(snap, project);
+    this.updateZombieReviveFlash(snap);
     this.drawMinimap(snap);
 
     const scoreboard = this.el['scoreboard'];
@@ -1045,14 +1102,113 @@ export class Hud {
   }
 
   // メダル表示: 初取得=中央のバッジ解放カード / 2回目以降=左の大文字。HSは抑止(フィードのみ)
+  // R21: マルチキル系はバナーへルーティングし、従来のテキスト行/バッジには出さない
   private pushMedals(snap: MatchSnapshot): void {
     for (const m of snap.medals) {
       if (SUPPRESS_BADGE.has(m.id)) continue;
+      // マルチキル系: 専用バナーへ(pushMedalText/pushBadgeは使わない)
+      if (MULTI_KILL_IDS.has(m.id)) {
+        this.pushMultiKillBanner(m, snap.reduceMotion);
+        continue;
+      }
       // R18: レベルの高い実績(ALWAYS_BADGE=キルストリーク大台/希少偉業)は取得済みでも毎回
       // バッジを出す(達成感・気持ち良さ)。日常的に出る状況キル系・低tierは初回のみバッジ。
       if (m.firstUnlock || ALWAYS_BADGE.has(m.id)) this.pushBadge(m);
       else this.pushMedalText(m);
     }
+  }
+
+  // R21 マルチキルバナー: 画面中央上寄りに段階エスカレーション演出で表示する。
+  // 連続段更新(1.5秒以内)はバナー昇格更新(スケールパンチ+ピップ追加)。単一バナー要素を再利用。
+  private pushMultiKillBanner(m: MedalEvent, reduceMotion: boolean): void {
+    const cfg = MK_CFG[m.id];
+    if (!cfg) return;
+
+    const banner = this.el['mkbanner'];
+    if (!banner) return;
+    const label = this.el['mklabel'];
+    const pips = this.el['mkpips'];
+
+    const now = Date.now();
+    // 1.5秒以内に既バナーが表示中ならアップグレード(パンチ)。それ以外はスラムイン
+    const upgrading = !banner.hidden && (now - this.mkBannerMs) < 1500;
+
+    // 既存の消去タイマーをキャンセル
+    if (this.mkTimerId) {
+      window.clearTimeout(this.mkTimerId);
+      this.mkTimerId = 0;
+    }
+
+    // ── ラベル更新 ──
+    if (label) {
+      if (label.textContent !== m.name) label.textContent = m.name;
+      label.style.color = cfg.color;
+      // クロマ収差: 赤/青をずらした二重残像(段が上がるほど増幅)
+      if (cfg.chromaPx > 0) {
+        label.style.textShadow = [
+          `${cfg.chromaPx}px 0 0 rgba(255,30,30,0.55)`,
+          `${-cfg.chromaPx}px 0 0 rgba(30,80,255,0.50)`,
+          `0 0 26px ${cfg.color}`,
+          `0 2px 8px rgba(0,0,0,0.92)`,
+        ].join(', ');
+      } else {
+        label.style.textShadow = `0 0 26px ${cfg.color}, 0 2px 8px rgba(0,0,0,0.92)`;
+      }
+    }
+
+    // ── スカルピップ列: アセットレス inline SVG 菱形。キル数ぶん全点灯 ──
+    if (pips) {
+      const pipSvg =
+        `<svg class="mk-pip" viewBox="0 0 10 10" aria-hidden="true">` +
+        `<polygon points="5,0.5 9.5,5 5,9.5 0.5,5"` +
+        ` fill="currentColor" stroke="currentColor" stroke-width="1"/></svg>`;
+      let pipHtml = '';
+      for (let i = 0; i < cfg.pips; i += 1) pipHtml += pipSvg;
+      pips.innerHTML = pipHtml;
+      pips.style.color = cfg.color;
+    }
+
+    // スラム強度を CSS 変数で公開(keyframe が参照)
+    banner.style.setProperty('--mk-scale', String(cfg.slamScale));
+
+    if (reduceMotion) {
+      // 省モーション: アニメなし即時表示
+      banner.hidden = false;
+      banner.classList.remove('mk-enter', 'mk-punch', 'mk-exit');
+    } else if (upgrading) {
+      // アップグレード: 既存バナーをスケールパンチ
+      banner.classList.remove('mk-enter', 'mk-exit');
+      void banner.offsetWidth; // reflow でアニメ再起動
+      banner.classList.add('mk-punch');
+      banner.hidden = false;
+    } else {
+      // 新規: スラムイン
+      banner.classList.remove('mk-punch', 'mk-exit');
+      banner.hidden = false;
+      void banner.offsetWidth;
+      banner.classList.add('mk-enter');
+    }
+
+    this.mkBannerMs = now;
+
+    // 表示時間経過後に消去
+    this.mkTimerId = window.setTimeout(() => {
+      this.mkTimerId = 0;
+      if (!banner.hidden) {
+        if (reduceMotion) {
+          banner.hidden = true;
+          banner.classList.remove('mk-enter', 'mk-punch', 'mk-exit');
+        } else {
+          banner.classList.remove('mk-enter', 'mk-punch');
+          void banner.offsetWidth;
+          banner.classList.add('mk-exit');
+          window.setTimeout(() => {
+            banner.hidden = true;
+            banner.classList.remove('mk-exit');
+          }, 300);
+        }
+      }
+    }, cfg.lifetimeMs);
   }
 
   private pushBadge(m: MedalEvent): void {
@@ -1320,5 +1476,85 @@ export class Hud {
   /** フラッシュ強度(0..1)を毎フレーム更新する */
   updateFinalKillcam(flash: number): void {
     this.fkcFlashEl.style.opacity = String(flash > 0.001 ? flash : 0);
+  }
+
+  private updateZombieShopHud(snap: MatchSnapshot): void {
+    const inZombie = snap.zombieRound !== undefined;
+
+    // ── パーク所持アイコン ──
+    const zperks = this.el['zperks'];
+    if (zperks) {
+      zperks.hidden = !inZombie;
+      const key = (snap.zombiePerks ?? []).join(',');
+      if (inZombie && key !== this.lastZombiePerks) {
+        this.lastZombiePerks = key;
+        zperks.innerHTML = '';
+        const PERK_COLORS: Record<string, string> = {
+          juggernog: '#ff3333',
+          'speed-cola': '#33ffee',
+          'double-tap': '#ff9933',
+          'stamin-up': '#ffee33',
+          'quick-revive': '#3355ff',
+        };
+        const PERK_LABELS: Record<string, string> = {
+          juggernog: 'JUG',
+          'speed-cola': 'SPD',
+          'double-tap': 'DBL',
+          'stamin-up': 'STM',
+          'quick-revive': 'REV',
+        };
+        for (const pid of snap.zombiePerks ?? []) {
+          const chip = document.createElement('div');
+          chip.className = 'zp-icon';
+          chip.title = pid;
+          chip.style.setProperty('--zp-color', PERK_COLORS[pid] ?? '#fff');
+          const abbr = document.createElement('span');
+          abbr.textContent = PERK_LABELS[pid] ?? pid.slice(0, 3).toUpperCase();
+          chip.appendChild(abbr);
+          zperks.appendChild(chip);
+        }
+      }
+    }
+
+    // ── 購入プロンプト ──
+    const zbuy = this.el['zbuy'];
+    if (zbuy) {
+      const prompt = snap.zombieShopPrompt;
+      zbuy.hidden = !inZombie || !prompt;
+      if (inZombie && prompt) {
+        const text = prompt.label;
+        if (zbuy.dataset.label !== text || zbuy.dataset.afford !== String(prompt.canAfford)) {
+          zbuy.dataset.label = text;
+          zbuy.dataset.afford = String(prompt.canAfford);
+          zbuy.textContent = text;
+          zbuy.classList.toggle('zbuy-broke', !prompt.canAfford);
+        }
+      }
+    }
+  }
+
+  private pushZombiePointFloats(snap: MatchSnapshot, project: Project): void {
+    if (!snap.zombiePointFloats?.length) return;
+    const layer = this.el['dmg'];
+    if (!layer) return;
+    for (const pf of snap.zombiePointFloats) {
+      const pt = project(pf.world);
+      if (pt.behind) continue;
+      const node = document.createElement('span');
+      node.className = 'hud-zpfloat';
+      node.textContent = `+${pf.amount}`;
+      node.style.left = `${pt.x}px`;
+      node.style.top = `${pt.y - 30}px`;
+      layer.appendChild(node);
+      requestAnimationFrame(() => node.classList.add('rise'));
+      window.setTimeout(() => node.remove(), 900);
+    }
+  }
+
+  private updateZombieReviveFlash(snap: MatchSnapshot): void {
+    const el = this.el['zreviveflash'];
+    if (!el) return;
+    const v = snap.zombieReviveFlash ?? 0;
+    el.style.opacity = v > 0.001 ? String(v) : '0';
   }
 }

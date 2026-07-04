@@ -9904,3 +9904,196 @@ body.killcam-active .hud-death {
     animation: none;
   }
 }
+
+/* ── ゾンビ経済 HUD ──────────────────────────────────────────────────────────── */
+
+/* パーク所持アイコン列(左下・HPパネルの上) */
+.hud-zperks {
+  position: absolute;
+  left: 22px;
+  bottom: 150px; /* HPパネル(bottom:22 + 高さ)の上 */
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  pointer-events: none;
+}
+
+/* 菱形チップ: clip-path は border/box-shadow ごと切り抜くため輪郭線に頼らず、
+   パーク色を混ぜた面 + クリップ後に効く drop-shadow の発光で色を示す */
+.zp-icon {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--zp-color, #fff) 32%, rgba(6, 10, 14, 0.92));
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); /* 菱形 */
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--zp-color, #fff) 65%, transparent));
+}
+
+.zp-icon span {
+  font-family: var(--mono, monospace);
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #f3f5f7;
+  text-shadow: 0 0 5px var(--zp-color, #fff);
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* 購入プロンプト(画面中央下) */
+.hud-zbuy {
+  position: absolute;
+  bottom: 160px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.62);
+  border: 1px solid rgba(255, 200, 60, 0.55);
+  border-radius: 3px;
+  padding: 5px 14px;
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: #f4c05a;
+  text-shadow: 0 0 8px rgba(244, 192, 90, 0.5);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.hud-zbuy.zbuy-broke {
+  border-color: rgba(255, 80, 60, 0.5);
+  color: #ff5a3c;
+  text-shadow: none;
+}
+
+/* +N ゾンビポイントフロート(緑系)。インラインの left/top は起点固定に使い、
+   上昇は transform で行う(インライン top はクラスの top 指定より優先されるため) */
+.hud-zpfloat {
+  position: absolute;
+  font-family: var(--display, sans-serif);
+  font-size: 18px;
+  font-weight: 700;
+  color: #44ff88;
+  text-shadow: 0 0 8px rgba(40, 220, 100, 0.8);
+  transform: translate(-50%, 0);
+  opacity: 1;
+  transition:
+    transform 0.7s ease-out,
+    opacity 0.7s ease-out;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-zpfloat.rise {
+  opacity: 0;
+  transform: translate(-50%, -40px);
+}
+
+/* クイックリバイブ復活フラッシュ(青白) */
+.hud-zrevive-flash {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(40, 120, 255, 0.7) 0%, rgba(100, 180, 255, 0.3) 50%, transparent 80%);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 120;
+}
+
+/* ── R21 マルチキルバナー: BO2 エスカレーション演出 ─────────────────────────────────── */
+/* 画面中央上寄り(14%)。コンパス帯より下・アナウンス帯(22%)より上 */
+.hud-multikill-banner {
+  position: absolute;
+  left: 50%;
+  top: 14%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  text-align: center;
+  z-index: 40;
+}
+
+.hud-multikill-banner[hidden] {
+  display: none;
+}
+
+/* ラベル+ピップを縦積みにする内側コンテナ(アニメはこちらに乗せる) */
+.mk-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  will-change: transform, opacity;
+}
+
+.mk-label {
+  font-family: var(--display);
+  font-size: 46px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-indent: 0.07em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* スカルピップ列: inline SVG 菱形が段数ぶん並ぶ */
+.mk-pips {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.mk-pip {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 3px currentColor);
+}
+
+/* ── アニメーション ────────────────────────────────────── */
+/* スラムイン: scale --mk-scale → 1。強さは JS の --mk-scale で段階制御 */
+.hud-multikill-banner.mk-enter .mk-inner {
+  animation: mk-slam 0.18s cubic-bezier(0.08, 1.4, 0.3, 1) both;
+}
+
+/* アップグレードパンチ: 既存バナーのその場スケール再起動 */
+.hud-multikill-banner.mk-punch .mk-inner {
+  animation: mk-punch 0.15s cubic-bezier(0.08, 1.5, 0.3, 1) both;
+}
+
+/* フェードアウト */
+.hud-multikill-banner.mk-exit .mk-inner {
+  animation: mk-fade 0.28s ease forwards;
+}
+
+@keyframes mk-slam {
+  0%   { opacity: 0; transform: scale(var(--mk-scale, 1.4)); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes mk-punch {
+  0%   { transform: scale(var(--mk-scale, 1.25)); }
+  100% { transform: scale(1); }
+}
+
+@keyframes mk-fade {
+  to { opacity: 0; transform: translateY(-8px); }
+}
+
+/* 省モーション: アニメを無効化して即時表示/非表示 */
+:root.reduce-motion .hud-multikill-banner.mk-enter .mk-inner,
+:root.reduce-motion .hud-multikill-banner.mk-punch .mk-inner,
+:root.reduce-motion .hud-multikill-banner.mk-exit .mk-inner {
+  animation: none;
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-multikill-banner.mk-enter .mk-inner,
+  .hud-multikill-banner.mk-punch .mk-inner,
+  .hud-multikill-banner.mk-exit .mk-inner {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -342,6 +342,20 @@ const loop = new GameLoop(
     const nav = input.consumeUiNav();
     if (mode !== 'playing') menu.handleGamepad(nav);
     if (match) {
+      // match.over の検出を frame() より前に持ち上げ、突入フレームで frame() を呼ばないことで
+      // effects.update の二重呼び出し(frame 内 + advanceFinalKillcam 内)を防ぐ。
+      // match.over は前フレームの frame() 内で true になるため、次フレーム冒頭で確実に捕捉できる。
+      if (mode === 'playing' && match.over) {
+        input.exitLock();
+        sounds.stopAmbience(); // リザルト画面で戦場の環境音が鳴り続けないように
+        // R19: ファイナルキルカムが適用できる試合かを確認してから分岐する
+        if (match.startFinalKillcam()) {
+          mode = 'finalkillcam';
+          hud.showFinalKillcam();
+        } else {
+          showResult();
+        }
+      }
       // finalkillcam 中は advanceFinalKillcam が effects/atmosphere を自分で進めるので
       // frame() を呼ばない(effects.update の二重呼び出しによるトレーサー早期消滅を防ぐ)
       if (mode !== 'finalkillcam') match.frame(dt, mode === 'playing');
@@ -375,17 +389,6 @@ const loop = new GameLoop(
             el.style.filter = 'none';
             chromaTimer = 0;
           }, 150);
-        }
-        if (match.over) {
-          input.exitLock();
-          sounds.stopAmbience(); // リザルト画面で戦場の環境音が鳴り続けないように
-          // R19: ファイナルキルカムが適用できる試合かを確認してから分岐する
-          if (match.startFinalKillcam()) {
-            mode = 'finalkillcam';
-            hud.showFinalKillcam();
-          } else {
-            showResult();
-          }
         }
       }
       // R19: ファイナルキルカム再生フェーズ
