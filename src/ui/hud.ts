@@ -201,7 +201,7 @@ export class Hud {
           <circle class="sc-lock" r="5"></circle>
         </svg>
       </div>
-      <div class="hud-hitmarker" data-id="hitmarker"><span></span><span></span><span></span><span></span></div>
+      <div class="hud-hitmarker" data-id="hitmarker"><span></span><span></span><span></span><span></span><span class="hm-diamond"></span></div>
       <div class="hud-reload" data-id="reload" hidden>
         <div class="hud-reload-bar"><div data-id="reloadfill"></div></div>
         <span>リロード中</span>
@@ -775,14 +775,19 @@ export class Hud {
   private pushHits(snap: MatchSnapshot): void {
     const marker = this.el['hitmarker'];
     if (!marker || snap.hits.length === 0) return;
+    // R20 ティア言語: snipe > kill > head > hit > limb(最弱)を1段だけ選ぶ。
+    // 'limb'はmatch.ts側の配線待ちだが、HUDのティア対応(クラス/CSS)は先に用意しておく
+    // (MatchSnapshot.hits の型は既に 'limb' を含む)。
     const strongest = snap.hits.includes('snipe')
       ? 'hm-snipe'
       : snap.hits.includes('kill')
         ? 'hm-kill'
         : snap.hits.includes('head')
           ? 'hm-head'
-          : 'hm-hit';
-    marker.classList.remove('hm-hit', 'hm-head', 'hm-kill', 'hm-snipe', 'show');
+          : snap.hits.includes('hit')
+            ? 'hm-hit'
+            : 'hm-limb';
+    marker.classList.remove('hm-hit', 'hm-head', 'hm-kill', 'hm-snipe', 'hm-limb', 'show');
     void marker.offsetWidth;
     marker.classList.add(strongest, 'show');
 
@@ -794,6 +799,15 @@ export class Hud {
         strongest === 'hm-snipe' ? 'hud-kill-ring hud-kill-ring--snipe' : 'hud-kill-ring';
       this.root.appendChild(ring);
       window.setTimeout(() => ring.remove(), 220);
+    }
+    // R20 hm-kill: 6本の細針が中心から弾ける高速な放射スパーク(kill-ringと同型のDOM+寿命)。
+    // reduceMotion時はスキーム全体を出さない(spawnゲート=CSSアニメも走らない)
+    if (strongest === 'hm-kill' && !snap.reduceMotion) {
+      const spark = document.createElement('span');
+      spark.className = 'hud-hit-spark';
+      spark.innerHTML = '<i></i><i></i><i></i><i></i><i></i><i></i>';
+      this.root.appendChild(spark);
+      window.setTimeout(() => spark.remove(), 200);
     }
   }
 

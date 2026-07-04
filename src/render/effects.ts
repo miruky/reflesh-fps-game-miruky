@@ -19,6 +19,8 @@ export class Effects {
   private flames: Timed<THREE.Group>[] = [];
   private sparks: Timed<THREE.Group>[] = [];
   private flares: Timed<THREE.Mesh>[] = [];
+  private rings: Timed<THREE.Mesh>[] = []; // 素手ウルトの拡大衝撃リング/刃閃フラッシュ
+  private streaks: Timed<THREE.Group>[] = []; // 素手ウルトの放射状クラック斬撃
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -26,6 +28,10 @@ export class Effects {
   private readonly blastGeometry = new THREE.SphereGeometry(1, 12, 10);
   private readonly sparkGeometry = new THREE.BoxGeometry(0.05, 0.05, 0.05);
   private readonly flareGeometry = new THREE.SphereGeometry(0.13, 10, 8);
+  // 単位リング(外半径1)。scale で任意半径へ拡大する共有ジオメトリ
+  private readonly ringGeometry = new THREE.RingGeometry(0.8, 1.0, 44);
+  // 単位クラック(長手Z=1)。scale.z で伸長する共有ジオメトリ
+  private readonly streakGeometry = new THREE.BoxGeometry(0.04, 0.02, 1);
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -160,6 +166,82 @@ export class Effects {
     }
     this.scene.add(group);
     this.sparks.push({ obj: group, life: 0.7, maxLife: 0.7 });
+  }
+
+  // 素手ウルト(残刃・大破斬)専用の衝撃波演出。center は足元(地面高さ)を渡す。
+  // (1)地を走る拡大リング×2(主+追走)、(2)中心の一瞬の刃閃フラッシュ、(3)放射状に
+  // 地を裂くクラック斬撃×10。全て加算・depthWrite:false・プール寿命管理で、既存fx同等の
+  // 軽量予算(リング3+クラック10=1グループ)。共有ジオメトリを scale で拡大するだけ。
+  shockwaveRing(center: THREE.Vector3, radius: number, color: number): void {
+    const gy = center.y;
+    // (1) 地面を走る拡大リング(主=太く速く/追走=薄く遅く)
+    const ringSpecs = [
+      { target: radius, life: 0.55, opacity: 0.92, y: 0.06 },
+      { target: radius * 0.72, life: 0.78, opacity: 0.5, y: 0.05 },
+    ];
+    for (const rs of ringSpecs) {
+      const ring = new THREE.Mesh(
+        this.ringGeometry,
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: rs.opacity,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      );
+      ring.position.set(center.x, gy + rs.y, center.z);
+      ring.rotation.x = -Math.PI / 2;
+      ring.scale.setScalar(radius * 0.18);
+      ring.userData.targetScale = rs.target;
+      ring.userData.baseOpacity = rs.opacity;
+      this.scene.add(ring);
+      this.rings.push({ obj: ring, life: rs.life, maxLife: rs.life });
+    }
+    // (2) 中心の刃閃(垂直の高速フラッシュリング)
+    const flash = new THREE.Mesh(
+      this.ringGeometry,
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    flash.position.set(center.x, gy + 0.9, center.z);
+    flash.scale.setScalar(0.2);
+    flash.userData.targetScale = radius * 0.5;
+    flash.userData.baseOpacity = 0.9;
+    this.scene.add(flash);
+    this.rings.push({ obj: flash, life: 0.2, maxLife: 0.2 });
+    // (3) 放射状に地を裂くクラック斬撃
+    const group = new THREE.Group();
+    group.position.set(center.x, gy + 0.04, center.z);
+    const n = 10;
+    for (let i = 0; i < n; i += 1) {
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.25;
+      const streak = new THREE.Mesh(
+        this.streakGeometry,
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.95,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      );
+      streak.rotation.y = a; // 単位クラックの長手(-Z)を放射方向へ向ける
+      streak.userData.len = radius * (0.7 + Math.random() * 0.3);
+      streak.userData.dir = new THREE.Vector2(Math.sin(a), Math.cos(a));
+      streak.scale.z = 0.01;
+      group.add(streak);
+    }
+    this.scene.add(group);
+    this.streaks.push({ obj: group, life: 0.5, maxLife: 0.5 });
   }
 
   smokeCloud(point: THREE.Vector3, radius: number, durationS: number): void {
@@ -300,6 +382,25 @@ export class Effects {
       flare.scale.setScalar(1 + (1 - ratio) * 1.5);
       (flare.material as THREE.MeshBasicMaterial).opacity = 0.95 * ratio;
     });
+    this.rings = this.tick(this.rings, dt, (ring, ratio) => {
+      // 誕生時(ratio=1)は小さく、寿命末(ratio→0)へ向けて target まで一気に拡大して据わる
+      const target = (ring.userData.targetScale as number) ?? 1;
+      const grown = target * (1 - ratio * ratio);
+      ring.scale.setScalar(Math.max(ring.scale.x, grown));
+      (ring.material as THREE.MeshBasicMaterial).opacity =
+        ((ring.userData.baseOpacity as number) ?? 0.9) * ratio;
+    });
+    this.streaks = this.tick(this.streaks, dt, (group, ratio) => {
+      const grow = 1 - ratio * ratio; // 中心から外へ走る
+      for (const child of group.children) {
+        const mesh = child as THREE.Mesh;
+        const len = (mesh.userData.len as number) * grow;
+        const dir = mesh.userData.dir as THREE.Vector2;
+        mesh.scale.z = Math.max(0.01, len);
+        mesh.position.set(dir.x * len * 0.5, 0, dir.y * len * 0.5);
+        (mesh.material as THREE.MeshBasicMaterial).opacity = 0.95 * ratio;
+      }
+    });
     this.flames = this.tick(this.flames, dt, (group, ratio) => {
       const t = performance.now() / 1000;
       for (const child of group.children) {
@@ -320,11 +421,11 @@ export class Effects {
 
   clear(): void {
     this.hideTrajectory();
-    for (const list of [this.tracers, this.puffs, this.decals, this.blasts, this.flares]) {
+    for (const list of [this.tracers, this.puffs, this.decals, this.blasts, this.flares, this.rings]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
-    for (const list of [this.clouds, this.flames, this.sparks]) {
+    for (const list of [this.clouds, this.flames, this.sparks, this.streaks]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
@@ -339,6 +440,8 @@ export class Effects {
     this.blastGeometry.dispose();
     this.sparkGeometry.dispose();
     this.flareGeometry.dispose();
+    this.ringGeometry.dispose();
+    this.streakGeometry.dispose();
   }
 
   private tick<T extends THREE.Object3D>(
@@ -369,7 +472,9 @@ export class Effects {
           node.geometry !== this.cloudGeometry &&
           node.geometry !== this.blastGeometry &&
           node.geometry !== this.sparkGeometry &&
-          node.geometry !== this.flareGeometry
+          node.geometry !== this.flareGeometry &&
+          node.geometry !== this.ringGeometry &&
+          node.geometry !== this.streakGeometry
         ) {
           node.geometry.dispose();
         }

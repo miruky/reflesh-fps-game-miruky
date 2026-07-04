@@ -706,7 +706,8 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     // 柄頭 + クナイらしいリング
     steel(new THREE.BoxGeometry(0.026, 0.026, 0.02), metalVC, C_DARK, 'gradY', 0, 0, -0.03);
     steel(new THREE.TorusGeometry(0.02, 0.005, 6, 10), metalVC, C_DARK, 'gradY', 0, 0, -0.008);
-    // 順手グリップ・切先やや上の構え
+    // 順手グリップ・切先やや上の構え(rest)。ADS で逆手へ倒すため vm:kunai として名付ける
+    blade.name = FIST_KUNAI;
     blade.position.set(0.02, -0.05, 0);
     blade.rotation.set(-0.12, 0.06, 0);
     gun.add(blade);
@@ -1566,6 +1567,31 @@ interface MovableRig {
   forend?: THREE.Object3D; // ポンプ・フォアエンド(前後)
 }
 
+// ── クナイ(素手)ADS 逆手ダガー構え ─────────────────────────────────────
+// 通常(腰だめ)は順手で刃を前方(-Z)へ。ADS 右クリックで「逆手グリップ(刃を下・
+// 後ろへ)+右前腕を胸前で横に構える」=進撃の巨人「心臓を捧げよ」風の暗殺者スタンスへ。
+// rest(腰だめ)= buildGunBody/buildGun がメッシュを配置する実値、ads = 逆手構えの目標値を
+// この1表に集約し、ViewModel.update が adsProgress(視覚イーズ後)で rest→ads を線形補間する。
+// 銃(非fists)は該当 vm:* ノードを持たないため完全に非干渉。射線(muzzle)/resolveSightY 契約も不変。
+interface FistPose {
+  name: string;
+  rest: { p: [number, number, number]; r: [number, number, number] };
+  ads: { p: [number, number, number]; r: [number, number, number] };
+}
+const FIST_KUNAI = 'vm:kunai';
+const FIST_POSES: FistPose[] = [
+  // 刃: 順手(切先-Z前方)→ 逆手(切先を下〜後ろへ倒し、刃腹をカメラへロール)
+  { name: FIST_KUNAI, rest: { p: [0.02, -0.05, 0], r: [-0.12, 0.06, 0] }, ads: { p: [-0.05, -0.02, -0.02], r: [-2.0, 0.15, 0.5] } },
+  // 右前腕: 右下から胸前へ持ち上げ、Yヨーで画面を横切る水平構えへ(捧げよ心臓)
+  { name: 'vm:fistRArm', rest: { p: [0.08, -0.2, 0.12], r: [0.5, -0.12, 0] }, ads: { p: [0.0, -0.11, 0.04], r: [0.12, 0.95, 0.12] } },
+  // 右手: 逆手グリップへ回り込む
+  { name: 'vm:fistRHand', rest: { p: [0.02, -0.07, -0.09], r: [0.2, 0.05, 0] }, ads: { p: [-0.05, -0.03, -0.04], r: [0.85, 0.1, 0.35] } },
+  // 左前腕: 添え手を引いて胸前を空ける
+  { name: 'vm:fistLArm', rest: { p: [-0.1, -0.16, -0.02], r: [0.42, 0.24, 0.1] }, ads: { p: [-0.16, -0.24, 0.16], r: [0.6, 0.15, -0.05] } },
+  // 左手: 引く
+  { name: 'vm:fistLHand', rest: { p: [-0.11, -0.09, -0.16], r: [0.25, 0.1, 0] }, ads: { p: [-0.17, -0.16, 0.04], r: [0.3, 0, 0] } },
+];
+
 // カメラ直付けの一人称武器モデル。procedural な銃本体に一人称腕を足し、
 // スウェイ・ボブ・リコイルキック・リロードを手続きで動かす。
 export class ViewModel {
@@ -1598,6 +1624,8 @@ export class ViewModel {
   private sprintLower = 0;
   // 可動ノード(vm:*)の参照 + メカアニメ状態。root には触れずローカルのみ動かす(スコープイン非干渉)。
   private rig: MovableRig = {};
+  // クナイ(素手)ADS逆手ポーズの対象ノード束。非fistsでは空(該当ノードが無いため)。
+  private fistNodes: { node: THREE.Object3D; pose: FistPose }[] = [];
   private mechTimer = 0; // slide/bolt/charging/forend の1サイクル残時間(0.16s)
   private cylTarget = 0; // シリンダ目標角(発砲ごとに -60°)
   private cylCur = 0; // シリンダ現在角(補間)
@@ -1653,6 +1681,18 @@ export class ViewModel {
           forend: g.getObjectByName('vm:forend'),
         }
       : {};
+    // クナイ逆手ポーズ対象を捕捉(該当ノードが無い銃では空=非干渉)。restへ復帰させておく。
+    this.fistNodes = [];
+    if (g) {
+      for (const pose of FIST_POSES) {
+        const node = g.getObjectByName(pose.name);
+        if (node) {
+          node.position.set(pose.rest.p[0], pose.rest.p[1], pose.rest.p[2]);
+          node.rotation.set(pose.rest.r[0], pose.rest.r[1], pose.rest.r[2]);
+          this.fistNodes.push({ node, pose });
+        }
+      }
+    }
     this.mechTimer = 0;
     this.cylTarget = 0;
     this.cylCur = 0;
@@ -1690,10 +1730,15 @@ export class ViewModel {
     if (def.shape === 'fists') {
       // クナイ(ダガー): 右手が柄(局所 z≈-0.10)を順手で握り、左手は添え手として前方へ構える。
       // 銃握り位置の手を流用せず、柄の位置に手首を合わせる専用配置。
+      // vm:fist* として名付け、update が rest↔逆手ADS を補間する(FIST_POSES の rest と一致)
       const rArmF = limb(sleeve, 0.08, 0.08, 0.32, 0.08, -0.2, 0.12, 0.5, -0.12, 0);
+      rArmF.name = 'vm:fistRArm';
       const rHandF = limb(glove, 0.06, 0.07, 0.1, 0.02, -0.07, -0.09, 0.2, 0.05, 0);
+      rHandF.name = 'vm:fistRHand';
       const lArmF = limb(sleeve, 0.08, 0.08, 0.3, -0.1, -0.16, -0.02, 0.42, 0.24, 0.1);
+      lArmF.name = 'vm:fistLArm';
       const lHandF = limb(glove, 0.065, 0.06, 0.09, -0.11, -0.09, -0.16, 0.25, 0.1, 0);
+      lHandF.name = 'vm:fistLHand';
       gun.add(rArmF, rHandF, lArmF, lHandF);
       return { gun, muzzle };
     }
@@ -1841,6 +1886,29 @@ export class ViewModel {
     // 視覚ADSはeaseOutQuintで「素早く構えて最後に据わる」BO2の所作にする。
     // ゲームプレイ(スプレッド/QS判定)は線形adsのままなので挙動は不変
     const adsVis = 1 - Math.pow(1 - ads, 5);
+
+    // クナイ(素手)逆手ダガー構え: rest(順手・腰だめ)↔ads(逆手・胸前水平)を adsVis で補間。
+    // 各ノードはローカル変形のみ(root非関与=射線/収束Y/スコープ所作に無干渉)。非fistsは空でスキップ。
+    if (this.fistNodes.length) {
+      const p = adsVis;
+      for (const { node, pose } of this.fistNodes) {
+        const rp = pose.rest.p;
+        const ap = pose.ads.p;
+        const rr = pose.rest.r;
+        const ar = pose.ads.r;
+        node.position.set(
+          rp[0] + (ap[0] - rp[0]) * p,
+          rp[1] + (ap[1] - rp[1]) * p,
+          rp[2] + (ap[2] - rp[2]) * p,
+        );
+        node.rotation.set(
+          rr[0] + (ar[0] - rr[0]) * p,
+          rr[1] + (ar[1] - rr[1]) * p,
+          rr[2] + (ar[2] - rr[2]) * p,
+        );
+      }
+    }
+
     const pos = this._pos.lerpVectors(HIP_POSITION, this.adsTarget, adsVis);
     // BO2 DSR: 所作を「順序化」する。同時進行だとZラッシュが支配して正面から
     // 迫って見えるため、(1)右で構える→(2)右から中央へ横スイープ→(3)中央到達後に

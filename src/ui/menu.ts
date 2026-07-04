@@ -451,6 +451,50 @@ function computeDerivedStats(def: WeaponDef): {
   return { dps, shotsToKill, effRpm: def.rpm, ttk };
 }
 
+// ── R20 戦闘評価(After-Action Report のシジル)──────────────────────
+// 命中率 / K・D / ヘッドショット / 勝敗 /(モード別)連鎖から純算術で S〜D を算出。
+// ティア色は既存メダルパレット(--medal-gold/plat/cyan/violet)、最下位Dは無彩スチール。
+type GradeTier = 'gold' | 'plat' | 'cyan' | 'violet' | 'steel';
+interface GradeInfo {
+  letter: string;
+  tier: GradeTier;
+  score: number; // 0..100(下部の PTS カウントアップ用)
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+// 面取り六角形の頂点(真上向き)。hud.ts の ngonPoints と同型(menu へ複製)
+function hexPoints(cx: number, cy: number, r: number): string {
+  const pts: string[] = [];
+  for (let i = 0; i < 6; i += 1) {
+    const a = (Math.PI / 3) * i - Math.PI / 2;
+    pts.push(`${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`);
+  }
+  return pts.join(' ');
+}
+
+function computeGrade(result: MatchResult): GradeInfo {
+  const you = result.rows.find((r) => r.isPlayer);
+  const kills = you?.kills ?? result.summary.kills;
+  const deaths = you?.deaths ?? result.summary.deaths;
+  const kd = deaths > 0 ? kills / deaths : kills; // 0デスはキル数をそのまま比とみなす
+  // 配点は満点100(勝敗22 / K・D26 / 命中20 / キル数18 / HS8 / 連鎖6)。全て純算術・決定論。
+  const score =
+    (result.won ? 22 : 0) +
+    clamp01(kd / 2) * 26 +
+    clamp01(result.accuracy / 0.45) * 20 +
+    clamp01(kills / 18) * 18 +
+    clamp01(result.headshots / 8) * 8 +
+    clamp01(result.summary.bestStreak / 6) * 6;
+  if (score >= 86) return { letter: 'S', tier: 'gold', score };
+  if (score >= 70) return { letter: 'A', tier: 'plat', score };
+  if (score >= 54) return { letter: 'B', tier: 'cyan', score };
+  if (score >= 38) return { letter: 'C', tier: 'violet', score };
+  return { letter: 'D', tier: 'steel', score };
+}
+
 export class Menu {
   private selection: MenuSelection = {
     stageId: STAGES[0]?.id ?? 'kunren',
@@ -475,6 +519,7 @@ export class Menu {
   private bg: SpaceBg | null = null; // メニュー背景の宇宙(ページ連動カメラ)。attachBgで注入
   private wipeTimer = 0; // 画面遷移ワイプのフォールバックタイマ(animationend不発でも畳む)
   private mfdWiped = false; // 初回マウントはワイプ抑止(ベゼル入場と二重演出にしない)
+  private gradeSeq = 0; // 戦闘評価シジルの一意ID用カウンタ(gradient/filterのid衝突回避)
 
   constructor(
     private readonly root: HTMLElement,
@@ -1203,6 +1248,9 @@ export class Menu {
     this.teardownPreview();
     this.root.hidden = false;
     const mvp = result.rows[0];
+    const you = result.rows.find((r) => r.isPlayer);
+    const youKills = you?.kills ?? result.summary.kills;
+    const grade = computeGrade(result);
     const rowsHtml = result.rows
       .map(
         (row) => `
@@ -1214,17 +1262,32 @@ export class Menu {
     const teamScoreHtml = result.teamScores
       ? `<p class="result-teamscore"><span class="ts-mine" data-id="tsmine">0</span> - <span class="ts-enemy" data-id="tsenemy">0</span></p>`
       : '';
+    // monoテレメトリ見出し: モード / OPR LV / 日付(所要時間はMatchResultに無いため計上しない)
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, '0')}.${String(now.getDate()).padStart(2, '0')}`;
     this.root.innerHTML = `
       <div class="menu-screen menu-result${result.won ? ' result-won' : ''}">
         <div class="result-panel" role="dialog" aria-modal="true" aria-label="試合結果">
-          <p class="result-mode">${result.modeName}</p>
-          <h1 data-en="${result.won ? 'VICTORY' : 'DEFEAT'}">${result.won ? '勝利' : '敗北'}</h1>
+          <div class="aar-telemetry" aria-hidden="true">
+            <span class="aar-tele-mode">${result.modeName}</span>
+            <span class="aar-tele-item">OPR <b>LV.${progress.levelAfter.level}</b></span>
+            <span class="aar-tele-item">${dateStr}</span>
+            <span class="aar-tele-live">AFTER-ACTION</span>
+          </div>
+          <div class="aar-hero ig-scan">
+            <div class="aar-verdict">
+              <h1 data-en="${result.won ? 'VICTORY' : 'DEFEAT'}">${result.won ? '勝利' : '敗北'}</h1>
+              <p class="result-mvp">MVP: ${mvp ? mvp.name : '-'}</p>
+            </div>
+            ${this.gradeSigilHtml(grade)}
+          </div>
           ${teamScoreHtml}
-          <p class="result-mvp">MVP: ${mvp ? mvp.name : '-'}</p>
-          <p class="result-stats">
-            <span class="stat-cell">ACC<b>${(result.accuracy * 100).toFixed(1)}%</b></span>
-            <span class="stat-cell">HS<b>${result.headshots}</b></span>
-          </p>
+          <div class="aar-grid">
+            <div class="aar-cell"><span class="aar-k">命中率</span><span class="aar-v"><b data-id="aar-acc">0</b><em>%</em></span></div>
+            <div class="aar-cell"><span class="aar-k">ヘッドショット</span><span class="aar-v"><b data-id="aar-hs">0</b></span></div>
+            <div class="aar-cell"><span class="aar-k">キル</span><span class="aar-v"><b data-id="aar-kills">0</b></span></div>
+            <div class="aar-cell"><span class="aar-k">最長連鎖</span><span class="aar-v"><b data-id="aar-streak">0</b></span></div>
+          </div>
           <table class="result-table">
             <thead><tr><th>名前</th><th>キル</th><th>デス</th></tr></thead>
             <tbody>${rowsHtml}</tbody>
@@ -1245,7 +1308,43 @@ export class Menu {
       this.countUp(this.query('tsmine'), result.teamScores.mine, 650);
       this.countUp(this.query('tsenemy'), result.teamScores.enemy, 650);
     }
+    // 2×2計器 + 評価スコアのカウントアップ(reduce時はcountUp内で即値へ着地)
+    this.countUp(this.query('aar-acc'), Math.round(result.accuracy * 100));
+    this.countUp(this.query('aar-hs'), result.headshots);
+    this.countUp(this.query('aar-kills'), youKills);
+    this.countUp(this.query('aar-streak'), result.summary.bestStreak);
+    this.countUp(this.query('aar-score'), Math.round(grade.score));
     this.query('restart').focus({ preventScroll: true });
+  }
+
+  // 戦闘評価シジル: 面取り六角の刻印にティア色の大グレード1文字。ベベルはSVG内グラデ+
+  // feDropShadowグロー(CSS filterはリング回転で毎フレーム再計算されるため使わない)。
+  // 細いティックリングは別要素として回転(reduce時はCSS側でアニメごと停止=静止)。
+  private gradeSigilHtml(grade: GradeInfo): string {
+    const id = `aar${this.gradeSeq++}`;
+    return `
+      <div class="aar-grade aar-grade--${grade.tier}" role="img" aria-label="戦闘評価 ${grade.letter}">
+        <svg viewBox="0 0 120 120" class="aar-grade-svg" aria-hidden="true">
+          <defs>
+            <radialGradient id="${id}g" cx="50%" cy="38%" r="66%">
+              <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
+              <stop offset="0.45" stop-color="currentColor" stop-opacity="0.82"/>
+              <stop offset="1" stop-color="#080b0f" stop-opacity="0.96"/>
+            </radialGradient>
+            <filter id="${id}f" x="-30%" y="-30%" width="160%" height="160%">
+              <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="currentColor" flood-opacity="0.75"/>
+            </filter>
+          </defs>
+          <circle class="aar-grade-ring" cx="60" cy="60" r="55" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="1.6 6.6"/>
+          <g filter="url(#${id}f)">
+            <polygon class="aar-grade-bevel" points="${hexPoints(60, 60, 48)}" fill="url(#${id}g)" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+            <polygon class="aar-grade-inner" points="${hexPoints(60, 60, 39)}" fill="none" stroke="currentColor" stroke-width="1" opacity="0.5"/>
+            <text class="aar-grade-letter" x="60" y="62" text-anchor="middle" dominant-baseline="central">${grade.letter}</text>
+          </g>
+        </svg>
+        <span class="aar-grade-cap">戦闘評価</span>
+        <span class="aar-grade-score"><b data-id="aar-score">0</b><i>PTS</i></span>
+      </div>`;
   }
 
   // リザルト下部の獲得XP・レベル・レート変動の表示

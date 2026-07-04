@@ -7329,6 +7329,205 @@ tr.score-ally td {
   margin-right: 10px;
 }
 
+/* ── R20 After-Action Report: 管制言語への全面改鋳(毎試合見る最重要面を格上げ) ── */
+/* パネルへ走査(scan)を合成 + ブラケットを1段長く(ヒーロー面としての格) */
+.result-panel {
+  --bk-len: 26px;
+}
+.result-panel::before {
+  /* 既存の外周1px線(border)は据え置き、背景にグレイン+走査ラインを重ねる */
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 2px, rgba(0, 0, 0, 0.06) 2px 3px),
+    var(--noise-img);
+}
+
+/* monoテレメトリ見出し: モード / OPR LV / 日付 + AFTER-ACTION 標識 */
+.aar-telemetry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin-bottom: 14px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.aar-tele-mode {
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+.aar-tele-mode::before {
+  content: '// ';
+  color: var(--ember);
+  letter-spacing: 0;
+}
+.aar-tele-item b {
+  color: var(--signal);
+}
+.aar-tele-live {
+  margin-left: auto;
+  color: var(--signal);
+  border: 1px solid var(--signal-dim);
+  padding: 2px 9px;
+  clip-path: var(--chip-cut);
+  letter-spacing: 0.2em;
+}
+
+/* ヒーロー対面: 左=勝敗ヴァーディクト / 右=戦闘評価シジル */
+.aar-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+.aar-verdict {
+  min-width: 0;
+}
+/* h1 は既存の .result-panel h1(スチール/ember縦グラデ・::before=data-en)を継承 */
+.aar-verdict h1 {
+  margin-bottom: 6px;
+}
+/* 勝利=emberヘアライン / 敗北=脱色スチール見出しへ赤ヘアラインを一点差し */
+.aar-verdict::after {
+  content: '';
+  display: block;
+  height: 2px;
+  width: 72px;
+  margin-top: 2px;
+  background: var(--ember);
+  box-shadow: 0 0 8px var(--ember-glow);
+}
+.menu-result:not(.result-won) .aar-verdict::after {
+  background: var(--threat);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--threat) 60%, transparent);
+}
+.aar-verdict .result-mvp {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+/* 戦闘評価シジル(rank5) */
+.aar-grade {
+  flex: none;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  color: var(--rule-strong); /* 既定=D の無彩スチール。ティアで上書き */
+}
+.aar-grade--gold {
+  color: var(--medal-gold);
+}
+.aar-grade--plat {
+  color: var(--medal-plat);
+}
+.aar-grade--cyan {
+  color: var(--medal-cyan);
+}
+.aar-grade--violet {
+  color: var(--medal-violet);
+}
+.aar-grade--steel {
+  color: var(--rule-strong);
+}
+.aar-grade-svg {
+  width: 104px;
+  height: 104px;
+}
+.aar-grade-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0.75;
+}
+.aar-grade-letter {
+  font-family: var(--display);
+  font-size: 54px;
+  font-weight: 900;
+  letter-spacing: 0;
+  fill: #fff;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.35);
+  stroke-width: 0.6px;
+}
+.aar-grade-cap {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.aar-grade-score {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.aar-grade-score b {
+  color: var(--ink);
+  font-weight: 800;
+  font-size: 12px;
+}
+.aar-grade-score i {
+  font-style: normal;
+  margin-left: 4px;
+  color: var(--ink-faint);
+}
+
+/* 2×2 計器セル(ACC/HS/KILLS/最長連鎖)。armory-stats流の1px計器グリッド */
+.aar-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin: 0 0 20px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+}
+.aar-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 14px;
+  background: var(--base-2);
+}
+.aar-k {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.aar-v {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  font-weight: 800;
+  font-size: 26px;
+  line-height: 1;
+  color: var(--signal);
+}
+.aar-v em {
+  font-style: normal;
+  font-size: 14px;
+  color: var(--ink-soft);
+  margin-left: 3px;
+}
+
+/* KDAテーブル: 縦罫線を足して1px計器グリッド化(既存の横罫線+自行emberレーンは維持) */
+.result-table {
+  border: 1px solid var(--rule);
+}
+.result-table th,
+.result-table td {
+  border-right: 1px solid color-mix(in srgb, var(--rule) 65%, transparent);
+}
+.result-table th:last-child,
+.result-table td:last-child {
+  border-right: none;
+}
+
 /* ══════════════════════════════════════════════════════════════
    9. モーション: transform/opacity/filterのみ。新規keyframeは
    @media (prefers-reduced-motion) + :root.reduce-motion の二重ゲート、
@@ -7575,6 +7774,39 @@ tr.score-ally td {
   }
   :root:not(.reduce-motion) .result-levelup {
     animation: stamp-in 0.3s var(--ease-snap) 0.9s both;
+  }
+  /* R20 After-Action Report の入場 */
+  :root:not(.reduce-motion) .aar-hero {
+    animation: listitem-in 0.22s var(--ease-out) 0.1s both;
+  }
+  :root:not(.reduce-motion) .aar-grid {
+    animation: listitem-in 0.2s var(--ease-out) 0.22s both;
+  }
+  /* 戦闘評価シジル: 刻印スタンプ + 細いティックリングの緩やかな回転 */
+  :root:not(.reduce-motion) .aar-grade {
+    animation: aar-stamp 0.42s var(--ease-snap) 0.18s both;
+  }
+  :root:not(.reduce-motion) .aar-grade-ring {
+    animation: aar-ring-spin 16s linear infinite;
+  }
+}
+@keyframes aar-stamp {
+  0% {
+    opacity: 0;
+    transform: scale(1.55);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes aar-ring-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -8539,6 +8771,130 @@ tr.score-ally td {
   box-shadow:
     0 0 14px var(--signal-glow),
     inset 0 0 8px var(--signal-glow);
+}
+
+/* ── R20 ヒットマーカー ティア言語: diamond(head/kill) / kill snap / snipe flick / limb / spark ── */
+/* 中央ダイヤ(5個目のspan)。head/kill時のみ可視。span.hm-diamond で基底span寸法を上書き。 */
+.hud-hitmarker span.hm-diamond {
+  width: 5px;
+  height: 5px;
+  background: #fff;
+  transform: translate(-2.5px, -2.5px) rotate(45deg);
+  opacity: 0;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+}
+.hud-hitmarker.hm-head span.hm-diamond {
+  opacity: 1;
+  background: var(--warn);
+  box-shadow:
+    0 0 5px color-mix(in srgb, var(--warn) 60%, transparent),
+    0 0 3px rgba(0, 0, 0, 0.9);
+}
+.hud-hitmarker.hm-kill span.hm-diamond {
+  opacity: 1;
+  width: 6px;
+  height: 6px;
+  transform: translate(-3px, -3px) rotate(45deg);
+  background: var(--ember);
+  box-shadow:
+    0 0 6px var(--ember-glow),
+    0 0 3px rgba(0, 0, 0, 0.9);
+}
+/* limb(掠り/四肢): 弱いフィードバック=無彩・短め。※match.ts側の 'limb' 配線は別担当 */
+.hud-hitmarker.hm-limb span {
+  background: var(--ink-soft);
+  height: 7px;
+  opacity: 0.85;
+}
+/* radial spark: kill時のみJSが~180msスポーン(reduceMotion時はspawnゲートで出ない) */
+.hud-hit-spark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.hud-hit-spark i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2px;
+  height: 10px;
+  margin: -5px -1px;
+  background: linear-gradient(var(--ember), transparent);
+  transform: rotate(var(--a, 0deg)) translateY(4px);
+  transform-origin: 50% 0;
+}
+.hud-hit-spark i:nth-child(1) {
+  --a: 0deg;
+}
+.hud-hit-spark i:nth-child(2) {
+  --a: 60deg;
+}
+.hud-hit-spark i:nth-child(3) {
+  --a: 120deg;
+}
+.hud-hit-spark i:nth-child(4) {
+  --a: 180deg;
+}
+.hud-hit-spark i:nth-child(5) {
+  --a: 240deg;
+}
+.hud-hit-spark i:nth-child(6) {
+  --a: 300deg;
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* kill: 45degから整定するスナップ回転(基底 ig-hitmark の scale を上書き) */
+  :root:not(.reduce-motion) .hud-hitmarker.hm-kill.show {
+    animation: hm-kill-snap 0.3s var(--ease-out);
+  }
+  /* snipe: 外向きに flick 拡大 */
+  :root:not(.reduce-motion) .hud-hitmarker.hm-snipe.show {
+    animation: hm-snipe-flick 0.3s var(--ease-out);
+  }
+  .hud-hit-spark i {
+    animation: hit-spark 0.18s var(--ease-out) forwards;
+  }
+}
+@keyframes hm-kill-snap {
+  0% {
+    opacity: 1;
+    transform: rotate(45deg) scale(1.5);
+  }
+  55% {
+    opacity: 1;
+    transform: rotate(-7deg) scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(0deg) scale(1);
+  }
+}
+@keyframes hm-snipe-flick {
+  0% {
+    opacity: 1;
+    transform: scale(0.7);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1.5);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.14);
+  }
+}
+@keyframes hit-spark {
+  0% {
+    opacity: 0.95;
+    transform: rotate(var(--a, 0deg)) translateY(3px) scaleY(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(var(--a, 0deg)) translateY(22px) scaleY(1);
+  }
 }
 
 /* ── H13. ダメージ方向: Titanfall2弧セグメント(三角wedge廃止)+被弾ビネット ── */

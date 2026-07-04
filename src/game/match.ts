@@ -117,6 +117,35 @@ interface SkyUniforms {
   sunPosition: { value: THREE.Vector3 };
 }
 
+// R20 rank3: 床/障害物の onBeforeCompile へ挿す決定論的な値ノイズ(3オクターブfbm)。
+// ワールドXZから摩耗/汚れ/濡れパッチのマクロ質感を作る。追加DC/ジオメトリはゼロ、
+// フラグメントALUのみ。フラグメント/頂点の #include <common> 直後へ差し込んで使う。
+const MACRO_NOISE_GLSL = /* glsl */ `
+  float macroHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+  float macroVnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = macroHash(i);
+    float b = macroHash(i + vec2(1.0, 0.0));
+    float c = macroHash(i + vec2(0.0, 1.0));
+    float d = macroHash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
+  float macroFbm(vec2 p) {
+    float s = 0.0;
+    float amp = 0.5;
+    float tot = 0.0;
+    for (int oct = 0; oct < 3; oct++) {
+      s += amp * macroVnoise(p);
+      tot += amp;
+      p = p * 2.03 + 11.0;
+      amp *= 0.5;
+    }
+    return s / tot;
+  }
+`;
+
 const DEG = Math.PI / 180;
 const LOOK_BASE = 0.0022;
 // ゲームパッドのヒップファイア時アシストゲート(マウスはADS時のみ、パッドは常時BO3準拠)
@@ -469,6 +498,8 @@ export class Match {
   private baseDpr = 0; // 動的DPRの基準(初回setで確定=main.tsが設定した実効pixelRatio)
   private resScale = 1; // 現在の解像度スケール 0.6..1
   private hitFlashEnv = 0; // 被弾フラッシュのエンベロープ 0..1
+  private killSurgeEnv = 0; // R20: キル確定サージのエンベロープ 0..1(キルで1へ、毎フレーム減衰)
+  private readonly hitDir = new THREE.Vector2(0, 0); // R20: 被弾方向(画面空間の単位ベクトル・平滑)
   // キルカメラ補間: 死亡時に固定するアンカー + 現在の補間カメラ姿勢(exp damping)
   private readonly killcamAnchorHead = new THREE.Vector3(); // 死亡時のkiller頭位置(固定)
   private readonly killcamAnchorPos = new THREE.Vector3(); // 死亡時のkiller胴位置(固定)
@@ -813,10 +844,12 @@ export class Match {
       floorBody,
     );
     this.tags.set(floorCollider.handle, { kind: 'world' });
-    const floorMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(size + 2, 1, size + 2),
-      new THREE.MeshStandardMaterial({ color: palette.floor, roughness: 0.95 }),
-    );
+    // R20 rank3: ムード/床材質/バイオームから濡れ度を導き、床マテリアルへマクロ質感を挿す。
+    // 追加DCゼロ・フラグメントALUのみで巨大床の「1色平面」読みを解消し、濡れパッチで減光した空IBLを拾う。
+    const wetness = this.resolveWetness(palette);
+    const floorMat = new THREE.MeshStandardMaterial({ color: palette.floor, roughness: 0.95 });
+    this.applyMacroFloor(floorMat, wetness);
+    const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(size + 2, 1, size + 2), floorMat);
     floorMesh.position.y = -0.5;
     floorMesh.receiveShadow = true;
     this.scene.add(floorMesh);
@@ -844,6 +877,8 @@ export class Match {
           material.emissiveIntensity = 0.45;
           material.envMapIntensity = 0.35; // 自発光体はIBLに打ち消されないよう抑制
         }
+        // R20 rank3: 焼込みAO(vertexColor)の上へ弱い汚れグラデを重ね、クローン箱の均一感を崩す
+        this.applyMacroProp(material);
         materials.set(key, material);
       }
       const mesh = new THREE.Mesh(unitBox, material);
@@ -903,6 +938,107 @@ export class Match {
       colors[i * 3 + 2] = b;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  }
+
+  // R20 rank3: ムード/床材質/バイオーム粒子から「濡れ度」(0..0.8)を導く。夜/曇りは雨上がりで
+  // 濡れ、溶岩/残り火の荒廃ステージは溶けた地面の照りとして底上げ。砂/雪/芝は濡れパッチが
+  // 不自然なので抑える。減光した空IBLを筋状の映り込みで拾わせる濡れアスファルト読み(MW2019)。
+  private resolveWetness(palette: StageDef['palette']): number {
+    const mood = resolveMood(palette);
+    let base =
+      mood === 'night'
+        ? 0.68
+        : mood === 'overcast'
+          ? 0.6
+          : mood === 'dusk'
+            ? 0.4
+            : mood === 'snow'
+              ? 0.0
+              : 0.12; // day
+    if (palette.particle === 'lava') base = Math.max(base, 0.6);
+    else if (palette.particle === 'ember') base = Math.max(base, 0.42);
+    const surf = deriveSurfaceMaterials(palette).floor;
+    const surfMul =
+      surf === 'metal' || surf === 'concrete'
+        ? 1.0
+        : surf === 'wood'
+          ? 0.9
+          : surf === 'dirt'
+            ? 0.55
+            : surf === 'grass'
+              ? 0.3
+              : surf === 'sand'
+                ? 0.2
+                : 0.0; // snow
+    return Math.min(0.8, base * surfMul);
+  }
+
+  // R20 rank3: 床マテリアルへ onBeforeCompile でマクロ質感を挿す。頂点で vWorldXZ を作り、
+  // (a)diffuseColor を値ノイズで摩耗/汚れ変調(暗め寄せで白飛び回避)、(b)第2ノイズ+濡れ度
+  // uniform で roughnessFactor を筋状に~0.35 まで下げ、減光した空IBLの映り込みを拾わせる。
+  private applyMacroFloor(mat: THREE.MeshStandardMaterial, wetness: number): void {
+    mat.customProgramCacheKey = () => 'hibana-macrofloor';
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uWetness = { value: wetness };
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vWorldXZ;')
+        .replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\nvWorldXZ = (modelMatrix * vec4(transformed, 1.0)).xz;',
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>\nvarying vec2 vWorldXZ;\nuniform float uWetness;\n${MACRO_NOISE_GLSL}`,
+        )
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          {
+            // 摩耗/汚れの巨大階調(グリッド線非依存)。暗め寄せ(0.90..1.045)で明部の白飛びを避ける
+            float macroWear = macroFbm(vWorldXZ * 0.16);
+            diffuseColor.rgb *= mix(0.90, 1.045, macroWear);
+          }`,
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          {
+            // 濡れパッチ: 第2ノイズを一軸へ引き伸ばし筋状に。濡れ度uniformでroughnessを~0.35へ
+            float macroWet = macroFbm(vWorldXZ * vec2(0.22, 0.85) + 41.3);
+            float wet = smoothstep(0.5, 0.82, macroWet) * uWetness;
+            roughnessFactor = mix(roughnessFactor, 0.35, wet);
+          }`,
+        );
+    };
+  }
+
+  // R20 rank3: 共有障害物マテリアルへ onBeforeCompile で弱い汚れグラデを挿す。焼込みAO
+  // (vertexColor)の上に diffuseColor を ±数% 変調(0.93..1.03)。emissive/AOは非侵襲、
+  // bloom閾値(0.9)未満に据え置く。追加DC/ジオメトリはゼロ。
+  private applyMacroProp(mat: THREE.MeshStandardMaterial): void {
+    mat.customProgramCacheKey = () => 'hibana-macroprop';
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vWorldXZ;')
+        .replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\nvWorldXZ = (modelMatrix * vec4(transformed, 1.0)).xz;',
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>\nvarying vec2 vWorldXZ;\n${MACRO_NOISE_GLSL}`,
+        )
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          {
+            float macroGrime = macroFbm(vWorldXZ * 0.5 + 7.0);
+            diffuseColor.rgb *= mix(0.93, 1.03, macroGrime);
+          }`,
+        );
+    };
   }
 
   // 寸法比と座標シードだけから各障害物のプロップ種別を推論する(決定論・RNG不使用)。
@@ -1279,11 +1415,12 @@ export class Match {
     };
 
     // ── プロシージャル大気(Sky.js, 大気散乱)を可視背景にする ──
-    // R19: 可視の空(=太陽/日差し)は極限まで暗める(scale0.35/clamp0.9)。ステージ全体の明るさは
-    // シーンのライト(sun/Hemi/IBL)が担い、下のenvSky(IBLベイク)は据え置くので地面は暗くならない。
+    // R20: 可視の空(=太陽/日差し)を極限まで暗める(scale0.16/clamp0.5)。clampはbloom閾値(0.9)
+    // 未満なので太陽ディスクのブルーム光そのものが立たなくなる=眩しさが消える。ステージ全体の
+    // 明るさはシーンのライト(sun/Hemi/IBL)が担い、下のenvSky(IBLベイク)は据え置くので地面は暗くならない。
     const sky = new Sky();
     sky.scale.setScalar(Math.max(10000, size * 40));
-    applySky(sky, 0.35, 0.9);
+    applySky(sky, 0.16, 0.5);
     this.scene.add(sky);
 
     // ステージ別の露出(明暗の演出)
@@ -1921,13 +2058,36 @@ export class Match {
     this.effects.update(vmDt);
     // 映画的アトモスフィア(草の風/環境パーティクル/グラウンドフォグ/グレインの時間前進)
     this.atmosphere?.update(vmDt, this.camera.position);
-    // ジュース: 被弾フラッシュのエンベロープ→PostFX(被弾時のみ有効化=idleコストゼロ)
+    // ジュース: 被弾フラッシュのエンベロープ→PostFX(被弾/低HP/キル時のみ有効化=idleコストゼロ)
     if (this.tookDamage) this.hitFlashEnv = 1;
     this.hitFlashEnv = Math.max(0, this.hitFlashEnv - dt * 3.5);
+    // R20 rank4: キルサージ封筒の減衰(キル確定時に activate 側で1へ叩かれる)
+    this.killSurgeEnv = Math.max(0, this.killSurgeEnv - dt * 3.2);
+    // R20 rank4: このフレームの被弾角(incomingAngle群)の平均を画面空間の単位方向へ。赤パルスを
+    // 被弾側へ寄せる。sin=右が正 / cos=正面が上(HUDと同じ極性)。パルス減衰中は最後の方向を保持
+    if (this.incoming.length > 0) {
+      let sx = 0;
+      let sy = 0;
+      for (const a of this.incoming) {
+        sx += Math.sin(a);
+        sy += Math.cos(a);
+      }
+      this.hitDir.set(sx, sy);
+      if (this.hitDir.lengthSq() > 1e-6) this.hitDir.normalize();
+    }
     if (this.postfx) {
-      const pulse = this.settings.reduceMotion ? 0 : this.hitFlashEnv * 0.75;
-      this.postfx.enabled = pulse > 0.002;
+      const rm = this.settings.reduceMotion;
+      const pulse = rm ? 0 : this.hitFlashEnv * 0.75;
+      const healthRatio = this.player.alive ? this.player.hp / this.player.maxHp : 1;
+      // 低HP封筒(38%以下で立ち上がり0→1)。脱色は色変化のみ(省モーション非侵襲・持続で有効化)
+      const lowHpEnv = this.player.alive
+        ? Math.max(0, Math.min(1, (0.38 - healthRatio) / 0.38))
+        : 0;
+      const killSurge = rm ? 0 : this.killSurgeEnv;
+      // idleゲート: いずれかの封筒が閾値超えのフレームだけ pass.enabled(low tier=postfx無し)
+      this.postfx.enabled = pulse > 0.002 || killSurge > 0.002 || lowHpEnv > 0.01;
       this.postfx.setHitPulse(pulse);
+      this.postfx.setCombat(this.hitDir.x, this.hitDir.y, healthRatio, killSurge, rm ? 0 : 1);
       this.postfx.setTime(this.elapsed);
     }
   }
@@ -2566,6 +2726,7 @@ export class Match {
     });
     if (died) {
       this.haptic(150, 0.5, 0.75); // キル確定の手応え
+      this.killSurgeEnv = 1; // R20 rank4: キル確定サージ(PostFXの彩度/コントラスト+白エッジ)を点火
       this.player.kills += 1;
       this.player.streak += 1;
       if (this.mission && bot.team === ENEMY_TEAM) this.missionKills += 1;
@@ -3336,6 +3497,8 @@ export class Match {
     const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
     this.effects.explosion(ground, NINJA_ULT_RADIUS * 0.6);
     this.effects.deathBurst(ground, this.colors.ally);
+    // 地を走る拡大リング+放射クラック+刃閃で「大破斬」を上積み(演出層のみ・判定不変)
+    this.effects.shockwaveRing(ground, NINJA_ULT_RADIUS, this.colors.ally);
     const { pan, distance } = this.panAndDistance(center);
     this.sounds.explosion(pan, distance);
     this.sounds.groundPound();

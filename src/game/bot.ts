@@ -57,6 +57,16 @@ const AIM_FIRE_COS = Math.cos(0.1);
 // ゾンビ近接。個体クールダウン(match側でグローバルrate-limit + i-frameを重ねる)
 const ZOMBIE_MELEE_RANGE = 2.3;
 const ZOMBIE_MELEE_CD = 1.1;
+// ── ゾンビ登坂アシスト(箱/瓦礫/低い壁へゆっくり這い上がる)──
+// autostep(0.75m)を越える障害物に前進を阻まれたら、重力の代わりに上向き速度を
+// 与えて乗り上がる。安全弁: 前方レイで実体を確認し、開始足元Yからの上限高さで
+// 青天井を防ぎ、水平が通れば自然に登坂終了→重力で着地する。ゾンビ専用。
+const ZOMBIE_CLIMB_SPEED = 1.6; // 登坂中の上向き速度(m/s)。ゆっくり這い上がる
+const ZOMBIE_CLIMB_MAX_H = 2.4; // 開始足元Yから越えられる最大高さ(m)。これ以上の壁は登らない
+const ZOMBIE_CLIMB_COOLDOWN = 1.2; // 上限まで登っても越えられない壁で登坂を封じる時間(2.4m浮遊バウンド防止)
+const ZOMBIE_CLIMB_PROBE = 0.7; // 前方の障害物検出レイ長(m)。カプセル半径(0.35)+余白
+const ZOMBIE_CLIMB_BLOCK = 0.4; // moved/wish がこれ未満なら「前進を阻まれた」と判定
+const ZOMBIE_CLIMB_RAY_YS = [-0.4, 0.1] as const; // 前方レイの高さ(体中心基準=膝〜胸)
 const TANK_SMOKE_OPACITY = 0.85;
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -432,6 +442,9 @@ export class Bot {
   // ── R16 ゾンビ ──
   zombieRunMul = 1; // 走行個体のローカル速度倍率(moveSpeedは readonly のため別持ち)
   private meleeTimer = 0; // 個体の近接クールダウン
+  private climbing = false; // 登坂アシスト作動中(前フレームのブロック検知で点火)
+  private climbBaseY = 0; // 登坂開始時の足元中心Y。上限高さ判定の起点(青天井防止)
+  private climbCooldownS = 0; // 越えられない壁で登坂を封じる残り時間(2.4m浮遊バウンド防止)
   private reactionJitter = 1; // 反応時間の個体差倍率(constructorで名前ハッシュから確定)
   private fireOnset = 0; // 交戦開始時の追加発砲遅延(s)
 
@@ -1501,16 +1514,46 @@ export class Bot {
       wishZ = f.z * this.moveSpeed * 0.4;
     }
 
-    this.velY = applyGravityStep(this.velY, 1, dt);
-    const movement = { x: wishX * dt, y: this.velY * dt, z: wishZ * dt };
+    // ── 登坂アシスト: 前フレームに前進を阻まれ登坂点火済みで、まだ上限高さ未満なら、
+    //    重力の代わりにゆっくり上向き速度を与えて障害物の上へ這い上がる。水平前進は
+    //    弱めに継続して乗り上がる。上限到達 or 目標喪失なら重力へ戻る。────────────
+    const wishLenH = Math.hypot(wishX, wishZ);
+    const canRise = this.climbing && wishLenH > 0.01 && pos.y - this.climbBaseY < ZOMBIE_CLIMB_MAX_H;
+    let vertV: number;
+    if (canRise) {
+      vertV = ZOMBIE_CLIMB_SPEED; // ゆっくり上昇。落下速度は打ち消して登坂へ切替
+      this.velY = 0;
+      wishX *= 0.55; // 水平前進は弱めに継続して障害物の上へ乗り上がる
+      wishZ *= 0.55;
+    } else {
+      this.velY = applyGravityStep(this.velY, 1, dt);
+      vertV = this.velY;
+    }
+    const movement = { x: wishX * dt, y: vertV * dt, z: wishZ * dt };
     this.controller.computeColliderMovement(this.bodyCollider, movement);
     const moved = this.controller.computedMovement();
-    if (this.controller.computedGrounded() && this.velY < 0) this.velY = -0.5;
-    // 壁で詰まったら横へ回り込む(群れが壁際で団子にならないように)
+    const grounded = this.controller.computedGrounded();
+    if (grounded && this.velY < 0) this.velY = -0.5;
+    // 接地して登坂していない間だけ登坂の基準足元Yを追従(上限高さ判定の起点=青天井防止)
+    if (grounded && !canRise) this.climbBaseY = pos.y;
+    // 前進を阻まれたか(moved が wish よりかなり小さい)を評価し、次フレームの登坂可否を決める
     const wishLen = Math.hypot(movement.x, movement.z);
     const movedLen = Math.hypot(moved.x, moved.z);
-    if (wishLen > 0.001 && movedLen < wishLen * 0.3) {
-      this.heading += (ctx.rand() - 0.5) * 1.6;
+    const blocked = wishLen > 0.001 && movedLen < wishLen * ZOMBIE_CLIMB_BLOCK;
+    const underCap = pos.y - this.climbBaseY < ZOMBIE_CLIMB_MAX_H;
+    this.climbCooldownS = Math.max(0, this.climbCooldownS - dt);
+    if (this.climbCooldownS <= 0 && blocked && target && underCap && this.obstacleAhead(pos)) {
+      // 標的を追って障害物に詰まり、前方に実体があり、まだ登れる高さ → 次フレーム登坂
+      this.climbing = true;
+    } else {
+      // V20修正: 上限まで登ったのに越えられない壁(underCap=false)で登坂を諦めた時は、
+      // 一定時間登坂を封じる。さもないと落下→再点火→再上昇を繰り返し2.4m地点で浮遊バウンドする。
+      // その間は接地して壁を押す通常挙動(横ジッタで回り込みも継続)。
+      if (this.climbing && !underCap) this.climbCooldownS = ZOMBIE_CLIMB_COOLDOWN;
+      // 登り切れない高い壁 / 障害物なし / 前進できている → 登坂終了。
+      // 詰まっているだけなら従来どおり横へ回り込む(壁際で団子にならないように)
+      this.climbing = false;
+      if (blocked) this.heading += (ctx.rand() - 0.5) * 1.6;
     }
     const t = this.body.translation();
     this.body.setNextKinematicTranslation({ x: t.x + moved.x, y: t.y + moved.y, z: t.z + moved.z });
@@ -1518,6 +1561,30 @@ export class Bot {
     const targetAmp = Math.min(1, step / Math.max(1e-4, this.moveSpeed * dt));
     this.walkAmp += (targetAmp - this.walkAmp) * Math.min(1, dt * 8);
     this.walkPhase += step * 8;
+  }
+
+  // 登坂アシスト用: 進行方向(=heading)前方に「静的地形/障害物」があるかを短いレイで確認する。
+  // 膝〜胸の2高さで前方へ撃ち、どちらかが当たれば障害物ありとみなす。
+  // V20修正: EXCLUDE_KINEMATIC で kinematic なプレイヤー/他ゾンビを除外し、fixed な床/障害物
+  // (match側は RigidBodyDesc.fixed)だけを拾う。これによりゾンビがプレイヤーや仲間ゾンビを
+  // よじ登って浮く/積み上がる不具合を根絶する(登坂は実在の静的障害物でのみ点火)。
+  private obstacleAhead(pos: THREE.Vector3): boolean {
+    const fx = -Math.sin(this.heading);
+    const fz = -Math.cos(this.heading);
+    for (const oy of ZOMBIE_CLIMB_RAY_YS) {
+      const ray = new RAPIER.Ray({ x: pos.x, y: pos.y + oy, z: pos.z }, { x: fx, y: 0, z: fz });
+      const hit = this.world.castRay(
+        ray,
+        ZOMBIE_CLIMB_PROBE,
+        true,
+        RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC,
+        undefined,
+        undefined,
+        this.body,
+      );
+      if (hit !== null) return true;
+    }
+    return false;
   }
 
   private updateShooting(dt: number, ctx: BotContext, engaged: boolean): void {
@@ -1800,6 +1867,10 @@ export class Bot {
     this.lastRawVisible = false;
     this.aimDir.set(0, 0, 0);
     this.meleeTimer = 0;
+    // 登坂状態をリセット(リスポーン再利用で持ち越さない)。基準足元Yはスポーン地点に置く
+    this.climbing = false;
+    this.climbBaseY = spawn.y + this.feetOffset;
+    this.climbCooldownS = 0;
     this.group.visible = true;
     this.group.rotation.x = 0;
     this.group.rotation.z = 0; // drone墜落/turret転倒のリセット
