@@ -94,7 +94,7 @@ import {
   type TeamId,
   type ZoneSnapshot,
 } from './modes';
-import { Player } from './player';
+import { CAPSULE_RADIUS, Player } from './player';
 import {
   ZOMBIE_MAX_ALIVE,
   zombieEliteRate,
@@ -152,6 +152,15 @@ const VOID_Y = -8;
 const MELEE_RANGE = 2.2;
 const MELEE_DAMAGE = 75;
 const MELEE_COOLDOWN = 0.8;
+// ── クナイ(ニンジャ・ダガー)専用パラメータ(素手=id 'fists' 装備時のみ) ──
+const DAGGER_MELEE_RANGE = 3.2; // 薙ぎ払いのリーチ(拳の 2.6 より広い)
+const DAGGER_MELEE_CONE = 0.34; // 前方コーンの内積しきい値(約±70°=広い薙ぎ払い)
+const BLINK_RANGE = 7; // ブリンク斬撃の瞬間移動距離(m)。壁の手前で停止
+const BLINK_DAMAGE = 130; // ブリンク斬撃で経路上の敵を切り裂くダメージ
+const BLINK_RADIUS = 1.8; // ブリンク経路(線分)の判定太さ(m)
+const BLINK_COOLDOWN = 1.2; // ブリンク斬撃の再発動クールダウン(s)
+const NINJA_ULT_RADIUS = 12; // 素手ウルトの衝撃波半径(接地でも即発動)
+const NINJA_ULT_DAMAGE = 260; // 素手ウルト衝撃波の中心ダメージ
 const BOT_VIEW_DISTANCE = 60;
 const BOT_VIEW_CONE_COS = Math.cos((75 * Math.PI) / 180);
 // 警戒中の拡張視野(半角95度)。全周検知は廃止し、警戒は「音源へ振り向く」調査行動で表現
@@ -488,6 +497,7 @@ export class Match {
   private slamPending = false; // ダイブスラム降下中(着地で衝撃波)
   private slamStartY = 0; // 降下開始高さ(ダメージスケール用)
   private slamCooldownS = 0; // ダイブスラムの再発動クールダウン(連打支配の防止)
+  private blinkCooldownS = 0; // ADSブリンク斬撃の再発動クールダウン
 
   private grenadeKind: GrenadeKind;
   private readonly grenadeCounts: Record<GrenadeKind, number>;
@@ -592,9 +602,12 @@ export class Match {
 
     const spawn = this.playerSpawns[0] ?? new THREE.Vector3();
     // モディファイアをプレイヤーの個体設定へ反映(低重力/HP自然回復なし)
-    const playerOpts: { regenPerS?: number; gravityScale?: number } = {};
+    const playerOpts: { regenPerS?: number; gravityScale?: number; maxHp?: number } = {};
     if (this.modifierSet.has('no-regen')) playerOpts.regenPerS = 0;
     if (this.modifierSet.has('low-gravity')) playerOpts.gravityScale = 0.55;
+    // クナイ(ニンジャ)装備は接近戦で撃たれ弱い分、体力を 300 へ引き上げてインファイトを成立させる。
+    // HUD/スナップショットの maxHp は player.maxHp を参照するため自動追従する。
+    if (config.primaryId === 'fists') playerOpts.maxHp = 300;
     this.player = new Player(this.physics, spawn, playerOpts);
     this.tags.set(this.player.collider.handle, { kind: 'player' });
 
@@ -724,6 +737,12 @@ export class Match {
 
   get activeWeapon(): Weapon {
     return this.weapons[this.activeIndex] ?? this.weapons[0]!;
+  }
+
+  // クナイ(ニンジャ・ダガー)ロードアウトか。HP300・素手ウルト衝撃波の分岐に使う
+  // (装備の切替に依らずロードアウト単位で成立させたいので primaryId で判定する)。
+  private get isNinja(): boolean {
+    return this.config.primaryId === 'fists';
   }
 
   private buildStageScene(boxes: ReturnType<typeof generateStage>['boxes']): void {
@@ -1537,6 +1556,7 @@ export class Match {
     // ── 素手(武器なし)の技: コンボ窓の減衰と、空中しゃがみ→ダイブスラム ──
     this.punchWindowS = Math.max(0, this.punchWindowS - dt);
     this.slamCooldownS = Math.max(0, this.slamCooldownS - dt);
+    this.blinkCooldownS = Math.max(0, this.blinkCooldownS - dt);
     const fists = weapon.def.id === 'fists';
     if (
       fists &&
@@ -1580,9 +1600,15 @@ export class Match {
     );
     for (const event of events) {
       if (event.type === 'fired') {
-        // 素手: 弾を出さずパンチへ差し替える(3段ラッシュ/スライドキック)
+        // 素手(クナイ): 弾を出さず斬撃へ差し替える。
+        // ADS(右クリック)構え中の左クリック=ブリンク斬撃(短距離テレポート斬り)。
+        // それ以外は薙ぎ払いコンボ(空中しゃがみ=ダイブスラム / スライド中=スライドキック)。
         if (weapon.def.id === 'fists') {
-          this.doPunch();
+          if (weapon.adsProgress > 0.5 && this.blinkCooldownS <= 0) {
+            this.doBlinkStrike();
+          } else {
+            this.doPunch();
+          }
           continue;
         }
         // RecoilStepの規約はyaw正=右。rotation.yは正で左回りなので符号を反転する
@@ -3125,8 +3151,9 @@ export class Match {
     }
   }
 
-  // ── 素手(武器なし)の技 ────────────────────────────────────────
-  // ラッシュコンボ: 45→63→90(3段目は重い)。スライド中は一撃90のスライドキック。
+  // ── クナイ(ニンジャ・ダガー)の技 ──────────────────────────────
+  // 薙ぎ払いコンボ: 45→63→90(3段目は重い)。スライド中は一撃90のスライドキック。
+  // 拳より広いリーチ(DAGGER_MELEE_RANGE)+前方扇状で、コーン内の敵を複数まとめて斬る。
   private doPunch(): void {
     if (!this.player.alive) return;
     // コンボ進行(0.55s窓)。スライドキックは常に最終段扱い
@@ -3135,43 +3162,104 @@ export class Match {
     const dmg = this.punchStep >= 3 ? 90 : this.punchStep === 2 ? 63 : 45;
 
     this.sounds.punchWhoosh();
-    this.viewModel.fire(false, false); // 拳の突き出しアニメ(マズルフラッシュは出さない)
+    this.viewModel.fire(false, false); // 斬りの振り抜きアニメ(マズルフラッシュは出さない)
     this.addShake(this.punchStep >= 3 ? 0.08 : 0.03);
     // 静かな攻撃: 銃声アラートは出さず、至近の敵だけが気づく
     this.alertBots(5);
 
-    // 前方コーン(60度)内の最近傍の敵に命中。リーチは機体の大きさで補正
-    // (戦車は車体が巨大なので中心距離では密着しても届かないため)
+    // 前方の広いコーン内の敵を「複数まとめて」斬る(薙ぎ払い)。リーチは機体の大きさで補正
+    // (戦車は車体が巨大なので中心距離では密着しても届かないため)。
     const eye = this.player.eyePosition;
     const fwd = this.cameraForward();
-    let best: Bot | null = null;
-    let bestGap = Infinity;
+    let hitAny = false;
     for (const bot of this.bots) {
       if (!bot.alive || bot.team === PLAYER_TEAM) continue;
-      const reach = 2.6 + (bot.kind === 'tank' ? 2.2 : bot.kind === 'turret' ? 0.5 : 0);
+      const reach = DAGGER_MELEE_RANGE + (bot.kind === 'tank' ? 2.2 : bot.kind === 'turret' ? 0.5 : 0);
       const to = bot.position.sub(eye);
       const dist = to.length();
-      const gap = dist - reach;
-      if (gap > 0 || gap > bestGap) continue;
+      if (dist > reach) continue;
       to.normalize();
-      if (fwd.dot(to) < 0.5) continue;
-      // 遮蔽判定: 薄い壁・コンテナ越しに殴れないようにする(handleMeleeと同じ流儀)
+      if (fwd.dot(to) < DAGGER_MELEE_CONE) continue;
+      // 遮蔽判定: 薄い壁・コンテナ越しに斬れないようにする(handleMeleeと同じ流儀)
       const hit = this.castRay(eye, to, dist - 0.1, this.player.body);
       if (hit) {
         const tag = this.tags.get(hit.collider.handle);
         if (!(tag?.kind === 'bot' && tag.bot === bot)) continue;
       }
-      bestGap = gap;
-      best = bot;
-    }
-    if (best) {
-      const point = best.position;
+      const point = bot.position;
       point.y += 0.3;
+      // weaponName '近接' で既存の近接メダル/チャレンジ経路に乗る
+      this.applyBotDamage(bot, dmg, point, false, '近接');
+      hitAny = true;
+    }
+    if (hitAny) {
       this.sounds.punchHit(this.punchStep);
       this.haptic(70, 0.4, 0.5);
-      // weaponName '近接' で既存の近接メダル/チャレンジ経路に乗る
-      this.applyBotDamage(best, dmg, point, false, '近接');
     }
+  }
+
+  // ── ブリンク斬撃(ADS+左クリック) ──────────────────────────────
+  // 前方(水平)へ短距離テレポートし、経路上の敵を切り裂く。壁は castRay で手前停止、
+  // テレポートは水平のみ=床/天井抜け・OOBを構造的に回避する。クールダウン付き。
+  private doBlinkStrike(): void {
+    if (!this.player.alive) return;
+    this.blinkCooldownS = BLINK_COOLDOWN;
+    this.punchStep = 0; // ブリンク後は薙ぎ払いコンボをリセット
+    this.punchWindowS = 0;
+
+    // 進行方向は視線の水平成分。真上/真下を向いていても水平の一貫した方向を確保する
+    const dir = this.cameraForward().setY(0);
+    if (dir.lengthSq() < 1e-4) dir.set(-Math.sin(this.player.yaw), 0, -Math.cos(this.player.yaw));
+    dir.normalize();
+
+    const start = this.player.position; // body中心(fresh vector)
+    // 壁の手前で停止(壁抜け防止)。V18修正: 敵が壁の手前に立つと最近接ヒットが敵になり壁を
+    // 見逃して7m貫通・場外テレポートしていた。filterPredicateでワールドgeometryのみを対象に
+    // レイキャストし、敵の背後にある壁でも確実に手前停止させる。
+    const hit = this.castRay(
+      start,
+      dir,
+      BLINK_RANGE + CAPSULE_RADIUS,
+      this.player.body,
+      (c) => this.tags.get(c.handle)?.kind === 'world',
+    );
+    let dist = BLINK_RANGE;
+    if (hit) dist = Math.max(0, hitToi(hit) - CAPSULE_RADIUS - 0.05);
+    const end = start.clone().addScaledVector(dir, dist);
+
+    // 斬撃の残像(目線高さで始点→終点の光跡)+ 抜刀音
+    const eyeY = this.player.eyePosition.y;
+    this.effects.tracer(
+      new THREE.Vector3(start.x, eyeY - 0.1, start.z),
+      new THREE.Vector3(end.x, eyeY - 0.1, end.z),
+      this.activeWeapon.def.tracerColor,
+    );
+    this.sounds.punchWhoosh();
+    this.sounds.melee();
+    this.addShake(0.12);
+    this.haptic(90, 0.5, 0.6);
+    this.alertBots(6);
+    this.viewModel.fire(false, false);
+
+    // 経路(始点→終点の線分)から BLINK_RADIUS 以内の敵を切り裂く
+    const segLen = Math.max(1e-4, dist);
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const bp = bot.position;
+      const t = THREE.MathUtils.clamp(bp.clone().sub(start).dot(dir), 0, segLen);
+      const cx = start.x + dir.x * t;
+      const cz = start.z + dir.z * t;
+      const dx = bp.x - cx;
+      const dz = bp.z - cz;
+      if (dx * dx + dz * dz > BLINK_RADIUS * BLINK_RADIUS) continue;
+      if (Math.abs(bp.y - start.y) > 2.0) continue; // 高さ方向は緩く許容
+      const point = new THREE.Vector3(bp.x, bp.y + 0.3, bp.z);
+      this.applyBotDamage(bot, BLINK_DAMAGE, point, false, '近接');
+    }
+
+    // テレポート(水平のみ)。player.update が設定済みの次kinematic変位を上書きする
+    // (物理ステップ前なので最後の値が採用される=このフレームで end へ移動する)。
+    this.player.body.setNextKinematicTranslation({ x: end.x, y: start.y, z: end.z });
   }
 
   // ダイブスラム: 空中でしゃがみ→終端速度で急降下し、着地の衝撃波で周囲にダメージ
@@ -3181,7 +3269,7 @@ export class Match {
     // その場ホップの即死化を防ぐ: 低空(1.5m未満)は威力35%に減衰。高く飛ぶほど痛い
     const heightMul = fallH < 1.5 ? 0.35 : 1;
     const dmg = Math.min(300, (110 + fallH * 25) * heightMul);
-    const radius = 6;
+    const radius = 9; // ドロップ(ダイブスラム)の衝撃波範囲を拡大(旧6→9)
     const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
     this.effects.explosion(ground, radius * 0.55);
     this.sounds.groundPound();
@@ -3203,6 +3291,11 @@ export class Match {
 
   // グラビティスラムで周囲の敵を吹き飛ばし、オーバードライブを起動する
   private activateUltimate(): void {
+    // クナイ(ニンジャ): オーバードライブではなく、接地でも即発動する大衝撃波(ジャンプ不要)
+    if (this.isNinja) {
+      this.activateNinjaShockwave();
+      return;
+    }
     this.ultCharge = 0;
     this.ultActive = OVERDRIVE_DURATION;
     this.ultReadyNotified = false;
@@ -3224,6 +3317,37 @@ export class Match {
         // スラムのキルでアルトを再充填しない(自己還元の連鎖を防ぐ)
         this.applyBotDamage(bot, SLAM_DAMAGE, bot.position, false, 'グラビティスラム', false);
       }
+    }
+  }
+
+  // 素手ウルト: オーバードライブを起動せず、接地状態からでも即座に周囲へ大衝撃波を放つ。
+  // ダイブスラムより広い半径・高ダメージ。ジャンプは不要(その場で発動)。
+  private activateNinjaShockwave(): void {
+    this.ultCharge = 0;
+    this.ultReadyNotified = false;
+    const center = this.player.position;
+    // 演出はカメラ内側だと裏面カリングで消えるため、足元の地面で炸裂させて衝撃波を広げる
+    const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
+    this.effects.explosion(ground, NINJA_ULT_RADIUS * 0.6);
+    this.effects.deathBurst(ground, this.colors.ally);
+    const { pan, distance } = this.panAndDistance(center);
+    this.sounds.explosion(pan, distance);
+    this.sounds.groundPound();
+    this.sounds.ultActivate();
+    this.addShake(0.75);
+    this.haptic(240, 0.85, 1.0);
+    this.announcements.push('残刃・大破斬');
+    // 轟音は銃声同等に響かせる(無音のAoEにしない)
+    this.alertBots(26);
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const dist = bot.position.distanceTo(center);
+      if (dist > NINJA_ULT_RADIUS) continue;
+      // グレネード/スラムと同じ遮蔽規約: 壁越しには効かない
+      if (!this.explosionReaches(center, bot.position)) continue;
+      const scaled = NINJA_ULT_DAMAGE * (1 - (dist / NINJA_ULT_RADIUS) * 0.4); // 中心ほど痛い
+      // ウルト同様、衝撃波キルでのアルト自己充填はしない(自己還元の連鎖を防ぐ)
+      this.applyBotDamage(bot, scaled, bot.position, false, 'グラビティスラム', false);
     }
   }
 
@@ -3713,6 +3837,7 @@ export class Match {
     dir: THREE.Vector3,
     maxToi: number,
     exclude: RAPIER.RigidBody | null,
+    predicate?: (collider: RAPIER.Collider) => boolean,
   ): RayHitLike | null {
     const ray = new RAPIER.Ray(
       { x: origin.x, y: origin.y, z: origin.z },
@@ -3726,6 +3851,7 @@ export class Match {
       undefined,
       undefined,
       exclude ?? undefined,
+      predicate,
     ) as unknown as RayHitLike | null;
   }
 

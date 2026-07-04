@@ -140,6 +140,20 @@ export const LONGSHOT: Record<WeaponClass, number> = {
 // バッジ表示しない(killfeed のアイコンのみに降格する)メダル。HUDが参照
 export const SUPPRESS_BADGE: ReadonlySet<MedalId> = new Set<MedalId>(['headshot']);
 
+// R18: 取得済みでも毎回バッジを出す「レベルの高い実績」。日常的に出る状況キル系
+// (no-scope/quickscope/slide-kill/ronin 等)は除外し、キルストリークの大台と希少な偉業に限定する
+// (毎キル乱発を避けつつ、達成の気持ち良さを再演出する)。
+export const ALWAYS_BADGE: ReadonlySet<MedalId> = new Set<MedalId>([
+  'bloodthirsty',
+  'merciless',
+  'ruthless',
+  'relentless',
+  'brutal',
+  'unstoppable',
+  'nuclear',
+  'qhsf',
+]);
+
 // アナウンサー音声の読み上げ優先度(大きいほど優先)。1キルで複数取得時に最上位を1件だけ読む
 export function medalRank(id: MedalId): number {
   if (id === 'nuclear') return 100;

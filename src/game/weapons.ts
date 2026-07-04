@@ -1149,12 +1149,15 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     airSpreadDeg: 1.8,
     shape: 'machine-pistol',
   },
-  // ── 素手(武器なし)。おふざけ枠の格闘スタイル ──
-  // 発砲イベントは match が「パンチ」へ差し替える(弾は出ない)。技:
-  // 地上射撃=3段ラッシュコンボ / 空中でしゃがみ=ダイブスラム(衝撃波) / スライド中射撃=スライドキック
+  // ── クナイ(ニンジャ・ダガー)。近接特化のおふざけ枠 ──
+  // id/shape は 'fists' のまま(match/viewmodel の近接分岐が全てこのキーで動く)。
+  // 発砲イベントは match が「斬撃」へ差し替える(弾は出ない)。技:
+  // 地上射撃=薙ぎ払いコンボ / 空中でしゃがみ=ダイブスラム(衝撃波) / スライド中射撃=スライドキック
+  // 右クリック(ADS)構え中の左クリック=ブリンク斬撃(短距離テレポート斬り)
+  // 装備時: プレイヤーHP=300 / ウルト(F)=接地でも大衝撃波
   fists: {
     id: 'fists',
-    name: '素手',
+    name: 'クナイ',
     slot: 'primary',
     damage: 45, // コンボ1段目。2段目x1.4 / 3段目x2 は match 側で乗算
     headshotMultiplier: 1.2,
@@ -1179,11 +1182,11 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     recoilPattern: buildRecoil({ steps: 1, pitchDeg: 0, driftDeg: 0 }),
     recoilRecoveryPerS: 10,
     range: 3,
-    tracerColor: 0xffe08a,
+    tracerColor: 0x66e0ff, // 刃紋/柄巻きのエネルギー発光色(ブリンク斬撃の残像にも使う)
     pellets: 1,
     pelletSpreadDeg: 0,
     penetrationM: 0,
-    soundProfile: 'pistol', // 未使用(matchがパンチ音へ差し替え)だが型上必須
+    soundProfile: 'pistol', // 未使用(matchが斬撃音へ差し替え)だが型上必須
     class: 'pistol',
     adsMoveSuppression: 0.3,
     airSpreadDeg: 0,

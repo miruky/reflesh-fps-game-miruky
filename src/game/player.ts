@@ -88,7 +88,9 @@ export class Player {
   yaw = 0;
   pitch = 0;
   hp = 100;
-  readonly maxHp = 100;
+  // 最大HP。既定100だが、コンストラクタ opts.maxHp で上書きできる
+  // (素手=ニンジャ・ダガー装備は接近戦を成立させるため 300 に引き上げる)。
+  maxHp = 100;
   alive = true;
   kills = 0;
   deaths = 0;
@@ -146,12 +148,17 @@ export class Player {
   constructor(
     world: RAPIER.World,
     spawn: THREE.Vector3,
-    opts?: { regenDelay?: number; regenPerS?: number; gravityScale?: number },
+    opts?: { regenDelay?: number; regenPerS?: number; gravityScale?: number; maxHp?: number },
   ) {
     this.world = world;
     this.regenDelay = opts?.regenDelay ?? REGEN_DELAY;
     this.regenPerS = opts?.regenPerS ?? REGEN_PER_SECOND;
     this.gravityScale = opts?.gravityScale ?? 1;
+    // 最大HPの上書き(素手=300)。開始HPも満タンへ揃える。respawnAt も maxHp へ復帰する
+    if (opts?.maxHp !== undefined) {
+      this.maxHp = opts.maxHp;
+      this.hp = opts.maxHp;
+    }
     const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
       spawn.x,
       spawn.y + CENTER_TO_FEET,

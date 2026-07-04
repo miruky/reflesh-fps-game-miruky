@@ -569,9 +569,15 @@ export class Bot {
         this.body,
       );
     }
-    // KCCはhumanoid/tankのみ使用するが生成は共通(最小差分。World破棄で回収される)
+    // KCCはhumanoid/tank/zombieが使用するが生成は共通(最小差分。World破棄で回収される)
     this.controller = world.createCharacterController(0.05);
-    this.controller.enableAutostep(0.4, 0.3, true);
+    // R18: ゾンビは小さい段差(バリケード/瓦礫/縁石)を乗り越えて詰めてくる。autostep高さを
+    // 0.4→0.75へ上げ、最小幅も緩めて群れが地形に引っかからず押し寄せるように
+    if (kind === 'zombie') {
+      this.controller.enableAutostep(0.75, 0.2, true);
+    } else {
+      this.controller.enableAutostep(0.4, 0.3, true);
+    }
     this.controller.enableSnapToGround(0.4);
 
     if (kind === 'drone') this.buildDroneMesh(color, tier);

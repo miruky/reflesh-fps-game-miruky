@@ -640,28 +640,78 @@ function chamferBox(w: number, h: number, d: number, bevel: number): THREE.Buffe
 export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.Object3D } {
   const gun = new THREE.Group();
 
-  // 素手: 銃は描かず、拳のナックルラップ(巻き布+アクセント帯)だけを構える。
-  // FPVの腕は ViewModel.buildGun 側が追加するので、ここは「握った拳」の芯のみ。
-  // 早期分岐は merge toolkit を通さず(質感のみ頂点カラー化)。
+  // 素手(id/shape='fists')は「クナイ(ニンジャ・ダガー)」を握る。銃は描かず、
+  // 細身の刃+切先+鍔+柄(柄巻き)+柄頭リングを低ポリ+頂点カラーで組む。
+  // FPVの腕は ViewModel.buildGun 側が右手グリップとして追加する。
+  // resolveSightY('fists')=0 契約は不変(ADSで刃が画面中央=射線へ寄る)。
+  // 早期分岐は merge toolkit を通さず(近接は1体描画なので寛容)。
   if (def.shape === 'fists') {
-    const { metalVC } = getShared();
-    const accent = getAccent(def.tracerColor);
-    const knuckle = (sx: number): THREE.Group => {
-      const g = new THREE.Group();
-      const fistGeo = new THREE.BoxGeometry(0.07, 0.06, 0.09);
-      setColor(fistGeo, col(0x1a1c20), 'gradY');
-      const fist = new THREE.Mesh(fistGeo, metalVC);
-      fist.castShadow = false;
-      const wrap = new THREE.Mesh(new THREE.BoxGeometry(0.074, 0.02, 0.094), accent);
-      wrap.position.y = 0.012;
-      g.add(fist, wrap);
-      g.position.set(sx, -0.05, -0.34);
-      g.rotation.z = -sx * 0.5;
-      return g;
+    const { metalVC, polishVC } = getShared();
+    const accent = getAccent(def.tracerColor); // 刃紋/柄巻きの発光帯(tracerColor)
+    const C_STEEL = 0x3a424e; // 研磨鋼(刃)
+    const C_DARK = 0x1b1f26; // 峰・鍔の暗鋼
+    const C_GRIP = 0x101216; // 柄(黒)
+    const blade = new THREE.Group();
+    // steel=頂点カラー鋼、glow=accent発光(頂点カラー不要)
+    const steel = (
+      geo: THREE.BufferGeometry,
+      mat: THREE.Material,
+      color: number,
+      shade: ShadeMode,
+      px: number,
+      py: number,
+      pz: number,
+      rx = 0,
+      ry = 0,
+      rz = 0,
+    ): void => {
+      setColor(geo, col(color), shade);
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(px, py, pz);
+      m.rotation.set(rx, ry, rz);
+      m.castShadow = false;
+      blade.add(m);
     };
-    gun.add(knuckle(-0.09), knuckle(0.09));
+    const glow = (
+      geo: THREE.BufferGeometry,
+      px: number,
+      py: number,
+      pz: number,
+      rx = 0,
+      ry = 0,
+      rz = 0,
+    ): void => {
+      const m = new THREE.Mesh(geo, accent);
+      m.position.set(px, py, pz);
+      m.rotation.set(rx, ry, rz);
+      m.castShadow = false;
+      blade.add(m);
+    };
+    // 刃身(薄板・幅Y0.03/厚みX0.013)。切先を前方(-Z)へ
+    steel(new THREE.BoxGeometry(0.013, 0.03, 0.22), polishVC, C_STEEL, 'machined', 0, 0.006, -0.3);
+    // 峰(暗い芯)を薄く重ねて厚みと稜線を出す
+    steel(new THREE.BoxGeometry(0.008, 0.033, 0.2), metalVC, C_DARK, 'gradY', 0, 0.006, -0.3);
+    // 切先(四角錐)
+    steel(new THREE.ConeGeometry(0.02, 0.1, 4), polishVC, C_STEEL, 'machined', 0, 0.006, -0.46, Math.PI / 2, Math.PI / 4, 0);
+    // 刃紋(下端の発光ライン)
+    glow(new THREE.BoxGeometry(0.016, 0.006, 0.2), 0, -0.009, -0.3);
+    // 鍔(クロスガード)
+    steel(new THREE.BoxGeometry(0.075, 0.016, 0.022), metalVC, C_DARK, 'gradY', 0, 0.004, -0.175);
+    // 柄(Z軸シリンダ)
+    steel(new THREE.CylinderGeometry(0.016, 0.014, 0.13, 8), metalVC, C_GRIP, 'gradY', 0, 0, -0.1, Math.PI / 2, 0, 0);
+    // 柄巻き(発光帯を3本)
+    for (let i = 0; i < 3; i += 1) {
+      glow(new THREE.CylinderGeometry(0.018, 0.018, 0.012, 8), 0, 0, -0.13 + i * 0.03, Math.PI / 2, 0, 0);
+    }
+    // 柄頭 + クナイらしいリング
+    steel(new THREE.BoxGeometry(0.026, 0.026, 0.02), metalVC, C_DARK, 'gradY', 0, 0, -0.03);
+    steel(new THREE.TorusGeometry(0.02, 0.005, 6, 10), metalVC, C_DARK, 'gradY', 0, 0, -0.008);
+    // 順手グリップ・切先やや上の構え
+    blade.position.set(0.02, -0.05, 0);
+    blade.rotation.set(-0.12, 0.06, 0);
+    gun.add(blade);
     const muzzleF = new THREE.Object3D();
-    muzzleF.position.set(0, -0.05, -0.42);
+    muzzleF.position.set(0, -0.03, -0.5);
     gun.add(muzzleF);
     return { gun, muzzle: muzzleF };
   }
@@ -1638,13 +1688,13 @@ export class ViewModel {
       return m;
     };
     if (def.shape === 'fists') {
-      // 素手: 両腕がそれぞれのナックル(±0.09, -0.05, -0.34)へ向かうファイティングポーズ。
-      // 銃握り位置の手を流用すると「3つ目の拳」が中央に浮くため専用配置にする
-      const rArmF = limb(sleeve, 0.08, 0.08, 0.34, 0.12, -0.14, -0.16, 0.35, 0.22, 0);
-      const lArmF = limb(sleeve, 0.08, 0.08, 0.34, -0.12, -0.14, -0.16, 0.35, -0.22, 0);
-      const rWrist = limb(glove, 0.065, 0.065, 0.08, 0.095, -0.06, -0.29, 0.2, 0.1, 0);
-      const lWrist = limb(glove, 0.065, 0.065, 0.08, -0.095, -0.06, -0.29, 0.2, -0.1, 0);
-      gun.add(rArmF, lArmF, rWrist, lWrist);
+      // クナイ(ダガー): 右手が柄(局所 z≈-0.10)を順手で握り、左手は添え手として前方へ構える。
+      // 銃握り位置の手を流用せず、柄の位置に手首を合わせる専用配置。
+      const rArmF = limb(sleeve, 0.08, 0.08, 0.32, 0.08, -0.2, 0.12, 0.5, -0.12, 0);
+      const rHandF = limb(glove, 0.06, 0.07, 0.1, 0.02, -0.07, -0.09, 0.2, 0.05, 0);
+      const lArmF = limb(sleeve, 0.08, 0.08, 0.3, -0.1, -0.16, -0.02, 0.42, 0.24, 0.1);
+      const lHandF = limb(glove, 0.065, 0.06, 0.09, -0.11, -0.09, -0.16, 0.25, 0.1, 0);
+      gun.add(rArmF, rHandF, lArmF, lHandF);
       return { gun, muzzle };
     }
     // 右手(グリップ)と右前腕(画面右下へ抜ける)

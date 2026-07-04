@@ -2,7 +2,7 @@ import { RADAR_RANGE_M, RETICLE_COLORS } from '../core/settings';
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
 import { MOVE_SPEEDS } from '../game/player';
-import { SUPPRESS_BADGE, starPoints, type MedalEvent } from '../game/medals';
+import { SUPPRESS_BADGE, ALWAYS_BADGE, starPoints, type MedalEvent } from '../game/medals';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -734,7 +734,14 @@ export class Hud {
       const lowPulse = snap.alive && ratio < 0.25 && !snap.reduceMotion;
       vignette.classList.toggle('low', lowPulse);
       if (lowPulse) vignette.style.removeProperty('opacity');
-      else vignette.style.opacity = String(Math.min(0.85, Math.max(0, (40 - snap.hp) / 40)));
+      // V18修正: 絶対HP40固定だと maxHp=300(ニンジャ)で13%まで警告が出ない(reduceMotion層は特に)。
+      // maxHp比率(40%窓)へ較正して maxHp に追従させる
+      else {
+        const dmgWindow = snap.maxHp * 0.4;
+        vignette.style.opacity = String(
+          Math.min(0.85, Math.max(0, (dmgWindow - snap.hp) / dmgWindow)),
+        );
+      }
     }
     if (snap.tookDamage) this.restartAnimation('flash', 'show');
   }
@@ -834,7 +841,9 @@ export class Hud {
   private pushMedals(snap: MatchSnapshot): void {
     for (const m of snap.medals) {
       if (SUPPRESS_BADGE.has(m.id)) continue;
-      if (m.firstUnlock) this.pushBadge(m);
+      // R18: レベルの高い実績(ALWAYS_BADGE=キルストリーク大台/希少偉業)は取得済みでも毎回
+      // バッジを出す(達成感・気持ち良さ)。日常的に出る状況キル系・低tierは初回のみバッジ。
+      if (m.firstUnlock || ALWAYS_BADGE.has(m.id)) this.pushBadge(m);
       else this.pushMedalText(m);
     }
   }
@@ -845,7 +854,9 @@ export class Hud {
     const card = document.createElement('div');
     card.className = 'hud-badge';
     card.style.color = m.color; // SVGの currentColor / アクセントに使う
-    card.innerHTML = `${this.makeBadgeSvg(m)}<div class="badge-name">${m.name}</div><div class="badge-tag">実績解放</div>`;
+    // V18: 初回取得は「実績解放」、再取得(ALWAYS_BADGE)は達成表記(「解放」の誤表示を避ける)
+    const tag = m.firstUnlock ? '実績解放' : '達成';
+    card.innerHTML = `${this.makeBadgeSvg(m)}<div class="badge-name">${m.name}</div><div class="badge-tag">${tag}</div>`;
     stack.appendChild(card);
     requestAnimationFrame(() => card.classList.add('show'));
     window.setTimeout(() => {
