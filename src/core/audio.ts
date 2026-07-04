@@ -720,6 +720,7 @@ export class SoundKit {
   private lastExplosionS = 0; // 爆発の0.08sスロットル
   private lastWhizzS = 0;
   private lastImpactS = 0;
+  private lastEnemyFootstepS = 0; // 敵足音の全体スロットル(~0.03s)
   private tinnitusUntilS = 0;
   private duckRecoverTarget = 1; // 低HP時はBGM復帰を抑える
   private lastHealthCutoff = 20000;
@@ -1359,56 +1360,66 @@ export class SoundKit {
     }
   }
 
-  // ヒット確認: squareの「ピコッ」をやめ、正弦+極短クリックの「タッ」へ(BO2系の質感)
+  // ヒット確認: BO2スタイルの乾いた"tic"。
+  // square の倍音成分が銃声ボディ帯域(≤1.9kHz)を抜けてuiBusコンプ後も残る。
+  // 1200→400Hz の急降下がホチキス由来の「押しつぶし」トランジェント感を作る(~60ms)。
   hit(pitch = 1): void {
-    // V9: 発砲4層(コンプのメイクアップ込み)にマスクされない音量へ。クリック(3.8kHz)を
-    // 主役にしてボディ/クラック帯域(<=1.9kHz)のマスキングを回避する
     this.tone({
-      freq: 950 * pitch,
-      durationS: 0.045,
-      type: 'sine',
-      gain: 0.45,
+      freq: 1200 * pitch,
+      endFreq: 400 * pitch,
+      durationS: 0.060,
+      type: 'square',
+      gain: 0.28,
       attackS: 0.001,
       bus: this.uiBus ?? undefined,
     });
+    // 4.8kHz エアクリック(uiBus・ドライ): 戦場騒音を切り裂くトランジェントの芯
     this.noiseBurst({
-      durationS: 0.01,
-      filterHz: 3800,
+      durationS: 0.008,
+      filterHz: 4800,
       filterType: 'bandpass',
-      q: 6,
-      gain: 0.34,
+      q: 8,
+      gain: 0.22,
       attackS: 0.001,
       bus: this.uiBus ?? undefined,
     });
   }
 
-  // ヘッドショット: C7+G7の非調和ペア+高域クリック+低い確認thump(「カキンッ」)
+  // ヘッドショット: 高い"ping"(1800Hz開始)+ 倍音リング + 低い確認thump。
+  // hit()の square tic と明確に聴き分けられるよう sine/高周波スタートで「澄んだリング」感。
   headshot(): void {
-    this.tone({ freq: 2093, durationS: 0.05, type: 'sine', gain: 0.5, attackS: 0.001, bus: this.uiBus ?? undefined });
-    this.tone({ freq: 3136, durationS: 0.07, type: 'sine', gain: 0.4, delayS: 0.02, bus: this.uiBus ?? undefined });
-    this.noiseBurst({ durationS: 0.01, filterHz: 6000, filterType: 'highpass', gain: 0.3, attackS: 0.001, bus: this.uiBus ?? undefined });
+    this.tone({ freq: 1800, endFreq: 900, durationS: 0.07, type: 'sine', gain: 0.55, attackS: 0.001, bus: this.uiBus ?? undefined });
+    this.tone({ freq: 2700, durationS: 0.05, type: 'sine', gain: 0.3, delayS: 0.022, bus: this.uiBus ?? undefined });
+    this.noiseBurst({ durationS: 0.008, filterHz: 6500, filterType: 'highpass', gain: 0.28, attackS: 0.001, bus: this.uiBus ?? undefined });
     this.tone({ freq: 240, endFreq: 120, durationS: 0.06, type: 'sine', gain: 0.35, delayS: 0.01, bus: this.uiBus ?? undefined });
   }
 
-  // キル確認: 既存2音+サブthump+きらめきで「重い確定感」
+  // キル確認: BO2スタイル — 低いトーン(~220Hzベル) + 上昇スイープ(~80ms)。
+  // hit()の高tic・headshot()の高pingと明確に異なる「低→リフト」の確定感。
   kill(pitch = 1): void {
+    // 低いベル(220Hz降下100ms): 「重い確定」の骨格
     this.tone({
-      freq: 880 * pitch,
+      freq: 220 * pitch,
+      endFreq: 110 * pitch,
+      durationS: 0.10,
+      type: 'sine',
+      gain: 0.44,
+      attackS: 0.001,
+      bus: this.uiBus ?? undefined,
+    });
+    // 上昇スイープ(440→1320Hz, 80ms, delay25ms): 「確定リフト」
+    this.tone({
+      freq: 440 * pitch,
+      endFreq: 1320 * pitch,
       durationS: 0.08,
       type: 'sine',
-      gain: 0.25,
+      gain: 0.30,
+      delayS: 0.025,
+      attackS: 0.001,
       bus: this.uiBus ?? undefined,
     });
-    this.tone({
-      freq: 1320 * pitch,
-      durationS: 0.12,
-      type: 'sine',
-      gain: 0.22,
-      delayS: 0.07,
-      bus: this.uiBus ?? undefined,
-    });
-    this.tone({ freq: 160, endFreq: 55, durationS: 0.12, type: 'sine', gain: 0.22, bus: this.uiBus ?? undefined });
-    this.noiseBurst({ durationS: 0.04, filterHz: 7000, filterType: 'highpass', gain: 0.08, delayS: 0.05, bus: this.uiBus ?? undefined });
+    // 極短エアトランジェント(uiBus・ドライ)
+    this.noiseBurst({ durationS: 0.012, filterHz: 5500, filterType: 'highpass', gain: 0.12, delayS: 0.04, attackS: 0.001, bus: this.uiBus ?? undefined });
   }
 
   // 連続キルのアナウンサー音声。音声ファイルを持たずSpeechSynthesisで読み上げる。
@@ -2284,6 +2295,108 @@ export class SoundKit {
         break;
       case 'concrete':
         this.noiseBurst({ durationS: 0.03, filterHz: this.jit(1400 * hzMul, 0.12), filterType: 'bandpass', q: 1.5, gain: 0.12 * intensity, delayS, attackS: 0.001, wet: 0 });
+        break;
+      default: {
+        const _exhaustive: never = mat;
+        return _exhaustive;
+      }
+    }
+  }
+
+  // ── 空間化された敵足音 ────────────────────────────────────────────
+  // pan(-1..1): 敵の方向、distance(m): 距離、mat: 床材質、intensity(0..1): 強度
+  // (歩き0.5/走り1.0想定)、occluded: 壁越しのこもり。
+  // BO2/Valorant級の索敵情報。自分の足音と聴き分けられるよう pitch ~0.9(重め/低め)。
+  // 26m超スキップ / liveVoices>200スキップ / 全体スロットル0.03s。
+  // sfxBus → 既存リバーブsendバスグラフに乗せるので「峡谷では足音も反響」が自動で成立する。
+  enemyFootstep(
+    pan: number,
+    distance: number,
+    mat: SurfaceMaterial,
+    intensity: number,
+    occluded: boolean,
+  ): void {
+    // 距離カリング
+    if (distance > 26) return;
+    // 予算ガード + スロットル
+    const now = this.ctx?.currentTime ?? 0;
+    if (this.liveVoices() > 200 || now - this.lastEnemyFootstepS < 0.03) return;
+    this.lastEnemyFootstepS = now;
+
+    // 距離減衰(仕様値: att = 1/(1 + distance*0.11))
+    let att = 1 / (1 + distance * 0.11);
+    // 空気吸収: enemyShotParams の airLpHz カーブを足音帯域(〜3.5kHz)に調整して流用
+    //   d=0 → 3500Hz / d=10 → ~2120Hz / d=26 → ~952Hz
+    let airLpHz = Math.max(600, 3500 * Math.exp(-0.05 * distance));
+    // 遮蔽: 追加LPF(~1200Hz) + att 半減
+    if (occluded) {
+      airLpHz = Math.min(airLpHz, 1200);
+      att *= 0.5;
+    }
+    const vol = Math.max(0, Math.min(1, intensity)) * att;
+    if (vol < 0.001) return;
+
+    // sfxBus 経由でリバーブバスグラフに乗せる(ステージプリセット自動適用)
+    const wet = this.presetWet;
+    // 敵用: pitch ~0.9 → 全周波数を10%落として「重め/低め」に
+    const hzMul = 0.9;
+    // intensity>0.8(走り/着地/ゾンビ)は踏み込みの低域をわずかに増厚
+    const bassBoost = intensity > 0.8 ? 1.25 : 1.0;
+
+    // ヒール(かかとの低い芯): 自分用 82Hz の 0.9× ≈ 74Hz
+    this.tone({
+      freq: this.jit(74, 0.15),
+      endFreq: 43,
+      durationS: 0.05,
+      type: 'sine',
+      gain: 0.18 * vol * bassBoost,
+      pan,
+      attackS: 0.002,
+      wet,
+    });
+    // 材質テクスチャ(ヒール)
+    this.enemyFootstepTexture(mat, vol, 0, hzMul, airLpHz, pan, wet, bassBoost);
+    // トゥ(つま先): 少し遅れて軽く(自分用と同じ遅延規約)
+    const toeDelay = 0.05 + this.rng() * 0.02;
+    this.enemyFootstepTexture(mat, vol * 0.5, toeDelay, hzMul * 1.3, airLpHz, pan, wet, 1.0);
+  }
+
+  // 敵用材質テクスチャ: footstepTexture を air LPF / pan / wet 対応に拡張。
+  // filterHz を airLpHz でキャップして空気吸収を表現(帯域幅=距離の質感)。
+  private enemyFootstepTexture(
+    mat: SurfaceMaterial,
+    intensity: number,
+    delayS: number,
+    hzMul: number,
+    airLpHz: number,
+    pan: number,
+    wet: number,
+    bassBoost: number,
+  ): void {
+    // bandpass / lowpass の中心周波数を airLpHz でキャップ(遠距離・遮蔽の空気吸収)
+    const lpCap = (hz: number): number => Math.min(hz, airLpHz);
+    switch (mat) {
+      case 'metal':
+        this.noiseBurst({ durationS: 0.04, filterHz: lpCap(this.jit(1900 * hzMul, 0.12)), filterType: 'bandpass', q: 3, gain: 0.12 * intensity, delayS, pan, wet });
+        this.tone({ freq: this.jit(620 * hzMul, 0.1), durationS: 0.05, type: 'sine', gain: 0.06 * intensity * bassBoost, delayS, pan, wet });
+        break;
+      case 'snow':
+        this.noiseBurst({ durationS: 0.035, filterHz: lpCap(this.jit(1200 * hzMul, 0.15)), filterType: 'bandpass', q: 0.8, gain: 0.14 * intensity, delayS, pan, wet });
+        this.noiseBurst({ durationS: 0.02, filterHz: lpCap(this.jit(1500 * hzMul, 0.15)), filterType: 'bandpass', q: 1, gain: 0.08 * intensity, delayS: delayS + 0.015, pan, wet });
+        break;
+      case 'grass':
+      case 'dirt':
+        this.noiseBurst({ durationS: 0.05, filterHz: lpCap(this.jit(520 * hzMul, 0.15)), filterType: 'lowpass', gain: 0.16 * intensity * bassBoost, delayS, pan, wet });
+        break;
+      case 'sand':
+        this.noiseBurst({ durationS: 0.06, filterHz: lpCap(this.jit(650 * hzMul, 0.15)), filterType: 'lowpass', gain: 0.15 * intensity, delayS, pan, wet });
+        break;
+      case 'wood':
+        this.tone({ freq: this.jit(240 * hzMul, 0.12), endFreq: 126, durationS: 0.04, type: 'triangle', gain: 0.1 * intensity * bassBoost, delayS, pan, wet });
+        this.noiseBurst({ durationS: 0.03, filterHz: lpCap(this.jit(900 * hzMul, 0.12)), filterType: 'bandpass', gain: 0.08 * intensity, delayS, pan, wet });
+        break;
+      case 'concrete':
+        this.noiseBurst({ durationS: 0.03, filterHz: lpCap(this.jit(1400 * hzMul, 0.12)), filterType: 'bandpass', q: 1.5, gain: 0.12 * intensity, delayS, pan, attackS: 0.001, wet });
         break;
       default: {
         const _exhaustive: never = mat;

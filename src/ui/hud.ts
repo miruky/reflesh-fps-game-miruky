@@ -75,6 +75,13 @@ export class Hud {
   private lastPipMag = -1; // 弾ピップの生成済み本数(=装弾数)。変化時のみ作り直す
   private lastPipAmmo = -1; // 弾ピップの点灯本数(=残弾)。変化時のみ点灯を更新
   private lastSsStreak = -1; // スコアストリーク段の直近キル数(変化時のみ更新)
+  // ── BO2 ミニマップ ──
+  private minimapCtx: CanvasRenderingContext2D | null = null;
+  private minimapStageSize = 60;
+  private minimapBoxes: Array<{ x: number; z: number; w: number; d: number }> = [];
+  // ── ファイナルキルカム: body 直下の独立オーバーレイ(hud.hide() の影響を受けない) ──
+  private readonly fkcRoot: HTMLElement;
+  private readonly fkcFlashEl: HTMLElement;
 
   constructor(private readonly root: HTMLElement) {
     root.innerHTML = `
@@ -232,6 +239,18 @@ export class Hud {
         </div>
         <div class="hud-grenade"><span>UTILITY</span><strong data-id="gname"></strong><span class="hud-gcount" data-id="gcount"></span></div>
       </div>
+      <!-- BO2 方形ミニマップ: 左上固定。UAV 発動時のみ敵ドット表示 -->
+      <canvas class="hud-minimap" data-id="minimap" width="144" height="144" aria-hidden="true"></canvas>
+      <!-- BO2 スコアストリークパネル: 右側・弾薬表示の上 -->
+      <div class="hud-bo2-ss" aria-hidden="true">
+        <div class="hud-bo2-ss-next" data-id="bo2ssnext"></div>
+        ${[0,1,2,3].map((i) => `
+        <div class="hud-bo2-slot" data-id="bo2slot${i}">
+          <span class="hud-bo2-key">${3+i}</span>
+          <span class="hud-bo2-icon" data-id="bo2icon${i}"></span>
+          <span class="hud-bo2-name" data-id="bo2name${i}"></span>
+        </div>`).join('')}
+      </div>
       <div class="hud-radar" data-id="radar" hidden>
         <div class="radar-sweep"></div>
         <svg class="radar-svg" viewBox="-50 -50 100 100" aria-hidden="true">
@@ -302,6 +321,41 @@ export class Hud {
     // スコープを最前(=描画最背面)へ移し、他のHUDがマスクの上に描かれるようにする
     const scopeEl = this.el['scope'];
     if (scopeEl) this.root.insertBefore(scopeEl, this.root.firstChild);
+
+    // ── ファイナルキルカム オーバーレイ: body 直下へ追加(hud.hide() に影響されない) ──
+    this.fkcRoot = document.createElement('div');
+    this.fkcRoot.className = 'hud-fkc';
+    this.fkcRoot.setAttribute('aria-hidden', 'true');
+    this.fkcRoot.innerHTML = `
+      <div class="hud-fkc-flash"></div>
+      <div class="hud-fkc-bar hud-fkc-bar-t"></div>
+      <div class="hud-fkc-bar hud-fkc-bar-b"></div>
+      <div class="hud-fkc-banner">
+        <span class="hud-fkc-hairline"></span>
+        <span class="hud-fkc-label"><span class="hud-fkc-scan"></span>FINAL KILLCAM</span>
+        <span class="hud-fkc-hairline"></span>
+      </div>
+      <div class="hud-fkc-skip">SKIP : クリック / SPACE</div>
+    `;
+    document.body.appendChild(this.fkcRoot);
+    this.fkcFlashEl = this.fkcRoot.querySelector('.hud-fkc-flash') as HTMLElement;
+  }
+
+  /**
+   * ミニマップを一度だけセットアップする(試合開始時に main.ts から呼ぶ)。
+   * ステージのボックスデータを保持し、毎フレーム drawMinimap() で直接描画する。
+   */
+  setupMinimap(
+    boxes: ReadonlyArray<{ x: number; z: number; w: number; d: number }>,
+    stageSize: number,
+  ): void {
+    this.minimapStageSize = stageSize;
+    this.minimapBoxes = Array.from(boxes);
+    // minimap canvas の 2D コンテキストを取得(ボックスは毎フレーム直接描画するためoffscreenは不要)
+    const canvas = this.el['minimap'] as HTMLCanvasElement | undefined;
+    if (canvas) {
+      this.minimapCtx = canvas.getContext('2d');
+    }
   }
 
   // スコープのミルティックを #sc-marks に追加する。<use>が2回参照するので
@@ -363,6 +417,8 @@ export class Hud {
     this.lastSsStreak = -1; // 段の再描画を次フレームで強制(前試合の残値を持ち越さない)
     // R11 キルカメラ状態の完全クリア(試合開始/離脱で黒幕やビネットを残さない)
     document.body.classList.remove('killcam-active');
+    // ファイナルキルカム オーバーレイもクリア
+    this.fkcRoot.classList.remove('fkc-active');
     for (const id of ['kcveil', 'kcflash'] as const) {
       const n = this.el[id];
       if (n) n.style.opacity = '0';
@@ -375,6 +431,10 @@ export class Hud {
     if (badges) badges.innerHTML = '';
     const medalStack = this.el['medalstack'];
     if (medalStack) medalStack.innerHTML = '';
+    // ミニマップ: 試合ごとにクリア(前試合のキャッシュを持ち越さない)
+    if (this.minimapCtx) {
+      this.minimapCtx.clearRect(0, 0, 144, 144);
+    }
   }
 
   update(
@@ -435,6 +495,8 @@ export class Hud {
     this.updateBanner(snap);
     this.updateUlt(snap);
     this.updateScorestreak(snap);
+    this.updateBO2Streaks(snap);
+    this.drawMinimap(snap);
 
     const scoreboard = this.el['scoreboard'];
     if (scoreboard) {
@@ -621,6 +683,137 @@ export class Hud {
       if (fill) fill.style.transform = `scaleY(${clampN(snap.streak / at, 0, 1)})`;
       const slot = this.el[`ss${i}`];
       if (slot) slot.classList.toggle('ss-ready', snap.streak >= at);
+    }
+  }
+
+  // ── BO2 スコアストリークパネル ────────────────────────────────────────────────────────
+  // BO2 GSC 仕様に忠実な 4 スロット縦積みパネル (UAV/HK/LS/Turret)。
+  // バンク済み = lit、非バンク = dim。次のストリークまでの残 pts を上部に表示する。
+  private readonly BO2_SVG_ICONS = [
+    // UAV: レーダーディッシュ (円 + 放射線)
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="14" r="3"/><path d="M5 20 C5 12 19 12 19 20"/><line x1="12" y1="11" x2="12" y2="4"/><line x1="12" y1="4" x2="7" y2="8"/><line x1="12" y1="4" x2="17" y2="8"/></svg>`,
+    // Hunter-Killer: ドローン (六角 + 線)
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polygon points="12,4 19,8 19,16 12,20 5,16 5,8"/><line x1="5" y1="8" x2="1" y2="6"/><line x1="19" y1="8" x2="23" y2="6"/><line x1="5" y1="16" x2="1" y2="18"/><line x1="19" y1="16" x2="23" y2="18"/></svg>`,
+    // Lightning Strike: 稲妻ボルト
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polyline points="13,2 7,13 12,13 11,22 17,11 12,11 13,2"/></svg>`,
+    // Sensor Turret: 砲台
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="7" y="14" width="10" height="6" rx="1"/><rect x="9" y="10" width="6" height="4"/><line x1="12" y1="10" x2="12" y2="4"/><line x1="12" y1="4" x2="17" y2="7"/></svg>`,
+  ];
+
+  private readonly BO2_NAMES = ['UAV', 'HUNTER KILLER', 'LIGHTNING', 'SENSOR TURRET'];
+  private readonly BO2_COSTS = [425, 525, 750, 800];
+
+  private updateBO2Streaks(snap: MatchSnapshot): void {
+    // ゾンビモードではパネルを隠す
+    const panel = this.root.querySelector<HTMLElement>('.hud-bo2-ss');
+    if (panel) panel.hidden = snap.zombieRound !== undefined;
+    if (snap.zombieRound !== undefined) return;
+
+    // 各スロットのリット状態更新
+    for (let i = 0; i < 4; i += 1) {
+      const slot = this.el[`bo2slot${i}`];
+      if (!slot) continue;
+      const banked = snap.streakBanked[i] ?? false;
+      slot.classList.toggle('bo2-banked', banked);
+      // アイコン: 初回のみ設定
+      const iconEl = this.el[`bo2icon${i}`];
+      if (iconEl && !iconEl.firstChild) {
+        iconEl.innerHTML = this.BO2_SVG_ICONS[i] ?? '';
+      }
+      const nameEl = this.el[`bo2name${i}`];
+      if (nameEl && !nameEl.textContent) {
+        nameEl.textContent = this.BO2_NAMES[i] ?? '';
+      }
+    }
+    // 次の未バンクストリークまでの残り pts
+    const nextEl = this.el['bo2ssnext'];
+    if (nextEl) {
+      let nextLabel = '';
+      for (let i = 0; i < 4; i += 1) {
+        if (!(snap.streakBanked[i] ?? false)) {
+          const cost = this.BO2_COSTS[i] ?? 0;
+          const rem = Math.max(0, cost - snap.streakProgress);
+          nextLabel = rem === 0 ? '' : `${rem} PTS`;
+          break;
+        }
+      }
+      if (nextEl.textContent !== nextLabel) nextEl.textContent = nextLabel;
+    }
+  }
+
+  // ── BO2 方形ミニマップ描画 ────────────────────────────────────────────────────────────
+  private drawMinimap(snap: MatchSnapshot): void {
+    const ctx = this.minimapCtx;
+    if (!ctx) return;
+    const MAP = 144;
+    const CX = MAP / 2;
+    const CY = MAP / 2;
+    const scale = (MAP * 0.82) / this.minimapStageSize;
+    const yaw = snap.yaw;
+
+    ctx.clearRect(0, 0, MAP, MAP);
+
+    // 背景
+    ctx.fillStyle = 'rgba(8,12,18,0.88)';
+    ctx.fillRect(0, 0, MAP, MAP);
+
+    // 外枠
+    ctx.strokeStyle = 'rgba(180,160,100,0.35)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, MAP - 1, MAP - 1);
+
+    // ── 回転コンテキスト: プレイヤー中心・ヨー回転 ──
+    ctx.save();
+    ctx.translate(CX, CY);
+    ctx.rotate(-yaw);
+
+    // 障害物ボックス
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 0.7;
+    for (const b of this.minimapBoxes) {
+      ctx.strokeRect(b.x * scale - b.w * scale / 2, b.z * scale - b.d * scale / 2, b.w * scale, b.d * scale);
+    }
+
+    // 味方ドット (青)
+    ctx.fillStyle = '#5ab0ff';
+    for (const ally of snap.minimapAllies) {
+      ctx.beginPath();
+      ctx.arc(ally.relX * scale, ally.relZ * scale, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 敵ドット (赤, UAV スナップ, opacity フェード)
+    for (const enemy of snap.minimapEnemies) {
+      ctx.globalAlpha = enemy.opacity;
+      ctx.fillStyle = '#ff5040';
+      ctx.beginPath();
+      ctx.arc(enemy.relX * scale, enemy.relZ * scale, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
+
+    // プレイヤーアロー (中心固定・常に上向き)
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(CX, CY - 6);
+    ctx.lineTo(CX + 4, CY + 4);
+    ctx.lineTo(CX, CY + 1);
+    ctx.lineTo(CX - 4, CY + 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // UAV アクティブ時: 上部に "UAV" ラベル
+    if (snap.streakUavActive) {
+      const t = Math.floor(snap.streakUavTimeLeft);
+      ctx.fillStyle = 'rgba(255,200,60,0.9)';
+      ctx.font = '8px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`UAV ${t}s`, CX, 11);
     }
   }
 
@@ -1110,5 +1303,22 @@ export class Hud {
     node.classList.remove(className);
     void node.offsetWidth;
     node.classList.add(className);
+  }
+
+  // ── ファイナルキルカム ──────────────────────────────────────────────
+
+  /** ファイナルキルカム開始: シネマバー + バナーを表示する */
+  showFinalKillcam(): void {
+    this.fkcRoot.classList.add('fkc-active');
+  }
+
+  /** ファイナルキルカム終了: オーバーレイを隠す */
+  hideFinalKillcam(): void {
+    this.fkcRoot.classList.remove('fkc-active');
+  }
+
+  /** フラッシュ強度(0..1)を毎フレーム更新する */
+  updateFinalKillcam(flash: number): void {
+    this.fkcFlashEl.style.opacity = String(flash > 0.001 ? flash : 0);
   }
 }

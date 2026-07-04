@@ -105,6 +105,8 @@ import {
 } from './zombie';
 import type { MatchSummary } from './progression';
 import { generateStage, type StageDef } from './stage';
+import { StreakManager, STREAK_DEFS, type StreakIndex } from './scorestreaks';
+import { type SurfaceMaterial } from './materials';
 import { teamPalette, type TeamPalette } from './teamcolors';
 import { Weapon, WEAPON_DEFS, SECONDARY_IDS, type WeaponClass } from './weapons';
 
@@ -208,6 +210,21 @@ const ALERT_RADIUS_SUPPRESSED = 9;
 // クッキング限界の直前で強制投擲し、手元爆発はさせない
 const COOK_SAFETY_S = 0.25;
 const FIRE_TICK_S = 0.5;
+
+// ── ファイナルキルカム リングバッファ(R19) ──
+const FK_MAX_FRAMES   = 90;  // 4.5 s @ 20 Hz
+const FK_MAX_BOTS     = 32;
+const FK_TICK_INT     = 3;   // 60 Hz の何 tick おきに記録(→ 20 Hz)
+const FK_WIN_PRE      = 2.2; // キル前の窓 (s)
+const FK_WIN_POST     = 1.0; // キル後の窓 (s)
+const FK_MAX_SHOTS    = 48;
+// player slot : eyeX,eyeY,eyeZ, yaw, pitch, alive = 6 floats
+const FK_P            = 6;
+// bot slot    : posX,posY,posZ, headY, yaw, alive  = 6 floats
+const FK_B            = 6;
+const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 198
+// shot slot   : from(3) + to(3) + color(1) + time(1) = 8 floats
+const FK_S            = 8;
 
 // ── R16 spot-time 知覚FSM(matchが積分する。calcSpotRateはraycast無しで毎フレーム)──
 const BOT_CENTRAL_COS = Math.cos((22 * Math.PI) / 180); // 中心視野(この内側でconeFactor=1)
@@ -404,6 +421,15 @@ export interface MatchSnapshot {
   scoreEvents: Array<{ label: string; xp: number }>; // スコア獲得トースト(キル/HS/制圧)
   enemyBearings: Array<{ angle: number; dist: number }>; // レーダー用: 自機yaw基準の相対角と水平距離
   medals: MedalEvent[]; // この描画フレームで取得したメダル(初回=バッジ/以降=大文字)
+  // ── BO2 スコアストリーク ──
+  streakProgress: number;        // 0..799
+  streakBanked: readonly boolean[];  // 各ストリークのバンク状態 [UAV, HK, LS, Turret]
+  streakUavActive: boolean;       // UAV 発動中か
+  streakUavTimeLeft: number;      // UAV 残り秒(0=非活動)
+  // ── ミニマップ (UAV=敵ドット, 常時=味方ドット) ──
+  minimapEnemies: ReadonlyArray<{ relX: number; relZ: number; opacity: number }>;
+  minimapAllies: ReadonlyArray<{ relX: number; relZ: number }>;
+  minimapStageSize: number;
 }
 
 interface RayHitLike {
@@ -606,6 +632,54 @@ export class Match {
   private zombieSpawnColor = 0x4c5a30; // ゾンビ本体の腐敗色(setupで確定)
   private playerDowns = 0;
 
+  // ── BO2 スコアストリーク ──
+  private readonly streakManager = new StreakManager();
+  private uavTimer = 0;         // UAV 残り秒(0=非活動)
+  private uavSweepTimer = 0;    // 次の UAV スナップショットまでの残り秒
+  private uavEnemySnap: Array<{ x: number; z: number; snappedAt: number }> = [];
+  // Hunter-Killer: 軽量エンティティ(フルBotを使わない)
+  private readonly hkEntities: Array<{
+    mesh: THREE.Mesh;
+    geo: THREE.SphereGeometry;
+    pos: THREE.Vector3;
+    vel: THREE.Vector3;
+    targetUid: number; // bot.uid (dead になっても位置追跡に使う)
+    targetLastPos: THREE.Vector3;
+    timer: number;
+    phase: 'rise' | 'dive';
+  }> = [];
+  // Lightning Strike: 遅延爆発キュー
+  private readonly lightningQueue: Array<{ pos: THREE.Vector3; fireAt: number }> = [];
+  // Sensor Turret: PLAYER_TEAM turret の uid → 有効期限 elapsed
+  private readonly streakTurretExpiry = new Map<number, number>();
+  // 足音: bot uid → 歩行累積距離(ストライドトリガー用)
+  private readonly botStepPhase = new Map<number, number>();
+  private stageSurfaceFloor: SurfaceMaterial = 'concrete';
+  // ミニマップ用ボックスデータ(setupMinimap()/snapshot()で参照)
+  private readonly minimapBoxData: Array<{ x: number; z: number; w: number; d: number }> = [];
+
+  // ── ファイナルキルカム: リングバッファ + ステートマシン ──
+  private readonly fkBuf     = new Float32Array(FK_MAX_FRAMES * FK_FRAME_STRIDE);
+  private readonly fkTimeArr = new Float32Array(FK_MAX_FRAMES);
+  private readonly fkBotCnt  = new Uint8Array(FK_MAX_FRAMES);
+  private fkHead = 0;
+  private fkFill = 0;
+  private fkTick = 0;
+  private readonly fkShotBuf = new Float32Array(FK_MAX_SHOTS * FK_S);
+  private fkShotHead = 0;
+  private fkShotFill = 0;
+  private fkKillerIsPlayer = false;
+  private fkKillerBotIdx   = -1;
+  private fkKillElapsed    = -Infinity;
+  private fkPlaying        = false;
+  fkFlash                  = 0;
+  private fkCursor         = 0; // 再生中のゲーム時刻カーソル(startFinalKillcam で窓先頭へ初期化)
+  private fkWinKill        = 0;
+  private fkWinEnd         = 0;
+  private fkPrevCursor     = -Infinity;
+  private readonly _fkEul  = new THREE.Euler(0, 0, 0, 'YXZ');
+  private readonly _fkQ    = new THREE.Quaternion();
+
   constructor(
     readonly config: MatchConfig,
     private readonly settings: Settings,
@@ -630,6 +704,12 @@ export class Match {
     this.playerSpawns = layout.playerSpawns.map(([x, y, z]) => new THREE.Vector3(x, y, z));
     this.botSpawns = layout.botSpawns.map(([x, y, z]) => new THREE.Vector3(x, y, z));
     this.buildStageScene(layout.boxes);
+    // ミニマップ用ボックスデータを保持(HUD から参照)
+    for (const b of layout.boxes) {
+      this.minimapBoxData.push({ x: b.x, z: b.z, w: b.w, d: b.d });
+    }
+    // ステージの床材質(足音に使用)
+    this.stageSurfaceFloor = deriveSurfaceMaterials(config.stage.palette).floor;
 
     const spawn = this.playerSpawns[0] ?? new THREE.Vector3();
     // モディファイアをプレイヤーの個体設定へ反映(低重力/HP自然回復なし)
@@ -1818,11 +1898,21 @@ export class Match {
     // キルカメラのカメラ姿勢を固定dtで前進(時間前進はここ1箇所に集約=冪等)
     this.advanceKillcam(dt);
 
+    // BO2 スコアストリーク: 入力受付 + UAV/HK/LS/Turret の毎フレーム処理
+    if (this.config.mode !== 'zombie' && this.player.alive) {
+      this.updateStreaks(dt);
+    }
     this.updateBots(dt);
     this.physics.step();
     this.syncCamera();
     this.handleRespawns();
     if (this.config.mode === 'zombie') this.updateZombieDirector(dt);
+
+    // ファイナルキルカム: 3 tick ごと 20 Hz でキーフレームをリングバッファへ記録
+    if (this.config.mode !== 'zombie') {
+      this.fkTick = (this.fkTick + 1) % FK_TICK_INT;
+      if (this.fkTick === 0) this.fkRecordFrame();
+    }
 
     // プレイヤー死亡の立ち下がりでメダル連続系をリセット(復讐対象=直近のkiller)
     if (this.lastAlive && !this.player.alive) {
@@ -2625,6 +2715,7 @@ export class Match {
         ? from.clone().addScaledVector(dir, hitToi(hit))
         : from.clone().addScaledVector(dir, remainingRange);
       this.effects.tracer(tracerFrom, end, weapon.def.tracerColor);
+      this.fkRecordShot(tracerFrom, end, weapon.def.tracerColor);
       if (!hit) return;
 
       const tag = this.tags.get(hit.collider.handle);
@@ -2726,6 +2817,12 @@ export class Match {
     });
     if (died) {
       this.haptic(150, 0.5, 0.75); // キル確定の手応え
+      // ファイナルキルカム: プレイヤーのキルを記録
+      if (this.config.mode !== 'zombie') {
+        this.fkKillerIsPlayer = true;
+        this.fkKillerBotIdx   = -1;
+        this.fkKillElapsed    = this.elapsed;
+      }
       this.killSurgeEnv = 1; // R20 rank4: キル確定サージ(PostFXの彩度/コントラスト+白エッジ)を点火
       this.player.kills += 1;
       this.player.streak += 1;
@@ -2736,6 +2833,17 @@ export class Match {
       this.hits.push(scopeKill ? 'snipe' : 'kill');
       this.feed.push({ killer: PLAYER_NAME, victim: bot.name, weapon: weaponName, headshot });
       this.scoreEvents.push({ label: 'キル', xp: 100 });
+      // BO2 スコアストリーク: ゾンビモードは無効
+      if (this.config.mode !== 'zombie') {
+        const newly = this.streakManager.addScore(headshot ? 125 : 100);
+        for (const idx of newly) {
+          const def = STREAK_DEFS[idx];
+          if (def) {
+            this.announcements.push(def.name + ' READY');
+            this.sounds.announceMedal(1, this.settings.announcerVolume);
+          }
+        }
+      }
       if (scopeKill) this.sounds.snipeKill();
       else this.sounds.kill(1 + Math.min(this.player.streak, 5) * 0.06);
       // 連続キルのアナウンサー(マイルストーンのみ。HUDのバナーと閾値を揃える)
@@ -2817,6 +2925,217 @@ export class Match {
     return false;
   }
 
+  // ── BO2 スコアストリーク: 入力受付 + 各ストリークの毎フレーム処理 ────────────────
+  private updateStreaks(dt: number): void {
+    const vol = this.settings.announcerVolume;
+
+    // ── キー入力 → 対応ストリークを tryConsume ────
+    const activationMap: Array<['streak1' | 'streak2' | 'streak3' | 'streak4', StreakIndex]> = [
+      ['streak1', 0],
+      ['streak2', 1],
+      ['streak3', 2],
+      ['streak4', 3],
+    ];
+    for (const [action, idx] of activationMap) {
+      if (this.input.wasPressed(action)) {
+        if (this.streakManager.tryConsume(idx)) {
+          this.activateStreak(idx, vol);
+        }
+      }
+    }
+
+    // ── UAV: タイマー減算 + 4 秒ごとにスナップ更新 ────
+    if (this.uavTimer > 0) {
+      this.uavTimer = Math.max(0, this.uavTimer - dt);
+      this.uavSweepTimer -= dt;
+      if (this.uavSweepTimer <= 0) {
+        this.uavSweepTimer = 4;
+        // 敵の現在位置をスナップショット
+        this.uavEnemySnap = [];
+        for (const bot of this.bots) {
+          if (bot.alive && bot.team !== PLAYER_TEAM) {
+            this.uavEnemySnap.push({
+              x: bot.position.x,
+              z: bot.position.z,
+              snappedAt: this.elapsed,
+            });
+          }
+        }
+      }
+    }
+
+    // ── Hunter-Killer: エンティティ更新 ────
+    const HK_SPEED = 28;     // m/s
+    const HK_IMPACT_DIST = 2.2; // m (この距離で爆発)
+    const HK_RADIUS = 6;    // 爆発半径(m)
+    const HK_MAX_DMG = 220;
+    for (let i = this.hkEntities.length - 1; i >= 0; i -= 1) {
+      const hk = this.hkEntities[i]!;
+      hk.timer -= dt;
+
+      // フェーズ判定
+      if (hk.phase === 'rise' && hk.timer <= 9.5) {
+        hk.phase = 'dive';
+        hk.vel.set(0, 0, 0);
+      }
+      if (hk.phase === 'rise') {
+        hk.vel.set(0, 8, 0);
+      } else {
+        // ターゲットが生きていれば追いかける
+        const target = this.bots.find((b) => b.uid === hk.targetUid && b.alive);
+        if (target) hk.targetLastPos.copy(target.position);
+        const toTarget = hk.targetLastPos.clone().sub(hk.pos);
+        const dist = toTarget.length();
+        if (dist > 0.1) {
+          hk.vel.copy(toTarget.normalize().multiplyScalar(HK_SPEED));
+        }
+      }
+
+      // 位置更新
+      hk.pos.addScaledVector(hk.vel, dt);
+      hk.mesh.position.copy(hk.pos);
+
+      // 命中判定 or タイムアウト
+      const target = this.bots.find((b) => b.uid === hk.targetUid && b.alive);
+      const distToTarget = target ? hk.pos.distanceTo(target.position) : Infinity;
+      if (distToTarget < HK_IMPACT_DIST || hk.timer <= 0) {
+        // 爆発
+        const ep = this.panAndDistance(hk.pos);
+        this.effects.explosion(hk.pos.clone(), 1.6);
+        this.sounds.explosion(ep.pan, ep.distance);
+        for (const bot of this.bots) {
+          if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+          const d = hk.pos.distanceTo(bot.position);
+          if (d >= HK_RADIUS || !this.explosionReaches(hk.pos.clone(), bot.position)) continue;
+          this.applyBotDamage(bot, HK_MAX_DMG * (1 - d / HK_RADIUS), bot.position, false, 'HUNTER KILLER');
+        }
+        // クリーンアップ
+        this.scene.remove(hk.mesh);
+        hk.geo.dispose();
+        (hk.mesh.material as THREE.Material).dispose();
+        this.hkEntities.splice(i, 1);
+      }
+    }
+
+    // ── Lightning Strike: 遅延爆発キュー ────
+    const LS_RADIUS = 8;
+    const LS_MAX_DMG = 180;
+    for (let i = this.lightningQueue.length - 1; i >= 0; i -= 1) {
+      const ls = this.lightningQueue[i]!;
+      if (this.elapsed < ls.fireAt) continue;
+      const ep = this.panAndDistance(ls.pos);
+      this.effects.explosion(ls.pos.clone(), 2.2);
+      this.sounds.explosion(ep.pan, ep.distance);
+      for (const bot of this.bots) {
+        if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+        const d = Math.min(ls.pos.distanceTo(bot.position), ls.pos.distanceTo(bot.headPosition()));
+        if (d >= LS_RADIUS || !this.explosionReaches(ls.pos.clone(), bot.position)) continue;
+        this.applyBotDamage(bot, LS_MAX_DMG * (1 - d / LS_RADIUS), bot.position, false, 'LIGHTNING STRIKE');
+      }
+      this.lightningQueue.splice(i, 1);
+    }
+
+    // ── Sensor Turret: 有効期限チェック ────
+    for (const [uid, expiresAt] of this.streakTurretExpiry) {
+      if (this.elapsed >= expiresAt) {
+        const bot = this.bots.find((b) => b.uid === uid && b.alive);
+        if (bot) bot.takeDamage(9999, undefined);
+        this.streakTurretExpiry.delete(uid);
+      }
+    }
+
+    // 終了した UAV のスナップをクリア
+    if (this.uavTimer <= 0 && this.uavEnemySnap.length > 0) {
+      this.uavEnemySnap = [];
+    }
+  }
+
+  // ── 各ストリークの発動 ────────────────────────────────────────────────────────────────
+  private activateStreak(idx: StreakIndex, vol: number): void {
+    if (idx === 0) {
+      // UAV
+      this.uavTimer = 25;
+      this.uavSweepTimer = 0; // 即座に1回スナップ
+      this.sounds.announceStreak('Friendly UAV inbound.', vol);
+      this.announcements.push('UAV ONLINE');
+    } else if (idx === 1) {
+      // Hunter-Killer: 最寄り敵へ自動誘導
+      const nearest = this.findNearestEnemyBot();
+      if (!nearest) return; // 敵がいないと発動不可(バンクは消費済み)
+      const geo = new THREE.SphereGeometry(0.18, 8, 6);
+      const mat = new THREE.MeshStandardMaterial({ color: 0xff5500, emissive: 0xff2200, emissiveIntensity: 1.2 });
+      const mesh = new THREE.Mesh(geo, mat);
+      const startPos = this.player.eyePosition.clone().add(new THREE.Vector3(0, 0.3, 0));
+      mesh.position.copy(startPos);
+      this.scene.add(mesh);
+      this.hkEntities.push({
+        mesh,
+        geo,
+        pos: startPos.clone(),
+        vel: new THREE.Vector3(0, 8, 0),
+        targetUid: nearest.uid,
+        targetLastPos: nearest.position.clone(),
+        timer: 10,
+        phase: 'rise',
+      });
+    } else if (idx === 2) {
+      // Lightning Strike: プレイヤーの正面方向に 3 発
+      const yaw = this.player.yaw;
+      const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+      const center = this.player.position.clone().addScaledVector(fwd, 35);
+      const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+      const offsets = [
+        new THREE.Vector3(0, 0, 0),
+        right.clone().multiplyScalar(4),
+        right.clone().multiplyScalar(-4),
+      ];
+      for (let i = 0; i < offsets.length; i += 1) {
+        const pos = center.clone().add(offsets[i]!);
+        // 地面の高さを取得
+        const down = this.castRay(new THREE.Vector3(pos.x, pos.y + 10, pos.z), new THREE.Vector3(0, -1, 0), 20, null);
+        pos.y = down ? pos.y + 10 - hitToi(down) + 0.1 : pos.y;
+        this.lightningQueue.push({ pos, fireAt: this.elapsed + 0.9 + i * 0.2 });
+      }
+    } else if (idx === 3) {
+      // Sensor Turret: プレイヤー正面 2.5m に設置
+      const yaw = this.player.yaw;
+      const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+      const spawnXZ = this.player.position.clone().addScaledVector(fwd, 2.5);
+      spawnXZ.y = this.player.position.y;
+      const down = this.castRay(
+        new THREE.Vector3(spawnXZ.x, spawnXZ.y + 1, spawnXZ.z),
+        new THREE.Vector3(0, -1, 0),
+        4,
+        null,
+      );
+      if (down) spawnXZ.y = spawnXZ.y + 1 - hitToi(down) + 0.05;
+      const bot = this.spawnBot(
+        'センサータレット',
+        spawnXZ,
+        this.colors.ally,
+        PLAYER_TEAM,
+        tuningFor('normal', this.config.difficulty),
+        'normal',
+        'turret',
+      );
+      // 60秒後に自動消滅
+      this.streakTurretExpiry.set(bot.uid, this.elapsed + 60);
+    }
+  }
+
+  // 生存している最近傍の敵ボットを返す
+  private findNearestEnemyBot(): Bot | null {
+    let best: Bot | null = null;
+    let bestDist = Infinity;
+    const pp = this.player.position;
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const d = pp.distanceTo(bot.position);
+      if (d < bestDist) { bestDist = d; best = bot; }
+    }
+    return best;
+  }
+
   private updateBots(dt: number): void {
     // 足音: スプリント/スライド中のプレイヤーが至近にいると敵が振り向く。
     // 歩き/しゃがみは無音なので、静かに近づけば背後を取れる
@@ -2850,6 +3169,37 @@ export class Match {
         onShoot: (origin, dir) => this.botShoot(bot, origin, dir),
         onMelee: (b) => this.zombieMelee(b),
       });
+
+      // ── 敵足音 ── (生存ボットのみ。遠距離25m超/歩行ゼロはスキップ)
+      if (bot.alive && this.player.alive) {
+        const botDist = bot.position.distanceTo(playerPos);
+        if (botDist < 25 && bot.horizSpeedMps > 0.1) {
+          const prev = this.botStepPhase.get(bot.uid) ?? 0;
+          const next = prev + bot.horizSpeedMps * dt;
+          this.botStepPhase.set(bot.uid, next % 2.2);
+          if (next >= 2.2) {
+            // ストライドイベント発火
+            const sp = this.panAndDistance(bot.position);
+            // 遮蔽判定: プレイヤー視点からのレイキャスト(一歩ごとに1回のみ)
+            const eye = this.player.eyePosition;
+            const toBotDir = bot.position.clone().sub(eye);
+            const d = toBotDir.length();
+            let occluded = false;
+            if (d > 0.5) {
+              const hit = this.castRay(eye, toBotDir.normalize(), d - 0.3, this.player.body);
+              if (hit) {
+                const tag = this.tags.get(hit.collider.handle);
+                occluded = tag === undefined || tag.kind === 'world';
+              }
+            }
+            const isZombie = bot.kind === 'zombie';
+            const intensity = isZombie ? Math.min(1, 0.6 + bot.horizSpeedMps * 0.08) : 0.45;
+            this.sounds.enemyFootstep(sp.pan, sp.distance, this.stageSurfaceFloor, intensity, occluded);
+          }
+        } else if (!bot.alive || bot.horizSpeedMps < 0.05) {
+          this.botStepPhase.delete(bot.uid);
+        }
+      }
     }
   }
 
@@ -3119,6 +3469,9 @@ export class Match {
       end,
       bot.team === PLAYER_TEAM ? this.colors.allyTracer : this.colors.enemyTracer,
     );
+    if (this.config.mode !== 'zombie') {
+      this.fkRecordShot(origin, end, bot.team === PLAYER_TEAM ? this.colors.allyTracer : this.colors.enemyTracer);
+    }
 
     // 発砲音は方向と距離をつけて鳴らす。敵弾のみ遮蔽レイ1本で「壁越しのこもり」を判定
     const { pan, distance } = this.panAndDistance(origin);
@@ -3226,6 +3579,8 @@ export class Match {
 
   // killerは敵BOTに倒された場合のみ。自爆や火災ではキルカメラを出さない
   private notePlayerDeath(killer: Bot | null = null): void {
+    // BO2 スコアストリーク: 死亡でprogress リセット (バンク保持)
+    this.streakManager.onDeath();
     this.deathPos = this.player.position;
     this.orbitAngle = this.player.yaw + Math.PI / 2;
     this.killer = killer;
@@ -3241,6 +3596,12 @@ export class Match {
       const dz = killer.position.z - this.player.position.z;
       this.killcamDistM = Math.round(Math.hypot(dx, dz));
       this.killcamFlash = this.settings.reduceMotion ? 0 : 1;
+      // ファイナルキルカム: ボットのキルを記録
+      if (this.config.mode !== 'zombie') {
+        this.fkKillerIsPlayer = false;
+        this.fkKillerBotIdx   = this.bots.indexOf(killer);
+        this.fkKillElapsed    = this.elapsed;
+      }
       this.killcamElapsedS = 0;
       this.killcamArc = 0;
       this.prevKillcamCamActive = false;
@@ -4227,6 +4588,15 @@ export class Match {
       zombieKills: this.config.mode === 'zombie' ? this.zombieKills : undefined,
       zombiePoints: this.config.mode === 'zombie' ? this.zombiePoints : undefined,
       playerDowns: this.config.mode === 'zombie' ? this.playerDowns : undefined,
+      // ── BO2 スコアストリーク ──
+      streakProgress: this.streakManager.state.progress,
+      streakBanked: this.streakManager.state.banked,
+      streakUavActive: this.uavTimer > 0,
+      streakUavTimeLeft: this.uavTimer,
+      // ── ミニマップ ──
+      minimapEnemies: this.computeMinimapEnemies(),
+      minimapAllies: this.computeMinimapAllies(),
+      minimapStageSize: this.config.stage.size,
     };
     this.feed = [];
     this.hits = [];
@@ -4262,6 +4632,37 @@ export class Match {
       out.push({ angle: wrapAngle(forwardAngle - Math.atan2(dx, dz)), dist });
     }
     return out;
+  }
+
+  // ── ミニマップ用データ ────────────────────────────────────────────────────────────────
+
+  /** ミニマ��プ上の敵ドット(UAV スナップショット)を返す。プレイヤー相対座標 */
+  private computeMinimapEnemies(): Array<{ relX: number; relZ: number; opacity: number }> {
+    if (this.uavTimer <= 0) return [];
+    const px = this.player.position.x;
+    const pz = this.player.position.z;
+    return this.uavEnemySnap.map((s) => ({
+      relX: s.x - px,
+      relZ: s.z - pz,
+      opacity: Math.max(0, 1 - (this.elapsed - s.snappedAt) / 4),
+    }));
+  }
+
+  /** ミニマップ上の味方ドットを返す。プレイヤー相対座標 */
+  private computeMinimapAllies(): Array<{ relX: number; relZ: number }> {
+    const px = this.player.position.x;
+    const pz = this.player.position.z;
+    const out: Array<{ relX: number; relZ: number }> = [];
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team !== PLAYER_TEAM) continue;
+      out.push({ relX: bot.position.x - px, relZ: bot.position.z - pz });
+    }
+    return out;
+  }
+
+  /** ミニマップ背景描画用ボックスデータ(HUD が初期化時に一度だけ参照する) */
+  minimapBoxes(): ReadonlyArray<{ x: number; z: number; w: number; d: number }> {
+    return this.minimapBoxData;
   }
 
   // FFAでは首位の敵スコア、チーム戦では敵チームスコア
@@ -4306,6 +4707,232 @@ export class Match {
       })),
     ];
     return rows.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+  }
+
+  // ── ファイナルキルカム: 記録メソッド ──────────────────────────────
+
+  private fkRecordFrame(): void {
+    const h   = this.fkHead;
+    const off = h * FK_FRAME_STRIDE;
+    const pe  = this.player.eyePosition;
+    this.fkBuf[off    ] = pe.x;
+    this.fkBuf[off + 1] = pe.y;
+    this.fkBuf[off + 2] = pe.z;
+    this.fkBuf[off + 3] = this.player.yaw;
+    this.fkBuf[off + 4] = this.player.pitch;
+    this.fkBuf[off + 5] = this.player.alive ? 1 : 0;
+    const nb = Math.min(this.bots.length, FK_MAX_BOTS);
+    this.fkBotCnt[h] = nb;
+    for (let i = 0; i < nb; i++) {
+      const bot  = this.bots[i]!;
+      const bpos  = bot.position;
+      const bhead = bot.headPosition();
+      const bo = off + FK_P + i * FK_B;
+      this.fkBuf[bo    ] = bpos.x;
+      this.fkBuf[bo + 1] = bpos.y;
+      this.fkBuf[bo + 2] = bpos.z;
+      this.fkBuf[bo + 3] = bhead.y;
+      this.fkBuf[bo + 4] = Math.atan2(-bot.aimDir.x, -bot.aimDir.z);
+      this.fkBuf[bo + 5] = bot.alive ? 1 : 0;
+    }
+    this.fkTimeArr[h] = this.elapsed;
+    this.fkHead = (h + 1) % FK_MAX_FRAMES;
+    if (this.fkFill < FK_MAX_FRAMES) this.fkFill++;
+  }
+
+  private fkRecordShot(from: THREE.Vector3, to: THREE.Vector3, color: number): void {
+    if (this.config.mode === 'zombie') return;
+    const h   = this.fkShotHead;
+    const off = h * FK_S;
+    this.fkShotBuf[off    ] = from.x;
+    this.fkShotBuf[off + 1] = from.y;
+    this.fkShotBuf[off + 2] = from.z;
+    this.fkShotBuf[off + 3] = to.x;
+    this.fkShotBuf[off + 4] = to.y;
+    this.fkShotBuf[off + 5] = to.z;
+    this.fkShotBuf[off + 6] = color;
+    this.fkShotBuf[off + 7] = this.elapsed;
+    this.fkShotHead = (h + 1) % FK_MAX_SHOTS;
+    if (this.fkShotFill < FK_MAX_SHOTS) this.fkShotFill++;
+  }
+
+  // ── ファイナルキルカム: 再生メソッド ──────────────────────────────
+
+  /**
+   * match.over 確定後に main.ts から1回だけ呼ぶ。
+   * 条件を満たせば再生状態をセットアップして true、対象外なら false を返す。
+   */
+  startFinalKillcam(): boolean {
+    if (this.config.mode === 'zombie') return false;
+    if (this.fkFill === 0 || this.fkKillElapsed === -Infinity) return false;
+    const killT  = this.fkKillElapsed;
+    const oldIdx = (this.fkHead - this.fkFill + FK_MAX_FRAMES) % FK_MAX_FRAMES;
+    const oldest = this.fkTimeArr[oldIdx]!;
+    // バッファが kill から 2.2s 前まで届いていない場合はスキップ
+    if (oldest > killT - FK_WIN_PRE + 0.5) return false;
+    this.fkWinKill    = killT;
+    this.fkWinEnd     = killT + FK_WIN_POST;
+    this.fkCursor     = killT - FK_WIN_PRE; // ゲーム時刻カーソルを窓先頭(kill-2.2s)へ初期化
+    this.fkPrevCursor = -Infinity;
+    this.fkFlash      = 0;
+    this.fkPlaying    = true;
+    return true;
+  }
+
+  /**
+   * カーソルのゲーム時刻に応じた再生速度を返す(BO2式ランプ速度)。
+   * キル直前で減速し、直後0.5sを最遅でホールド、その後復帰する。
+   */
+  private fkSpeedAt(cursor: number): number {
+    const d = cursor - this.fkWinKill; // キルからの相対時間(負=前・正=後)
+    if (d < -1.5) return 1.0;          // キル 1.5s より前: 等速1×
+    if (d < 0.0) {
+      // キル 1.5s 前〜キル: 1.0 → 0.3 へ線形減速
+      const t = (d + 1.5) / 1.5;      // 0 → 1
+      return 1.0 + (0.3 - 1.0) * t;
+    }
+    if (d < 0.5) return 0.3;           // キル〜キル後 0.5s: 0.3× ホールド
+    // キル後 0.5s〜窓終端: 0.3 → 1.0 へ線形復帰
+    const t = Math.min(1, (d - 0.5) / Math.max(1e-6, FK_WIN_POST - 0.5));
+    return 0.3 + (1.0 - 0.3) * t;
+  }
+
+  /**
+   * finalKillcam 中に毎フレーム呼ぶ。
+   * 完了(窓を抜けた)なら true、継続なら false を返す。
+   */
+  advanceFinalKillcam(dt: number): boolean {
+    if (!this.fkPlaying) return true;
+    // BO2式ランプ速度: カーソル位置によって速度が変わる
+    const speed  = this.fkSpeedAt(this.fkCursor);
+    this.fkCursor += dt * speed;
+    const cursor = this.fkCursor;
+    if (cursor >= this.fkWinEnd) {
+      this.fkPlaying = false;
+      return true;
+    }
+    const [iA, iB, t] = this.fkFindFrames(cursor);
+    if (iA < 0) { this.fkPlaying = false; return true; }
+    this.fkApplyFrame(iA, iB, t);
+    this.fkSetCamera(iA, iB, t);
+    // キル瞬間の白フラッシュ(reduceMotion 非依存 — HUD 側で CSS ゲート済み)
+    const afterKill = cursor - this.fkWinKill;
+    if (!this.settings.reduceMotion && afterKill >= 0 && afterKill < 0.05) {
+      this.fkFlash = Math.max(this.fkFlash, 1 - afterKill / 0.05);
+    }
+    this.fkFlash = Math.max(0, this.fkFlash - dt * 4);
+    // ショット再生(prevCursor..cursor の範囲のみ。重複なし)
+    this.fkReplayShots(this.fkPrevCursor, cursor);
+    this.fkPrevCursor = cursor;
+    // エフェクト・アトモスフィアを前進(トレーサー消滅 / 草揺れ維持)
+    this.effects.update(dt);
+    this.atmosphere?.update(dt, this.camera.position);
+    return false;
+  }
+
+  private fkFindFrames(cursor: number): [number, number, number] {
+    if (this.fkFill === 0) return [-1, -1, 0];
+    let bestA = -1; let bestATime = -Infinity;
+    let bestB = -1; let bestBTime =  Infinity;
+    for (let i = 0; i < this.fkFill; i++) {
+      const idx = (this.fkHead - this.fkFill + i + FK_MAX_FRAMES) % FK_MAX_FRAMES;
+      const ft  = this.fkTimeArr[idx]!;
+      if (ft <= cursor && ft > bestATime) { bestATime = ft; bestA = idx; }
+      if (ft >  cursor && ft < bestBTime) { bestBTime = ft; bestB = idx; }
+    }
+    if (bestA < 0) return [-1, -1, 0];
+    if (bestB < 0) return [bestA, bestA, 0];
+    const span = Math.max(1e-6, bestBTime - bestATime);
+    return [bestA, bestB, Math.min(1, Math.max(0, (cursor - bestATime) / span))];
+  }
+
+  private fkApplyFrame(iA: number, iB: number, t: number): void {
+    const offA = iA * FK_FRAME_STRIDE;
+    const offB = iB * FK_FRAME_STRIDE;
+    const nbA  = this.fkBotCnt[iA]!;
+    const nbB  = this.fkBotCnt[iB]!;
+    const nb   = Math.min(nbA, nbB, this.bots.length);
+    for (let i = 0; i < this.bots.length; i++) {
+      const bot = this.bots[i]!;
+      if (i < nb) {
+        const boA = offA + FK_P + i * FK_B;
+        const boB = offB + FK_P + i * FK_B;
+        const bx   = this.fkBuf[boA    ]! + (this.fkBuf[boB    ]! - this.fkBuf[boA    ]!) * t;
+        const by   = this.fkBuf[boA + 1]! + (this.fkBuf[boB + 1]! - this.fkBuf[boA + 1]!) * t;
+        const bz   = this.fkBuf[boA + 2]! + (this.fkBuf[boB + 2]! - this.fkBuf[boA + 2]!) * t;
+        const ya   = this.fkBuf[boA + 4]!;
+        const yb   = this.fkBuf[boB + 4]!;
+        let   yd   = yb - ya;
+        if (yd >  Math.PI) yd -= Math.PI * 2;
+        if (yd < -Math.PI) yd += Math.PI * 2;
+        const byaw = ya + yd * t;
+        const balive = (this.fkBuf[boA + 5]! > 0.5) || (this.fkBuf[boB + 5]! > 0.5);
+        bot.group.position.set(bx, by, bz);
+        bot.group.rotation.y = byaw;
+        bot.group.visible    = balive;
+      } else {
+        bot.group.visible = false;
+      }
+    }
+  }
+
+  private fkSetCamera(iA: number, iB: number, t: number): void {
+    const offA = iA * FK_FRAME_STRIDE;
+    const offB = iB * FK_FRAME_STRIDE;
+    let ex: number; let ey: number; let ez: number;
+    let yaw: number; let pitch = 0;
+
+    if (this.fkKillerIsPlayer) {
+      ex = this.fkBuf[offA    ]! + (this.fkBuf[offB    ]! - this.fkBuf[offA    ]!) * t;
+      ey = this.fkBuf[offA + 1]! + (this.fkBuf[offB + 1]! - this.fkBuf[offA + 1]!) * t;
+      ez = this.fkBuf[offA + 2]! + (this.fkBuf[offB + 2]! - this.fkBuf[offA + 2]!) * t;
+      const ya = this.fkBuf[offA + 3]!; const yb = this.fkBuf[offB + 3]!;
+      let yd = yb - ya;
+      if (yd >  Math.PI) yd -= Math.PI * 2;
+      if (yd < -Math.PI) yd += Math.PI * 2;
+      yaw   = ya + yd * t;
+      pitch = this.fkBuf[offA + 4]! + (this.fkBuf[offB + 4]! - this.fkBuf[offA + 4]!) * t;
+    } else {
+      const ki  = this.fkKillerBotIdx;
+      const nbA = this.fkBotCnt[iA]!;
+      const nbB = this.fkBotCnt[iB]!;
+      if (ki < 0 || ki >= Math.min(nbA, nbB)) return;
+      const boA = offA + FK_P + ki * FK_B;
+      const boB = offB + FK_P + ki * FK_B;
+      ex = this.fkBuf[boA    ]! + (this.fkBuf[boB    ]! - this.fkBuf[boA    ]!) * t; // body X = head X
+      ey = this.fkBuf[boA + 3]! + (this.fkBuf[boB + 3]! - this.fkBuf[boA + 3]!) * t; // headY
+      ez = this.fkBuf[boA + 2]! + (this.fkBuf[boB + 2]! - this.fkBuf[boA + 2]!) * t; // body Z = head Z
+      const ya = this.fkBuf[boA + 4]!; const yb = this.fkBuf[boB + 4]!;
+      let yd = yb - ya;
+      if (yd >  Math.PI) yd -= Math.PI * 2;
+      if (yd < -Math.PI) yd += Math.PI * 2;
+      yaw = ya + yd * t;
+    }
+
+    this.camera.position.set(ex, ey, ez);
+    this._fkEul.set(pitch, yaw, 0);
+    this._fkQ.setFromEuler(this._fkEul);
+    this.camera.quaternion.copy(this._fkQ);
+    const tgtFov = 62;
+    if (Math.abs(this.camera.fov - tgtFov) > 0.1) {
+      this.camera.fov += (tgtFov - this.camera.fov) * Math.min(1, 0.08);
+      this.camera.updateProjectionMatrix();
+    }
+  }
+
+  private fkReplayShots(prevCursor: number, cursor: number): void {
+    for (let i = 0; i < this.fkShotFill; i++) {
+      const h   = (this.fkShotHead - this.fkShotFill + i + FK_MAX_SHOTS) % FK_MAX_SHOTS;
+      const off = h * FK_S;
+      const st  = this.fkShotBuf[off + 7]!;
+      if (st > prevCursor && st <= cursor) {
+        this.effects.tracer(
+          new THREE.Vector3(this.fkShotBuf[off    ]!, this.fkShotBuf[off + 1]!, this.fkShotBuf[off + 2]!),
+          new THREE.Vector3(this.fkShotBuf[off + 3]!, this.fkShotBuf[off + 4]!, this.fkShotBuf[off + 5]!),
+          this.fkShotBuf[off + 6]!,
+        );
+      }
+    }
   }
 
   // 描画。composer(medium/high)があればそれ、無ければ素のレンダラ。
@@ -4391,6 +5018,13 @@ export class Match {
   }
 
   dispose(): void {
+    // BO2 ストリーク: HK エンティティを解放(scene.traverse前に手動removeが必要)
+    for (const hk of this.hkEntities) {
+      this.scene.remove(hk.mesh);
+      hk.geo.dispose();
+      (hk.mesh.material as THREE.Material).dispose();
+    }
+    this.hkEntities.length = 0;
     this.atmosphere?.dispose(); // 草/フォグ/粒子/遠景/リムライトを解放(scene.traverse前)
     this.atmosphere = null;
     this.effects.dispose();

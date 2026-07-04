@@ -9402,6 +9402,95 @@ tr.score-ally td {
   color: #fff;
 }
 
+/* ── H23. BO2 方形ミニマップ ── */
+.hud-minimap {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  width: 144px;
+  height: 144px;
+  image-rendering: pixelated;
+  border: 1px solid rgba(180, 160, 100, 0.3);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  pointer-events: none;
+  z-index: 5;
+  /* ミニマップは低負荷のため常に表示 */
+}
+
+/* ── H24. BO2 スコアストリークパネル (4スロット) ── */
+.hud-bo2-ss {
+  position: fixed;
+  right: 18px;
+  bottom: 160px; /* 弾薬カウンターの上 */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 5;
+}
+.hud-bo2-ss-next {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--ember);
+  letter-spacing: 0.08em;
+  text-align: right;
+  min-height: 12px;
+  margin-bottom: 2px;
+}
+.hud-bo2-slot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--glass-heavy);
+  border: 1px solid var(--rule-strong);
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+  padding: 3px 7px 3px 5px;
+  opacity: 0.4;
+  transition: opacity 0.2s var(--ease-out), border-color 0.2s;
+}
+.hud-bo2-slot.bo2-banked {
+  opacity: 1;
+  border-color: var(--ember);
+  box-shadow: 0 0 6px var(--ember-deep);
+}
+.hud-bo2-key {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  min-width: 8px;
+  text-align: center;
+}
+.hud-bo2-slot.bo2-banked .hud-bo2-key {
+  color: var(--ember);
+}
+.hud-bo2-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--ink-soft);
+  flex-shrink: 0;
+}
+.hud-bo2-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.hud-bo2-slot.bo2-banked .hud-bo2-icon {
+  color: #fff;
+}
+.hud-bo2-name {
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.hud-bo2-slot.bo2-banked .hud-bo2-name {
+  color: #fff;
+}
+
 /* ── H21. レスポンシブ(基底@mediaを後勝ちで潰したためここで再宣言) ── */
 @media (max-width: 980px) {
   .hud-radar {
@@ -9665,4 +9754,153 @@ body.killcam-active .hud-death {
 :root.reduce-motion .mfd-deck.wipe::after {
   animation: none;
   opacity: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   R19 FINAL KILLCAM — ポストマッチ決着キル再生オーバーレイ
+   body 直下 .hud-fkc に .fkc-active で表示。hud.hide() に依存しない。
+   ═══════════════════════════════════════════════════════════════════ */
+.hud-fkc {
+  display: none;
+  pointer-events: none;
+}
+.hud-fkc.fkc-active {
+  display: block;
+}
+
+/* 全面白フラッシュ(キル瞬間): JS が opacity を駆動 */
+.hud-fkc-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  /* scale(1/--ui-scale) 相当は不要: fixed は viewport 解決で zoom に影響されない */
+}
+
+/* レターボックス(シネマ上下帯) */
+.hud-fkc-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 10vh;
+  background: var(--void, #07090b);
+  z-index: 88;
+  pointer-events: none;
+  transform: scaleY(0);
+}
+.hud-fkc-bar-t {
+  top: 0;
+  transform-origin: top;
+  animation: fkc-bar-in 0.36s var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) forwards;
+}
+.hud-fkc-bar-b {
+  bottom: 0;
+  transform-origin: bottom;
+  animation: fkc-bar-in 0.36s var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) forwards;
+}
+@keyframes fkc-bar-in {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
+}
+
+/* FINAL KILLCAM バナー */
+.hud-fkc-banner {
+  position: fixed;
+  top: calc(10vh + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 89;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: fkc-fade-in 0.45s 0.15s var(--ease-out, ease) both;
+}
+.hud-fkc-label {
+  position: relative;
+  overflow: hidden;
+  padding: 0 3px;
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.44em;
+  text-indent: 0.44em;
+  color: var(--ember, #ff574f);
+  white-space: nowrap;
+}
+/* 走査アニメーション */
+.hud-fkc-scan {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--ember, #ff574f) 30%, transparent) 50%,
+    transparent 100%
+  );
+  animation: fkc-scan 1.6s linear infinite;
+}
+@keyframes fkc-scan {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+/* アンバー細線 */
+.hud-fkc-hairline {
+  display: block;
+  flex: 0 0 44px;
+  height: 1px;
+  background: var(--ember, #ff574f);
+  opacity: 0.55;
+}
+@keyframes fkc-fade-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* スキップヒント */
+.hud-fkc-skip {
+  position: fixed;
+  bottom: calc(10vh + 18px);
+  right: 22px;
+  z-index: 89;
+  font-family: var(--mono, monospace);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--ink-faint, #7a8288);
+  animation: fkc-fade-in 0.6s 0.5s var(--ease-out, ease) both;
+}
+
+/* reduceMotion: アニメを止め即表示 */
+:root.reduce-motion .hud-fkc-bar-t,
+:root.reduce-motion .hud-fkc-bar-b {
+  animation: none;
+  transform: scaleY(1);
+}
+:root.reduce-motion .hud-fkc-banner,
+:root.reduce-motion .hud-fkc-skip {
+  animation: none;
+  opacity: 1;
+  transform: translateX(-50%);
+}
+:root.reduce-motion .hud-fkc-scan {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hud-fkc-bar-t,
+  .hud-fkc-bar-b {
+    animation: none;
+    transform: scaleY(1);
+  }
+  .hud-fkc-banner,
+  .hud-fkc-skip {
+    animation: none;
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+  .hud-fkc-scan {
+    animation: none;
+  }
 }

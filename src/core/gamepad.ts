@@ -78,6 +78,11 @@ export const BO3_DEFAULT: GamepadBindings = {
   ultimate: btn(GP.L1),
   holdBreath: btn(GP.L3), // スプリントと共有(ADS中=息止め / 非ADS=スプリント)
   scoreboard: btn(GP.SHARE),
+  // BO2 スコアストリーク発動キー: ゲームパッドは未割当(キーボード専用)
+  streak1: [],
+  streak2: [],
+  streak3: [],
+  streak4: [],
   fire: [{ kind: 'trigger', index: GP.R2, threshold: TRIGGER_FIRE }],
   ads: [{ kind: 'trigger', index: GP.L2, threshold: TRIGGER_ADS }],
   weaponswitch: btn(GP.TRIANGLE),

@@ -125,7 +125,7 @@ applyMotion();
 
 let match: Match | null = null;
 let chromaTimer = 0; // 被弾クロマアベの後始末タイマー(連続被弾で積み重ねない)
-let mode: 'menu' | 'playing' | 'paused' | 'result' = 'menu';
+let mode: 'menu' | 'playing' | 'paused' | 'result' | 'finalkillcam' = 'menu';
 let lastSelection: MenuSelection | null = null;
 let activeMissionId: string | null = null; // ストーリー進行中のミッションID(なければ通常戦)
 
@@ -166,6 +166,8 @@ function launch(config: MatchConfig): void {
     new Set<string>(profile.unlockedMedals),
   );
   hud.reset();
+  // BO2 ミニマップ: 試合ごとにステージのボックスデータをセットアップ
+  hud.setupMinimap(match.minimapBoxes(), config.stage.size);
   hud.show();
   spaceBg?.stop(); // 出撃中はメニュー背景の宇宙レンダラを止める(RAF/GPU圧迫防止)
   menu.hide();
@@ -252,6 +254,7 @@ spaceBg?.start();
 if (spaceBg) menu.attachBg(spaceBg);
 
 input.onLockChange((locked) => {
+  // ファイナルキルカム中はロック離脱でもポーズしない(再生を継続させる)
   if (!locked && mode === 'playing' && match && !match.over) {
     mode = 'paused';
     menu.showPause();
@@ -297,6 +300,32 @@ function adaptResolution(dt: number, nowMs: number): void {
   }
 }
 
+/** リザルト画面へ遷移する共通処理(通常終了 / ファイナルキルカム後のどちらからも呼ぶ) */
+function showResult(): void {
+  mode = 'result';
+  hud.hide();
+  const result = match!.result();
+  if (activeMissionId) {
+    const ms = match!.missionSummary();
+    if (ms) {
+      const cp = applyCampaignMission(profile, ms);
+      saveProfile(profile);
+      menu.showMissionResult(result, cp);
+    } else {
+      menu.showResult(result, applyMatch(profile, result.summary));
+    }
+  } else {
+    const isScore = lastSelection?.mode === 'score';
+    const summary = isScore ? { ...result.summary, rated: false } : result.summary;
+    const progress = applyMatch(profile, summary);
+    if (isScore && lastSelection) {
+      applyScoreRecord(profile, `score:${lastSelection.stageId}`, result.summary.kills);
+    }
+    saveProfile(profile);
+    menu.showResult(result, progress);
+  }
+}
+
 const loop = new GameLoop(
   (dt) => {
     if (mode === 'playing' && match) match.update(dt);
@@ -304,7 +333,8 @@ const loop = new GameLoop(
   (dt) => {
     // Options(ゲームパッド)で一時停止/再開。pointer lock のジェスチャ制約で
     // 再開はベストエフォート(失敗時はクリックで再開できる)
-    if (input.consumePausePressed()) {
+    // finalkillcam 中は pause ボタンをスキップとして下のブロックで使うため、ここでは消費しない
+    if (mode !== 'finalkillcam' && input.consumePausePressed()) {
       if (mode === 'playing') input.exitLock();
       else if (mode === 'paused') input.requestLock(renderer.domElement);
     }
@@ -312,7 +342,9 @@ const loop = new GameLoop(
     const nav = input.consumeUiNav();
     if (mode !== 'playing') menu.handleGamepad(nav);
     if (match) {
-      match.frame(dt, mode === 'playing');
+      // finalkillcam 中は advanceFinalKillcam が effects/atmosphere を自分で進めるので
+      // frame() を呼ばない(effects.update の二重呼び出しによるトレーサー早期消滅を防ぐ)
+      if (mode !== 'finalkillcam') match.frame(dt, mode === 'playing');
       // 動的BGM/環境音: プレイ中だけ進める。ポーズは環境音を沈め、離脱で拍をリセット
       if (mode === 'playing') {
         sounds.tickBgm();
@@ -345,39 +377,36 @@ const loop = new GameLoop(
           }, 150);
         }
         if (match.over) {
-          mode = 'result';
           input.exitLock();
           sounds.stopAmbience(); // リザルト画面で戦場の環境音が鳴り続けないように
-          hud.hide();
-          const result = match.result();
-          if (activeMissionId) {
-            // ストーリー: ミッション進行を反映し、星・章解放つきの結果を出す
-            const ms = match.missionSummary();
-            if (ms) {
-              const cp = applyCampaignMission(profile, ms);
-              saveProfile(profile);
-              menu.showMissionResult(result, cp);
-            } else {
-              menu.showResult(result, applyMatch(profile, result.summary));
-            }
+          // R19: ファイナルキルカムが適用できる試合かを確認してから分岐する
+          if (match.startFinalKillcam()) {
+            mode = 'finalkillcam';
+            hud.showFinalKillcam();
           } else {
-            const isScore = lastSelection?.mode === 'score';
-            // スコアアタックは自己ベスト用途。競技レートは動かさない(rated=false)
-            const summary = isScore ? { ...result.summary, rated: false } : result.summary;
-            const progress = applyMatch(profile, summary);
-            if (isScore && lastSelection) {
-              applyScoreRecord(profile, `score:${lastSelection.stageId}`, result.summary.kills);
-            }
-            saveProfile(profile);
-            menu.showResult(result, progress);
+            showResult();
           }
+        }
+      }
+      // R19: ファイナルキルカム再生フェーズ
+      if (mode === 'finalkillcam') {
+        // スキップ: スペース / ゲームパッドの任意ボタン(クリックはロック解除中のため非対応)
+        const skipPressed =
+          input.wasPressed('jump') ||
+          input.consumePausePressed();
+        const done = match.advanceFinalKillcam(dt) || skipPressed;
+        hud.updateFinalKillcam(match.fkFlash);
+        if (done) {
+          hud.hideFinalKillcam();
+          showResult();
         }
       }
       // R17: ポーズ/リザルト中はゲームを再描画しない(直前フレームで画面が静止する)。
       // ライブなWebGLキャンバスの上にポーズ幕の backdrop-filter が載ると、明るい空の
       // ステージで白く破綻する既知の禁止パターン(=白飛びバグ)を根絶する。GPUも節約。
-      if (mode === 'playing') {
-        adaptResolution(dt, performance.now());
+      // R19: ファイナルキルカム中も描画継続する(再生映像のため必須)。
+      if (mode === 'playing' || mode === 'finalkillcam') {
+        if (mode === 'playing') adaptResolution(dt, performance.now());
         match.render();
       }
     }

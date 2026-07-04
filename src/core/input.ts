@@ -30,7 +30,11 @@ export type Action =
   | 'leanright'
   | 'ultimate'
   | 'holdBreath'
-  | 'scoreboard';
+  | 'scoreboard'
+  | 'streak1'
+  | 'streak2'
+  | 'streak3'
+  | 'streak4';
 
 export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   forward: ['KeyW'],
@@ -45,7 +49,11 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   weapon1: ['Digit1'],
   weapon2: ['Digit2'],
   grenade: ['KeyG'],
-  grenadeswitch: ['Digit3'],
+  grenadeswitch: ['KeyH'],
+  streak1: ['Digit3'],
+  streak2: ['Digit4'],
+  streak3: ['Digit5'],
+  streak4: ['Digit6'],
   leanleft: ['KeyQ'],
   leanright: ['KeyE'],
   ultimate: ['KeyF'],

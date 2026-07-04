@@ -1622,6 +1622,10 @@ export class ViewModel {
   private counterKickTimer = 0;
   // スプリント中に銃を下げる量(滑らかに追従)。raiseRatioとは独立した加算項
   private sprintLower = 0;
+  // 呼吸スウェイ位相(~0.295 Hz サイン波。ADS 収束でゼロ収束)
+  private breathPhase = 0;
+  // サプレッサー装着状態キャッシュ(setWeapon 時に更新。fire() フラッシュ減光で参照)
+  private isSuppressed = false;
   // 可動ノード(vm:*)の参照 + メカアニメ状態。root には触れずローカルのみ動かす(スコープイン非干渉)。
   private rig: MovableRig = {};
   // クナイ(素手)ADS逆手ポーズの対象ノード束。非fistsでは空(該当ノードが無いため)。
@@ -1637,7 +1641,7 @@ export class ViewModel {
     this.flashMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(0.16, 0.16),
       new THREE.MeshBasicMaterial({
-        color: 0xffd9a0,
+        color: 0xffaa44,
         transparent: true,
         opacity: 0.9,
         blending: THREE.AdditiveBlending,
@@ -1645,7 +1649,8 @@ export class ViewModel {
       }),
     );
     this.flashMesh.visible = false;
-    this.flashLight = new THREE.PointLight(0xffc070, 0, 7);
+    // intensity=0(オフ時), distance=4(4m到達で完全減衰), decay=2(物理正則フォールオフ)
+    this.flashLight = new THREE.PointLight(0xffaa44, 0, 4, 2);
   }
 
   setWeapon(def: WeaponDef): void {
@@ -1662,6 +1667,8 @@ export class ViewModel {
     this.muzzle.add(this.flashMesh);
     this.muzzle.add(this.flashLight);
     this.captureRig();
+    // サプレッサー装着状態をキャッシュ(fire() フラッシュ減光で参照する)
+    this.isSuppressed = (def.attachmentIds ?? []).includes('suppressor');
     // 各武器のサイト高さを ADS 収束 Y へ反映(attachmentIds 可変にも追従)。キャッシュ両経路後。
     this.adsY = -resolveSightY(def);
     this.adsTarget.set(ADS_X, this.adsY, ADS_Z);
@@ -1837,14 +1844,28 @@ export class ViewModel {
     const bobX = Math.sin(this.bobPhase) * bobAmp;
     const bobY = Math.abs(Math.cos(this.bobPhase)) * bobAmp;
 
-    // やや遅い回復で「重い一撃」の余韻を残す
-    this.kickZ = Math.max(0, this.kickZ - dt * 0.35);
-    this.kickRot = Math.max(0, this.kickRot - dt * 1.0);
+    // 呼吸スウェイ(BO2/BO3: ~0.295 Hz サイン波、振幅~0.003m)。
+    // ADS 収束(ads→1)でゼロへ。resolveSightY 契約: ads=1 時は breathAtten=0 なので無影響。
+    this.breathPhase += dt * 0.295;
+    const breathAtten = Math.pow(1.0 - ads, 2) * state.motionScale;
+    const breathX = Math.sin(this.breathPhase) * 0.003 * breathAtten;
+    const breathY = Math.sin(this.breathPhase * 0.73 + 1.1) * 0.002 * breathAtten;
+
+    // スプリング的指数回復(≈0.82/frame @60fps = exp(-12*dt))。
+    // 線形より初期がすばやく後半がなめらかで「重い一撃の余韻→すっと戻る」撃ち味を作る
+    const kickDecay = Math.exp(-dt * 12.0);
+    this.kickZ *= kickDecay;
+    this.kickRot *= kickDecay;
     this.flashTimer -= dt;
     this.flashMesh.visible = this.flashTimer > 0;
-    this.flashLight.intensity = this.flashTimer > 0 ? 4.0 : 0;
+    // サプレッサー付きは intensity/scale を 1/4 に抑えて炎を消す
+    const flashSuppFactor = this.isSuppressed ? 0.25 : 1.0;
+    this.flashLight.intensity = this.flashTimer > 0 ? 8.0 * flashSuppFactor : 0;
     if (this.flashTimer > 0) {
       this.flashMesh.rotation.z = Math.random() * Math.PI;
+      // 毎発シード違いのスケールで連射のちらつきを自然に
+      const fs = this.isSuppressed ? 0.3 + Math.random() * 0.35 : 0.7 + Math.random() * 0.85;
+      this.flashMesh.scale.setScalar(fs);
     }
 
     // 着地インパルス: 0.28sかけて一度沈んで戻る半周期サイン
@@ -1935,11 +1956,12 @@ export class ViewModel {
       pos.z -= 0.2 * bell;
       pos.y += 0.05 * bell;
     }
-    pos.x += this.swayX + bobX;
+    pos.x += this.swayX + bobX + breathX;
     // スコープを覗き込むほど銃を下げ、完全に覗いたらDOMスコープのため非表示にする
     pos.y +=
       this.swayY +
       bobY +
+      breathY +
       LOWERED_OFFSET * state.raiseRatio -
       0.55 * state.scopeReveal01 -
       landDip +
