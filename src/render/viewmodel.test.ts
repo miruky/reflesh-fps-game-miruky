@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { buildGunBody, resolveSightY } from './viewmodel';
+import { buildGunBody, CamoStandardMaterial, resolveSightY } from './viewmodel';
 import { WEAPON_DEFS, type ViewModelShape, type WeaponDef } from '../game/weapons';
 import { OPTIC_SPECS, resolveOpticId } from '../game/optics';
+import { CAMO_IDS, CAMO_VISUALS } from '../game/camo';
 
 // 一人称腕は sleeve/glove の固有色で塗られる。銃本体にこれらが混ざっていなければ
 // 「腕なし」と判定できる(dark/darker/accent とは別色)。
@@ -84,6 +85,88 @@ describe('buildGunBody', () => {
     const suppressed = buildGunBody({ ...ar, attachmentIds: ['suppressor'] });
     expect(suppressed.muzzle.position.z).toBeLessThan(plain.muzzle.position.z);
     expect(hasArmMaterials(suppressed.gun)).toBe(false);
+  });
+});
+
+// ── R25 武器カモ: buildGunBody(def, camoId) の材差し替えを検証する ──
+describe('武器カモ(buildGunBody)', () => {
+  const ar = WEAPON_DEFS['kaede-ar'];
+  if (!ar) throw new Error('kaede-ar missing');
+
+  function camoMats(g: THREE.Object3D): CamoStandardMaterial[] {
+    const out: CamoStandardMaterial[] = [];
+    g.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.material instanceof CamoStandardMaterial) {
+        out.push(o.material);
+      }
+    });
+    return out;
+  }
+
+  it('全カモIDで銃が組め、主要バケツにカモ材が載る', () => {
+    for (const id of CAMO_IDS) {
+      const { gun, muzzle } = buildGunBody(ar, id);
+      expect(muzzle.position.z, id).toBeLessThan(0);
+      const mats = camoMats(gun);
+      expect(mats.length, id).toBeGreaterThan(0);
+      for (const m of mats) expect(m.camoVisualId, id).toBe(id);
+    }
+  });
+
+  it('ゴールドは金属金(metalness 1.0)+微発光、ダイヤは強スペキュラ', () => {
+    const gold = camoMats(buildGunBody(ar, 'gold').gun)[0];
+    expect(gold).toBeDefined();
+    expect(gold!.metalness).toBe(1.0);
+    expect(gold!.emissiveIntensity).toBeGreaterThan(0);
+    const dia = camoMats(buildGunBody(ar, 'diamond').gun)[0];
+    expect(dia!.roughness).toBeLessThanOrEqual(0.2);
+  });
+
+  it('camoId=null/不正ID/プロファイル無しはカモ材を使わない', () => {
+    expect(camoMats(buildGunBody(ar, null).gun)).toHaveLength(0);
+    expect(camoMats(buildGunBody(ar, 'rainbow').gun)).toHaveLength(0);
+    // 省略時はプロファイル解決(テスト環境=保存なし)で素の質感
+    expect(camoMats(buildGunBody(ar).gun)).toHaveLength(0);
+  });
+
+  it('カモ適用でも研磨(polish)系の素材は素のまま残る(コントラスト維持)', () => {
+    const { gun } = buildGunBody(ar, 'gold');
+    let polish = 0;
+    gun.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      const m = o.material;
+      if (
+        m instanceof THREE.MeshStandardMaterial &&
+        !(m instanceof CamoStandardMaterial) &&
+        m.vertexColors &&
+        m.metalness >= 0.85
+      ) {
+        polish += 1;
+      }
+    });
+    expect(polish).toBeGreaterThan(0);
+  });
+
+  it('カモ材は clone してもカモであり続ける(ARMORYプレビューの複製経路)', () => {
+    const mat = camoMats(buildGunBody(ar, 'dark-matter').gun)[0];
+    expect(mat).toBeDefined();
+    const cloned = mat!.clone();
+    expect(cloned).toBeInstanceOf(CamoStandardMaterial);
+    expect(cloned.camoVisualId).toBe('dark-matter');
+    expect(cloned.customProgramCacheKey()).toBe(mat!.customProgramCacheKey());
+    expect(cloned.metalness).toBe(CAMO_VISUALS['dark-matter'].metalness);
+    cloned.dispose();
+  });
+
+  it('カモ適用は照準ジオメトリ(reflexドット/レンズ)に触れない', () => {
+    const def: WeaponDef = { ...ar, attachmentIds: ['reflex'] };
+    let dotY = Number.NaN;
+    buildGunBody(def, 'gold').gun.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.geometry.type === 'PlaneGeometry' && Number.isNaN(dotY)) {
+        dotY = o.position.y;
+      }
+    });
+    expect(dotY).toBeCloseTo(resolveSightY(def), 6);
   });
 });
 

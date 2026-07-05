@@ -52,6 +52,41 @@ describe('parseProfile', () => {
     expect(restored).toEqual(profile);
   });
 
+  it('weaponStats/selectedCamos(カモ)が往復で保存復元される', () => {
+    const profile = emptyProfile();
+    profile.weaponStats['kaede-ar'] = { kills: 120, headshots: 10 };
+    profile.weaponStats['gouka-rl'] = { kills: 500, headshots: 100 };
+    profile.selectedCamos['kaede-ar'] = 'blue';
+    profile.selectedCamos['gouka-rl'] = 'gold';
+    const restored = parseProfile(serializeProfile(profile));
+    expect(restored).toEqual(profile);
+  });
+
+  it('不正なweaponStats/selectedCamosは安全に弾く', () => {
+    const restored = parseProfile(
+      JSON.stringify({
+        weaponStats: {
+          bad1: { kills: -5, headshots: 'x' }, // 両方不正→0/0で破棄
+          good: { kills: 10, headshots: 2 },
+          bad2: 5, // オブジェクトでない→破棄
+        },
+        selectedCamos: {
+          w1: 'gold',
+          w2: 'rainbow', // 未知のカモID→破棄
+          w3: 7, // 文字列でない→破棄
+        },
+      }),
+    );
+    expect(restored.weaponStats).toEqual({ good: { kills: 10, headshots: 2 } });
+    expect(restored.selectedCamos).toEqual({ w1: 'gold' });
+  });
+
+  it('カモフィールド欠落の旧セーブは空で開始(後方互換)', () => {
+    const restored = parseProfile(JSON.stringify({ xp: 100 }));
+    expect(restored.weaponStats).toEqual({});
+    expect(restored.selectedCamos).toEqual({});
+  });
+
   it('campaign欠落の旧セーブはch1解放の既定で補完される', () => {
     const restored = parseProfile(JSON.stringify({ xp: 100 }));
     expect(restored.campaign.unlockedChapters).toEqual(['ch1']);

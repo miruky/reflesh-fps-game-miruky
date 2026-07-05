@@ -382,6 +382,12 @@ export class Hud {
         <div class="hud-ss-slot" data-id="ss2"><i class="ss-fill" data-id="ss2f"></i><b>7</b></div>
       </div>
       <div class="hud-zbuy" data-id="zbuy" hidden></div>
+      <!-- ガンゲーム: 右上にランク + 武器名 + トップ3リーダーボード -->
+      <div class="hud-gg" data-id="gg" hidden>
+        <div class="hud-gg-rank" data-id="ggrank">1/20</div>
+        <div class="hud-gg-weapon" data-id="ggweapon"></div>
+        <div class="hud-gg-top3" data-id="ggtop3"></div>
+      </div>
       <div class="hud-death" data-id="death" hidden>
         <div class="hud-death-title">やられた</div>
         <div class="hud-death-sub">リスポーンまで <span data-id="respawn">0.0</span> 秒</div>
@@ -620,6 +626,7 @@ export class Hud {
     this.updateZombieBossFlash(snap);
     this.updateDarkEmperorHud(snap);
     this.drawMinimap(snap);
+    this.updateGunGameHud(snap);
 
     const scoreboard = this.el['scoreboard'];
     if (scoreboard) {
@@ -1785,6 +1792,41 @@ export class Hud {
       const ss = Math.floor(secs % 60);
       const timeStr = `${mm}:${String(ss).padStart(2, '0')}`;
       this.text('detimer', timeStr);
+    }
+  }
+
+  // ── ガンゲーム HUD ──────────────────────────────────────────────────────────────────────
+  private updateGunGameHud(snap: MatchSnapshot): void {
+    const el = this.el['gg'];
+    if (!el) return;
+    const inGG = snap.ggRank !== undefined;
+    el.hidden = !inGG;
+    if (!inGG) return;
+
+    const rank = snap.ggRank!;
+    this.text('ggrank', `${rank} / 20`);
+    this.text('ggweapon', snap.ggWeaponName ?? '');
+
+    // ランクアップフラッシュ(1フレームだけ演出クラスを付与)
+    if (snap.ggRankUpFlash) {
+      el.classList.add('gg-rankup');
+      setTimeout(() => el.classList.remove('gg-rankup'), 600);
+    }
+    if (snap.ggSetback) {
+      el.classList.add('gg-setback');
+      setTimeout(() => el.classList.remove('gg-setback'), 600);
+    }
+
+    // トップ3リーダーボード
+    const top3El = this.el['ggtop3'];
+    if (top3El && snap.ggTop3) {
+      top3El.innerHTML = snap.ggTop3.map((e, i) =>
+        `<div class="gg-top3-row${e.isPlayer ? ' gg-top3-you' : ''}">` +
+        `<span class="gg-top3-pos">${i + 1}</span>` +
+        `<span class="gg-top3-name">${e.isPlayer ? 'YOU' : e.name}</span>` +
+        `<span class="gg-top3-rank">${e.rank}</span>` +
+        `</div>`
+      ).join('');
     }
   }
 }

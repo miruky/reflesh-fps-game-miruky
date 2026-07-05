@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CAMPAIGN } from './campaign';
 import { WEAPON_DEFS } from './weapons';
 import { ATTACHMENT_DEFS } from './attachments';
+import { CAMO_WEAPON_IDS } from './camo';
 import {
   applyCampaignMission,
   applyMatch,
@@ -367,6 +368,112 @@ describe('XP乗数', () => {
     const scaled = applyCampaignMission(p2, { ...ms }, 50);
     expect(scaled.xpTotal).toBe(base.xpTotal * 50);
     expect(p2.xp).toBe(p1.xp * 50);
+  });
+});
+
+describe('カモチャレンジ積算(applyMatch)', () => {
+  it('武器別キル/HSが weaponStats へ累積される', () => {
+    const profile = emptyProfile();
+    applyMatch(profile, summary({ kills: 10, killsByWeapon: { 'kaede-ar': 10 }, hsByWeapon: { 'kaede-ar': 3 } }));
+    applyMatch(profile, summary({ kills: 5, killsByWeapon: { 'kaede-ar': 5 } }));
+    expect(profile.weaponStats['kaede-ar']).toEqual({ kills: 15, headshots: 3 });
+  });
+
+  it('しきい値到達でカモ解除がnewCamosとXP内訳に載る', () => {
+    const profile = emptyProfile();
+    profile.weaponStats['kaede-ar'] = { kills: 20, headshots: 0 };
+    const progress = applyMatch(
+      profile,
+      summary({ kills: 5, killsByWeapon: { 'kaede-ar': 5 } }),
+    );
+    expect(progress.newCamos).toHaveLength(1);
+    expect(progress.newCamos[0]?.camoId).toBe('dirt');
+    expect(progress.newCamos[0]?.label).toContain('カエデAR');
+    expect(progress.xpBreakdown.some((e) => e.label.startsWith('カモ解除:'))).toBe(true);
+  });
+
+  it('1試合で複数段を跨ぐと全段が報告される', () => {
+    const profile = emptyProfile();
+    const progress = applyMatch(
+      profile,
+      summary({ kills: 120, killsByWeapon: { 'tsubaki-smg': 120 } }),
+    );
+    expect(progress.newCamos.map((c) => c.camoId)).toEqual(['dirt', 'woodland', 'tiger', 'blue']);
+  });
+
+  it('ゴールドは500キルだけでは開かず、HS100で開く', () => {
+    const profile = emptyProfile();
+    const first = applyMatch(
+      profile,
+      summary({ kills: 500, killsByWeapon: { 'kaede-ar': 500 }, hsByWeapon: { 'kaede-ar': 99 } }),
+    );
+    expect(first.newCamos.map((c) => c.camoId)).not.toContain('gold');
+    const second = applyMatch(
+      profile,
+      summary({ kills: 1, killsByWeapon: { 'kaede-ar': 1 }, hsByWeapon: { 'kaede-ar': 1 } }),
+    );
+    expect(second.newCamos.map((c) => c.camoId)).toEqual(['gold']);
+  });
+
+  it('単独武器クラス(launcher)のゴールドで同試合内にダイヤも解除される', () => {
+    const profile = emptyProfile();
+    const progress = applyMatch(
+      profile,
+      summary({ kills: 500, killsByWeapon: { 'gouka-rl': 500 }, hsByWeapon: { 'gouka-rl': 100 } }),
+    );
+    const ids = progress.newCamos.map((c) => c.camoId);
+    expect(ids).toContain('gold');
+    expect(ids).toContain('diamond');
+  });
+
+  it('最後のクラスがダイヤに達するとダークマターが解除される', () => {
+    const profile = emptyProfile();
+    // launcher(gouka-rl)以外の全カモ対象武器をゴールド済みにしておく
+    for (const id of CAMO_WEAPON_IDS) {
+      if (id === 'gouka-rl') continue;
+      profile.weaponStats[id] = { kills: 500, headshots: 100 };
+    }
+    const progress = applyMatch(
+      profile,
+      summary({ kills: 500, killsByWeapon: { 'gouka-rl': 500 }, hsByWeapon: { 'gouka-rl': 100 } }),
+    );
+    const ids = progress.newCamos.map((c) => c.camoId);
+    expect(ids).toContain('gold');
+    expect(ids).toContain('diamond');
+    expect(ids).toContain('dark-matter');
+    expect(progress.xpBreakdown.some((e) => e.label.includes('ダークマター'))).toBe(true);
+  });
+
+  it('既解除のカモは再報告されない', () => {
+    const profile = emptyProfile();
+    applyMatch(profile, summary({ kills: 30, killsByWeapon: { 'kaede-ar': 30 } }));
+    const again = applyMatch(profile, summary({ kills: 1, killsByWeapon: { 'kaede-ar': 1 } }));
+    expect(again.newCamos).toHaveLength(0);
+  });
+
+  it('killsByWeapon省略(旧経路)は何も起きない(後方互換)', () => {
+    const profile = emptyProfile();
+    const progress = applyMatch(profile, summary({ kills: 100, weaponKills: { カエデAR: 100 } }));
+    expect(progress.newCamos).toHaveLength(0);
+    expect(profile.weaponStats).toEqual({});
+  });
+
+  it('副武器・近接など対象外IDは統計のみ積み、解除は発生しない', () => {
+    const profile = emptyProfile();
+    const progress = applyMatch(profile, summary({ kills: 200, killsByWeapon: { suzume: 200 } }));
+    expect(profile.weaponStats['suzume']).toEqual({ kills: 200, headshots: 0 });
+    expect(progress.newCamos).toHaveLength(0);
+  });
+
+  it('カモ解除XPにも xpMul が掛かる', () => {
+    const profile = emptyProfile();
+    const progress = applyMatch(
+      profile,
+      summary({ kills: 25, killsByWeapon: { 'kaede-ar': 25 } }),
+      10,
+    );
+    const row = progress.xpBreakdown.find((e) => e.label.startsWith('カモ解除:'));
+    expect(row?.xp).toBe(1000); // dirt 100 XP × 10
   });
 });
 

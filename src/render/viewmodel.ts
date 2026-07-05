@@ -2,6 +2,14 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { ViewModelShape, WeaponDef } from '../game/weapons';
 import { classDefault, OPTIC_SPECS, resolveOpticId } from '../game/optics';
+import {
+  CAMO_VISUALS,
+  equippedCamoFor,
+  isCamoId,
+  type CamoId,
+  type CamoVisual,
+} from '../game/camo';
+import { loadProfile } from '../core/profile';
 
 const HIP_POSITION = new THREE.Vector3(0.24, -0.22, -0.5);
 // ADS 収束座標。X/Z は全武器共通、Y は武器ごとに resolveSightY で動的算出する
@@ -531,6 +539,184 @@ function getShared(): SharedMats {
   return sharedMats;
 }
 
+// ── R25 武器カモ(プロシージャル)────────────────────────────────────────
+// 主要メタル/ポリマー材質(metalVC/polyVC)を、カモ定義(camo.ts)に基づく
+// onBeforeCompile の軽量ノイズGLSLで置き換える。研磨(polish)/レンズ/発光帯は
+// 素のまま残してコントラストを保つ。カモ材はカモIDごとに1枚をモジュールキャッシュし
+// (userData.shared=true)、disposeShared で他の共有材と同時に解放する。
+// 銃キャッシュのキーにカモIDが入るため、材の差し替え・復元は不要(元本を汚さない)。
+
+// 全カモ材で共有する時刻uniform(ダークマター等の脈動アニメ用)。描画直前に
+// mesh.onBeforeRender が進めるので、本編ViewModelとARMORYプレビューの両方で動く。
+const CAMO_TIME = { value: 0 };
+const tickCamoTime = (): void => {
+  CAMO_TIME.value = performance.now() * 0.001;
+};
+
+function glslColor(hex: number): string {
+  const c = new THREE.Color(hex);
+  return `vec3(${c.r.toFixed(5)}, ${c.g.toFixed(5)}, ${c.b.toFixed(5)})`;
+}
+
+// パターン本体。camoCol(必須)と camoEmissiveMul(任意・既定1.0)を組み立てる。
+// 色・周波数はGLSL定数として焼き込む(uniform管理不要・clone安全)。
+function camoPatternGLSL(v: CamoVisual): string {
+  const A = glslColor(v.colorA);
+  const B = glslColor(v.colorB);
+  const C = glslColor(v.colorC);
+  const S = v.scale.toFixed(2);
+  switch (v.pattern) {
+    case 'blotch':
+      // 迷彩斑: 2周波の値ノイズで主/副/差し色を島状に混ぜる
+      return `
+        float n1 = camoNoise(vCamoPos * ${S});
+        float n2 = camoNoise(vCamoPos * ${S} * 2.63 + 17.3);
+        vec3 camoCol = mix(${A}, ${B}, smoothstep(0.42, 0.58, n1));
+        camoCol = mix(camoCol, ${C}, smoothstep(0.60, 0.74, n2));`;
+    case 'stripe':
+      // 縞(タイガー/ネオン): ノイズで歪ませたsin縞。縞側(B)を発光対象にする
+      return `
+        float w = vCamoPos.z * ${S} + (camoNoise(vCamoPos * ${S} * 0.9) - 0.5) * 2.4;
+        float band = smoothstep(0.35, 0.65, 0.5 + 0.5 * sin(w * 6.2832));
+        vec3 camoCol = mix(${A}, ${B}, band);
+        float n2 = camoNoise(vCamoPos * ${S} * 2.1 + 31.7);
+        camoCol = mix(camoCol, ${C}, smoothstep(0.66, 0.80, n2));
+        camoEmissiveMul = band;`;
+    case 'facet':
+      // 結晶(ダイヤ): セル状ファセット+氷白の稜線。面ごとに明度が割れる
+      return `
+        vec3 cell = floor(vCamoPos * ${S});
+        float f = camoHash(cell);
+        vec3 fr = fract(vCamoPos * ${S});
+        float edge = smoothstep(0.0, 0.12, min(min(fr.x, fr.y), fr.z))
+                   * smoothstep(0.0, 0.12, min(min(1.0 - fr.x, 1.0 - fr.y), 1.0 - fr.z));
+        vec3 camoCol = mix(${C}, mix(${A}, ${B}, f), edge);
+        camoEmissiveMul = 1.0 - 0.5 * edge;`;
+    case 'pulse':
+      // 脈動(溶岩/ダークマター): 流動するノイズ脈+時間で明滅する発光(uCamoTime)
+      return `
+        float n1 = camoNoise(vCamoPos * ${S} + vec3(0.0, 0.0, uCamoTime * 0.15));
+        float vein = 1.0 - smoothstep(0.04, 0.16, abs(n1 - 0.5));
+        float n2 = camoNoise(vCamoPos * ${S} * 2.2 + 11.1);
+        vec3 camoCol = mix(${A}, ${B}, vein);
+        camoCol = mix(camoCol, ${C}, vein * smoothstep(0.5, 0.8, n2));
+        camoEmissiveMul = vein * (0.55 + 0.45 * sin(uCamoTime * 2.4 + n2 * 6.2832));`;
+    case 'solid':
+      // 単色(ゴールド): 微ノイズの色むら+まれなハイライト班のみ
+      return `
+        float n1 = camoNoise(vCamoPos * ${S});
+        vec3 camoCol = mix(${A}, ${B}, n1 * 0.35);
+        camoCol = mix(camoCol, ${C}, smoothstep(0.78, 0.96, camoNoise(vCamoPos * ${S} * 1.7 + 5.0)));`;
+    default:
+      return 'vec3 camoCol = diffuseColor.rgb;';
+  }
+}
+
+// 頂点カラーで焼いた擬似AO(下暗上明)を保ったままアルベドをカモ柄へ差し替える。
+// 位置は銃ローカル(vCamoPos)なので柄は武器に固定され、決定論で再現される。
+function camoShaderPatch(
+  shader: { uniforms: Record<string, { value: unknown }>; vertexShader: string; fragmentShader: string },
+  v: CamoVisual,
+): void {
+  shader.uniforms.uCamoTime = CAMO_TIME;
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vCamoPos;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvCamoPos = position;');
+  shader.fragmentShader = shader.fragmentShader
+    .replace(
+      '#include <common>',
+      `#include <common>
+varying vec3 vCamoPos;
+uniform float uCamoTime;
+float camoEmissiveMul = 1.0;
+float camoHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+float camoNoise(vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float n000 = camoHash(i);
+  float n100 = camoHash(i + vec3(1.0, 0.0, 0.0));
+  float n010 = camoHash(i + vec3(0.0, 1.0, 0.0));
+  float n110 = camoHash(i + vec3(1.0, 1.0, 0.0));
+  float n001 = camoHash(i + vec3(0.0, 0.0, 1.0));
+  float n101 = camoHash(i + vec3(1.0, 0.0, 1.0));
+  float n011 = camoHash(i + vec3(0.0, 1.0, 1.0));
+  float n111 = camoHash(i + vec3(1.0, 1.0, 1.0));
+  return mix(
+    mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+    mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
+    f.z);
+}`,
+    )
+    .replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+{
+${camoPatternGLSL(v)}
+  float camoLum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+  float camoShade = clamp(camoLum * 3.6, 0.35, 1.3);
+  diffuseColor.rgb = camoCol * camoShade;
+}`,
+    )
+    .replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+totalEmissiveRadiance *= camoEmissiveMul;`,
+    );
+}
+
+// clone しても柄が生き残るカモ材。WeaponPreview は setWeapon 時に material.clone() で
+// プレビュー専用複製を作るため、Material.copy が運ばない onBeforeCompile を
+// clone() のオーバーライドで再構成する。customProgramCacheKey でプログラムを
+// カモIDごとに分離(同一シェーダ文字列は three が自動共有)。
+export class CamoStandardMaterial extends THREE.MeshStandardMaterial {
+  readonly camoVisualId: CamoId;
+
+  constructor(visual: CamoVisual, base?: THREE.MeshStandardMaterial) {
+    super();
+    if (base) this.copy(base);
+    this.camoVisualId = visual.id;
+    this.vertexColors = true;
+    this.metalness = visual.metalness;
+    this.roughness = visual.roughness;
+    this.emissive = new THREE.Color(visual.emissive);
+    this.emissiveIntensity = visual.emissiveIntensity;
+    this.onBeforeCompile = (shader) => camoShaderPatch(shader, visual);
+  }
+
+  override clone(): this {
+    return new CamoStandardMaterial(CAMO_VISUALS[this.camoVisualId], this) as this;
+  }
+
+  override customProgramCacheKey(): string {
+    return `camo:${this.camoVisualId}`;
+  }
+}
+
+// カモIDごとに1枚だけ生成してモジュール共有(disposeSharedで解放)。
+// メタル/ポリマー両バケツが同じ材を使う(質感はカモ定義側が決める)。
+const camoMatCache = new Map<CamoId, CamoStandardMaterial>();
+
+function getCamoMaterial(camoId: CamoId): CamoStandardMaterial {
+  let m = camoMatCache.get(camoId);
+  if (!m) {
+    m = new CamoStandardMaterial(CAMO_VISUALS[camoId], getShared().metalVC);
+    m.userData.shared = true;
+    camoMatCache.set(camoId, m);
+  }
+  return m;
+}
+
+// プロファイルから装備カモを解決する(未解除・不正は camo.ts が null に落とす)。
+// localStorage の無い環境(テスト/SSR)でも安全に null を返す。
+function resolveEquippedCamo(weaponId: string): CamoId | null {
+  try {
+    return equippedCamoFor(weaponId, loadProfile());
+  } catch {
+    return null;
+  }
+}
+
 // アクセント帯: tracerColor を弱emissive化(近接なので intensity 0.5 に抑えて白飛び回避)。
 function getAccent(color: number): THREE.MeshStandardMaterial {
   let m = accentCache.get(color);
@@ -564,6 +750,8 @@ function disposeShared(): void {
   }
   for (const m of accentCache.values()) m.dispose();
   accentCache.clear();
+  for (const m of camoMatCache.values()) m.dispose();
+  camoMatCache.clear();
 }
 
 // ── ジオメトリ toolkit(頂点カラーを焼く) ───────────────────────────────
@@ -655,7 +843,12 @@ function chamferBox(w: number, h: number, d: number, bevel: number): THREE.Buffe
 
 // ── 銃本体ビルダ(ARMORY 3Dプレビューと共用) ──────────────────────────
 // 一人称腕(sleeve/glove)は含めない、純粋な銃メッシュ + トレーサー原点muzzle。
-export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.Object3D } {
+// camoId: 省略(undefined)=プロファイルの装備カモを自動解決(ARMORYプレビューも
+// これで反映される)、null=カモなし、CamoId=明示適用。
+export function buildGunBody(
+  def: WeaponDef,
+  camoId?: string | null,
+): { gun: THREE.Group; muzzle: THREE.Object3D } {
   const gun = new THREE.Group();
 
   // 素手(id/shape='fists')は「クナイ(ニンジャ・ダガー)」を握る。銃は描かず、
@@ -772,6 +965,16 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
 
   const { metalVC, polishVC, polyVC, glassThin, glassScope, reflexDot } = getShared();
   const accent = getAccent(def.tracerColor);
+
+  // R25 カモ: 装備カモ(または明示指定)を主要メタル/ポリマーバケツへ適用。
+  // fists は上の早期分岐で戻っているためここには来ない(=カモ対象外)。
+  const camo: CamoId | null =
+    camoId === undefined
+      ? resolveEquippedCamo(def.id)
+      : camoId !== null && isCamoId(camoId)
+        ? camoId
+        : null;
+  const camoMat = camo ? getCamoMaterial(camo) : null;
 
   // ⑤ BO3寒色化: 頂点アルベドをブルースチール寄りへ(実際の陰影はvertexColor gradY+IBL/Bloom)。
   // どれも arm hex 0x2b2e34/0x161820 と不一致(監査済み)。C_WOOD/C_BRASS は暖寒コントラスト維持で据置。
@@ -1544,20 +1747,24 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
   }
 
   // ── 系統別に1メッシュへ畳む + 可動Groupを追加 ──
+  // カモ装備時はメタル/ポリマーバケツのみカモ材へ(研磨/発光帯/レンズは素のまま)。
   const addFamily = (parts: THREE.BufferGeometry[], material: THREE.Material, parent: THREE.Object3D): void => {
     if (parts.length === 0) return;
     const merged = mergeGeometries(parts, false);
     if (!merged) return;
-    parent.add(new THREE.Mesh(merged, material));
+    const mesh = new THREE.Mesh(merged, material);
+    // 脈動カモ(uCamoTime)は描画側を問わず onBeforeRender で時刻を進める
+    if (material instanceof CamoStandardMaterial) mesh.onBeforeRender = tickCamoTime;
+    parent.add(mesh);
   };
-  addFamily(metalParts, metalVC, gun);
+  addFamily(metalParts, camoMat ?? metalVC, gun);
   addFamily(polishParts, polishVC, gun);
-  addFamily(polyParts, polyVC, gun);
+  addFamily(polyParts, camoMat ?? polyVC, gun);
   addFamily(accentParts, accent, gun);
   for (const mv of movables) {
-    addFamily(mv.metal, metalVC, mv.group);
+    addFamily(mv.metal, camoMat ?? metalVC, mv.group);
     addFamily(mv.polish, polishVC, mv.group);
-    addFamily(mv.poly, polyVC, mv.group);
+    addFamily(mv.poly, camoMat ?? polyVC, mv.group);
     gun.add(mv.group);
   }
   // 焼き込みに使った一時ジオメトリ + テンプレを破棄(merge後は不要)
@@ -1796,10 +2003,13 @@ export class ViewModel {
 
   setWeapon(def: WeaponDef): void {
     if (this.gun) this.root.remove(this.gun);
-    const key = `${def.id}:${(def.attachmentIds ?? []).join(',')}`;
+    // 装備カモを解決してキャッシュキーに含める(ARMORYで変更→次のsetWeaponで反映)。
+    // キー分離により材の差し替え/復元は不要=共有マテリアルの元本を汚さない(R24教訓)。
+    const camo = resolveEquippedCamo(def.id);
+    const key = `${def.id}:${(def.attachmentIds ?? []).join(',')}:${camo ?? ''}`;
     let entry = this.cache.get(key);
     if (!entry) {
-      entry = this.buildGun(def);
+      entry = this.buildGun(def, camo);
       this.cache.set(key, entry);
     }
     this.gun = entry.gun;
@@ -1861,8 +2071,8 @@ export class ViewModel {
 
   // 銃本体(buildGunBody)に一人称腕を足す。腕は銃グループの子なので
   // ADS・スウェイ・反動・リロードの動きにそのまま追従する。
-  private buildGun(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.Object3D } {
-    const { gun, muzzle } = buildGunBody(def);
+  private buildGun(def: WeaponDef, camo: CamoId | null = null): { gun: THREE.Group; muzzle: THREE.Object3D } {
+    const { gun, muzzle } = buildGunBody(def, camo);
     const bs = def.bodyScale ?? resolveSilhouette(def).bodyScale;
     const { sleeve, glove } = getShared();
     const limb = (

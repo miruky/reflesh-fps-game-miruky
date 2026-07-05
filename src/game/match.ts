@@ -91,6 +91,9 @@ import {
 import {
   DominationState,
   ENEMY_TEAM,
+  GG_BOT_RANK_TUNING,
+  GG_LADDER,
+  GunGameState,
   HardpointState,
   KillConfirmState,
   MODE_DEFS,
@@ -128,6 +131,7 @@ import {
   type ZombiePerkId,
 } from './zombie-economy';
 import type { MatchSummary } from './progression';
+import { weaponIdByName } from './camo';
 import { generateStage, type StageDef, type MoodId } from './stage';
 import { StreakManager, STREAK_DEFS, type StreakIndex } from './scorestreaks';
 import { type SurfaceMaterial } from './materials';
@@ -507,6 +511,12 @@ export interface MatchSnapshot {
   // ── キルコンファーム ──
   kcEvent?: 'confirmed' | 'denied' | null; // このフレームのタグ回収イベント
   kcTagPositions?: ReadonlyArray<{ relX: number; relZ: number; isEnemy: boolean }>; // ミニマップ用
+  // ── ガンゲーム ──
+  ggRank?: number;           // 現在のランク (1-20)。gungame以外では undefined
+  ggWeaponName?: string;     // 現在のラダー武器名
+  ggRankUpFlash?: boolean;   // このフレームにランクアップした(HUD演出トリガ)
+  ggSetback?: boolean;       // このフレームに setback(ランクダウン)した
+  ggTop3?: ReadonlyArray<{ name: string; rank: number; isPlayer: boolean }>; // トップ3
 }
 
 interface RayHitLike {
@@ -602,6 +612,10 @@ export class Match {
   // ── キルコンファーム ──
   private readonly kcState: KillConfirmState | null;
   private kcDogTagEntities: Array<{ id: number; group: THREE.Group; isEnemy: boolean; spawnedAt: number }> = [];
+  // ── ガンゲーム ──
+  private readonly ggState: GunGameState | null;
+  private ggRankUpFlash = false;  // このフレームにランクアップした(snapshot消費型)
+  private ggSetback = false;      // このフレームに setback した(snapshot消費型)
   private kcEvent: 'confirmed' | 'denied' | null = null;
   private announcements: string[] = [];
   private deathPos: THREE.Vector3 | null = null;
@@ -644,6 +658,9 @@ export class Match {
   private bestStreak = 0;
   private playerCaptures = 0;
   private readonly playerWeaponKills: Record<string, number> = {};
+  // カモチャレンジ用: 武器IDごとのプレイヤーキル/ヘッドショットキル(近接・投擲は対象外)
+  private readonly playerKillsByWeapon: Record<string, number> = {};
+  private readonly playerHsByWeapon: Record<string, number> = {};
 
   // ── 素手(武器なし)の格闘状態 ──
   private punchStep = 0; // ラッシュコンボの段(0..3)
@@ -933,12 +950,15 @@ export class Match {
     if (this.modifierSet.has('low-gravity')) playerOpts.gravityScale = 0.55;
     // クナイ(ニンジャ)装備は接近戦で撃たれ弱い分、体力を 300 へ引き上げてインファイトを成立させる。
     // HUD/スナップショットの maxHp は player.maxHp を参照するため自動追従する。
-    if (config.primaryId === 'fists') playerOpts.maxHp = 300;
+    // V31修正: ガンゲームはラダー武器強制のためHP300を適用しない(純粋な銃勝負)
+    if (config.primaryId === 'fists' && config.mode !== 'gungame') playerOpts.maxHp = 300;
     this.player = new Player(this.physics, spawn, playerOpts);
     this.tags.set(this.player.collider.handle, { kind: 'player' });
 
-    const primaryBase = WEAPON_DEFS[config.primaryId] ?? WEAPON_DEFS['kaede-ar']!;
-    const primaryDef = applyAttachments(primaryBase, config.attachments);
+    // ガンゲーム: ラダー1段目の武器を強制使用(config.primaryId は無視)
+    const primaryId = config.mode === 'gungame' ? (GG_LADDER[0] ?? 'kawasemi-pistol') : config.primaryId;
+    const primaryBase = WEAPON_DEFS[primaryId] ?? WEAPON_DEFS['kaede-ar']!;
+    const primaryDef = applyAttachments(primaryBase, config.mode === 'gungame' ? [] : config.attachments);
     // 副武器: 指定があり SECONDARY_IDS に含まれていればそれを、無ければ拳銃スズメ
     const secDef =
       (config.secondaryId && SECONDARY_IDS.includes(config.secondaryId)
@@ -1007,6 +1027,7 @@ export class Match {
     this.hardpointState = config.mode === 'hardpoint' ? new HardpointState(5) : null;
     if (this.hardpointState) this.buildHardpointZones();
     this.kcState = config.mode === 'killconfirm' ? new KillConfirmState() : null;
+    this.ggState = config.mode === 'gungame' ? new GunGameState() : null;
 
     this.effects = new Effects(this.scene);
     this.viewModel = new ViewModel(this.camera);
@@ -1191,7 +1212,8 @@ export class Match {
   // クナイ(ニンジャ・ダガー)ロードアウトか。HP300・素手ウルト衝撃波の分岐に使う
   // (装備の切替に依らずロードアウト単位で成立させたいので primaryId で判定する)。
   private get isNinja(): boolean {
-    return this.config.primaryId === 'fists';
+    // V31修正: ガンゲームはロードアウト無視のラダー戦のためニンジャ系を全て無効化
+    return this.config.primaryId === 'fists' && this.config.mode !== 'gungame';
   }
 
   private buildStageScene(boxes: ReturnType<typeof generateStage>['boxes']): void {
@@ -3181,6 +3203,11 @@ export class Match {
 
   private handleWeaponSwitch(): void {
     if (this.cooking) return;
+    // ガンゲーム: セカンダリへの切り替えを禁止(ラダー武器のみ)
+    if (this.config.mode === 'gungame') {
+      this.input.consumeWheel();
+      return;
+    }
     let target: number | null = null;
     if (this.input.wasPressed('weapon1')) target = 0;
     if (this.input.wasPressed('weapon2')) target = 1;
@@ -3213,6 +3240,8 @@ export class Match {
   }
 
   private handleGrenadeInput(dt: number): void {
+    // ガンゲーム: グレネード無効(純粋な銃勝負)
+    if (this.config.mode === 'gungame') return;
     // 投擲物の切替。クッキング中は不可
     if (!this.cooking && this.input.wasPressed('grenadeswitch')) {
       const index = GRENADE_KINDS.indexOf(this.grenadeKind);
@@ -3858,13 +3887,25 @@ export class Match {
       if (this.mission && bot.team === ENEMY_TEAM) this.missionKills += 1;
       this.bestStreak = Math.max(this.bestStreak, this.player.streak);
       this.playerWeaponKills[weaponName] = (this.playerWeaponKills[weaponName] ?? 0) + 1;
+      // カモチャレンジ: 表示名→武器IDの逆引きで武器別キル/HSキルを記録(近接/投擲は null=対象外)
+      const camoWeaponId = weaponIdByName(weaponName);
+      if (camoWeaponId) {
+        this.playerKillsByWeapon[camoWeaponId] = (this.playerKillsByWeapon[camoWeaponId] ?? 0) + 1;
+        if (headshot) {
+          this.playerHsByWeapon[camoWeaponId] = (this.playerHsByWeapon[camoWeaponId] ?? 0) + 1;
+        }
+      }
       this.addKillScore(PLAYER_TEAM);
       this.spawnDogTag(bot);
       this.hits.push(scopeKill ? 'snipe' : 'kill');
       this.feed.push({ killer: PLAYER_NAME, victim: bot.name, weapon: weaponName, headshot });
       this.scoreEvents.push({ label: 'キル', xp: 100 });
-      // BO2 スコアストリーク: ゾンビモードは無効
-      if (this.config.mode !== 'zombie') {
+      // ガンゲーム: ランク進行(スコアストリーク/アナウンサーの前に処理してthis.overを確定させる)
+      if (this.config.mode === 'gungame') {
+        this.ggOnPlayerKill(bot, weaponName === '近接');
+      }
+      // BO2 スコアストリーク: ゾンビ/ガンゲームモードは無効
+      if (this.config.mode !== 'zombie' && this.config.mode !== 'gungame') {
         const newly = this.streakManager.addScore(headshot ? 125 : 100);
         for (const idx of newly) {
           const def = STREAK_DEFS[idx];
@@ -4201,10 +4242,19 @@ export class Match {
           targetEye = this.perceive(bot, dt); // spot-time知覚FSMで積分してから供給
         }
       }
+      // ガンゲーム: botランクに応じてdamage/burstPauseを段階テーブルで近似する
+      let effectiveTuning = bot.tuning;
+      if (this.ggState && bot.kind === 'humanoid') {
+        const rank = this.ggState.getBotRank(bot.uid);
+        const rankTune = GG_BOT_RANK_TUNING[rank - 1];
+        if (rankTune) {
+          effectiveTuning = { ...bot.tuning, ...rankTune };
+        }
+      }
       bot.update(dt, {
         targetEye,
         objective: bot.alive ? this.objectiveFor(bot) : null,
-        tuning: bot.tuning,
+        tuning: effectiveTuning,
         rand: this.rand,
         onShoot: (origin, dir) => this.botShoot(bot, origin, dir),
         onMelee: (b) => this.zombieMelee(b),
@@ -4629,10 +4679,14 @@ export class Match {
         bot.kills += 1;
         this.addKillScore(bot.team);
         this.spawnPlayerDogTag();
+        // ガンゲーム: botがプレイヤーをキルした場合のランク進行
+        // V31修正: ランクアップ前に「キルに使った武器名」を取ってからggOnBotKillする(off-by-one解消)
+        const ggWepName = this.ggState ? (WEAPON_DEFS[this.ggState.getWeaponIdAt(this.ggState.getBotRank(bot.uid))]?.name ?? 'ボットAR') : 'ボットAR';
+        if (this.ggState) this.ggOnBotKill(bot, null);
         this.feed.push({
           killer: bot.name,
           victim: PLAYER_NAME,
-          weapon: 'ボットAR',
+          weapon: ggWepName,
           headshot: false,
         });
         this.sounds.death();
@@ -4648,10 +4702,13 @@ export class Match {
         bot.kills += 1;
         this.addKillScore(bot.team);
         this.spawnDogTag(tag.bot);
+        // ガンゲーム: bot-bot キルのランク進行(killer rankUp, victim rankDown は近接のみ。bot間は近接なし)
+        const ggWepName2 = this.ggState ? (WEAPON_DEFS[this.ggState.getWeaponIdAt(this.ggState.getBotRank(bot.uid))]?.name ?? 'ボットAR') : 'ボットAR';
+        if (this.ggState) this.ggOnBotKill(bot, tag.bot);
         this.feed.push({
           killer: bot.name,
           victim: tag.bot.name,
-          weapon: 'ボットAR',
+          weapon: ggWepName2,
           headshot: false,
         });
         this.tracker.onFeed(false); // 他者のキルは自分の連続フィード(QuadFeed)を分断する
@@ -4660,9 +4717,55 @@ export class Match {
     }
   }
 
-  // キルを取ったチームのスコアを進める。ドミネーション/キルコンファームはキル直接加算なし
+  // キルを取ったチームのスコアを進める。ドミネーション/キルコンファーム/ガンゲームはキル直接加算なし
   private addKillScore(team: TeamId): void {
-    if (this.config.mode !== 'dom' && this.config.mode !== 'killconfirm') this.scores.add(team, 1);
+    if (this.config.mode !== 'dom' && this.config.mode !== 'killconfirm' && this.config.mode !== 'gungame') {
+      this.scores.add(team, 1);
+    }
+  }
+
+  // ── ガンゲーム: プレイヤーがキルを取ったとき ──────────────────────────────────────────
+  private ggOnPlayerKill(killedBot: Bot, isMelee: boolean): void {
+    if (!this.ggState) return;
+    // ランクアップ
+    const { newRank, isWin } = this.ggState.playerRankUp();
+    this.ggRankUpFlash = true;
+
+    // setback: メレーキルされた bot のランクダウン(BO2仕様)
+    if (isMelee) {
+      this.ggState.botRankDown(killedBot.uid);
+      this.ggSetback = true;
+      this.announcements.push('SETBACK!');
+    }
+
+    // 武器切替(ランク20は fists なのでそのまま)
+    const newWeaponId = this.ggState.getWeaponIdAt(newRank);
+    const newDef = WEAPON_DEFS[newWeaponId] ?? WEAPON_DEFS['kaede-ar']!;
+    const newWeapon = new Weapon(newDef);
+    newWeapon.raise();
+    (this.weapons as Weapon[])[0] = newWeapon;
+    if (this.activeIndex !== 0) this.activeIndex = 0;
+    this.viewModel.setWeapon(newWeapon.def);
+    this.adsLatch = false;
+
+    // ランクアップアナウンス
+    const rankLabel = `RANK ${newRank}/20 → ${newDef.name}`;
+    this.announcements.push(rankLabel);
+    this.sounds.announceMedal(1, this.settings.announcerVolume);
+
+    // 勝利判定: ランク20で1キル
+    if (isWin) {
+      this.over = true;
+    }
+  }
+
+  // ── ガンゲーム: bot がキルを取ったとき ────────────────────────────────────────────────
+  private ggOnBotKill(killer: Bot, _victim: Bot | null): void {
+    if (!this.ggState) return;
+    const { isWin } = this.ggState.botRankUp(killer.uid);
+    if (isWin) {
+      this.over = true;
+    }
   }
 
   // killerは敵BOTに倒された場合のみ。自爆や火災ではキルカメラを出さない
@@ -4729,6 +4832,8 @@ export class Match {
 
   // アルティメットの充填・発動・オーバードライブ持続。player.update前に呼ぶ
   private updateUltimate(dt: number): void {
+    // ガンゲーム: ウルト無効(純粋な銃勝負)
+    if (this.config.mode === 'gungame') return;
     // 死亡中はオーバードライブを終了し、バフを残さない(ゲージ自体は維持)。
     // 落下死などnotePlayerDeathを通らない経路も含めて確実に解除する。
     // 黒帝モードは死亡で解除しない(解除条件は300秒経過 or 試合終了のみ。
@@ -6248,8 +6353,9 @@ export class Match {
       whiteout: this.whiteout,
       modeName: this.modeDef.name,
       teamBased: this.modeDef.teamBased,
-      scoreMine: this.scores.get(PLAYER_TEAM),
-      scoreEnemy: this.enemyTopScore(),
+      // ガンゲーム: score = rank(1-20) をオーバーライド
+      scoreMine: this.ggState ? this.ggState.getPlayerRank() : this.scores.get(PLAYER_TEAM),
+      scoreEnemy: this.ggState ? this.ggState.topBotRank(this.bots.map((b) => b.uid)) : this.enemyTopScore(),
       scoreTarget: this.modeDef.scoreTarget,
       zones: this.zoneViews(),
       announcements: this.announcements,
@@ -6326,6 +6432,8 @@ export class Match {
         relZ: e.group.position.z - this.player.position.z,
         isEnemy: e.isEnemy,
       })) : undefined,
+      // ── ガンゲーム ──
+      ...this.buildGunGameSnap(),
     };
     this.feed = [];
     this.hits = [];
@@ -6337,7 +6445,35 @@ export class Match {
     this.medals = [];
     this.zombiePointFloats = [];
     this.kcEvent = null;
+    this.ggRankUpFlash = false;
+    this.ggSetback = false;
     return snapshot;
+  }
+
+  private buildGunGameSnap(): Partial<MatchSnapshot> {
+    if (!this.ggState) return {};
+    const playerRank = this.ggState.getPlayerRank();
+    const weaponId = this.ggState.getWeaponIdAt(playerRank);
+    const weaponName = WEAPON_DEFS[weaponId]?.name ?? weaponId;
+
+    // top3: プレイヤー + ボット全員のランクを降順で上位3エントリ
+    type Entry = { name: string; rank: number; isPlayer: boolean };
+    const entries: Entry[] = [{ name: 'YOU', rank: playerRank, isPlayer: true }];
+    for (const b of this.bots) {
+      if (b.team !== PLAYER_TEAM) { // V31修正: FFAでは全botがteam=i+1のため==1だと先頭1体しか出ない
+        entries.push({ name: b.name, rank: this.ggState.getBotRank(b.uid), isPlayer: false });
+      }
+    }
+    entries.sort((a, b) => b.rank - a.rank);
+    const top3 = entries.slice(0, 3) as ReadonlyArray<Entry>;
+
+    return {
+      ggRank: playerRank,
+      ggWeaponName: weaponName,
+      ggRankUpFlash: this.ggRankUpFlash,
+      ggSetback: this.ggSetback,
+      ggTop3: top3,
+    };
   }
 
   // レーダー用: 視認できている敵(LoS・煙で遮られていない)の、自機の向きを基準にした
@@ -6761,6 +6897,8 @@ export class Match {
         captures: this.playerCaptures,
         bestStreak: this.bestStreak,
         weaponKills: { ...this.playerWeaponKills },
+        killsByWeapon: { ...this.playerKillsByWeapon },
+        hsByWeapon: { ...this.playerHsByWeapon },
         unlockedMedals: [...this.tracker.newlyUnlocked],
         medalCounts: { ...this.tracker.counts },
         medalXp: this.medalXpTotal,

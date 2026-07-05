@@ -46,6 +46,16 @@ import {
   type MatchProgress,
   type Profile,
 } from '../game/progression';
+import {
+  CAMO_IDS,
+  CAMO_TIERS,
+  CAMO_VISUALS,
+  CAMO_WEAPON_IDS,
+  camoName,
+  camoProgress,
+  isCamoUnlocked,
+  type CamoId,
+} from '../game/camo';
 import { generateStage } from '../game/stage';
 import { STAGES, stagesForMode } from '../game/stages';
 import { TEAM_PALETTES } from '../game/teamcolors';
@@ -329,6 +339,37 @@ const SHAPE_SIL: Record<ViewModelShape, SilSpec> = {
 
 function tracerHex(color: number): string {
   return '#' + (color & 0xffffff).toString(16).padStart(6, '0');
+}
+
+// ── 武器カモUIのスコープドCSS(初回のみheadへ注入。IGNITION FRAME: カーボン+琥珀) ──
+// filter/backdrop-filter/box-shadowグローは使わない(白飛び・重描画の再発禁止)。
+const CAMO_STYLE_ID = 'hibana-camo-style';
+function ensureCamoStyle(): void {
+  if (document.getElementById(CAMO_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = CAMO_STYLE_ID;
+  style.textContent = `
+.armory-camo{margin-top:10px;border-top:1px solid rgba(255,255,255,0.08);padding-top:8px}
+.camo-head{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(220,228,240,.72);margin-bottom:6px}
+.camo-head b{color:#ffab1e;font-size:12px;letter-spacing:.06em}
+.camo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:6px}
+.camo-grid--mastery{margin-top:6px;padding-top:6px;border-top:1px dashed rgba(159,208,255,.25)}
+.camo-chip{display:flex;flex-direction:column;align-items:stretch;gap:3px;padding:6px 7px;background:rgba(14,18,25,.85);border:1px solid rgba(255,255,255,.12);border-radius:4px;color:#dce4f0;cursor:pointer;text-align:left;font:inherit;min-width:0}
+.camo-chip:hover:not(:disabled){border-color:rgba(255,171,30,.65)}
+.camo-chip:focus-visible{outline:1px solid #ffab1e;outline-offset:1px}
+.camo-chip.selected{border-color:#ffab1e;background:rgba(255,171,30,.1)}
+.camo-chip.locked{opacity:.55;cursor:default}
+.camo-chip.mastery{border-color:rgba(159,208,255,.4)}
+.camo-chip.mastery.selected{border-color:#ffab1e}
+.camo-swatch{display:block;height:14px;border-radius:2px;border:1px solid rgba(0,0,0,.55)}
+.camo-none .camo-swatch{background:linear-gradient(135deg,#2c3340,#181b22)}
+.camo-name{font-size:11px;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.camo-sub{font-size:10px;color:rgba(220,228,240,.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.camo-bar{display:block;height:3px;background:rgba(255,255,255,.12);border-radius:2px;overflow:hidden}
+.camo-bar i{display:block;height:100%;background:#ffab1e;transform-origin:left}
+.camo-prog{color:#ffab1e;opacity:.85}
+`;
+  document.head.appendChild(style);
 }
 
 const rc = (x: number, y: number, w: number, h: number): string =>
@@ -840,6 +881,7 @@ export class Menu {
                       <div class="armory-wname" data-id="armory-wname"></div>
                       <div class="armory-bars" data-id="armory-bars"></div>
                       <div class="armory-stats" data-id="armory-stats"></div>
+                      <div class="armory-camo" data-id="armory-camo" hidden></div>
                       <p class="armory-hint">ドラッグで回転・武器をクリックで選択</p>
                     </div>
                   </aside>
@@ -1377,11 +1419,15 @@ export class Menu {
       level.level > progress.levelBefore.level
         ? `<p class="result-levelup">レベルアップ Lv ${progress.levelBefore.level} から Lv ${level.level} へ</p>`
         : '';
-    const unlocks = progress.newUnlocks.length
-      ? `<ul class="result-unlocks">${progress.newUnlocks
-          .map((u) => `<li>${u.kind === 'weapon' ? '武器' : 'アタッチメント'}解放: ${u.name}</li>`)
-          .join('')}</ul>`
-      : '';
+    const unlockRows = progress.newUnlocks
+      .map((u) => `<li>${u.kind === 'weapon' ? '武器' : 'アタッチメント'}解放: ${u.name}</li>`)
+      .join('');
+    // カモ解除!行(XP内訳とは別に、解放一覧としても目立たせる)
+    const camoRows = progress.newCamos
+      .map((c) => `<li class="result-camo-unlock">カモ解除: ${c.label}</li>`)
+      .join('');
+    const unlocks =
+      unlockRows || camoRows ? `<ul class="result-unlocks">${unlockRows}${camoRows}</ul>` : '';
     const delta = progress.ratingAfter - progress.ratingBefore;
     const rankNote =
       progress.rankAfter.name === progress.rankBefore.name
@@ -1714,6 +1760,95 @@ export class Menu {
     statsEl.innerHTML =
       `<span>DPS <b>${d.dps}</b></span><span>確殺 <b>${d.shotsToKill}</b></span>` +
       `<span>TTK <b>${d.ttk}</b><em>ms</em></span><span>RPM <b>${d.effRpm}</b></span>`;
+    this.renderCamoSection(def);
+  }
+
+  // ── 武器カモ(BO2/BO3式チャレンジ)────────────────────────────────
+  // 解除済みチップ=クリックで装備、未解除=ロック表示+条件と進捗。ダイヤ/ダークマターは
+  // マスタリー特別枠。装備はプロファイルへ即保存し、3Dプレビューを作り直して反映する。
+  private renderCamoSection(def: WeaponDef): void {
+    const host = this.root.querySelector<HTMLElement>('[data-id="armory-camo"]');
+    if (!host) return;
+    if (!CAMO_WEAPON_IDS.includes(def.id)) {
+      // 副武器・クナイはカモ対象外(セクションごと畳む)
+      host.hidden = true;
+      host.replaceChildren();
+      return;
+    }
+    ensureCamoStyle();
+    host.hidden = false;
+    const unlockedCount = CAMO_IDS.filter((id) =>
+      isCamoUnlocked(id, def.id, this.profile.weaponStats),
+    ).length;
+    host.innerHTML = `
+      <div class="camo-head"><span>カモフラージュ</span><b>${unlockedCount}/${CAMO_IDS.length}</b></div>
+      <div class="camo-grid" data-id="camo-grid"></div>
+      <div class="camo-grid camo-grid--mastery" data-id="camo-mastery"></div>
+    `;
+    const grid = host.querySelector<HTMLElement>('[data-id="camo-grid"]');
+    const masteryGrid = host.querySelector<HTMLElement>('[data-id="camo-mastery"]');
+    if (!grid || !masteryGrid) return;
+    const equipped = this.profile.selectedCamos[def.id] ?? null;
+    grid.appendChild(this.camoChip(def, null, equipped));
+    for (const tier of CAMO_TIERS) grid.appendChild(this.camoChip(def, tier.id, equipped));
+    masteryGrid.appendChild(this.camoChip(def, 'diamond', equipped, true));
+    masteryGrid.appendChild(this.camoChip(def, 'dark-matter', equipped, true));
+  }
+
+  // カモチップ1枚。camoId=null は「なし(標準の質感)」
+  private camoChip(
+    def: WeaponDef,
+    camoId: CamoId | null,
+    equipped: string | null,
+    mastery = false,
+  ): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    if (camoId === null) {
+      const on = equipped === null;
+      btn.className = `camo-chip camo-none${on ? ' selected' : ''}`;
+      btn.setAttribute('aria-pressed', String(on));
+      btn.innerHTML =
+        '<i class="camo-swatch"></i><span class="camo-name">なし</span><span class="camo-sub">標準の質感</span>';
+      btn.addEventListener('click', () => this.equipCamo(def, null));
+      return btn;
+    }
+    const v = CAMO_VISUALS[camoId];
+    const unlocked = isCamoUnlocked(camoId, def.id, this.profile.weaponStats);
+    const on = unlocked && equipped === camoId;
+    const swatch = `background:linear-gradient(135deg, ${tracerHex(v.colorA)} 0%, ${tracerHex(v.colorB)} 55%, ${tracerHex(v.colorC)} 100%)`;
+    btn.className =
+      `camo-chip${mastery ? ' mastery' : ''}${on ? ' selected' : ''}${unlocked ? '' : ' locked'}`;
+    btn.setAttribute('aria-pressed', String(on));
+    if (unlocked) {
+      btn.innerHTML =
+        `<i class="camo-swatch" style="${swatch}"></i>` +
+        `<span class="camo-name">${camoName(camoId)}</span>` +
+        `<span class="camo-sub">${on ? '装備中' : '解除済み'}</span>`;
+      btn.addEventListener('click', () => this.equipCamo(def, camoId));
+      return btn;
+    }
+    // 未解除: 条件テキスト + 進捗 n/条件(バー付き)。クリック不可
+    const p = camoProgress(camoId, def.id, this.profile.weaponStats);
+    const ratio = p.target > 0 ? Math.min(1, p.current / p.target) : 0;
+    btn.disabled = true;
+    btn.title = p.label;
+    btn.innerHTML =
+      `<i class="camo-swatch" style="${swatch}"></i>` +
+      `<span class="camo-name">${camoName(camoId)}</span>` +
+      `<span class="camo-sub">${p.label}</span>` +
+      `<span class="camo-bar"><i style="transform:scaleX(${ratio.toFixed(3)})"></i></span>` +
+      `<span class="camo-sub camo-prog">${p.current}/${p.target}</span>`;
+    return btn;
+  }
+
+  // カモを装備(null=外す)してプロファイルへ保存し、プレビューを再構築する
+  private equipCamo(def: WeaponDef, camoId: CamoId | null): void {
+    if (camoId === null) delete this.profile.selectedCamos[def.id];
+    else this.profile.selectedCamos[def.id] = camoId;
+    saveProfile(this.profile);
+    // buildGunBody がプロファイルから装備カモを解決するので、作り直しだけで反映される
+    this.previewWeapon(this.currentPrimaryDef());
   }
 
   // 10分割セグメント点火バー(0..10)。左から value 個を点灯。box-shadow glow は使わない。

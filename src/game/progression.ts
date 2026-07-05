@@ -2,6 +2,20 @@
 
 import { CAMPAIGN, missionById, type ModifierId } from './campaign';
 import type { Difficulty } from './bot';
+import {
+  CAMO_CLASS_LABELS,
+  CAMO_TIERS,
+  camoClassOf,
+  camoTierFor,
+  DARK_MATTER_CAMO,
+  darkMatterFor,
+  DIAMOND_CAMO,
+  diamondFor,
+  weaponNameOf,
+  type CamoId,
+  type WeaponCamoStats,
+} from './camo';
+import type { WeaponClass } from './weapons';
 
 export interface CareerStats {
   matches: number;
@@ -45,6 +59,10 @@ export interface Profile {
   completedChallenges: string[];
   // 表示名ごとのキル数(武器・投擲物・近接)
   weaponKills: Record<string, number>;
+  // 武器IDごとのカモ用累計統計(kills/ヘッドショットキル)。カモチャレンジの単一真実源
+  weaponStats: Record<string, WeaponCamoStats>;
+  // 武器IDごとの選択中カモID(未選択キーは無し)。装備可否は camo.ts が毎回検証する
+  selectedCamos: Record<string, string>;
   // 初取得済みメダルID(初回バッジ解放の判定に使う)
   unlockedMedals: string[];
   // メダルIDごとの累計取得回数
@@ -66,6 +84,10 @@ export interface MatchSummary {
   captures: number;
   bestStreak: number;
   weaponKills: Record<string, number>;
+  // 武器IDごとのプレイヤーキル数(カモチャレンジ用・省略可=旧経路互換)
+  killsByWeapon?: Record<string, number>;
+  // 武器IDごとのヘッドショットキル数(カモのゴールド条件用・省略可)
+  hsByWeapon?: Record<string, number>;
   // この試合で初解放したメダルID
   unlockedMedals: string[];
   // この試合で取得したメダルIDごとの回数
@@ -96,6 +118,8 @@ export function emptyProfile(): Profile {
     },
     completedChallenges: [],
     weaponKills: {},
+    weaponStats: {},
+    selectedCamos: {},
     unlockedMedals: [],
     medalCounts: {},
     // 第1章のみ最初から解放(全既存セーブも第1章から開始でき、softlock回避)
@@ -337,6 +361,16 @@ export interface XpEntry {
   xp: number;
 }
 
+// この試合で新規解除したカモ(リザルトの「カモ解除!」行に使う)
+export interface CamoUnlock {
+  camoId: CamoId;
+  camoName: string;
+  // 段階/ゴールドは対象武器、diamond はクラス、dark-matter は全体(weaponId 無し)
+  weaponId: string | null;
+  label: string;
+  xp: number;
+}
+
 export interface MatchProgress {
   xpBreakdown: XpEntry[];
   xpTotal: number;
@@ -350,6 +384,69 @@ export interface MatchProgress {
   rankAfter: RankDef;
   // この試合で更新した自己ベストの説明(なければ空)
   newRecords: string[];
+  // この試合で解除したカモ(なければ空)
+  newCamos: CamoUnlock[];
+}
+
+// カモ統計の積算と新規解除の検出。profile.weaponStats はエントリ差し替えで更新する
+// (before スナップショットが浅いコピーで済む)。解除XPは呼び側が xpBreakdown へ積む。
+function applyCamoStats(profile: Profile, summary: MatchSummary): CamoUnlock[] {
+  const kbw = summary.killsByWeapon ?? {};
+  const hbw = summary.hsByWeapon ?? {};
+  const touched = new Set([...Object.keys(kbw), ...Object.keys(hbw)]);
+  if (touched.size === 0) return [];
+
+  const before = { ...profile.weaponStats };
+  for (const id of touched) {
+    const prev = profile.weaponStats[id] ?? { kills: 0, headshots: 0 };
+    profile.weaponStats[id] = {
+      kills: prev.kills + Math.max(0, kbw[id] ?? 0),
+      headshots: prev.headshots + Math.max(0, hbw[id] ?? 0),
+    };
+  }
+
+  const unlocks: CamoUnlock[] = [];
+  const classesTouched = new Set<WeaponClass>();
+  for (const id of touched) {
+    const cls = camoClassOf(id);
+    if (!cls) continue; // 副武器/近接などカモ対象外は統計のみ積む
+    classesTouched.add(cls);
+    const tierBefore = camoTierFor(before[id]);
+    const tierAfter = camoTierFor(profile.weaponStats[id]);
+    for (let t = tierBefore; t < tierAfter; t += 1) {
+      const tier = CAMO_TIERS[t]!;
+      unlocks.push({
+        camoId: tier.id,
+        camoName: tier.name,
+        weaponId: id,
+        label: `${weaponNameOf(id)}「${tier.name}」`,
+        xp: tier.xp,
+      });
+    }
+  }
+  // ダイヤ: 影響を受けたクラスのみ before/after 比較(1試合で複数クラス同時成立も拾う)
+  for (const cls of classesTouched) {
+    if (!diamondFor(cls, before) && diamondFor(cls, profile.weaponStats)) {
+      unlocks.push({
+        camoId: DIAMOND_CAMO.id,
+        camoName: DIAMOND_CAMO.name,
+        weaponId: null,
+        label: `${CAMO_CLASS_LABELS[cls]}全武器「${DIAMOND_CAMO.name}」`,
+        xp: DIAMOND_CAMO.xp,
+      });
+    }
+  }
+  // ダークマター: 全クラスダイヤの成立瞬間を検出
+  if (!darkMatterFor(before) && darkMatterFor(profile.weaponStats)) {
+    unlocks.push({
+      camoId: DARK_MATTER_CAMO.id,
+      camoName: DARK_MATTER_CAMO.name,
+      weaponId: null,
+      label: `全クラス制覇「${DARK_MATTER_CAMO.name}」`,
+      xp: DARK_MATTER_CAMO.xp,
+    });
+  }
+  return unlocks;
 }
 
 // 試合結果をプロフィールへ反映する。profileはその場で更新される。
@@ -385,6 +482,8 @@ function accumulateMatch(
   for (const [id, count] of Object.entries(summary.medalCounts)) {
     profile.medalCounts[id] = (profile.medalCounts[id] ?? 0) + count;
   }
+  // カモ: 武器ID別統計の積算と新規解除の検出(XPは下のbreakdownで計上する)
+  const newCamos = applyCamoStats(profile, summary);
 
   // 自己ベストの更新。更新したものは結果画面で知らせる
   const records = profile.records;
@@ -417,6 +516,11 @@ function accumulateMatch(
   }
   // メダルXPは試合中のトーストとは別に、リザルトで1行だけ計上する(二重計上回避)
   if (summary.medalXp > 0) xpBreakdown.push({ label: 'メダル', xp: summary.medalXp });
+
+  // カモ解除行(xpBreakdown 流儀でリザルトに1行ずつ出る)
+  for (const camo of newCamos) {
+    xpBreakdown.push({ label: `カモ解除: ${camo.label}`, xp: camo.xp });
+  }
 
   const completed: ChallengeDef[] = [];
   for (const challenge of CHALLENGES) {
@@ -460,6 +564,7 @@ function accumulateMatch(
     rankBefore: rankFromRating(ratingBefore),
     rankAfter: rankFromRating(profile.rating),
     newRecords,
+    newCamos,
   };
 }
 

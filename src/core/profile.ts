@@ -1,3 +1,4 @@
+import { isCamoId } from '../game/camo';
 import { emptyProfile, type Profile } from '../game/progression';
 
 const KEY = 'hibana.profile.v1';
@@ -45,6 +46,24 @@ export function parseProfile(raw: string): Profile {
     for (const [name, count] of Object.entries(source.weaponKills as Record<string, unknown>)) {
       const value = num(count, 0);
       if (value > 0) base.weaponKills[name] = value;
+    }
+  }
+
+  // ── カモ: 武器ID別統計(kills/headshots)。旧セーブは空で開始(後方互換) ──
+  if (typeof source.weaponStats === 'object' && source.weaponStats !== null) {
+    for (const [id, raw2] of Object.entries(source.weaponStats as Record<string, unknown>)) {
+      if (typeof raw2 !== 'object' || raw2 === null) continue;
+      const s = raw2 as Record<string, unknown>;
+      const kills = num(s.kills, 0);
+      const headshots = num(s.headshots, 0);
+      if (kills > 0 || headshots > 0) base.weaponStats[id] = { kills, headshots };
+    }
+  }
+
+  // ── カモ: 選択中カモ(weaponId→camoId)。既知のカモIDのみ採用 ──
+  if (typeof source.selectedCamos === 'object' && source.selectedCamos !== null) {
+    for (const [id, val] of Object.entries(source.selectedCamos as Record<string, unknown>)) {
+      if (typeof val === 'string' && isCamoId(val)) base.selectedCamos[id] = val;
     }
   }
 

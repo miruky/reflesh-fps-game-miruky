@@ -1,6 +1,6 @@
 // ゲームモードのルール定義と進行計算。描画・物理に依存しない
 // 'story'=キャンペーン(目的駆動・scoreTarget無効) / 'score'=スコアアタック(時間内キル数)
-export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie' | 'hardpoint' | 'killconfirm';
+export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie' | 'hardpoint' | 'killconfirm' | 'gungame';
 
 export type TeamId = number;
 
@@ -17,6 +17,13 @@ export interface ModeDef {
 }
 
 export const MODE_DEFS: Record<GameMode, ModeDef> = {
+  gungame: {
+    id: 'gungame',
+    name: 'ガンゲーム',
+    desc: '全員が同じ20段武器ラダーを進む。最終段(クナイ)でキルした者が勝者',
+    teamBased: false,
+    scoreTarget: 20, // ランク=スコアとして表示。実勝利はGunGameStateが管理
+  },
   ffa: {
     id: 'ffa',
     name: 'フリーフォーオール',
@@ -76,7 +83,7 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
 };
 
 // メニューで選べる対戦モード。'story' は専用UI、'zombie' は専用ラウンドUI
-export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'hardpoint', 'killconfirm', 'score', 'zombie'];
+export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'hardpoint', 'killconfirm', 'gungame', 'score', 'zombie'];
 
 const CAPTURE_PER_S = 0.35;
 const DECAY_PER_S = 0.2;
@@ -363,5 +370,105 @@ export class ScoreBoard {
       }
     }
     return tied ? null : best;
+  }
+}
+
+// ── ガンゲーム: 20段武器ラダー(固定順。ステージ非依存) ──────────────────────────────
+// ピストル→リボルバー→SG→SMG→AR→BR/LMG→マークスマン→スナイパー→ロケラン→クナイ(最終)
+export const GG_LADDER: readonly string[] = [
+  'kawasemi-pistol',  // rank  1: ピストル
+  'taka-revolver',    // rank  2: リボルバー
+  'hiiragi-sg',       // rank  3: ショットガン
+  'raijin-sg',        // rank  4: ショットガン2
+  'tsubaki-smg',      // rank  5: SMG
+  'hayabusa-smg',     // rank  6: SMG2
+  'enaga-pdw',        // rank  7: PDW
+  'kaede-ar',         // rank  8: AR
+  'kasasagi-ar',      // rank  9: AR2
+  'akatsuki-ar',      // rank 10: AR3
+  'shinonome-ar',     // rank 11: AR4
+  'miyama-br',        // rank 12: BR
+  'kumagera-lmg',     // rank 13: LMG
+  'raitei-lmg',       // rank 14: LMG2
+  'shirasagi-mk',     // rank 15: マークスマン
+  'hibari-mk',        // rank 16: マークスマン2
+  'yamasemi-dmr',     // rank 17: DSRスナイパー
+  'raicho-sniper',    // rank 18: スナイパー2
+  'gouka-rl',         // rank 19: 業火ロケットランチャー
+  'fists',            // rank 20: クナイ(最終段・キルで勝利)
+] as const;
+
+// botのランクに応じたダメージ/連射パラメタ近似テーブル(tuning部分上書き用)
+// 低ランクは弱く、高ランクは強くなるように線形スケール
+export const GG_BOT_RANK_TUNING: readonly { damage: number; burstPauseMin: number; burstPauseMax: number }[] = [
+  { damage:  7, burstPauseMin: 0.90, burstPauseMax: 1.40 }, // rank  1: pistol
+  { damage:  9, burstPauseMin: 0.90, burstPauseMax: 1.40 }, // rank  2: revolver
+  { damage:  9, burstPauseMin: 1.00, burstPauseMax: 1.50 }, // rank  3: sg
+  { damage: 10, burstPauseMin: 0.90, burstPauseMax: 1.40 }, // rank  4: sg2
+  { damage: 10, burstPauseMin: 0.55, burstPauseMax: 0.85 }, // rank  5: smg
+  { damage: 11, burstPauseMin: 0.50, burstPauseMax: 0.80 }, // rank  6: smg2
+  { damage: 11, burstPauseMin: 0.50, burstPauseMax: 0.75 }, // rank  7: pdw
+  { damage: 12, burstPauseMin: 0.55, burstPauseMax: 0.85 }, // rank  8: ar
+  { damage: 13, burstPauseMin: 0.50, burstPauseMax: 0.80 }, // rank  9: ar2
+  { damage: 13, burstPauseMin: 0.50, burstPauseMax: 0.75 }, // rank 10: ar3
+  { damage: 14, burstPauseMin: 0.45, burstPauseMax: 0.70 }, // rank 11: ar4
+  { damage: 15, burstPauseMin: 0.50, burstPauseMax: 0.80 }, // rank 12: br
+  { damage: 15, burstPauseMin: 0.55, burstPauseMax: 0.85 }, // rank 13: lmg
+  { damage: 14, burstPauseMin: 0.50, burstPauseMax: 0.75 }, // rank 14: lmg2
+  { damage: 16, burstPauseMin: 0.60, burstPauseMax: 0.90 }, // rank 15: marksman
+  { damage: 17, burstPauseMin: 0.60, burstPauseMax: 0.90 }, // rank 16: marksman2
+  { damage: 20, burstPauseMin: 1.00, burstPauseMax: 1.60 }, // rank 17: sniper
+  { damage: 22, burstPauseMin: 1.00, burstPauseMax: 1.60 }, // rank 18: sniper2
+  { damage: 25, burstPauseMin: 1.80, burstPauseMax: 2.50 }, // rank 19: launcher
+  { damage: 30, burstPauseMin: 0.50, burstPauseMax: 0.70 }, // rank 20: fists
+] as const;
+
+// ── GunGameState: ランク進行の純ロジック(描画・物理に依存しない) ────────────────────
+export class GunGameState {
+  private playerRank = 1;
+  private readonly botRanks = new Map<number, number>(); // bot.uid → rank(1-20)
+
+  // ラダー武器IDを返す(rank は 1-20)
+  getWeaponIdAt(rank: number): string {
+    return GG_LADDER[Math.max(0, Math.min(19, rank - 1))] ?? 'fists';
+  }
+
+  getPlayerRank(): number { return this.playerRank; }
+  getBotRank(uid: number): number { return this.botRanks.get(uid) ?? 1; }
+
+  // プレイヤーがキルを取ったとき。返り値 isWin=true なら試合終了
+  playerRankUp(): { newRank: number; isWin: boolean } {
+    const wasAt20 = this.playerRank === 20;
+    if (!wasAt20) this.playerRank += 1;
+    return { newRank: this.playerRank, isWin: wasAt20 };
+  }
+
+  // 近接キルされたとき(BO2 setback): プレイヤーランク -1(最低1)
+  playerRankDown(): number {
+    if (this.playerRank > 1) this.playerRank -= 1;
+    return this.playerRank;
+  }
+
+  // botがキルを取ったとき
+  botRankUp(uid: number): { newRank: number; isWin: boolean } {
+    const current = this.getBotRank(uid);
+    const wasAt20 = current === 20;
+    if (!wasAt20) this.botRanks.set(uid, current + 1);
+    return { newRank: this.getBotRank(uid), isWin: wasAt20 };
+  }
+
+  // bot が近接キルされたとき: ランク -1(最低1)
+  botRankDown(uid: number): number {
+    const current = this.getBotRank(uid);
+    const next = Math.max(1, current - 1);
+    this.botRanks.set(uid, next);
+    return next;
+  }
+
+  // 全 bot の中のトップランクを返す
+  topBotRank(botUids: readonly number[]): number {
+    let best = 0;
+    for (const uid of botUids) best = Math.max(best, this.getBotRank(uid));
+    return best;
   }
 }
