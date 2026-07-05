@@ -352,9 +352,10 @@ export interface MatchProgress {
   newRecords: string[];
 }
 
-// 試合結果をプロフィールへ反映する。profileはその場で更新される
-export function applyMatch(profile: Profile, summary: MatchSummary): MatchProgress {
-  return accumulateMatch(profile, summary, { rated: summary.rated, trackWinStreak: true });
+// 試合結果をプロフィールへ反映する。profileはその場で更新される。
+// xpMul: 1試合のXP全体に掛ける乗数(省略=1)。ゾンビ以外の全モードは ×10 を推奨。
+export function applyMatch(profile: Profile, summary: MatchSummary, xpMul = 1): MatchProgress {
+  return accumulateMatch(profile, summary, { rated: summary.rated, trackWinStreak: true, xpMul });
 }
 
 // applyMatch / applyCampaignMission の共通の積算。rating と連勝記録の扱いだけ呼び側で切り替える
@@ -362,7 +363,7 @@ export function applyMatch(profile: Profile, summary: MatchSummary): MatchProgre
 function accumulateMatch(
   profile: Profile,
   summary: MatchSummary,
-  opts: { rated: boolean; trackWinStreak: boolean },
+  opts: { rated: boolean; trackWinStreak: boolean; xpMul?: number },
 ): MatchProgress {
   const stats = profile.stats;
   stats.matches += 1;
@@ -425,6 +426,12 @@ function accumulateMatch(
       completed.push(challenge);
       xpBreakdown.push({ label: `任務達成: ${challenge.name}`, xp: challenge.xp });
     }
+  }
+
+  // 非ゾンビ全モードのXP乗数適用(リザルト表示との一貫性のため breakdown ごと乗せる)
+  const mul = opts.xpMul ?? 1;
+  if (mul !== 1) {
+    for (const e of xpBreakdown) e.xp = Math.round(e.xp * mul);
   }
 
   const xpTotal = xpBreakdown.reduce((sum, entry) => sum + entry.xp, 0);
@@ -530,8 +537,9 @@ export function applyScoreRecord(profile: Profile, key: string, kills: number): 
 
 // ミッション結果をプロフィールへ反映。XP/stats/メダルは共通積算、加えてクリア記録・
 // 星・章解放・初制圧ボーナスを処理する。競技レート/PvP連勝は汚染しない。
-export function applyCampaignMission(profile: Profile, summary: MissionSummary): CampaignProgress {
-  const base = accumulateMatch(profile, summary, { rated: false, trackWinStreak: false });
+// xpMul: ゾンビ以外の全モード同様に ×10 を推奨。
+export function applyCampaignMission(profile: Profile, summary: MissionSummary, xpMul = 1): CampaignProgress {
+  const base = accumulateMatch(profile, summary, { rated: false, trackWinStreak: false, xpMul });
   const camp = profile.campaign;
   const mission = missionById(summary.missionId);
   const firstClear = summary.missionWon && !camp.clearedMissions.includes(summary.missionId);
@@ -570,9 +578,10 @@ export function applyCampaignMission(profile: Profile, summary: MissionSummary):
   }
 
   if (firstClear) {
-    base.xpBreakdown.push({ label: '初制圧ボーナス', xp: 800 });
-    profile.xp += 800;
-    base.xpTotal += 800;
+    const bonusXp = Math.round(800 * xpMul);
+    base.xpBreakdown.push({ label: '初制圧ボーナス', xp: bonusXp });
+    profile.xp += bonusXp;
+    base.xpTotal += bonusXp;
     base.levelAfter = levelFromXp(profile.xp);
     // ボーナスでレベルが上がった分の解放も結果画面に出す(取りこぼし防止)
     base.newUnlocks = UNLOCKS.filter(

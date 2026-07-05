@@ -315,6 +315,48 @@ describe('キャンペーン進行', () => {
   });
 });
 
+describe('XP乗数', () => {
+  it('xpMul=10 で1試合のXP合計・各行とも10倍になる', () => {
+    const profile = emptyProfile();
+    // won=true, kills=5: 勝利500+キル500+初陣チャレンジ200 = 1200 → ×10 = 12000
+    const progress = applyMatch(profile, summary({ won: true, kills: 5 }), 10);
+    expect(progress.xpTotal).toBe(12000);
+    expect(profile.xp).toBe(12000);
+    // breakdown のキルXPも10倍
+    const killEntry = progress.xpBreakdown.find((e) => e.label.startsWith('キル'));
+    expect(killEntry?.xp).toBe(5000); // 5 * 100 * 10
+  });
+
+  it('xpMul=1 は省略時と同一(ゾンビ相当)', () => {
+    const p1 = emptyProfile();
+    const p2 = emptyProfile();
+    const s = summary({ won: false, kills: 3 });
+    const r1 = applyMatch(p1, { ...s });
+    const r2 = applyMatch(p2, { ...s }, 1);
+    expect(r2.xpTotal).toBe(r1.xpTotal);
+    expect(p2.xp).toBe(p1.xp);
+  });
+
+  it('xpMul はレベル曲線 xpToNext に影響しない', () => {
+    expect(xpToNext(1)).toBe(750);
+    expect(xpToNext(100)).toBe(25_500);
+    expect(xpToNext(999)).toBe(65_500 + 499 * 50); // = 90_450
+  });
+
+  it('キャンペーンミッションでも xpMul=10 が効く(初制圧ボーナス込み)', () => {
+    const ch1 = CAMPAIGN[0]!;
+    const m1 = ch1.missions[0]!;
+    const p1 = emptyProfile();
+    const p2 = emptyProfile();
+    // won=true, kills=0: 勝利500+初制圧ボーナス800 = 1300 → ×10 = 13000
+    const ms = missionSummary(m1.id, ch1.id, true, 30);
+    const base = applyCampaignMission(p1, { ...ms });
+    const scaled = applyCampaignMission(p2, { ...ms }, 10);
+    expect(scaled.xpTotal).toBe(base.xpTotal * 10);
+    expect(p2.xp).toBe(p1.xp * 10);
+  });
+});
+
 describe('CHALLENGES定義', () => {
   it('IDが重複しない', () => {
     const ids = CHALLENGES.map((c) => c.id);

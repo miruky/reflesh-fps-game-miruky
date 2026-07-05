@@ -4075,17 +4075,21 @@ export class Match {
 
     // 前方の広いコーン内の敵を「複数まとめて」斬る(薙ぎ払い)。リーチは機体の大きさで補正
     // (戦車は車体が巨大なので中心距離では密着しても届かないため)。
+    // 黒帝モード中: 黒刀への変形に合わせてリーチを 7.0m へ拡大、コーンも 0.22 へ広げる。
+    const isDark = this.darkEmperorTimer > 0;
+    const baseReach = isDark ? 7.0 : DAGGER_MELEE_RANGE;
+    const meleeCone = isDark ? 0.22 : DAGGER_MELEE_CONE;
     const eye = this.player.eyePosition;
     const fwd = this.cameraForward();
     let hitAny = false;
     for (const bot of this.bots) {
       if (!bot.alive || bot.team === PLAYER_TEAM) continue;
-      const reach = DAGGER_MELEE_RANGE + (bot.kind === 'tank' ? 2.2 : bot.kind === 'turret' ? 0.5 : 0);
+      const reach = baseReach + (bot.kind === 'tank' ? 2.2 : bot.kind === 'turret' ? 0.5 : 0);
       const to = bot.position.sub(eye);
       const dist = to.length();
       if (dist > reach) continue;
       to.normalize();
-      if (fwd.dot(to) < DAGGER_MELEE_CONE) continue;
+      if (fwd.dot(to) < meleeCone) continue;
       // 遮蔽判定: 薄い壁・コンテナ越しに斬れないようにする(handleMeleeと同じ流儀)
       const hit = this.castRay(eye, to, dist - 0.1, this.player.body);
       if (hit) {

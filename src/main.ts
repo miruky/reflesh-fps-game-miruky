@@ -308,16 +308,20 @@ function showResult(): void {
   if (activeMissionId) {
     const ms = match!.missionSummary();
     if (ms) {
-      const cp = applyCampaignMission(profile, ms);
+      // ストーリーモードは常に非ゾンビ → ×10
+      const cp = applyCampaignMission(profile, ms, 10);
       saveProfile(profile);
       menu.showMissionResult(result, cp);
     } else {
-      menu.showResult(result, applyMatch(profile, result.summary));
+      // ストーリー途中離脱のフォールバック(非ゾンビ → ×10)
+      menu.showResult(result, applyMatch(profile, result.summary, 10));
     }
   } else {
+    const isZombie = lastSelection?.mode === 'zombie';
+    const xpMul = isZombie ? 1 : 10; // ゾンビは現状維持, それ以外は ×10 爆増
     const isScore = lastSelection?.mode === 'score';
     const summary = isScore ? { ...result.summary, rated: false } : result.summary;
-    const progress = applyMatch(profile, summary);
+    const progress = applyMatch(profile, summary, xpMul);
     if (isScore && lastSelection) {
       applyScoreRecord(profile, `score:${lastSelection.stageId}`, result.summary.kills);
     }

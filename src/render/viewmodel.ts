@@ -653,6 +653,7 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     const C_GRIP = 0x101216; // 柄(黒)
     const blade = new THREE.Group();
     // steel=頂点カラー鋼、glow=accent発光(頂点カラー不要)
+    // bladeCore=true のメッシュは黒帝モード中に setKunaiDarkMode が非表示にし、黒刀に差し替える
     const steel = (
       geo: THREE.BufferGeometry,
       mat: THREE.Material,
@@ -664,12 +665,14 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
       rx = 0,
       ry = 0,
       rz = 0,
+      bladeCore = false,
     ): void => {
       setColor(geo, col(color), shade);
       const m = new THREE.Mesh(geo, mat);
       m.position.set(px, py, pz);
       m.rotation.set(rx, ry, rz);
       m.castShadow = false;
+      if (bladeCore) m.userData.kunaiBladeCore = true;
       blade.add(m);
     };
     const glow = (
@@ -690,12 +693,12 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
       if (kunaiGlow) m.userData.kunaiGlow = true;
       blade.add(m);
     };
-    // 刃身(薄板・幅Y0.03/厚みX0.013)。切先を前方(-Z)へ
-    steel(new THREE.BoxGeometry(0.013, 0.03, 0.22), polishVC, C_STEEL, 'machined', 0, 0.006, -0.3);
+    // 刃身(薄板・幅Y0.03/厚みX0.013)。切先を前方(-Z)へ。bladeCore=true → 黒帝時非表示
+    steel(new THREE.BoxGeometry(0.013, 0.03, 0.22), polishVC, C_STEEL, 'machined', 0, 0.006, -0.3, 0, 0, 0, true);
     // 峰(暗い芯)を薄く重ねて厚みと稜線を出す
-    steel(new THREE.BoxGeometry(0.008, 0.033, 0.2), metalVC, C_DARK, 'gradY', 0, 0.006, -0.3);
+    steel(new THREE.BoxGeometry(0.008, 0.033, 0.2), metalVC, C_DARK, 'gradY', 0, 0.006, -0.3, 0, 0, 0, true);
     // 切先(四角錐)
-    steel(new THREE.ConeGeometry(0.02, 0.1, 4), polishVC, C_STEEL, 'machined', 0, 0.006, -0.46, Math.PI / 2, Math.PI / 4, 0);
+    steel(new THREE.ConeGeometry(0.02, 0.1, 4), polishVC, C_STEEL, 'machined', 0, 0.006, -0.46, Math.PI / 2, Math.PI / 4, 0, true);
     // 刃紋(下端の発光ライン) — kunaiGlow=true で setKunaiDarkMode が emissive を切替
     glow(new THREE.BoxGeometry(0.016, 0.006, 0.2), 0, -0.009, -0.3, 0, 0, 0, true);
     // 鍔(クロスガード)
@@ -1662,7 +1665,8 @@ export class ViewModel {
     vel: THREE.Vector3;
   }> = [];
   private _darkAuraSpawnTimer = 0;
-  private _darkOverlayMeshes: THREE.Mesh[] = [];
+  // 黒帝モードで追加した黒刀グループ(THREE.Group)またはリムメッシュ。disposal で traverse する
+  private _darkOverlayMeshes: THREE.Object3D[] = [];
 
   // ── スクラッチ変数(Vector3/Matrix4 alloc を避ける) ──────────────────────
   private readonly _v3scratch = new THREE.Vector3();
@@ -2163,9 +2167,10 @@ export class ViewModel {
     if (!trail) return;
     const kunai = this.gun?.getObjectByName(FIST_KUNAI);
     if (!kunai) return;
-    // 刃先(kunaiローカル座標: 切先付近)を root ローカルへ変換
+    // 刃先(kunaiローカル座標)を root ローカルへ変換。黒帝モード中は黒刀の刃先(3.5倍延長後)を使う
     this.root.updateWorldMatrix(true, false);
-    this._v3scratch.set(0, 0.006, -0.46);
+    const tipZ = this._darkMode ? -1.31 : -0.46;
+    this._v3scratch.set(0, 0.006, tipZ);
     kunai.localToWorld(this._v3scratch);
     this._v3scratch.applyMatrix4(this._m4scratch.copy(this.root.matrixWorld).invert());
     trail.mesh.position.copy(this._v3scratch);
@@ -2212,11 +2217,14 @@ export class ViewModel {
     const kunai = this.gun?.getObjectByName(FIST_KUNAI);
     if (!kunai) return;
     this.root.updateWorldMatrix(true, false);
-    // 刃の中間付近にランダム散布
+    // 刃の中間付近にランダム散布。黒帝モード中は黒刀刀身(Z: -0.19〜-0.91)をカバー
+    const auraZ = this._darkMode
+      ? -0.19 - Math.random() * 0.72   // 黒刀刀身全域
+      : -0.28 - Math.random() * 0.18;  // 通常クナイ刃中間
     this._v3scratch.set(
       (Math.random() - 0.5) * 0.05,
       0.006 + (Math.random() - 0.5) * 0.05,
-      -0.28 - Math.random() * 0.18,
+      auraZ,
     );
     kunai.localToWorld(this._v3scratch);
     this._v3scratch.applyMatrix4(this._m4scratch.copy(this.root.matrixWorld).invert());
@@ -2280,12 +2288,12 @@ export class ViewModel {
     }
   }
 
-  // 刃紋を深紫 emissive へ切替 + リムオーバーレイ追加 + トレイルカラー変更
+  // 刃紋を深紫 emissive へ切替 + 元刃非表示 + 超長黒刀メッシュ追加 + トレイルカラー変更
   private _applyDarkModeVisuals(): void {
     if (!this.gun) return;
     const kunai = this.gun.getObjectByName(FIST_KUNAI);
     if (!kunai) return;
-    // 刃紋(userData.kunaiGlow=true)の material をクローンして深紫 emissive に
+    // 刃紋(userData.kunaiGlow=true)の material をクローンして深紫 emissive に(復元用に origMat を保存)
     kunai.traverse((node) => {
       if (!(node instanceof THREE.Mesh) || !node.userData.kunaiGlow) return;
       if (node.userData.origMat) return; // 既に切替済み(重複適用防止)
@@ -2299,14 +2307,106 @@ export class ViewModel {
       node.userData.darkMat = dm;
       node.material = dm;
     });
-    this._addDarkRimOverlay();
+    // 刀身コアメッシュ(kunaiBladeCore=true / kunaiGlow=true)を非表示にして黒刀に差し替える
+    kunai.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) return;
+      if (!node.userData.kunaiBladeCore && !node.userData.kunaiGlow) return;
+      if (node.userData.darkHidden) return; // 既に非表示(重複防止)
+      node.visible = false;
+      node.userData.darkHidden = true;
+    });
+    // 超長黒刀メッシュを追加(既に追加済みの場合はスキップ)
+    if (!kunai.getObjectByName('vm:darkBlade')) {
+      this._buildDarkBladeMeshes(kunai);
+    }
     // トレイルカラーを黒紫へ
     for (const tr of this._trailPool) {
       (tr.mesh.material as THREE.MeshBasicMaterial).color.setHex(0x6a00b0);
     }
   }
 
-  // 刃紋 material を通常色へ戻す + トレイルカラー復帰。
+  // 超長黒刀メッシュ群を 'vm:darkBlade' Group として kunai に追加する。
+  // 刀身(0x0a0812/低metalness高rough/NormalBlending)+深紫エミシブエッジ+暗紫リムオーバーレイ。
+  // 刃先は元クナイの約3.5倍(~1.12m)。Group ごと _darkOverlayMeshes へ積んで一括 dispose。
+  private _buildDarkBladeMeshes(kunai: THREE.Object3D): void {
+    const group = new THREE.Group();
+    group.name = 'vm:darkBlade';
+
+    // 漆黒刀身(主板): 0x0a0812, 低metalness, 高roughness, NormalBlending(MeshStandardMaterial既定)
+    const darkSteelMat = new THREE.MeshStandardMaterial({
+      color: 0x0a0812,
+      metalness: 0.05,
+      roughness: 0.9,
+      envMapIntensity: 0.08,
+    });
+    darkSteelMat.userData.shared = false;
+
+    // 峰(芯板): より暗色で微細な厚み差
+    const darkSpineMat = new THREE.MeshStandardMaterial({
+      color: 0x060408,
+      metalness: 0.03,
+      roughness: 0.95,
+      envMapIntensity: 0.05,
+    });
+    darkSpineMat.userData.shared = false;
+
+    // 刀身板: 幅 0.022×高 0.048×長 0.72m。ガード直後(-0.19)から始まり -0.91 まで
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.048, 0.72), darkSteelMat);
+    body.position.set(0, 0.006, -0.55); // center = -0.19 - 0.36
+    group.add(body);
+
+    // 峰板: やや細い
+    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.013, 0.054, 0.65), darkSpineMat);
+    spine.position.set(0, 0.006, -0.515); // center = -0.19 - 0.325
+    group.add(spine);
+
+    // 切先(漆黒四角錐): tip が z≈-1.31 → 0.32m×3.5 = 1.12m の刃先に一致
+    const tipMat = darkSteelMat.clone();
+    tipMat.userData.shared = false;
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.4, 4), tipMat);
+    tip.position.set(0, 0.006, -1.11); // center = -0.91 - 0.20
+    tip.rotation.set(Math.PI / 2, Math.PI / 4, 0);
+    group.add(tip);
+
+    // 深紫エミシブエッジ: 刃先沿いに走る発光ライン(AdditiveBlending, 0x6a00b0)
+    const edgeMat = new THREE.MeshBasicMaterial({
+      color: 0x6a00b0,
+      transparent: true,
+      opacity: 0.72,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    edgeMat.userData.shared = false;
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.007, 0.68), edgeMat);
+    edge.position.set(0, -0.022, -0.53);
+    edge.renderOrder = 6;
+    group.add(edge);
+
+    // 暗紫リムオーバーレイ(上縁・下縁): 黒刀の長さに合わせた幅
+    const rimY = [0.029, -0.016] as const;
+    for (const py of rimY) {
+      const rimMat = new THREE.MeshBasicMaterial({
+        color: 0x5500aa,
+        transparent: true,
+        opacity: 0.42,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      rimMat.userData.shared = false;
+      const rimMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.015, 0.72), rimMat);
+      rimMesh.position.set(0, py, -0.55);
+      rimMesh.rotation.set(Math.PI / 2, 0, 0);
+      rimMesh.renderOrder = 6;
+      group.add(rimMesh);
+    }
+
+    kunai.add(group);
+    this._darkOverlayMeshes.push(group);
+  }
+
+  // 刃紋 material を通常色へ戻す + 刀身コアメッシュを再表示 + トレイルカラー復帰。
   // V24修正: 黒帝終了時にセカンダリを構えているとキャッシュ内のクナイが紫のまま残るため、
   // 現在の gun だけでなく武器キャッシュ全体を走査して復元する(冪等)。
   private _restoreKunaiGlow(): void {
@@ -2320,6 +2420,7 @@ export class ViewModel {
       if (cached && !targets.includes(cached)) targets.push(cached);
     }
     for (const kunai of targets) {
+      // 刃紋マテリアル復元
       kunai.traverse((node) => {
         if (!(node instanceof THREE.Mesh) || !node.userData.kunaiGlow) return;
         if (!node.userData.origMat) return;
@@ -2329,49 +2430,31 @@ export class ViewModel {
         node.userData.origMat = undefined;
         node.userData.darkMat = undefined;
       });
+      // 刀身コアメッシュの可視性を復元(kunaiBladeCore または kunaiGlow で非表示にしたもの)
+      kunai.traverse((node) => {
+        if (!(node instanceof THREE.Mesh)) return;
+        if (!node.userData.darkHidden) return;
+        node.visible = true;
+        node.userData.darkHidden = undefined;
+      });
     }
+    // トレイルカラーを通常色へ
     for (const tr of this._trailPool) {
       (tr.mesh.material as THREE.MeshBasicMaterial).color.setHex(0x8ab4ff);
     }
   }
 
-  // 刃の縁に暗紫リムオーバーレイを追加(AdditiveBlending 深紫=「黒いのに視認できる」縁取り)
-  private _addDarkRimOverlay(): void {
-    if (!this.gun) return;
-    const kunai = this.gun.getObjectByName(FIST_KUNAI);
-    if (!kunai) return;
-    // 上縁・下縁それぞれに独立した Material でリムメッシュを追加
-    const configs: [number, number, number, number, number, number][] = [
-      [0, 0.017, -0.3, Math.PI / 2, 0, 0], // 上縁
-      [0, -0.005, -0.3, Math.PI / 2, 0, 0], // 下縁
-    ];
-    for (const [px, py, pz, rx, ry, rz] of configs) {
-      const rimMat = new THREE.MeshBasicMaterial({
-        color: 0x5500aa,
-        transparent: true,
-        opacity: 0.45,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      });
-      rimMat.userData.shared = false;
-      const geo = new THREE.PlaneGeometry(0.012, 0.21);
-      const mesh = new THREE.Mesh(geo, rimMat);
-      mesh.position.set(px, py, pz);
-      mesh.rotation.set(rx, ry, rz);
-      mesh.renderOrder = 6;
-      kunai.add(mesh);
-      this._darkOverlayMeshes.push(mesh);
-    }
-  }
-
-  // リムオーバーレイを全削除して GPU 資源を解放
+  // 黒刀グループ(_darkOverlayMeshes)を全削除して GPU 資源を解放。
+  // _darkOverlayMeshes は THREE.Object3D(Group 含む)なので traverse して Mesh を dispose する。
   private _removeDarkRimOverlay(): void {
-    for (const mesh of this._darkOverlayMeshes) {
-      mesh.parent?.remove(mesh);
-      mesh.geometry.dispose();
-      const mat = mesh.material as THREE.Material;
-      if (mat.userData.shared !== true) mat.dispose();
+    for (const obj of this._darkOverlayMeshes) {
+      obj.traverse((node) => {
+        if (!(node instanceof THREE.Mesh)) return;
+        node.geometry.dispose();
+        const mat = node.material as THREE.Material;
+        if (mat.userData.shared !== true) mat.dispose();
+      });
+      obj.parent?.remove(obj);
     }
     this._darkOverlayMeshes = [];
   }
