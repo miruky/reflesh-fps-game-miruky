@@ -101,6 +101,13 @@ export interface BoxSpec {
    * テスト・ミニマップのスポーン距離チェックでスキップ対象。
    */
   decor?: boolean;
+  /**
+   * 破壊可能プロップ(BF5簡易版)。
+   * ghost/decor/構造壁/床以外の小〜中型遮蔽プロップの約35%に決定論的に付与。
+   * match.ts が個別メッシュ+コライダーを生成し HP0 で破壊演出+消滅を担う。
+   */
+  breakable?: { hp: number };
+  structural?: boolean; // V31: 構造支持材(キャットウォーク支柱等)=絶対に破壊不可
 }
 
 export type SpawnPoint = [number, number, number];
@@ -257,13 +264,13 @@ function buildArena(cx: number, cz: number, rot: number, p: StagePalette): BoxSp
     // 2F キャットウォーク (y=5)
     pb(cx, cz, rot, 0, -11, 5, 40, 0.5, 8, ac, e),
     pb(cx, cz, rot, 0, +11, 5, 40, 0.5, 8, ac, e),
-    // 支柱 × 6
-    pb(cx, cz, rot, -13, -11, 0, 1, 5, 1, c),
-    pb(cx, cz, rot, 0, -11, 0, 1, 5, 1, c),
-    pb(cx, cz, rot, +13, -11, 0, 1, 5, 1, c),
-    pb(cx, cz, rot, -13, +11, 0, 1, 5, 1, c),
-    pb(cx, cz, rot, 0, +11, 0, 1, 5, 1, c),
-    pb(cx, cz, rot, +13, +11, 0, 1, 5, 1, c),
+    // 支柱 × 6 (V31: structural=キャットウォークの支持材なので破壊不可)
+    { ...pb(cx, cz, rot, -13, -11, 0, 1, 5, 1, c), structural: true },
+    { ...pb(cx, cz, rot, 0, -11, 0, 1, 5, 1, c), structural: true },
+    { ...pb(cx, cz, rot, +13, -11, 0, 1, 5, 1, c), structural: true },
+    { ...pb(cx, cz, rot, -13, +11, 0, 1, 5, 1, c), structural: true },
+    { ...pb(cx, cz, rot, 0, +11, 0, 1, 5, 1, c), structural: true },
+    { ...pb(cx, cz, rot, +13, +11, 0, 1, 5, 1, c), structural: true },
     // ── キャットウォーク登坂階段(N壁内側沿い, 東端 lx+0→+14, 18段×0.3m蹴上) ──
     // 上面y=5.4m で catwalk 上面 y=5.5m まで autostep 0.1m の1ステップ
     ...buildStair(cx, cz, rot, +0.4, -14, 0.8, 0, 0, 0.8, 2, 18, c),
@@ -635,6 +642,23 @@ export function generateStage(def: StageDef): StageLayout {
       placed.push(mirror);
       numPlaced += 1;
     }
+  }
+
+  // ⑥ breakable 付与 ── 小〜中型遮蔽プロップの約35%に決定論的にHP付与する。
+  // 別シード(def.seed ^ 0x1a2b3c4d)を使うことで既存レイアウトRNGに影響を与えない。
+  // 除外基準: ghost / decor / 幅>8(構造壁) / h<0.8(床・屋根スラブ) / h>10(巨大柱)
+  //           / 縦横アスペクト>5(細長い壁パネル)
+  // HP: 120-260 の範囲で体積の平方根に比例(小さい箱は折れやすく、大きい箱は頑丈)。
+  const breakRng = mulberry32(def.seed ^ 0x1a2b3c4d);
+  for (const box of boxes) {
+    if (box.ghost || box.decor || box.structural) continue;
+    const maxXZ = Math.max(box.w, box.d);
+    const minXZ = Math.min(box.w, box.d);
+    if (maxXZ > 8 || box.h < 0.8 || box.h > 10) continue;
+    if (minXZ > 0 && maxXZ / minXZ > 5) continue;
+    if (breakRng() > 0.35) continue;
+    const vol = box.w * box.h * box.d;
+    box.breakable = { hp: Math.max(120, Math.min(260, Math.round(120 + Math.sqrt(vol) * 10))) };
   }
 
   return { boxes, playerSpawns: corners, botSpawns };

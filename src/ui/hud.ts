@@ -111,7 +111,7 @@ export class Hud {
   // ── BO2 ミニマップ ──
   private minimapCtx: CanvasRenderingContext2D | null = null;
   private minimapStageSize = 60;
-  private minimapBoxes: Array<{ x: number; z: number; w: number; d: number }> = [];
+  private minimapBoxes: Array<{ x: number; z: number; w: number; d: number; handle?: number }> = [];
   // ── ファイナルキルカム: body 直下の独立オーバーレイ(hud.hide() の影響を受けない) ──
   private readonly fkcRoot: HTMLElement;
   private readonly fkcFlashEl: HTMLElement;
@@ -941,6 +941,8 @@ export class Hud {
     ctx.strokeStyle = 'rgba(255,255,255,0.12)';
     ctx.lineWidth = 0.7;
     for (const b of this.minimapBoxes) {
+      // V31: 破壊済みプロップはミニマップからも消す
+      if (b.handle !== undefined && snap.destroyedPropHandles?.has(b.handle)) continue;
       ctx.strokeRect(b.x * scale - b.w * scale / 2, b.z * scale - b.d * scale / 2, b.w * scale, b.d * scale);
     }
 

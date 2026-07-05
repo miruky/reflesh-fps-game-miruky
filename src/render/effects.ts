@@ -27,6 +27,7 @@ export class Effects {
   private darkPuffs: Timed<THREE.Mesh>[] = [];               // 黒帝オーラ煙(足元低頻度)
   private darkAuras: Timed<THREE.Mesh>[] = [];               // 黒帝オーラ渦ウィスプ(螺旋上昇)
   private shingetsuRings: Timed<THREE.Group>[] = [];         // 真月拡大リング
+  private debris: Timed<THREE.Group>[] = [];                 // 破壊可能プロップの破片群
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -38,6 +39,8 @@ export class Effects {
   private readonly ringGeometry = new THREE.RingGeometry(0.8, 1.0, 44);
   // 単位クラック(長手Z=1)。scale.z で伸長する共有ジオメトリ
   private readonly streakGeometry = new THREE.BoxGeometry(0.04, 0.02, 1);
+  // 破片(単位箱・scale で各フラグメントサイズへ拡大)。deathBurst の sparkGeometry より大きめ
+  private readonly debrisFragGeo = new THREE.BoxGeometry(1, 1, 1);
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -449,6 +452,44 @@ export class Effects {
     }
     this.scene.add(group);
     this.sparks.push({ obj: group, life: 0.65, maxLife: 0.65 });
+  }
+
+  // BF5簡易破壊: プロップの色・寸法から 6〜10 個の小箱片が弾け飛ぶ。
+  // deathBurst流儀(重力落下・0.9sフェード)。match.ts側で土煙はexplosion()小半径で担う。
+  // colorHex: THREE色番号(0xrrggbb)。w/h/d: プロップの World 寸法(m)。
+  debrisBurst(pos: THREE.Vector3, colorHex: number, w: number, h: number, d: number): void {
+    const count = 6 + Math.floor(Math.random() * 5); // 6〜10
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    for (let i = 0; i < count; i += 1) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        transparent: true,
+        opacity: 0.95,
+      });
+      const frag = new THREE.Mesh(this.debrisFragGeo, mat);
+      // 破片サイズ: プロップ寸法の 10〜30 % でランダムにばらす
+      frag.scale.set(
+        w * (0.1 + Math.random() * 0.2),
+        h * (0.1 + Math.random() * 0.2),
+        d * (0.1 + Math.random() * 0.2),
+      );
+      // 初期位置をプロップ内部でばらす
+      frag.position.set(
+        (Math.random() - 0.5) * w * 0.4,
+        (Math.random() - 0.5) * h * 0.4,
+        (Math.random() - 0.5) * d * 0.4,
+      );
+      // 外方向へ弾け飛ぶ速度(上向き成分を多めに)
+      frag.userData.vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 9,
+        Math.random() * 5 + 1.5,
+        (Math.random() - 0.5) * 9,
+      );
+      group.add(frag);
+    }
+    this.scene.add(group);
+    this.debris.push({ obj: group, life: 0.9, maxLife: 0.9 });
   }
 
   // ジグザグ雷弧(雷帝ウルト)。加算ライン・短寿命(トレーサープールへ相乗り)
@@ -899,6 +940,15 @@ export class Effects {
         (mesh.material as THREE.MeshBasicMaterial).opacity = 0.95 * ratio;
       }
     });
+    this.debris = this.tick(this.debris, dt, (group, ratio) => {
+      for (const child of group.children) {
+        const frag = child as THREE.Mesh;
+        const vel = frag.userData.vel as THREE.Vector3;
+        vel.y -= 14 * dt; // 重力
+        frag.position.addScaledVector(vel, dt);
+        (frag.material as THREE.MeshBasicMaterial).opacity = 0.95 * ratio;
+      }
+    });
     this.flames = this.tick(this.flames, dt, (group, ratio) => {
       const t = performance.now() / 1000;
       for (const child of group.children) {
@@ -936,7 +986,7 @@ export class Effects {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
-    for (const list of [this.clouds, this.flames, this.sparks, this.streaks]) {
+    for (const list of [this.clouds, this.flames, this.sparks, this.streaks, this.debris]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
@@ -953,6 +1003,7 @@ export class Effects {
     this.flareGeometry.dispose();
     this.ringGeometry.dispose();
     this.streakGeometry.dispose();
+    this.debrisFragGeo.dispose();
   }
 
   private tick<T extends THREE.Object3D>(
@@ -985,7 +1036,8 @@ export class Effects {
           node.geometry !== this.sparkGeometry &&
           node.geometry !== this.flareGeometry &&
           node.geometry !== this.ringGeometry &&
-          node.geometry !== this.streakGeometry
+          node.geometry !== this.streakGeometry &&
+          node.geometry !== this.debrisFragGeo
         ) {
           node.geometry.dispose();
         }

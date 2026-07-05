@@ -521,6 +521,8 @@ export interface MatchSnapshot {
   ggRankUpFlash?: boolean;   // このフレームにランクアップした(HUD演出トリガ)
   ggSetback?: boolean;       // このフレームに setback(ランクダウン)した
   ggTop3?: ReadonlyArray<{ name: string; rank: number; isPlayer: boolean }>; // トップ3
+  // 破壊済み breakable プロップのコライダーハンドルセット(将来のミニマップ連携用)
+  destroyedPropHandles: ReadonlySet<number>;
 }
 
 interface RayHitLike {
@@ -578,6 +580,22 @@ interface DarkSlashWave {
   traveled: number;
   hitSet: Set<number>; // 既ヒット bot.uid(多段ヒット防止)
   smokeTimer: number;
+}
+
+// BF5簡易破壊可能プロップ: buildStageScene で個別メッシュ+コライダーを生成し登録。
+// 'world' タグのままにして既存の弾道/爆発/視線ロジックと整合させ、
+// breakableProps マップで HP 管理+破壊演出を担う。
+interface BreakableProp {
+  mesh: THREE.Mesh;
+  body: RAPIER.RigidBody;
+  collider: RAPIER.Collider;
+  pos: THREE.Vector3; // ワールド中心座標(body.translation()の静的キャッシュ)
+  colorHex: number;   // THREE 16進数色(デブリ演出用)
+  w: number;
+  h: number;
+  d: number;
+  hp: number;
+  maxHp: number;
 }
 
 export class Match {
@@ -896,8 +914,13 @@ export class Match {
   // 足音: bot uid → 歩行��積距離(ストライドトリガー用)
   private readonly botStepPhase = new Map<number, number>();
   private stageSurfaceFloor: SurfaceMaterial = 'concrete';
-  // ミニマップ用ボックスデータ(setupMinimap()/snapshot()で参照)
-  private readonly minimapBoxData: Array<{ x: number; z: number; w: number; d: number }> = [];
+  // ミニマップ用ボックスデータ(setupMinimap()/snapshot()で参照)。
+  // breakable プロップには handle フィールドを追加し破壊時に動的削除する。
+  private readonly minimapBoxData: Array<{ x: number; z: number; w: number; d: number; handle?: number }> = [];
+  // 破壊可能プロップ: handle → BreakableProp(buildStageSceneで登録、破壊時に削除)
+  private readonly breakableProps = new Map<number, BreakableProp>();
+  // 破壊済みハンドルセット(MatchSnapshot経由でHUDへ公開=将来のミニマップ連携用)
+  private readonly destroyedPropHandles = new Set<number>();
 
   // ── ファイナルキルカム: リングバッファ + ステートマシン ──
   private readonly fkBuf     = new Float32Array(FK_MAX_FRAMES * FK_FRAME_STRIDE);
@@ -960,12 +983,7 @@ export class Match {
     // ゾンビは既存ムード優先=天候ロール無し('clear' のまま)。
     if (config.mode !== 'zombie') this.weatherKind = rollWeather(config.stage.seed);
     this.buildStageScene(layout.boxes);
-    // ミニマップ用ボックスデータを保持(HUD から参照)。ghost/decor ボックスは除外
-    for (const b of layout.boxes) {
-      if ((b as { ghost?: boolean }).ghost !== true && (b as { decor?: boolean }).decor !== true) {
-        this.minimapBoxData.push({ x: b.x, z: b.z, w: b.w, d: b.d });
-      }
-    }
+    // ミニマップ用ボックスデータは buildStageScene 内で ghost/decor 除外しながら登録済み
     // ステージの床材質(足音に使用)
     this.stageSurfaceFloor = deriveSurfaceMaterials(config.stage.palette).floor;
 
@@ -1348,6 +1366,59 @@ export class Match {
     // stage.ts/StageDef 側が ghost フラグを追加する。防御的読み取りで型拡張に依存しない。
     for (const spec of boxes) {
       const isGhost = (spec as { ghost?: boolean }).ghost === true;
+      const isDecor = (spec as { decor?: boolean }).decor === true;
+      const brkSpec = (spec as { breakable?: { hp: number } }).breakable;
+      const isBreakable = !isGhost && brkSpec !== undefined;
+
+      // ── 破壊可能プロップ: 個別メッシュ+個別マテリアル+個別コライダーで生成 ──
+      // マージ描画から除外し破壊時にそのメッシュだけ scene.remove できる。
+      // draw call 増は +~35 個/ステージ(仕様許容範囲内)。
+      if (isBreakable) {
+        const mat = new THREE.MeshStandardMaterial({
+          color: spec.color,
+          roughness: 0.72,
+          metalness: 0.0,
+          vertexColors: true,
+        });
+        if (spec.emissive) {
+          mat.emissive = new THREE.Color(spec.color);
+          mat.emissiveIntensity = 0.45;
+          mat.envMapIntensity = 0.35;
+        }
+        this.applyMacroProp(mat);
+        const mesh = new THREE.Mesh(unitBox, mat);
+        mesh.position.set(spec.x, spec.y, spec.z);
+        mesh.scale.set(spec.w, spec.h, spec.d);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        this.scene.add(mesh);
+        const body = this.physics.createRigidBody(
+          RAPIER.RigidBodyDesc.fixed().setTranslation(spec.x, spec.y, spec.z),
+        );
+        const collider = this.physics.createCollider(
+          RAPIER.ColliderDesc.cuboid(spec.w / 2, spec.h / 2, spec.d / 2),
+          body,
+        );
+        this.tags.set(collider.handle, { kind: 'world' });
+        this.breakableProps.set(collider.handle, {
+          mesh,
+          body,
+          collider,
+          pos: new THREE.Vector3(spec.x, spec.y, spec.z),
+          colorHex: parseInt(spec.color.slice(1), 16),
+          w: spec.w,
+          h: spec.h,
+          d: spec.d,
+          hp: brkSpec.hp,
+          maxHp: brkSpec.hp,
+        });
+        if (!isDecor) {
+          this.minimapBoxData.push({ x: spec.x, z: spec.z, w: spec.w, d: spec.d, handle: collider.handle });
+        }
+        continue;
+      }
+
+      // ── 通常ボックス: 共有マテリアル+共有ジオメトリ ──
       if (!isGhost) {
         const key = `${spec.color}:${spec.emissive}`;
         let material = materials.get(key);
@@ -1376,6 +1447,9 @@ export class Match {
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         this.scene.add(mesh);
+        if (!isDecor) {
+          this.minimapBoxData.push({ x: spec.x, z: spec.z, w: spec.w, d: spec.d });
+        }
       }
 
       // ghost の有無にかかわらず物理コライダーは常に生成(不可視境界はプレイヤー/ボットを止める)
@@ -3475,6 +3549,14 @@ export class Match {
         }
       }
     }
+
+    // 破壊可能プロップへの爆発ダメージ: 100%適用(距離減衰あり・LOS不問)
+    for (const [handle, prop] of this.breakableProps) {
+      const dist = prop.pos.distanceTo(point);
+      if (dist > spec.radius) continue;
+      const dmg = explosionDamage(spec, dist);
+      if (dmg > 0) this.applyPropDamage(handle, dmg);
+    }
   }
 
   private applyFlash(spec: (typeof GRENADE_SPECS)['flash'], point: THREE.Vector3): void {
@@ -3499,6 +3581,56 @@ export class Match {
       const intensity = flashIntensity(dist, spec.radius, 1, false);
       bot.blind = Math.max(bot.blind, spec.effectDurationS * intensity);
     }
+  }
+
+  // ── 破壊可能プロップ: ダメージ適用 + HP50%以下でヒビ色 ──────────────────────
+  // rawDamage: 武器ダメージの50% or 爆発ダメージ100%。呼び出し側で係数適用済みで渡す。
+  private applyPropDamage(handle: number, rawDamage: number): void {
+    const prop = this.breakableProps.get(handle);
+    if (!prop) return;
+    prop.hp -= rawDamage;
+
+    // HP50%以下でヒビ色(個別マテリアルなので他のプロップに影響しない)
+    if (prop.hp > 0 && prop.hp <= prop.maxHp * 0.5) {
+      const mat = prop.mesh.material as THREE.MeshStandardMaterial;
+      if (!mat.userData.cracked) {
+        mat.userData.cracked = true;
+        // 暗く色ずれした「ひび割れ」色: 元色を45%まで暗化し暖色ダーティネスを加える
+        const c = new THREE.Color(prop.colorHex);
+        c.multiplyScalar(0.45);
+        mat.color = c;
+        mat.needsUpdate = true;
+      }
+    }
+
+    if (prop.hp <= 0) this.destroyProp(prop);
+  }
+
+  // ── 破壊可能プロップ: 破壊処理(演出+物理+メッシュ消去) ──────────────────────
+  private destroyProp(prop: BreakableProp): void {
+    const { pan, distance } = this.panAndDistance(prop.pos);
+
+    // (a) 破片化演出: 6〜10 個の小箱片 + 小爆発(土煙)
+    this.effects.debrisBurst(prop.pos, prop.colorHex, prop.w, prop.h, prop.d);
+    this.effects.explosion(prop.pos, Math.max(prop.w, prop.d) * 0.15);
+    // (b) 破壊音(既存 impactSurface 流用)
+    this.sounds.impactSurface('wall', pan, distance);
+
+    // (c) メッシュ除去(ジオメトリは unitBox 共有なので dispose しない、マテリアルのみ)
+    this.scene.remove(prop.mesh);
+    (prop.mesh.material as THREE.Material).dispose();
+
+    // (d) コライダー/剛体除去: removeRigidBody が付属コライダーも一括解放
+    this.tags.delete(prop.collider.handle);
+    this.physics.removeRigidBody(prop.body);
+
+    // (e) 追跡セット更新
+    this.destroyedPropHandles.add(prop.collider.handle);
+    this.breakableProps.delete(prop.collider.handle);
+
+    // (f) ミニマップデータから削除(minimapBoxes()を通じてHUDが次回 setupMinimap で反映)
+    const idx = this.minimapBoxData.findIndex((b) => b.handle === prop.collider.handle);
+    if (idx >= 0) this.minimapBoxData.splice(idx, 1);
   }
 
   private updateFirePatches(dt: number): void {
@@ -3704,6 +3836,14 @@ export class Match {
         }
       }
 
+      // ロケット爆発による破壊可能プロップへのダメージ(100%適用・距離減衰あり)
+      for (const [handle, prop] of this.breakableProps) {
+        const dist = prop.pos.distanceTo(point);
+        if (dist > ROCKET_SPEC.radius) continue;
+        const dmg = ROCKET_SPEC.maxDamage * Math.max(0, 1 - dist / ROCKET_SPEC.radius);
+        if (dmg > 0) this.applyPropDamage(handle, dmg);
+      }
+
       // メッシュ後始末
       this.scene.remove(r.mesh);
     }
@@ -3843,6 +3983,9 @@ export class Match {
       // 着弾の材質音: 法線が上向きなら床、それ以外は壁(遮蔽物)の材質で鳴らす
       const ip = this.panAndDistance(end);
       this.sounds.impactSurface(hit.normal.y > 0.65 ? 'floor' : 'wall', ip.pan, ip.distance);
+
+      // 破壊可能プロップへのダメージ: 武器ダメージの50%を適用
+      this.applyPropDamage(hit.collider.handle, weapon.def.damage * 0.5);
 
       if (leg > 0 || weapon.def.penetrationM <= 0) return;
 
@@ -5891,6 +6034,8 @@ export class Match {
         (c) => this.tags.get(c.handle)?.kind === 'world',
       );
       if (wallHit) {
+        // 黒斬撃が破壊可能プロップに命中した場合は HP を削る(壁で止まる動作は変わらない)
+        this.applyPropDamage(wallHit.collider.handle, DARK_SLASH_DAMAGE);
         this.disposeDarkSlashWave(w);
         continue;
       }
@@ -6793,6 +6938,8 @@ export class Match {
       })) : undefined,
       // ── ガンゲーム ──
       ...this.buildGunGameSnap(),
+      // 破壊済み breakable プロップのハンドルセット(HUD ミニマップ将来連携用)
+      destroyedPropHandles: this.destroyedPropHandles,
     };
     this.feed = [];
     this.hits = [];

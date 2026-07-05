@@ -99,4 +99,53 @@ describe('generateStage', () => {
       expect(def.recipe.buildings.length).toBeLessThanOrEqual(4);
     }
   });
+
+  it('breakable: ghost/decor ボックスは絶対に breakable にならない', () => {
+    for (const def of STAGES) {
+      const layout = generateStage(def);
+      for (const box of layout.boxes) {
+        if (box.ghost || box.decor) {
+          expect(box.breakable, `${def.id}: ghost/decor box should not be breakable`).toBeUndefined();
+        }
+      }
+    }
+  });
+
+  it('breakable: hp は 120〜260 の範囲に収まる', () => {
+    for (const def of STAGES) {
+      const layout = generateStage(def);
+      for (const box of layout.boxes) {
+        if (box.breakable === undefined) continue;
+        expect(box.breakable.hp, `${def.id}: hp too low`).toBeGreaterThanOrEqual(120);
+        expect(box.breakable.hp, `${def.id}: hp too high`).toBeLessThanOrEqual(260);
+      }
+    }
+  });
+
+  it('breakable: 小〜中型プロップの 15〜55% に付与される(確率35%の許容誤差込み)', () => {
+    for (const def of STAGES) {
+      const layout = generateStage(def);
+      const candidates = layout.boxes.filter((box) => {
+        if (box.ghost || box.decor) return false;
+        const maxXZ = Math.max(box.w, box.d);
+        const minXZ = Math.min(box.w, box.d);
+        return maxXZ <= 8 && box.h >= 0.8 && box.h <= 10 && (minXZ <= 0 || maxXZ / minXZ <= 5);
+      });
+      if (candidates.length === 0) continue;
+      const breakableCount = layout.boxes.filter((b) => b.breakable !== undefined).length;
+      const ratio = breakableCount / candidates.length;
+      expect(ratio, `${def.id}: breakable ratio ${ratio.toFixed(2)}`).toBeGreaterThan(0.1);
+      expect(ratio, `${def.id}: breakable ratio ${ratio.toFixed(2)}`).toBeLessThan(0.65);
+    }
+  });
+
+  it('breakable: 同じステージ定義からは常に同じ breakable 割当が出る(決定論)', () => {
+    for (const def of STAGES.slice(0, 5)) {
+      const a = generateStage(def);
+      const b = generateStage(def);
+      const aBreakable = a.boxes.map((x) => x.breakable);
+      const bBreakable = b.boxes.map((x) => x.breakable);
+      expect(JSON.stringify(aBreakable)).toBe(JSON.stringify(bBreakable));
+    }
+  });
 });
