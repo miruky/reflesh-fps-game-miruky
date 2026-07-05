@@ -1,5 +1,5 @@
 import { isCamoId } from '../game/camo';
-import { emptyProfile, type Profile } from '../game/progression';
+import { emptyDailyState, emptyProfile, type DailyState, type Profile } from '../game/progression';
 
 const KEY = 'hibana.profile.v1';
 
@@ -117,6 +117,45 @@ export function parseProfile(raw: string): Profile {
     for (const [key, val] of Object.entries(source.scoreRecords as Record<string, unknown>)) {
       const value = num(val, 0);
       if (value > 0) base.scoreRecords[key] = value;
+    }
+  }
+
+  // ── デイリーチャレンジ状態(旧セーブは emptyDailyState で補完) ──
+  if (typeof source.daily === 'object' && source.daily !== null) {
+    base.daily = parseDailyState(source.daily as Record<string, unknown>);
+  }
+
+  return base;
+}
+
+function parseDailyState(raw: Record<string, unknown>): DailyState {
+  const base = emptyDailyState();
+  const isYYYYMMDD = (v: unknown): v is string =>
+    typeof v === 'string' && /^\d{8}$/.test(v);
+  if (isYYYYMMDD(raw.currentDate)) base.currentDate = raw.currentDate;
+  if (isYYYYMMDD(raw.lastClearDate)) base.lastClearDate = raw.lastClearDate;
+  // '' は空文字(初期値)として許容する
+  if (raw.lastClearDate === '') base.lastClearDate = '';
+
+  if (typeof raw.streakDays === 'number' && Number.isFinite(raw.streakDays) && raw.streakDays >= 0) {
+    base.streakDays = Math.floor(raw.streakDays);
+  }
+
+  // progress / claimed は長さ3のタプル
+  if (Array.isArray(raw.progress) && raw.progress.length >= 3) {
+    const p = raw.progress as unknown[];
+    for (const i of [0, 1, 2] as const) {
+      const v = p[i];
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+        base.progress[i] = v;
+      }
+    }
+  }
+
+  if (Array.isArray(raw.claimed) && raw.claimed.length >= 3) {
+    const c = raw.claimed as unknown[];
+    for (const i of [0, 1, 2] as const) {
+      if (typeof c[i] === 'boolean') base.claimed[i] = c[i] as boolean;
     }
   }
 

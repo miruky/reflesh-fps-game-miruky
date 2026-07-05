@@ -317,15 +317,22 @@ export class Hud {
       </div>
       <!-- BO2 方形ミニマップ: 左上固定。UAV 発動時のみ敵ドット表示 -->
       <canvas class="hud-minimap" data-id="minimap" width="144" height="144" aria-hidden="true"></canvas>
-      <!-- BO2 スコアストリークパネル: 右側・弾薬表示の上 -->
+      <!-- BO2 スコアストリークパネル: 右側・弾薬表示の上 (7スロット) -->
       <div class="hud-bo2-ss" aria-hidden="true">
         <div class="hud-bo2-ss-next" data-id="bo2ssnext"></div>
-        ${[0,1,2,3].map((i) => `
+        <div class="hud-bo2-ss-cauav" data-id="bo2cauav" hidden>COUNTER UAV <span data-id="bo2cauavt">30</span>s</div>
+        ${[0,1,2,3,4,5,6].map((i) => `
         <div class="hud-bo2-slot" data-id="bo2slot${i}">
           <span class="hud-bo2-key">${3+i}</span>
           <span class="hud-bo2-icon" data-id="bo2icon${i}"></span>
           <span class="hud-bo2-name" data-id="bo2name${i}"></span>
         </div>`).join('')}
+      </div>
+      <!-- RC-XD操縦オーバーレイ: 操縦中のみ表示 -->
+      <div class="hud-rcxd-overlay" data-id="rcxdoverlay" hidden>
+        <div class="hud-rcxd-label">RC-XD</div>
+        <div class="hud-rcxd-hint">[LClick] 起爆 · [RClick/ESC] キャンセル</div>
+        <div class="hud-rcxd-timer"><span data-id="rcxdtimer">30</span>s</div>
       </div>
       <div class="hud-radar" data-id="radar" hidden>
         <div class="radar-sweep"></div>
@@ -817,30 +824,39 @@ export class Hud {
   }
 
   // ── BO2 スコアストリークパネル ────────────────────────────────────────────────────────
-  // BO2 GSC 仕様に忠実な 4 スロット縦積みパネル (UAV/HK/LS/Turret)。
-  // バンク済み = lit、非バンク = dim。次のストリークまでの残 pts を上部に表示する。
+  // 7スロット縦積みパネル。バンク済み=lit、非バンク=dim。次のストリークまでの残pts上部表示。
+  // idx:  0=RC-XD / 1=UAV / 2=HK / 3=CarePackage / 4=CounterUAV / 5=Lightning / 6=SensorTurret
   private readonly BO2_SVG_ICONS = [
+    // RC-XD: ラジコン車 (車体+アンテナ)
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4" y="13" width="16" height="6" rx="1"/><circle cx="8" cy="20" r="1.8"/><circle cx="16" cy="20" r="1.8"/><line x1="15" y1="13" x2="17" y2="8"/><line x1="17" y1="8" x2="17" y2="5"/></svg>`,
     // UAV: レーダーディッシュ (円 + 放射線)
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="14" r="3"/><path d="M5 20 C5 12 19 12 19 20"/><line x1="12" y1="11" x2="12" y2="4"/><line x1="12" y1="4" x2="7" y2="8"/><line x1="12" y1="4" x2="17" y2="8"/></svg>`,
     // Hunter-Killer: ドローン (六角 + 線)
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polygon points="12,4 19,8 19,16 12,20 5,16 5,8"/><line x1="5" y1="8" x2="1" y2="6"/><line x1="19" y1="8" x2="23" y2="6"/><line x1="5" y1="16" x2="1" y2="18"/><line x1="19" y1="16" x2="23" y2="18"/></svg>`,
+    // Care Package: 落下クレート (箱+降下線)
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="6" y="13" width="12" height="8" rx="1"/><line x1="12" y1="2" x2="12" y2="13"/><line x1="8" y1="6" x2="12" y2="2"/><line x1="16" y1="6" x2="12" y2="2"/><line x1="6" y1="17" x2="18" y2="17"/></svg>`,
+    // Counter UAV: 妨害アンテナ (電波遮断)
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><line x1="12" y1="4" x2="12" y2="20"/><path d="M6 8 C6 4 18 4 18 8"/><path d="M4 12 C4 6 20 6 20 12"/><line x1="4" y1="4" x2="20" y2="20"/></svg>`,
     // Lightning Strike: 稲妻ボルト
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polyline points="13,2 7,13 12,13 11,22 17,11 12,11 13,2"/></svg>`,
     // Sensor Turret: 砲台
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="7" y="14" width="10" height="6" rx="1"/><rect x="9" y="10" width="6" height="4"/><line x1="12" y1="10" x2="12" y2="4"/><line x1="12" y1="4" x2="17" y2="7"/></svg>`,
   ];
 
-  private readonly BO2_NAMES = ['UAV', 'HUNTER KILLER', 'LIGHTNING', 'SENSOR TURRET'];
-  private readonly BO2_COSTS = [425, 525, 750, 800];
+  private readonly BO2_NAMES = ['RC-XD', 'UAV', 'HUNTER KILLER', 'CARE PKG', 'C-UAV', 'LIGHTNING', 'SENSOR TURRET'];
+  private readonly BO2_COSTS = [325, 425, 525, 550, 600, 750, 800];
+  private readonly BO2_SLOT_COUNT = 7;
 
   private updateBO2Streaks(snap: MatchSnapshot): void {
     // ゾンビモードではパネルを隠す
     const panel = this.root.querySelector<HTMLElement>('.hud-bo2-ss');
-    if (panel) panel.hidden = snap.zombieRound !== undefined;
-    if (snap.zombieRound !== undefined) return;
+    // V31修正: ガンゲームでもストリークパネルを隠す(ストリーク無効モード)
+    const ssHidden = snap.zombieRound !== undefined || snap.ggRank !== undefined;
+    if (panel) panel.hidden = ssHidden;
+    if (ssHidden) return;
 
     // 各スロットのリット状態更新
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < this.BO2_SLOT_COUNT; i += 1) {
       const slot = this.el[`bo2slot${i}`];
       if (!slot) continue;
       const banked = snap.streakBanked[i] ?? false;
@@ -859,7 +875,7 @@ export class Hud {
     const nextEl = this.el['bo2ssnext'];
     if (nextEl) {
       let nextLabel = '';
-      for (let i = 0; i < 4; i += 1) {
+      for (let i = 0; i < this.BO2_SLOT_COUNT; i += 1) {
         if (!(snap.streakBanked[i] ?? false)) {
           const cost = this.BO2_COSTS[i] ?? 0;
           const rem = Math.max(0, cost - snap.streakProgress);
@@ -868,6 +884,30 @@ export class Hud {
         }
       }
       if (nextEl.textContent !== nextLabel) nextEl.textContent = nextLabel;
+    }
+    // Counter UAV アクティブ表示
+    const cauavEl = this.el['bo2cauav'];
+    if (cauavEl) {
+      cauavEl.hidden = !snap.streakCauavActive;
+      if (snap.streakCauavActive) {
+        const tEl = this.el['bo2cauavt'];
+        if (tEl) {
+          const t = String(Math.ceil(snap.streakCauavTimeLeft));
+          if (tEl.textContent !== t) tEl.textContent = t;
+        }
+      }
+    }
+    // RC-XD 操縦オーバーレイ
+    const rcxdOverlay = this.el['rcxdoverlay'];
+    if (rcxdOverlay) {
+      rcxdOverlay.hidden = !snap.streakRcxdActive;
+      if (snap.streakRcxdActive) {
+        const tEl = this.el['rcxdtimer'];
+        if (tEl) {
+          const t = String(Math.ceil(snap.streakRcxdTimeLeft));
+          if (tEl.textContent !== t) tEl.textContent = t;
+        }
+      }
     }
   }
 

@@ -322,7 +322,7 @@ function showResult(): void {
     const xpMul = isZombie ? 5 : 50; // ゾンビ×5, それ以外は×50 爆増
     const isScore = lastSelection?.mode === 'score';
     const summary = isScore ? { ...result.summary, rated: false } : result.summary;
-    const progress = applyMatch(profile, summary, xpMul);
+    const progress = applyMatch(profile, summary, xpMul, lastSelection?.mode);
     if (isScore && lastSelection) {
       applyScoreRecord(profile, `score:${lastSelection.stageId}`, result.summary.kills);
     }

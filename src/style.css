@@ -9439,7 +9439,7 @@ tr.score-ally td {
   left: 22px;
 }
 
-/* ── H24. BO2 スコアストリークパネル (4スロット) ── */
+/* ── H24. BO2 スコアストリークパネル (7スロット) ── */
 .hud-bo2-ss {
   position: fixed;
   right: 18px;
@@ -9447,7 +9447,7 @@ tr.score-ally td {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 4px;
+  gap: 2px;
   pointer-events: none;
   z-index: 5;
 }
@@ -9459,16 +9459,27 @@ tr.score-ally td {
   letter-spacing: 0.08em;
   text-align: right;
   min-height: 12px;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
+}
+/* Counter UAV アクティブインジケーター */
+.hud-bo2-ss-cauav {
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 700;
+  color: #60e0ff;
+  letter-spacing: 0.06em;
+  text-align: right;
+  text-shadow: 0 0 6px rgba(96, 224, 255, 0.6);
+  margin-bottom: 1px;
 }
 .hud-bo2-slot {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   background: var(--glass-heavy);
   border: 1px solid var(--rule-strong);
-  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
-  padding: 3px 7px 3px 5px;
+  clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+  padding: 2px 6px 2px 4px;
   opacity: 0.4;
   transition: opacity 0.2s var(--ease-out), border-color 0.2s;
 }
@@ -9489,8 +9500,8 @@ tr.score-ally td {
   color: var(--ember);
 }
 .hud-bo2-icon {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   color: var(--ink-soft);
   flex-shrink: 0;
 }
@@ -9503,14 +9514,49 @@ tr.score-ally td {
 }
 .hud-bo2-name {
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 7px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   color: var(--ink-soft);
   white-space: nowrap;
 }
 .hud-bo2-slot.bo2-banked .hud-bo2-name {
   color: #fff;
+}
+/* RC-XD 操縦オーバーレイ */
+.hud-rcxd-overlay {
+  position: fixed;
+  bottom: 50%;
+  left: 50%;
+  transform: translate(-50%, 50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 12;
+}
+.hud-rcxd-label {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--ember);
+  letter-spacing: 0.15em;
+  text-shadow: 0 0 12px rgba(255, 80, 0, 0.7);
+}
+.hud-rcxd-hint {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.6);
+  letter-spacing: 0.05em;
+}
+.hud-rcxd-timer {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ember);
+  letter-spacing: 0.1em;
 }
 
 /* ── H21. レスポンシブ(基底@mediaを後勝ちで潰したためここで再宣言) ── */

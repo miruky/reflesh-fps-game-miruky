@@ -10,6 +10,12 @@ import {
 import type { Input, UiNav } from '../core/input';
 import { exportProfile, importProfile, saveProfile } from '../core/profile';
 import {
+  dailiesFor,
+  dateStringFromSeed,
+  refreshDailiesDate,
+  todayDateSeed,
+} from '../game/dailies';
+import {
   DEFAULT_SETTINGS,
   GRAPHICS_QUALITIES,
   MATCH_LENGTHS,
@@ -816,6 +822,7 @@ export class Menu {
               <span class="lever-eta" aria-hidden="true">降下軌道 LOCKED · 1G</span>
             </div>
           </section>
+          <section class="daily-panel ig-panel ig-scan" aria-label="本日のチャレンジ" data-id="daily-panel"></section>
           <div class="console-body">
             <nav class="mfd-rail" role="tablist" aria-label="管制ページ">
               <button class="mfd-tab mfd-tab-campaign" type="button" role="tab" data-page="campaign" id="mfd-tab-campaign" aria-controls="mfd-panel-campaign"><b>★</b><span>CAMPAIGN</span><small>戦役</small></button>
@@ -921,6 +928,7 @@ export class Menu {
     `;
     this.renderProfile();
     this.renderChallenges();
+    this.renderDailies();
     this.renderStages();
     this.renderModes();
     this.renderZombieRoundSelector();
@@ -1922,6 +1930,69 @@ export class Menu {
       list.appendChild(row);
     }
     this.stagger(list);
+  }
+
+  // ── 本日のチャレンジパネル(IGNITION FRAME 意匠) ─────────────────────
+  private renderDailies(): void {
+    const panel = this.root.querySelector<HTMLElement>('[data-id="daily-panel"]');
+    if (!panel) return;
+
+    // 日付が変わっていたらステートをリフレッシュ(表示の一貫性)
+    const dateSeed = todayDateSeed();
+    const nowDate = dateStringFromSeed(dateSeed);
+    refreshDailiesDate(this.profile.daily, nowDate);
+
+    const challenges = dailiesFor(dateSeed);
+    const daily = this.profile.daily;
+    const streak = daily.streakDays;
+
+    // 炎アイコン(IGNITION FRAME のスパーク意匠)
+    const flameSvg = `<svg class="daily-flame" viewBox="0 0 20 24" aria-hidden="true">
+      <path d="M10 2c0 0-1 3.5 1 5.5S13 11 11 14c0 0 2-1 2.5-3.5 1 2 0.5 5-2.5 7C8 19.5 6 17 6 14c0-2.5 2-3.5 2-3.5C6 14 4 16 4 18.5 2.5 16 3 12 5 10 3.5 7.5 4 4 6 2c0 0 0.5 3 2 4 0.5-3 2-4 2-4z"
+        fill="currentColor" opacity="0.9"/>
+    </svg>`;
+
+    const tiers = [0, 1, 2] as const;
+    const rows = tiers.map((i) => {
+      const ch = challenges[i];
+      const prog = daily.progress[i];
+      const claimed = daily.claimed[i];
+      const ratio = claimed ? 1 : Math.min(1, prog / ch.target);
+      const diffLabel = i === 0 ? 'EASY' : i === 1 ? 'MEDIUM' : 'HARD';
+      const diffClass = i === 0 ? 'daily-easy' : i === 1 ? 'daily-medium' : 'daily-hard';
+      const checkHtml = claimed
+        ? `<span class="daily-check" aria-label="達成済み">✓</span>`
+        : `<span class="daily-xp">${ch.rewardXp.toLocaleString()} XP</span>`;
+      const progressText = claimed
+        ? `${ch.target}/${ch.target}`
+        : `${prog}/${ch.target}`;
+      return `
+        <div class="daily-row${claimed ? ' daily-row--done' : ''}">
+          <span class="daily-diff ${diffClass}">${diffLabel}</span>
+          <span class="daily-label">${ch.label}</span>
+          <span class="daily-prog-wrap" aria-label="進捗 ${progressText}">
+            <span class="daily-prog-bar"><i style="transform:scaleX(${ratio.toFixed(3)})"></i></span>
+            <span class="daily-prog-txt">${progressText}</span>
+          </span>
+          ${checkHtml}
+        </div>`;
+    });
+
+    panel.innerHTML = `
+      <div class="daily-head">
+        <span class="daily-title">
+          <svg class="daily-icon" viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M10 1L12.5 7H19L14 11.3 16 18 10 14 4 18l2-6.7L1 7h6.5z" fill="currentColor" opacity="0.85"/>
+          </svg>
+          本日のチャレンジ
+        </span>
+        <span class="daily-streak" aria-label="連続ログイン${streak}日">
+          ${flameSvg}
+          <b>${streak}</b><small>日</small>
+        </span>
+      </div>
+      <div class="daily-rows">${rows.join('')}</div>
+    `;
   }
 
   private renderModes(): void {

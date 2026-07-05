@@ -493,9 +493,13 @@ export interface MatchSnapshot {
   medals: MedalEvent[]; // この描画フレームで取得したメダル(初回=バッジ/以降=大文字)
   // ── BO2 スコアストリーク ──
   streakProgress: number;        // 0..799
-  streakBanked: readonly boolean[];  // 各ストリークのバンク状態 [UAV, HK, LS, Turret]
+  streakBanked: readonly boolean[];  // 7ストリークのバンク状態
   streakUavActive: boolean;       // UAV 発動中か
   streakUavTimeLeft: number;      // UAV 残り秒(0=非活動)
+  streakRcxdActive: boolean;      // RC-XD操縦中
+  streakRcxdTimeLeft: number;     // RC-XD残り秒
+  streakCauavActive: boolean;     // カウンターUAVアクティブ
+  streakCauavTimeLeft: number;    // カウンターUAV残り秒
   // ── ミニマップ (UAV=敵ドット, 常時=味方ドット) ──
   minimapEnemies: ReadonlyArray<{ relX: number; relZ: number; opacity: number }>;
   minimapAllies: ReadonlyArray<{ relX: number; relZ: number }>;
@@ -867,7 +871,29 @@ export class Match {
   private readonly lightningQueue: Array<{ pos: THREE.Vector3; fireAt: number }> = [];
   // Sensor Turret: PLAYER_TEAM turret の uid → 有効期限 elapsed
   private readonly streakTurretExpiry = new Map<number, number>();
-  // 足音: bot uid → 歩行累積距離(ストライドトリガー用)
+  // ── RC-XD: 遠隔操作ラジコン爆弾 ──
+  private rcxdActive = false;
+  private rcxdTimer = 0;
+  private readonly rcxdPos = new THREE.Vector3();
+  private rcxdYaw = 0;
+  private rcxdMesh: THREE.Group | null = null;
+  private readonly rcxdGeos: THREE.BufferGeometry[] = [];
+  private readonly rcxdMats: THREE.Material[] = [];
+  // ── Care Package: クレート投下 ──
+  private readonly carePackageCrates: Array<{
+    mesh: THREE.Group;
+    geos: THREE.BufferGeometry[];
+    mats: THREE.Material[];
+    pos: THREE.Vector3;
+    dropTimer: number;   // 0→2 落下アニメ
+    openTimer: number;   // 30s 自動消滅カウントダウン
+    landed: boolean;
+    startY: number;
+    groundY: number;
+  }> = [];
+  // ── Counter UAV: 索敵妨害 ──
+  private cauavTimer = 0;
+  // 足音: bot uid → 歩行��積距離(ストライドトリガー用)
   private readonly botStepPhase = new Map<number, number>();
   private stageSurfaceFloor: SurfaceMaterial = 'concrete';
   // ミニマップ用ボックスデータ(setupMinimap()/snapshot()で参照)
@@ -2457,11 +2483,11 @@ export class Match {
     this.updateUltimate(dt);
     const weapon = this.activeWeapon;
 
-    // ADS: ホールドまたはトグル(アクセシビリティ設定)
-    if (this.settings.adsToggle && this.input.adsPressed()) {
+    // ADS: ホールドまたはトグル(アクセシビリティ設定)。RC-XD操縦中は右クリックをキャンセルに使うためADS無効
+    if (!this.rcxdActive && this.settings.adsToggle && this.input.adsPressed()) {
       this.adsLatch = !this.adsLatch;
     }
-    const wantAds = this.settings.adsToggle ? this.adsLatch : this.input.adsDown();
+    const wantAds = !this.rcxdActive && (this.settings.adsToggle ? this.adsLatch : this.input.adsDown());
 
     // しゃがみ: ホールドまたはトグル(アクセシビリティ設定)。
     // wasPressedは消費型なので1回だけ読む
@@ -2473,20 +2499,21 @@ export class Match {
       this.crouchLatch = !this.crouchLatch;
     }
     // キーのデジタル±1とゲームパッドのアナログ量をORブレンド(-1..1へクランプ)
+    // RC-XD操縦中はWASDをRC車体へ横取りするためプレイヤー移動を0化する
     const moveInput = {
-      x: clampUnit(
+      x: this.rcxdActive ? 0 : clampUnit(
         this.input.gpMoveX + (this.input.isDown('right') ? 1 : 0) - (this.input.isDown('left') ? 1 : 0),
       ),
-      z: clampUnit(
+      z: this.rcxdActive ? 0 : clampUnit(
         this.input.gpMoveZ + (this.input.isDown('forward') ? 1 : 0) - (this.input.isDown('back') ? 1 : 0),
       ),
-      jumpPressed: this.input.wasPressed('jump'),
-      crouch: this.settings.crouchToggle ? this.crouchLatch : this.input.isDown('crouch'),
-      crouchPressed,
-      sprint: this.input.isDown('sprint'),
-      lean: this.config.mode === 'zombie'
+      jumpPressed: this.rcxdActive ? false : this.input.wasPressed('jump'),
+      crouch: this.rcxdActive ? false : (this.settings.crouchToggle ? this.crouchLatch : this.input.isDown('crouch')),
+      crouchPressed: this.rcxdActive ? false : crouchPressed,
+      sprint: this.rcxdActive ? false : this.input.isDown('sprint'),
+      lean: this.rcxdActive ? 0 : (this.config.mode === 'zombie' || this.nearCarePackage()
         ? -(this.input.isDown('leanleft') ? 1 : 0)
-        : (this.input.isDown('leanright') ? 1 : 0) - (this.input.isDown('leanleft') ? 1 : 0),
+        : (this.input.isDown('leanright') ? 1 : 0) - (this.input.isDown('leanleft') ? 1 : 0)),
     };
     this.player.update(dt, moveInput, weapon.adsProgress, this.sounds);
     // 移動由来のカメラシェイク(着地・ブースト)+ビューモデルの着地インパルス
@@ -2534,9 +2561,9 @@ export class Match {
     const events = weapon.update(
       dt * 1000,
       {
-        trigger: this.input.fireDown() && this.player.alive && !sprintBlocksFire && !this.cooking,
-        ads: wantAds && this.player.alive && !this.cooking,
-        reloadPressed: this.input.wasPressed('reload'),
+        trigger: this.input.fireDown() && this.player.alive && !sprintBlocksFire && !this.cooking && !this.rcxdActive,
+        ads: wantAds && this.player.alive && !this.cooking && !this.rcxdActive,
+        reloadPressed: !this.rcxdActive && this.input.wasPressed('reload'),
       },
       {
         moveFactor: this.player.moveFactor,
@@ -2855,7 +2882,7 @@ export class Match {
       (1 - (1 - weapon.def.adsFovScale) * weapon.adsProgress) *
       breathZoom;
     // キルカメラ中は advanceKillcam が FOV を唯一所有する(望遠パンチと競合させない)
-    if (!this.killcamCamActive && Math.abs(this.camera.fov - targetFov) > 0.01) {
+    if (!this.killcamCamActive && !this.rcxdActive && Math.abs(this.camera.fov - targetFov) > 0.01) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 14);
       this.camera.updateProjectionMatrix();
     }
@@ -2911,7 +2938,7 @@ export class Match {
       reloadRatio: weapon.reloading ? weapon.reloadRatio : null,
       raiseRatio: Math.max(weapon.raiseRatio, this.cooking ? 0.65 : 0),
       motionScale: this.settings.reduceMotion ? 0.25 : 1,
-      alive: this.player.alive,
+      alive: this.player.alive && !this.rcxdActive, // V31: RC操縦ビューに銃が浮かないように
       scopeReveal01: scopeReveal,
       sprinting: this.player.sprinting && this.player.grounded,
       scopeWeapon: weapon.def.scope === true,
@@ -3155,6 +3182,21 @@ export class Match {
   }
 
   private syncCamera(): void {
+    // RC-XD操縦中: 車体の斜め後上方からローアングルで前方を向くドライバーズビュー
+    if (this.rcxdActive) {
+      const fwdDir = new THREE.Vector3(-Math.sin(this.rcxdYaw), 0, -Math.cos(this.rcxdYaw));
+      // カメラ位置: RC後方1.2m + 上方0.55m
+      const behind = fwdDir.clone().multiplyScalar(-1.2);
+      this.camera.position.copy(this.rcxdPos).add(new THREE.Vector3(0, 0.55, 0)).add(behind);
+      // 注視点: RC前方2mの接地高さ付近
+      const lookAt = this.rcxdPos.clone().addScaledVector(fwdDir, 2).add(new THREE.Vector3(0, 0.12, 0));
+      this.camera.lookAt(lookAt);
+      if (Math.abs(this.camera.fov - 80) > 0.01) {
+        this.camera.fov = 80;
+        this.camera.updateProjectionMatrix();
+      }
+      return;
+    }
     // キルカメラ: advanceKillcam(固定dt)が算出した姿勢をコピー+決定論的手ブレのみ
     if (this.killcamCamActive) {
       this.camera.position.copy(this.killcamCurPos);
@@ -3201,8 +3243,20 @@ export class Match {
     }
   }
 
+  // V31: ケアパッケージ至近ではEを開封専用にする(リーン右との物理キー衝突回避)
+  private nearCarePackage(): boolean {
+    if (this.carePackageCrates.length === 0) return false;
+    const p = this.player.position;
+    for (const crate of this.carePackageCrates) {
+      if (!crate.landed) continue;
+      if (Math.hypot(crate.pos.x - p.x, crate.pos.z - p.z) < 3.0) return true;
+    }
+    return false;
+  }
+
   private handleWeaponSwitch(): void {
     if (this.cooking) return;
+    if (this.rcxdActive) return; // V31: RC操縦中は本体を凍結
     // ガンゲーム: セカンダリへの切り替えを禁止(ラダー武器のみ)
     if (this.config.mode === 'gungame') {
       this.input.consumeWheel();
@@ -3223,6 +3277,7 @@ export class Match {
 
   private handleMelee(): void {
     if (!this.input.wasPressed('melee') || this.meleeCooldown > 0 || !this.player.alive) return;
+    if (this.rcxdActive) return; // V31: RC操縦中は本体を凍結
     if (this.cooking) return;
     this.meleeCooldown = MELEE_COOLDOWN;
     this.viewModel.fire();
@@ -3242,6 +3297,8 @@ export class Match {
   private handleGrenadeInput(dt: number): void {
     // ガンゲーム: グレネード無効(純粋な銃勝負)
     if (this.config.mode === 'gungame') return;
+    // V31修正: RC-XD操縦中は投擲を封じる(軌道がRCカメラ方向へ乖離するため)
+    if (this.rcxdActive) return;
     // 投擲物の切替。クッキング中は不可
     if (!this.cooking && this.input.wasPressed('grenadeswitch')) {
       const index = GRENADE_KINDS.indexOf(this.grenadeKind);
@@ -4006,18 +4063,70 @@ export class Match {
   private updateStreaks(dt: number): void {
     const vol = this.settings.announcerVolume;
 
-    // ── キー入力 → 対応ストリークを tryConsume (生存中のみ) ────
-    if (this.player.alive) {
-      const activationMap: Array<['streak1' | 'streak2' | 'streak3' | 'streak4', StreakIndex]> = [
-        ['streak1', 0],
-        ['streak2', 1],
-        ['streak3', 2],
-        ['streak4', 3],
+    // ── RC-XD: 操縦中フレーム処理 ────
+    if (this.rcxdActive) {
+      this.rcxdTimer -= dt;
+      const RCXD_SPEED = 18; // m/s
+      const RCXD_TURN_RATE = 2.8; // rad/s
+      const fwdInput = (this.input.isDown('forward') ? 1 : 0) - (this.input.isDown('back') ? 1 : 0);
+      const turnInput = (this.input.isDown('right') ? 1 : 0) - (this.input.isDown('left') ? 1 : 0);
+      if (turnInput !== 0) this.rcxdYaw += turnInput * RCXD_TURN_RATE * dt;
+      const moveDir = new THREE.Vector3(-Math.sin(this.rcxdYaw), 0, -Math.cos(this.rcxdYaw));
+      if (fwdInput !== 0) {
+        const checkDir = moveDir.clone().multiplyScalar(fwdInput > 0 ? 1 : -1);
+        const wallHit = this.castRay(
+          this.rcxdPos.clone().add(new THREE.Vector3(0, 0.1, 0)),
+          checkDir,
+          0.5,
+          null,
+        );
+        if (!wallHit) {
+          this.rcxdPos.addScaledVector(moveDir, fwdInput * RCXD_SPEED * dt);
+        }
+      }
+      // 接地スナップ
+      const groundHit = this.castRay(
+        this.rcxdPos.clone().add(new THREE.Vector3(0, 1.5, 0)),
+        new THREE.Vector3(0, -1, 0),
+        3,
+        null,
+      );
+      if (groundHit) {
+        this.rcxdPos.y = this.rcxdPos.y + 1.5 - hitToi(groundHit) + 0.09;
+      }
+      if (this.rcxdMesh) {
+        this.rcxdMesh.position.copy(this.rcxdPos);
+        this.rcxdMesh.rotation.y = this.rcxdYaw;
+      }
+      // 起爆: 左クリック or タイムアウト
+      const detonate = (this.input.locked && this.input.fireDown()) || this.rcxdTimer <= 0;
+      // キャンセル: ポインタロック解除(ESC) or 右クリック(ADS)
+      const cancel = !this.input.locked || this.input.adsPressed();
+      if (detonate) {
+        this.detonateRcxd();
+      } else if (cancel) {
+        this.cancelRcxd();
+      }
+    }
+
+    // ── キー入力 → 対応ストリークを tryConsume (生存中・RC-XD非操縦中のみ) ────
+    if (this.player.alive && !this.rcxdActive) {
+      type StreakAction = 'streak1' | 'streak2' | 'streak3' | 'streak4' | 'streak5' | 'streak6' | 'streak7';
+      const activationMap: Array<[StreakAction, StreakIndex]> = [
+        ['streak1', 0],  // RC-XD 325
+        ['streak2', 1],  // UAV 425
+        ['streak3', 2],  // Hunter-Killer 525
+        ['streak4', 3],  // Care Package 550
+        ['streak5', 4],  // Counter UAV 600
+        ['streak6', 5],  // Lightning Strike 750
+        ['streak7', 6],  // Sensor Turret 800
       ];
       for (const [action, idx] of activationMap) {
         if (this.input.wasPressed(action)) {
-          // HK(idx=1): 標的不在なら消費しない(バンクを無駄に使わない)
-          if (idx === 1 && !this.findNearestEnemyBot()) continue;
+          // RC-XD(idx=0): 既に操縦中なら不可
+          if (idx === 0 && this.rcxdActive) continue;
+          // HK(idx=2): 標的不在なら消費しない(バンクを無駄に使わない)
+          if (idx === 2 && !this.findNearestEnemyBot()) continue;
           if (this.streakManager.tryConsume(idx)) {
             this.activateStreak(idx, vol);
           }
@@ -4125,21 +4234,251 @@ export class Match {
       }
     }
 
+    // ── Counter UAV: タイマー減算 ────
+    if (this.cauavTimer > 0) {
+      this.cauavTimer = Math.max(0, this.cauavTimer - dt);
+    }
+
+    // ── Care Package: 落下アニメ + 自動消滅 ────
+    for (let i = this.carePackageCrates.length - 1; i >= 0; i -= 1) {
+      const crate = this.carePackageCrates[i]!;
+      if (!crate.landed) {
+        crate.dropTimer += dt;
+        const t = Math.min(1, crate.dropTimer / 2.0); // 2秒で着地
+        const eased = t * t; // ease-in
+        crate.mesh.position.y = crate.startY + (crate.groundY - crate.startY) * eased;
+        if (t >= 1) {
+          crate.landed = true;
+          crate.mesh.position.y = crate.groundY;
+          crate.pos.y = crate.groundY;
+          const ep = this.panAndDistance(crate.pos);
+          this.effects.explosion(crate.pos.clone(), 0.7); // 着地衝撃
+          this.sounds.explosion(ep.pan, ep.distance * 1.4);
+        }
+      } else {
+        crate.openTimer -= dt;
+        if (crate.openTimer <= 0) {
+          this.disposeCarePackageCrate(i);
+        }
+      }
+    }
+
+    // ── Care Package: E キーで開封 ────
+    if (this.player.alive && this.config.mode !== 'zombie' && this.input.wasPressed('interact')) {
+      const pp = this.player.position;
+      for (let i = this.carePackageCrates.length - 1; i >= 0; i -= 1) {
+        const crate = this.carePackageCrates[i]!;
+        if (!crate.landed) continue;
+        if (pp.distanceTo(crate.pos) > 2.5) continue;
+        // ランダム報酬: 50%でストリーク付与、50%でスコア+500
+        const roll = Math.random();
+        if (roll < 0.5) {
+          // ランダムなストリーク1種をバンクへ付与
+          const preferIdx = Math.floor(Math.random() * 7) as StreakIndex;
+          const granted = this.streakManager.forceBankOne(preferIdx);
+          const def = STREAK_DEFS[granted];
+          if (def) {
+            this.announcements.push(`CARE PACKAGE: ${def.name} RECEIVED`);
+            this.sounds.announceMedal(1, vol);
+          }
+        } else {
+          this.scores.add(PLAYER_TEAM, 500);
+          this.scoreEvents.push({ label: 'ケアパッケージ', xp: 500 });
+          this.announcements.push('CARE PACKAGE: +500 PTS');
+          this.sounds.announceMedal(1, vol);
+        }
+        this.disposeCarePackageCrate(i);
+        break;
+      }
+    }
+
     // 終了した UAV のスナップをクリア
     if (this.uavTimer <= 0 && this.uavEnemySnap.length > 0) {
       this.uavEnemySnap = [];
     }
   }
 
+  // ── RC-XD ヘルパー ────────────────────────────────────────────────────────────────────
+  private spawnRcxd(): void {
+    // プロシージャル箱車(車体+4輪+アンテナ+点滅LED)
+    const bodyGeo = new THREE.BoxGeometry(0.45, 0.18, 0.7);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1a1a33, emissive: 0x0a0818, roughness: 0.7 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.position.y = 0.18;
+
+    const wheelGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.07, 8);
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+    const wheelPositions: [number, number, number][] = [
+      [-0.26, 0.09, 0.24], [0.26, 0.09, 0.24],
+      [-0.26, 0.09, -0.24], [0.26, 0.09, -0.24],
+    ];
+
+    const antennaGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.28, 4);
+    const antennaMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.5 });
+    const antenna = new THREE.Mesh(antennaGeo, antennaMat);
+    antenna.position.set(-0.1, 0.38, -0.15);
+
+    const ledGeo = new THREE.SphereGeometry(0.022, 4, 4);
+    const ledMat = new THREE.MeshStandardMaterial({
+      color: 0xff2200, emissive: 0xff2200, emissiveIntensity: 2.5,
+    });
+    const led = new THREE.Mesh(ledGeo, ledMat);
+    led.position.set(0, 0.26, 0.36);
+
+    const group = new THREE.Group();
+    group.add(body);
+    for (const [wx, wy, wz] of wheelPositions) {
+      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(wx, wy, wz);
+      group.add(wheel);
+    }
+    group.add(antenna);
+    group.add(led);
+
+    this.rcxdGeos.push(bodyGeo, wheelGeo, antennaGeo, ledGeo);
+    this.rcxdMats.push(bodyMat, wheelMat, antennaMat, ledMat);
+    this.rcxdMesh = group;
+
+    const fwd = new THREE.Vector3(-Math.sin(this.player.yaw), 0, -Math.cos(this.player.yaw));
+    this.rcxdPos.copy(this.player.position).addScaledVector(fwd, 1.5);
+    this.rcxdYaw = this.player.yaw;
+    // 接地させる
+    const down = this.castRay(
+      this.rcxdPos.clone().add(new THREE.Vector3(0, 1, 0)),
+      new THREE.Vector3(0, -1, 0),
+      3,
+      null,
+    );
+    if (down) this.rcxdPos.y = this.rcxdPos.y + 1 - hitToi(down) + 0.09;
+
+    group.position.copy(this.rcxdPos);
+    group.rotation.y = this.rcxdYaw;
+    this.scene.add(group);
+    this.rcxdActive = true;
+    this.rcxdTimer = 30;
+    this.announcements.push('RC-XD DEPLOYED');
+  }
+
+  private detonateRcxd(): void {
+    if (!this.rcxdActive) return;
+    const pos = this.rcxdPos.clone();
+    const ep = this.panAndDistance(pos);
+    this.effects.explosion(pos, 1.4);
+    this.sounds.explosion(ep.pan, ep.distance);
+    // 爆発ダメージ: 半径5m / 最大220ダメージ
+    const RADIUS = 5;
+    const MAX_DMG = 220;
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const d = pos.distanceTo(bot.position);
+      if (d >= RADIUS || !this.explosionReaches(pos.clone(), bot.position)) continue;
+      this.applyBotDamage(bot, MAX_DMG * (1 - d / RADIUS), bot.position, false, 'RC-XD');
+    }
+    // 自爆ダメージ: 近すぎると自分も巻き込まれる(半径2m以内で50ダメ)
+    const selfDist = pos.distanceTo(this.player.position);
+    if (selfDist < 2 && this.player.alive) {
+      this.player.hp = Math.max(1, this.player.hp - 50);
+    }
+    this.cleanupRcxd();
+  }
+
+  private cancelRcxd(): void {
+    if (!this.rcxdActive) return;
+    // 自壊(小さな爆発のみ・ダメージなし)
+    const pos = this.rcxdPos.clone();
+    const ep = this.panAndDistance(pos);
+    this.effects.explosion(pos, 0.5);
+    this.sounds.explosion(ep.pan, ep.distance * 1.5);
+    this.cleanupRcxd();
+  }
+
+  private cleanupRcxd(): void {
+    if (this.rcxdMesh) {
+      this.scene.remove(this.rcxdMesh);
+      for (const g of this.rcxdGeos) g.dispose();
+      for (const m of this.rcxdMats) m.dispose();
+      this.rcxdGeos.length = 0;
+      this.rcxdMats.length = 0;
+      this.rcxdMesh = null;
+    }
+    this.rcxdActive = false;
+    this.rcxdTimer = 0;
+  }
+
+  // ── Care Package ヘルパー ─────────────────────────────────────────────────────────────
+  private spawnCarePackage(): void {
+    // 照準方向の地面に落とす(~10m前方)
+    const fwd = new THREE.Vector3(-Math.sin(this.player.yaw), 0, -Math.cos(this.player.yaw));
+    const dropCenter = this.player.position.clone().addScaledVector(fwd, 8);
+    const down = this.castRay(
+      new THREE.Vector3(dropCenter.x, dropCenter.y + 15, dropCenter.z),
+      new THREE.Vector3(0, -1, 0),
+      25,
+      null,
+    );
+    const groundY = down ? dropCenter.y + 15 - hitToi(down) + 0.3 : dropCenter.y + 0.3;
+    const startY = groundY + 14;
+
+    // クレートメッシュ(木箱風)
+    const boxGeo = new THREE.BoxGeometry(0.7, 0.7, 0.7);
+    const boxMat = new THREE.MeshStandardMaterial({ color: 0x4a3520, roughness: 0.85 });
+    const box = new THREE.Mesh(boxGeo, boxMat);
+    box.position.y = 0.35;
+
+    // 十字マーク
+    const stripV = new THREE.BoxGeometry(0.08, 0.72, 0.08);
+    const stripH = new THREE.BoxGeometry(0.72, 0.08, 0.08);
+    const stripMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xaaaaaa, emissiveIntensity: 0.3 });
+    const sv = new THREE.Mesh(stripV, stripMat);
+    sv.position.set(0, 0.35, 0.36);
+    const sh = new THREE.Mesh(stripH, stripMat);
+    sh.position.set(0, 0.35, 0.36);
+
+    const group = new THREE.Group();
+    group.add(box, sv, sh);
+    group.position.set(dropCenter.x, startY, dropCenter.z);
+    this.scene.add(group);
+
+    const cratePos = new THREE.Vector3(dropCenter.x, groundY, dropCenter.z);
+    this.carePackageCrates.push({
+      mesh: group,
+      geos: [boxGeo, stripV, stripH],
+      mats: [boxMat, stripMat],
+      pos: cratePos,
+      dropTimer: 0,
+      openTimer: 30,
+      landed: false,
+      startY,
+      groundY,
+    });
+    this.announcements.push('CARE PACKAGE INBOUND');
+    this.sounds.announceMedal(1, this.settings.announcerVolume);
+  }
+
+  private disposeCarePackageCrate(index: number): void {
+    const crate = this.carePackageCrates[index];
+    if (!crate) return;
+    this.scene.remove(crate.mesh);
+    for (const g of crate.geos) g.dispose();
+    for (const m of crate.mats) m.dispose();
+    this.carePackageCrates.splice(index, 1);
+  }
+
   // ── 各ストリークの発動 ────────────────────────────────────────────────────────────────
+  // idx:  0=RC-XD(325) / 1=UAV(425) / 2=HK(525) / 3=CarePackage(550)
+  //       4=CounterUAV(600) / 5=Lightning(750) / 6=SensorTurret(800)
   private activateStreak(idx: StreakIndex, vol: number): void {
     if (idx === 0) {
+      // RC-XD: 遠隔操作爆走ラジコン爆弾
+      this.spawnRcxd();
+    } else if (idx === 1) {
       // UAV
       this.uavTimer = 25;
       this.uavSweepTimer = 0; // 即座に1回スナップ
       this.sounds.announceStreak('Friendly UAV inbound.', vol);
       this.announcements.push('UAV ONLINE');
-    } else if (idx === 1) {
+    } else if (idx === 2) {
       // Hunter-Killer: 最寄り敵へ自動誘導
       const nearest = this.findNearestEnemyBot();
       if (!nearest) return; // 敵がいないと発動不可(バンクは消費済み)
@@ -4159,7 +4498,15 @@ export class Match {
         timer: 10,
         phase: 'rise',
       });
-    } else if (idx === 2) {
+    } else if (idx === 3) {
+      // Care Package: 照準前方へクレート投下
+      this.spawnCarePackage();
+    } else if (idx === 4) {
+      // Counter UAV: 30秒間 索敵妨害(spotRate×0.3 + alertBots半径×0.5)
+      this.cauavTimer = 30;
+      this.announcements.push('COUNTER UAV ONLINE');
+      this.sounds.announceStreak('Counter UAV online.', vol);
+    } else if (idx === 5) {
       // Lightning Strike: プレイヤーの正面方向に 3 発
       const yaw = this.player.yaw;
       const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
@@ -4177,7 +4524,7 @@ export class Match {
         pos.y = down ? pos.y + 10 - hitToi(down) + 0.1 : pos.y;
         this.lightningQueue.push({ pos, fireAt: this.elapsed + 0.9 + i * 0.2 });
       }
-    } else if (idx === 3) {
+    } else if (idx === 6) {
       // Sensor Turret: プレイヤー正面 2.5m に設置
       const yaw = this.player.yaw;
       const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
@@ -4439,6 +4786,8 @@ export class Match {
     let rate = base * distFactor * coneFactor * moveFactor * fogFactor;
     if (bot.alert > 0) rate *= ALERT_SPOT_MUL; // 銃声を聞いた=戦闘文脈では素早く発見
     if (bot.pain > 0) rate = Math.max(rate, base * PAIN_SPOT_MUL); // 撃たれた=即発見に近づく
+    // カウンターUAV: 索敵能力を×0.3まで減衰(プレイヤーが見つかりにくくなる)
+    if (cand.isPlayer && this.cauavTimer > 0) rate *= 0.3;
     return rate;
   }
 
@@ -4772,6 +5121,8 @@ export class Match {
   private notePlayerDeath(killer: Bot | null = null): void {
     // BO2 スコアストリーク: 死亡でprogress リセット (バンク保持)
     this.streakManager.onDeath();
+    // RC-XD操縦中に死亡した場合は強制終了(本体は無防備という仕様)
+    if (this.rcxdActive) this.cancelRcxd();
     this.deathPos = this.player.position;
     this.orbitAngle = this.player.yaw + Math.PI / 2;
     this.killer = killer;
@@ -4803,10 +5154,12 @@ export class Match {
   }
 
   // 銃声を「聞かせる」。全周検知にはせず、音源方向への警戒(調査行動)を与える
+  // カウンターUAV発動中は警戒伝播半径を半減(本家の敵ミニマップ妨害に相当するbot戦翻案)
   private alertBots(radius: number): void {
+    const effectiveRadius = this.cauavTimer > 0 ? radius * 0.5 : radius;
     const pos = this.player.position;
     for (const bot of this.bots) {
-      if (bot.alive && bot.team !== PLAYER_TEAM && bot.position.distanceTo(pos) < radius) {
+      if (bot.alive && bot.team !== PLAYER_TEAM && bot.position.distanceTo(pos) < effectiveRadius) {
         bot.alert = 4;
         bot.alertPos = pos.clone();
       }
@@ -4834,6 +5187,8 @@ export class Match {
   private updateUltimate(dt: number): void {
     // ガンゲーム: ウルト無効(純粋な銃勝負)
     if (this.config.mode === 'gungame') return;
+    // V31修正: RC-XD操縦中は本体からのウルト発動を封じる(視点と発生位置が乖離するため)
+    if (this.rcxdActive) return;
     // 死亡中はオーバードライブを終了し、バフを残さない(ゲージ自体は維持)。
     // 落下死などnotePlayerDeathを通らない経路も含めて確実に解除する。
     // 黒帝モードは死亡で解除しない(解除条件は300秒経過 or 試合終了のみ。
@@ -6419,6 +6774,10 @@ export class Match {
       streakBanked: this.streakManager.state.banked,
       streakUavActive: this.uavTimer > 0,
       streakUavTimeLeft: this.uavTimer,
+      streakRcxdActive: this.rcxdActive,
+      streakRcxdTimeLeft: this.rcxdTimer,
+      streakCauavActive: this.cauavTimer > 0,
+      streakCauavTimeLeft: this.cauavTimer,
       // ── ミニマップ ──
       minimapEnemies: this.computeMinimapEnemies(),
       minimapAllies: this.computeMinimapAllies(),
@@ -6653,6 +7012,9 @@ export class Match {
       (hk.mesh.material as THREE.Material).dispose();
     }
     this.hkEntities.length = 0;
+    // RC-XD / ケアパッケージも凍結表示させない
+    this.cleanupRcxd();
+    for (let i = this.carePackageCrates.length - 1; i >= 0; i -= 1) this.disposeCarePackageCrate(i);
     // 同様に飛行中の風神手裏剣・疾走中の雷麒麟・黒帝斬撃波も凍結表示させない
     this.disposeWindShuriken();
     this.disposeLightningKirin();
@@ -7310,6 +7672,9 @@ export class Match {
       (hk.mesh.material as THREE.Material).dispose();
     }
     this.hkEntities.length = 0;
+    // RC-XD / ケアパッケージクレートを解放
+    this.cleanupRcxd();
+    for (let i = this.carePackageCrates.length - 1; i >= 0; i -= 1) this.disposeCarePackageCrate(i);
     // クナイウルト: 飛行中の風神手裏剣・疾走中の雷麒麟・黒帝斬撃波を解放
     this.disposeWindShuriken();
     this.disposeLightningKirin();

@@ -2,6 +2,14 @@
 
 import { CAMPAIGN, missionById, type ModifierId } from './campaign';
 import type { Difficulty } from './bot';
+import type { GameMode } from './modes';
+import {
+  applyDailies,
+  dateStringFromSeed,
+  todayDateSeed,
+  emptyDailyState,
+  type DailyState,
+} from './dailies';
 import {
   CAMO_CLASS_LABELS,
   CAMO_TIERS,
@@ -16,6 +24,10 @@ import {
   type WeaponCamoStats,
 } from './camo';
 import type { WeaponClass } from './weapons';
+
+// DailyState / emptyDailyState は dailies.ts で定義 → ここで re-export して後方互換を保つ
+export type { DailyState };
+export { emptyDailyState };
 
 export interface CareerStats {
   matches: number;
@@ -71,6 +83,8 @@ export interface Profile {
   campaign: CampaignState;
   // スコアアタックの自己ベスト(curatedステージidのみ・件数キャップ)
   scoreRecords: Record<string, number>;
+  // デイリーチャレンジ + ストリーク
+  daily: DailyState;
 }
 
 export interface MatchSummary {
@@ -125,6 +139,7 @@ export function emptyProfile(): Profile {
     // 第1章のみ最初から解放(全既存セーブも第1章から開始でき、softlock回避)
     campaign: { clearedMissions: [], unlockedChapters: ['ch1'], missionBests: {} },
     scoreRecords: {},
+    daily: emptyDailyState(),
   };
 }
 
@@ -451,8 +466,19 @@ function applyCamoStats(profile: Profile, summary: MatchSummary): CamoUnlock[] {
 
 // 試合結果をプロフィールへ反映する。profileはその場で更新される。
 // xpMul: 1試合のXP全体に掛ける乗数(省略=1)。ゾンビ以外の全モードは ×10 を推奨。
-export function applyMatch(profile: Profile, summary: MatchSummary, xpMul = 1): MatchProgress {
-  return accumulateMatch(profile, summary, { rated: summary.rated, trackWinStreak: true, xpMul });
+// mode: ゲームモード(省略時はデイリーチャレンジ判定をスキップ)。
+export function applyMatch(
+  profile: Profile,
+  summary: MatchSummary,
+  xpMul = 1,
+  mode?: GameMode,
+): MatchProgress {
+  return accumulateMatch(profile, summary, {
+    rated: summary.rated,
+    trackWinStreak: true,
+    xpMul,
+    mode,
+  });
 }
 
 // applyMatch / applyCampaignMission の共通の積算。rating と連勝記録の扱いだけ呼び側で切り替える
@@ -460,7 +486,7 @@ export function applyMatch(profile: Profile, summary: MatchSummary, xpMul = 1): 
 function accumulateMatch(
   profile: Profile,
   summary: MatchSummary,
-  opts: { rated: boolean; trackWinStreak: boolean; xpMul?: number },
+  opts: { rated: boolean; trackWinStreak: boolean; xpMul?: number; mode?: GameMode },
 ): MatchProgress {
   const stats = profile.stats;
   stats.matches += 1;
@@ -536,6 +562,15 @@ function accumulateMatch(
   const mul = opts.xpMul ?? 1;
   if (mul !== 1) {
     for (const e of xpBreakdown) e.xp = Math.round(e.xp * mul);
+  }
+
+  // ── デイリーチャレンジ判定(xpMul対象外の固定XP。モード指定時のみ実行)──
+  // デイリー報酬は乗数をかけない固定値なので、乗算ブロックの後に追加する。
+  if (opts.mode !== undefined) {
+    const dateSeed = todayDateSeed();
+    const nowDate = dateStringFromSeed(dateSeed);
+    const dailyEntries = applyDailies(profile.daily, summary, opts.mode, nowDate, dateSeed);
+    for (const e of dailyEntries) xpBreakdown.push(e);
   }
 
   const xpTotal = xpBreakdown.reduce((sum, entry) => sum + entry.xp, 0);
@@ -644,7 +679,7 @@ export function applyScoreRecord(profile: Profile, key: string, kills: number): 
 // 星・章解放・初制圧ボーナスを処理する。競技レート/PvP連勝は汚染しない。
 // xpMul: ゾンビ以外の全モード同様に ×10 を推奨。
 export function applyCampaignMission(profile: Profile, summary: MissionSummary, xpMul = 1): CampaignProgress {
-  const base = accumulateMatch(profile, summary, { rated: false, trackWinStreak: false, xpMul });
+  const base = accumulateMatch(profile, summary, { rated: false, trackWinStreak: false, xpMul, mode: 'story' });
   const camp = profile.campaign;
   const mission = missionById(summary.missionId);
   const firstClear = summary.missionWon && !camp.clearedMissions.includes(summary.missionId);
