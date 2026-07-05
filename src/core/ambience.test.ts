@@ -21,10 +21,10 @@ describe('deriveAmbientProfile(パレット→環境音の決定的導出)', () 
   it('setsugen: 濃霧の屋外。風が太く高帯域、ハム/群衆/イベント無し', () => {
     const p = profileOf('setsugen');
     expect(p.isIndoor).toBe(false);
-    // R13: setsugen fogDensity 0.028→0.018(霧の白飛び緩和)に伴い風音も追従(fogDensity由来)
-    expect(p.windGain).toBeCloseTo(0.595, 5); // 0.28 + 0.018*17.5
-    expect(p.windHz).toBeCloseTo(560, 5); // 200 + 0.018*20000
-    expect(p.windLfoHz).toBeCloseTo(0.08 + (0.018 / 0.03) * 0.17, 5);
+    // R21: setsugen fogDensity 0.008(エリア超拡大で霧を薄く)に伴い風音も追従(fogDensity由来)
+    expect(p.windGain).toBeCloseTo(0.28 + 0.008 * 17.5, 5); // 0.42
+    expect(p.windHz).toBeCloseTo(200 + 0.008 * 20000, 5); // 360
+    expect(p.windLfoHz).toBeCloseTo(0.08 + (0.008 / 0.03) * 0.17, 5);
     expect(p.humGain).toBe(0); // turbidity 1.5 < 9
     expect(p.crowdGain).toBe(0);
     expect(p.waterGain).toBe(0.05); // accent #4a7dbf が青優勢
@@ -51,8 +51,9 @@ describe('deriveAmbientProfile(パレット→環境音の決定的導出)', () 
   it('kunren: 明るい昼の屋外。鳥だけが鳴き、床の微青グレーは水と誤検出しない', () => {
     const p = profileOf('kunren');
     expect(p.isIndoor).toBe(false);
-    expect(p.windGain).toBeCloseTo(0.455, 5); // 0.28 + 0.01*17.5
-    expect(p.windHz).toBeCloseTo(400, 5);
+    // R21: kunren fogDensity 0.005(エリア超拡大で霧を薄く)
+    expect(p.windGain).toBeCloseTo(0.28 + 0.005 * 17.5, 5); // 0.3675
+    expect(p.windHz).toBeCloseTo(200 + 0.005 * 20000, 5); // 300
     expect(p.humGain).toBe(0);
     expect(p.waterGain).toBe(0); // 床 #b8bcc4 はほぼ無彩色なので弾く
     expect(p.birdRateS).toBe(7); // elevation 45 >= 35

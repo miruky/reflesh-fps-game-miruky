@@ -78,13 +78,15 @@ describe('生成パイプライン', () => {
         const layout = generateStage(def);
         const half = def.size / 2;
 
-        const walls = layout.boxes.filter((box) => box.color === def.palette.wall && box.h >= 5);
-        expect(walls.length).toBeGreaterThanOrEqual(4);
+        // ghost=true の境界壁が 4 枚あること
+        const ghostWalls = layout.boxes.filter((box) => box.ghost === true);
+        expect(ghostWalls.length).toBeGreaterThanOrEqual(4);
         expect(layout.playerSpawns).toHaveLength(4);
         expect(layout.botSpawns.length).toBeGreaterThanOrEqual(def.botCount);
 
         for (const box of layout.boxes) {
-          if (box.color === def.palette.wall && box.h >= 5) continue;
+          // ghost(不可視境界壁)と decor(装飾)はチェック対象外
+          if (box.ghost || box.decor) continue;
           expect(Math.abs(box.x) + box.w / 2).toBeLessThanOrEqual(half + 1);
           expect(Math.abs(box.z) + box.d / 2).toBeLessThanOrEqual(half + 1);
         }
@@ -92,7 +94,8 @@ describe('生成パイプライン', () => {
         const spawns = [...layout.playerSpawns, ...layout.botSpawns];
         for (const [sx, , sz] of spawns) {
           for (const box of layout.boxes) {
-            if (box.color === def.palette.wall && box.h >= 5) continue;
+            // ghost(境界壁)と decor(装飾) は対象外
+            if (box.ghost || box.decor) continue;
             const dx = Math.max(0, Math.abs(box.x - sx) - box.w / 2);
             const dz = Math.max(0, Math.abs(box.z - sz) - box.d / 2);
             expect(Math.hypot(dx, dz)).toBeGreaterThan(1);

@@ -110,10 +110,12 @@ export interface BotTuning {
   aimSlewRadS: number;
 }
 
+// viewDistM はエリア×3��大に合わせ humanoid ~1.4倍(easy 55→77 / normal 60→84 / hard 68→95)。
+// ゾンビ(近接)は 120 維持(KIND_TUNING 参照)。
 export const DIFFICULTY: Record<Difficulty, BotTuning> = {
-  easy: { spreadDeg: 5.5, reactionS: 0.6, damage: 8, burstPauseMin: 1.0, burstPauseMax: 1.6, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 55, spotTimeS: 1.8, aimSlewRadS: 2.6 },
-  normal: { spreadDeg: 3.2, reactionS: 0.38, damage: 11, burstPauseMin: 0.7, burstPauseMax: 1.2, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 60, spotTimeS: 1.1, aimSlewRadS: 4.2 },
-  hard: { spreadDeg: 1.9, reactionS: 0.22, damage: 14, burstPauseMin: 0.5, burstPauseMax: 0.9, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 68, spotTimeS: 0.6, aimSlewRadS: 6.3 },
+  easy: { spreadDeg: 5.5, reactionS: 0.6, damage: 8, burstPauseMin: 1.0, burstPauseMax: 1.6, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 77, spotTimeS: 1.8, aimSlewRadS: 2.6 },
+  normal: { spreadDeg: 3.2, reactionS: 0.38, damage: 11, burstPauseMin: 0.7, burstPauseMax: 1.2, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 84, spotTimeS: 1.1, aimSlewRadS: 4.2 },
+  hard: { spreadDeg: 1.9, reactionS: 0.22, damage: 14, burstPauseMin: 0.5, burstPauseMax: 0.9, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 95, spotTimeS: 0.6, aimSlewRadS: 6.3 },
 };
 
 // 階層ごとの上書き差分。base(難度)へスプレッドして合成する。
@@ -124,7 +126,7 @@ export const ELITE_TUNING: Partial<BotTuning> = {
   reactionS: 0.2,
   spreadDeg: 1.8,
   damage: 15,
-  viewDistM: 75,
+  viewDistM: 100, // エリア×3拡大対応: 75→100(×1.33)
   spotTimeS: 0.45,
   aimSlewRadS: 7.0,
 };
@@ -135,7 +137,7 @@ export const BOSS_TUNING: Partial<BotTuning> = {
   spreadDeg: 1.5,
   damage: 18,
   scale: 1,
-  viewDistM: 90,
+  viewDistM: 120, // エリア×3拡大対応: 90→120(×1.33)
   burstPauseMin: 0.35,
   burstPauseMax: 0.7,
   spotTimeS: 0.3,
@@ -152,24 +154,26 @@ export function tuningFor(tier: BotTier, difficulty: Difficulty): BotTuning {
 
 // アーキタイプごとの上書き差分。match側が tuningFor(tier, difficulty) の結果へ
 // さらにスプレッドして合成する想定(ELITE/BOSS_TUNINGと同じ流儀)。
+// KIND_TUNING viewDistM: エリア×3拡大対応で humanoid 系 ~1.3-1.4倍。ゾンビは近接のため 120 維持。
 export const KIND_TUNING: Record<BotKind, Partial<BotTuning>> = {
   humanoid: {},
-  drone: { maxHp: 60, moveSpeedMul: 1.4, viewDistM: 70, spotTimeS: 0.4 },
+  drone: { maxHp: 60, moveSpeedMul: 1.4, viewDistM: 95, spotTimeS: 0.4 }, // 70→95(×1.36)
   tank: {
     maxHp: 2200,
     damage: 26,
     moveSpeedMul: 0.45,
-    viewDistM: 90,
+    viewDistM: 120, // 90→120(×1.33)
     reactionS: 0.5,
     burstPauseMin: 1.6,
     burstPauseMax: 2.4,
     spotTimeS: 0.4,
     aimSlewRadS: 1.4,
   },
-  turret: { maxHp: 160, moveSpeedMul: 0, viewDistM: 65, spotTimeS: 0.4, aimSlewRadS: 1.2 },
+  turret: { maxHp: 160, moveSpeedMul: 0, viewDistM: 90, spotTimeS: 0.4, aimSlewRadS: 1.2 }, // 65→90(×1.38)
   // ゾンビは銃を持たず近接のみ。HP/速度は spawnZombie が tuning に載せて渡す(致命バグ回避=
   // spawnBot merge で KIND_TUNING が後勝ちになるため maxHp/moveSpeedMul は絶対に入れない)。
   // damage=爪の一撃, reactionS/burstPause は発砲経路に入らないので実質未使用。
+  // viewDistM: 近接追尾のため 120 維持(エリア拡大の影響なし)。
   zombie: { viewDistM: 120, reactionS: 0, damage: 22, burstPauseMin: 99, burstPauseMax: 99 },
 };
 

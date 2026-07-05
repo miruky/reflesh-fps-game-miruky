@@ -203,6 +203,8 @@ const PLAYER_FEET_OFFSET = 0.95; // カプセル中心から足元まで(CAPSULE
 // 正規地形は Y>=0 のみ。-8 は足元≈-9mで誤検出余地ゼロ(無限落下の構造的封じ込め)
 const VOID_Y = -8;
 const MELEE_RANGE = 2.2;
+// R29: プレイヤー追従シャドウボックスの半径(m)。マップサイズ非依存の影テクセル密度を保つ
+const SHADOW_FOLLOW_HALF = 70;
 const MELEE_DAMAGE = 75;
 const MELEE_COOLDOWN = 0.8;
 // ── クナイ(ニンジャ・ダガー)専用パラメータ(素手=id 'fists' 装備時のみ) ──
@@ -496,6 +498,7 @@ function hitToi(hit: RayHitLike): number {
 
 type ColliderTag =
   | { kind: 'world' }
+  | { kind: 'boundary' }   // ghost 壁専用(弾/視線/斬撃が素通り, ブリンク/KCCは止まる)
   | { kind: 'player' }
   | { kind: 'bot'; bot: Bot; part: HitPart };
 
@@ -703,6 +706,12 @@ export class Match {
   private composer: EffectComposer | null = null; // medium/high のみ(low は素のレンダラ)
   private envRT: THREE.WebGLRenderTarget | null = null; // 空から焼いたIBL(per-Matchで解放)
   private readonly sunDir = new THREE.Vector3(); // 太陽方向の単一の真実(空/日光/影を駆動)
+  // R29: プレイヤー追従シャドウ(巨大マップで影を常に鮮明に保つ)
+  private sunLight: THREE.DirectionalLight | null = null;
+  private shadowTexelWorld = 0.05; // シャドウ1テクセルのワールドサイズ(スナップ用)
+  // R29修正: 光空間スナップ用の直交基底(sunDirから1回だけ計算してbuildStageSceneで保存)
+  private readonly shadowRight = new THREE.Vector3(1, 0, 0);
+  private readonly shadowUp = new THREE.Vector3(0, 0, 1);
   // ── R22 新レンダリングパス(high tierのみ) ──
   private _n8aoPass: N8AOPass | null = null;
   private _godRaysPass: GodRaysPass | null = null;
@@ -730,7 +739,7 @@ export class Match {
   // ── R16 spot-time知覚: setup時にpaletteから保持(Matchはpalette非保持=fog/ambientが必要)──
   private stageFogDensity = 0;
   private stageAmbient = 1;
-  private botFrameIdx = 0; // uid%3 のLOSバケット(観測者を間引いてO(N^2)castRayを~1/3に)
+  private botFrameIdx = 0; // uid%5 のLOSバケット(観測者を間引いてO(N^2)castRayを~1/5に。botCount増員対応)
   // ── R16 ゾンビディレクタ(mode==='zombie'のみ稼働。matchが唯一の状態保持者)──
   private zombieRound = 0;
   private zombieKills = 0;
@@ -829,7 +838,8 @@ export class Match {
     this.colors = teamPalette(settings.teamPaletteId);
     this.rand = mulberry32(Date.now() % 0xffffffff);
     this.physics = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
-    this.camera = new THREE.PerspectiveCamera(settings.fov, aspect, 0.05, 400);
+    // R29: エリア超拡大(280-360m)+遠景シルエット(size*1.2-1.5)に合わせ描画距離を800へ
+    this.camera = new THREE.PerspectiveCamera(settings.fov, aspect, 0.05, 800);
     this.camera.rotation.order = 'YXZ';
     this.scene.add(this.camera);
 
@@ -847,9 +857,11 @@ export class Match {
     this.playerSpawns = layout.playerSpawns.map(([x, y, z]) => new THREE.Vector3(x, y, z));
     this.botSpawns = layout.botSpawns.map(([x, y, z]) => new THREE.Vector3(x, y, z));
     this.buildStageScene(layout.boxes);
-    // ミニマップ用ボックスデータを保持(HUD から参照)
+    // ミニマップ用ボックスデータを保持(HUD から参照)。ghost/decor ボックスは除外
     for (const b of layout.boxes) {
-      this.minimapBoxData.push({ x: b.x, z: b.z, w: b.w, d: b.d });
+      if ((b as { ghost?: boolean }).ghost !== true && (b as { decor?: boolean }).decor !== true) {
+        this.minimapBoxData.push({ x: b.x, z: b.z, w: b.w, d: b.d });
+      }
     }
     // ステージの床材質(足音に使用)
     this.stageSurfaceFloor = deriveSurfaceMaterials(config.stage.palette).floor;
@@ -1118,6 +1130,13 @@ export class Match {
       THREE.MathUtils.degToRad(90 - elevation),
       THREE.MathUtils.degToRad(azimuth),
     );
+    // 光空間スナップ用の直交基底を sunDir から算出して保存(frame()で毎フレーム流用)。
+    // shadowRight = worldUp × sunDir の正規化(光の right 軸)。
+    // shadowUp    = sunDir × shadowRight の正規化(光の up 軸)。
+    // これにより shadow snap をワールド XZ でなく「影テクセルグリッド面」で行い snap 誤差をゼロ化。
+    this.shadowRight.crossVectors(new THREE.Vector3(0, 1, 0), this.sunDir).normalize();
+    if (this.shadowRight.lengthSq() < 0.0001) this.shadowRight.set(1, 0, 0); // sunDir≒真上の edge case
+    this.shadowUp.crossVectors(this.sunDir, this.shadowRight).normalize();
 
     // IBL(scene.environment)と二重になるため Hemi は控えめに。
     // 「天井(空)から差す環境光」が上面/明部を洗い流して眩しくする主因の一つなので
@@ -1131,18 +1150,29 @@ export class Match {
     const sun = new THREE.DirectionalLight(palette.lightColor, palette.lightIntensity);
     sun.position.copy(this.sunDir).multiplyScalar(size); // 見える太陽と影方向を一致させる
     sun.castShadow = true;
-    // R12軽量化: mediumは1024²で影フラグメント1/4・VRAM 12MB→3MB(highは2048²維持)
-    sun.shadow.mapSize.set(tier === 'high' ? 2048 : 1024, tier === 'high' ? 2048 : 1024);
+    // R12軽量化: mediumは1024²で影フラグメント1/4・VRAM 12MB→3MB。
+    // エリア×3拡大でステージsize比例のshadow camera境界も広がるため、
+    // highは2048²→4096²へ増強してテクセル密度を維持(midは1024²のまま)。
+    // R29仕様メモ: follow-box ±70m(140m)+ 4096px = 29px/m = 従来小マップ相当の密度。
+    //   VRAM 約64MB(4096×4096×4byte)= high tier のみ許容。medium は1024²(約4MB)のまま。
+    sun.shadow.mapSize.set(tier === 'high' ? 4096 : 1024, tier === 'high' ? 4096 : 1024);
     sun.shadow.bias = -0.0005; // シャドウアクネ除去
     sun.shadow.normalBias = 0.02; // ピーターパン(浮き影)防止
     sun.shadow.radius = 2; // PCFカーネル拡大(ほぼ0コストで柔らかく)
-    const half = size / 2 + 4;
+    // R29: エリア超拡大(280-360m)対応=ステージ全体を1枚で覆う方式をやめ、
+    // プレイヤー追従シャドウボックス(±70m)へ。マップがどれだけ大きくても影の
+    // テクセル密度が一定(4096/140m≈29px/m=従来より鮮明)。中心はテクセルグリッドへ
+    // スナップし、移動時のシャドウシマーを防ぐ(frame()で毎フレーム追従)。
+    const half = SHADOW_FOLLOW_HALF;
     sun.shadow.camera.left = -half;
     sun.shadow.camera.right = half;
     sun.shadow.camera.top = half;
     sun.shadow.camera.bottom = -half;
-    sun.shadow.camera.far = size * 1.5;
+    sun.shadow.camera.far = size * 2.2;
     this.scene.add(sun);
+    this.scene.add(sun.target);
+    this.sunLight = sun;
+    this.shadowTexelWorld = (half * 2) / (tier === 'high' ? 4096 : 1024);
 
     // 逆光フィル(影を落とさない=追加コストほぼ0。シルエットの締まりを出す)
     const fill = new THREE.DirectionalLight(
@@ -1177,35 +1207,41 @@ export class Match {
     // 共有unitBoxに焼くので全障害物が無コストで「平面の豆腐」を脱する
     this.bakeVolumetricAO(unitBox);
     const materials = new Map<string, THREE.MeshStandardMaterial>();
+    // ghost === true のボックスはコライダーのみ生成し描画をスキップ(不可視境界=開放境界対応)。
+    // stage.ts/StageDef 側が ghost フラグを追加する。防御的読み取りで型拡張に依存しない。
     for (const spec of boxes) {
-      const key = `${spec.color}:${spec.emissive}`;
-      let material = materials.get(key);
-      if (!material) {
-        material = new THREE.MeshStandardMaterial({
-          color: spec.color,
-          roughness: 0.72, // IBL投入で空の照り返しを拾えるよう少し滑らかに
-          metalness: 0.0,
-          vertexColors: true,
-        });
-        if (spec.emissive) {
-          material.emissive = new THREE.Color(spec.color);
-          // 0.7 は工廠/廃駅など発光ステージで箱が白飛び・過剰グレアの主因だった。
-          // 0.45 まで下げると暗い夜/ネオンでは依然「暗闇で自発光するアクセント」として
-          // はっきり読め、明るい発光ステージでの眩しさだけが消える(bloomは自発光を拾わない)。
-          material.emissiveIntensity = 0.45;
-          material.envMapIntensity = 0.35; // 自発光体はIBLに打ち消されないよう抑制
+      const isGhost = (spec as { ghost?: boolean }).ghost === true;
+      if (!isGhost) {
+        const key = `${spec.color}:${spec.emissive}`;
+        let material = materials.get(key);
+        if (!material) {
+          material = new THREE.MeshStandardMaterial({
+            color: spec.color,
+            roughness: 0.72, // IBL投入で空の照り返しを拾えるよう少し滑らかに
+            metalness: 0.0,
+            vertexColors: true,
+          });
+          if (spec.emissive) {
+            material.emissive = new THREE.Color(spec.color);
+            // 0.7 は工廠/廃駅など発光ステージで箱が白飛び・過剰グレアの主因だった。
+            // 0.45 まで下げると暗い夜/ネオンでは依然「暗闇で自発光するアクセント」として
+            // はっきり読め、明るい発光ステージでの眩しさだけが消える(bloomは自発光を拾わない)。
+            material.emissiveIntensity = 0.45;
+            material.envMapIntensity = 0.35; // 自発光体はIBLに打ち消されないよう抑制
+          }
+          // R20 rank3: 焼込みAO(vertexColor)の上へ弱い汚れグラデを重ね、クローン箱の均一感を崩す
+          this.applyMacroProp(material);
+          materials.set(key, material);
         }
-        // R20 rank3: 焼込みAO(vertexColor)の上へ弱い汚れグラデを重ね、クローン箱の均一感を崩す
-        this.applyMacroProp(material);
-        materials.set(key, material);
+        const mesh = new THREE.Mesh(unitBox, material);
+        mesh.position.set(spec.x, spec.y, spec.z);
+        mesh.scale.set(spec.w, spec.h, spec.d);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        this.scene.add(mesh);
       }
-      const mesh = new THREE.Mesh(unitBox, material);
-      mesh.position.set(spec.x, spec.y, spec.z);
-      mesh.scale.set(spec.w, spec.h, spec.d);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      this.scene.add(mesh);
 
+      // ghost の有無にかかわらず物理コライダーは常に生成(不可視境界はプレイヤー/ボットを止める)
       const body = this.physics.createRigidBody(
         RAPIER.RigidBodyDesc.fixed().setTranslation(spec.x, spec.y, spec.z),
       );
@@ -1213,16 +1249,23 @@ export class Match {
         RAPIER.ColliderDesc.cuboid(spec.w / 2, spec.h / 2, spec.d / 2),
         body,
       );
-      this.tags.set(collider.handle, { kind: 'world' });
+      // ghost 壁は 'boundary' タグ: KCC/ブリンクは物理で止まるが弾/斬撃/視線は素通りする
+      this.tags.set(collider.handle, isGhost ? { kind: 'boundary' } : { kind: 'world' });
     }
 
+    // ghost ボックスはビジュアル装飾・アトモスフィア・ミニマップに含めない(描画なし)
+    // decor ボックスも除外(草/プロップ/シルエット配置の基点に遠景装飾ボックスを使わない)
+    const visibleBoxes = boxes.filter(
+      (b) => !(b as { ghost?: boolean }).ghost && !(b as { decor?: boolean }).decor,
+    );
     // 障害物のビジュアル装飾(当たり判定には一切触れない・純粋に飾り)
-    this.buildPropDecor(boxes, palette);
+    this.buildPropDecor(visibleBoxes, palette);
     this.buildAtmosphere(this.config.stage.palette, this.config.stage.size);
     // ステージパレットから床/遮蔽物の材質を推定し、足音・着弾音のテクスチャを決める
     this.sounds.setSurfaceMaterial(deriveSurfaceMaterials(this.config.stage.palette));
     // 映画的アトモスフィア(ムード照明/奥行きフォグ/草/環境パーティクル/遠景シルエット)。
     // physics/tags非受領=当たり判定ゼロ・装飾のみ。tier(hoist済)で低スペックは自動ゲート
+    // ghost ボックスを除外した visibleBoxes を渡す(草配置/粒子がゴーストバウンダリに依存しない)
     this.atmosphere = new Atmosphere(
       this.scene,
       this.renderer,
@@ -1231,7 +1274,7 @@ export class Match {
       tier,
       this.settings.reduceMotion,
       size,
-      boxes,
+      visibleBoxes,
       this.sunDir,
       mulberry32(this.config.stage.seed ^ 0x0a7),
     );
@@ -2485,6 +2528,27 @@ export class Match {
       this._indoor01 += indoorAlpha * (rawIndoor - this._indoor01);
     }
 
+    // ── R29: プレイヤー追従シャドウ(±70mの影ボックスがプレイヤーと共に動く) ──
+    // 中心をシャドウテクセルの「光空間グリッド」へスナップしてエッジシマーをゼロ化。
+    // ワールドXZではなく shadowRight/shadowUp(sunDirから算出した直交基底)の投影面でスナップする。
+    if (this.sunLight) {
+      const g = this.shadowTexelWorld;
+      const p = this.player.position;
+      // 光空間右/上軸へ投影 → グリッドスナップ → ワールド座標へ復元
+      const rSnapped = Math.floor(p.dot(this.shadowRight) / g) * g;
+      const uSnapped = Math.floor(p.dot(this.shadowUp) / g) * g;
+      const snapX = rSnapped * this.shadowRight.x + uSnapped * this.shadowUp.x;
+      const snapY = rSnapped * this.shadowRight.y + uSnapped * this.shadowUp.y;
+      const snapZ = rSnapped * this.shadowRight.z + uSnapped * this.shadowUp.z;
+      this.sunLight.position.set(
+        snapX + this.sunDir.x * this.config.stage.size,
+        snapY + this.sunDir.y * this.config.stage.size,
+        snapZ + this.sunDir.z * this.config.stage.size,
+      );
+      this.sunLight.target.position.set(snapX, snapY, snapZ);
+      this.sunLight.target.updateMatrixWorld();
+    }
+
     // ── High tier 専用パス更新 ──
     if (this._godRaysPass !== null) {
       // GodRays: 太陽ワールド位置 = カメラ位置 + sunDir × (stage.size * 3)
@@ -2588,7 +2652,7 @@ export class Match {
     const dirX = this._kcLook.x * Math.cos(arc) - this._kcLook.z * Math.sin(arc);
     const dirZ = this._kcLook.x * Math.sin(arc) + this._kcLook.z * Math.cos(arc);
     this._kcTarget.set(head.x + dirX * dist, head.y + 1.05, head.z + dirZ * dist);
-    // 壁抜け防止: killer頭→カメラ目標へレイ、world遮蔽なら手前へ寄せる
+    // 壁抜け防止: killer頭→カメラ目標へレイ、world/boundary遮蔽なら手前へ寄せる
     const dcx = this._kcTarget.x - head.x;
     const dcy = this._kcTarget.y - head.y;
     const dcz = this._kcTarget.z - head.z;
@@ -2599,7 +2663,7 @@ export class Match {
       const hit = this.castRay(head, this._kcLook, camDist, this.player.body);
       if (hit) {
         const t = this.tags.get(hit.collider.handle);
-        if (t === undefined || t.kind === 'world') {
+        if (t === undefined || t.kind === 'world' || t.kind === 'boundary') {
           const safe = Math.max(0.6, hitToi(hit) - 0.15);
           this._kcTarget.set(head.x + this._kcLook.x * safe, head.y + this._kcLook.y * safe, head.z + this._kcLook.z * safe);
         }
@@ -3089,6 +3153,8 @@ export class Match {
       if (!hit) return;
 
       const tag = this.tags.get(hit.collider.handle);
+      // boundary(ghost壁)は素通り: 着弾エフェクト/衝撃音なしで弾道終端(開放境界演出)
+      if (tag?.kind === 'boundary') return;
       if (tag?.kind === 'bot' && tag.bot.alive) {
         // 味方への誤射はダメージなしで弾が止まる
         if (tag.bot.team === PLAYER_TEAM) return;
@@ -3535,7 +3601,7 @@ export class Match {
     // 歩き/しゃがみは無音なので、静かに近づけば背後を取れる
     const noisy = this.player.alive && (this.player.sprinting || this.player.sliding);
     const playerPos = this.player.position;
-    this.botFrameIdx = (this.botFrameIdx + 1) % 3; // 今フレームにLOSを走らせる観測者バケット
+    this.botFrameIdx = (this.botFrameIdx + 1) % 5; // 今フレームにLOSを走らせる観測者バケット(14bot対応)
     for (const bot of this.bots) {
       if (
         noisy &&
@@ -3610,9 +3676,9 @@ export class Match {
     let cand: SpotCand | null = null;
     let rawVisible = false;
     if (cands.length > 0) {
-      // 前回の対象がまだコーン内なら継続、無ければ最至近。LOSは uid%3 バケットで間引く
+      // 前回の対象がまだコーン内なら継続、無ければ最至近。LOSは uid%5 バケットで間引く
       const cached = cands.find((c) => c.uid === bot.lastCandidateUid) ?? null;
-      const runLos = bot.uid % 3 === this.botFrameIdx || cached === null;
+      const runLos = bot.uid % 5 === this.botFrameIdx || cached === null;
       if (runLos) {
         // 近い順にLOSを試し、最初に通った候補を採用(遮蔽された最至近に固着しない)
         for (const c of cands) {
@@ -3712,7 +3778,10 @@ export class Match {
     const dist = to.length();
     if (dist < 1e-3) return true;
     const dir = to.multiplyScalar(1 / dist);
-    const hit = this.castRay(head, dir, dist - 0.2, bot.body);
+    // boundary(ghost壁)は視線を遮蔽しない(演出系=除外原則)
+    const hit = this.castRay(head, dir, dist - 0.2, bot.body,
+      (c) => this.tags.get(c.handle)?.kind !== 'boundary',
+    );
     if (hit === null) return true;
     const tag = this.tags.get(hit.collider.handle);
     if (cand.isPlayer) return tag?.kind === 'player';
@@ -3734,8 +3803,9 @@ export class Match {
     // R16修正: 係数40は過大で中距離でも敵が実質盲目化(撃たれるまで撃ち返さない)する重大回帰だった。
     // 距離減衰は distFactor が担うので fogFactor は霧/暗所の緩やかな追加減衰に留め、下限0.35で
     // 中距離(10〜25m)を数秒で発見できるようにする(視覚フォグとの1000倍乖離を解消)
+    // R29再校正: fogDensity が約半減したため係数 2.5→5.0 へ戻し実効発見速度を従来相当に維持する。
     const fogFactor =
-      Math.max(0.35, Math.exp(-cand.dist * this.stageFogDensity * 2.5)) * Math.max(0.5, this.stageAmbient);
+      Math.max(0.35, Math.exp(-cand.dist * this.stageFogDensity * 5.0)) * Math.max(0.5, this.stageAmbient);
     let rate = base * distFactor * coneFactor * moveFactor * fogFactor;
     if (bot.alert > 0) rate *= ALERT_SPOT_MUL; // 銃声を聞いた=戦闘文脈では素早く発見
     if (bot.pain > 0) rate = Math.max(rate, base * PAIN_SPOT_MUL); // 撃たれた=即発見に近づく
@@ -4175,12 +4245,13 @@ export class Match {
     // 壁の手前で停止(壁抜け防止)。V18修正: 敵が壁の手前に立つと最近接ヒットが敵になり壁を
     // 見逃して7m貫通・場外テレポートしていた。filterPredicateでワールドgeometryのみを対象に
     // レイキャストし、敵の背後にある壁でも確実に手前停止させる。
+    // boundary(ghost壁)もブリンク停止に含める(境界エスケープ防止は絶対維持)。
     const hit = this.castRay(
       start,
       dir,
       blinkRange + CAPSULE_RADIUS,
       this.player.body,
-      (c) => this.tags.get(c.handle)?.kind === 'world',
+      (c) => { const k = this.tags.get(c.handle)?.kind; return k === 'world' || k === 'boundary'; },
     );
     let dist = blinkRange;
     if (hit) dist = Math.max(0, hitToi(hit) - CAPSULE_RADIUS - 0.05);

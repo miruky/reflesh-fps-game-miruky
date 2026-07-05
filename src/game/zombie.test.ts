@@ -21,8 +21,8 @@ describe('zombie round curves', () => {
       expect(n).toBeLessThanOrEqual(90);
       prev = n;
     }
-    expect(zombieTotal(1)).toBe(8);
-    expect(zombieTotal(60)).toBe(90); // 十分大きいラウンドで上限に達する
+    expect(zombieTotal(1)).toBe(11); // ×1.4スケール後: Math.round(8.4+2.1+0.154)=11
+    expect(zombieTotal(60)).toBe(90); // 十分大���いラウンドで上限に達する
   });
 
   it('HPは単調非減少・r9で線形の頂点・600でクランプ', () => {
@@ -68,7 +68,7 @@ describe('zombie round curves', () => {
   it('同時生存上限はtier順で増える', () => {
     expect(ZOMBIE_MAX_ALIVE.low).toBeLessThan(ZOMBIE_MAX_ALIVE.medium);
     expect(ZOMBIE_MAX_ALIVE.medium).toBeLessThan(ZOMBIE_MAX_ALIVE.high);
-    expect(ZOMBIE_MAX_ALIVE.high).toBe(24);
+    expect(ZOMBIE_MAX_ALIVE.high).toBe(36); // エリア×3拡大対応: low18/med28/high36
   });
 });
 

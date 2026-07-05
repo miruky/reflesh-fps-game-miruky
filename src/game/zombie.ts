@@ -5,15 +5,16 @@
 // InstancedMesh 化が困難なため、この上限 + 距離LOD + 近接影のみで多数描画を軽量化する。
 export type ZombieTierCapKey = 'low' | 'medium' | 'high';
 export const ZOMBIE_MAX_ALIVE: Record<ZombieTierCapKey, number> = {
-  low: 14,
-  medium: 20,
-  high: 24,
+  low: 18,
+  medium: 28,
+  high: 36,
 };
 
-// ラウンド r で湧く総数。r1≈8 / r10≈32 / r20≈80(上限90でTTK壁を防ぐ)。
+// ラウンド r で湧く総数。r1≈11 / r10≈45 / r15≈75(上限90でTTK壁を防ぐ)。
+// エリア×3拡大に伴い旧比×1.4でプレッシャーを維持する(係数を一律1.4倍)。
 // count と速度でプレッシャーを掛ける方針(HPは緩やかにしか上げない)。
 export function zombieTotal(r: number): number {
-  return Math.min(90, Math.round(6 + r * 1.5 + r * r * 0.11));
+  return Math.min(90, Math.round(8.4 + r * 2.1 + r * r * 0.154));
 }
 
 // ラウンド r の1体あたりHP。1〜9は線形(40→104)、以降は緩やかな指数(×1.07/round)。
