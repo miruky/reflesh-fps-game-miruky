@@ -65,6 +65,11 @@ import { closestApproach } from './whizz';
 import { Atmosphere, resolveMood, resolveGrade } from '../render/atmosphere';
 import { createGradePass } from '../render/grade';
 import { PostFXPass } from '../render/postfx';
+import { N8AOPass } from 'n8ao';
+import { GodRaysPass } from '../render/godrays';
+import { AdsDofPass } from '../render/dof';
+import { patchPcss, unpatchPcss, isPcssPatched } from '../render/pcss';
+import { AutoExposure } from '../render/exposure';
 import type { MissionSummary } from './progression';
 import {
   MedalTracker,
@@ -117,7 +122,7 @@ import {
   type ZombiePerkId,
 } from './zombie-economy';
 import type { MatchSummary } from './progression';
-import { generateStage, type StageDef } from './stage';
+import { generateStage, type StageDef, type MoodId } from './stage';
 import { StreakManager, STREAK_DEFS, type StreakIndex } from './scorestreaks';
 import { type SurfaceMaterial } from './materials';
 import { teamPalette, type TeamPalette } from './teamcolors';
@@ -632,6 +637,29 @@ export class Match {
   private composer: EffectComposer | null = null; // medium/high のみ(low は素のレンダラ)
   private envRT: THREE.WebGLRenderTarget | null = null; // 空から焼いたIBL(per-Matchで解放)
   private readonly sunDir = new THREE.Vector3(); // 太陽方向の単一の真実(空/日光/影を駆動)
+  // ── R22 新レンダリングパス(high tierのみ) ──
+  private _n8aoPass: N8AOPass | null = null;
+  private _godRaysPass: GodRaysPass | null = null;
+  private _adsDofPass: AdsDofPass | null = null;
+  // AutoExposure: 全tier有効(コストゼロ)
+  private readonly _autoExposure = new AutoExposure();
+  private _prevShadowType: THREE.ShadowMapType = THREE.PCFSoftShadowMap;
+  private _pcssPatched = false;
+  // AutoExposure: indoor検出用タイマー・平滑値・scratch
+  private _indoorCheckTimer = 0;
+  private _indoor01 = 0;
+  private readonly _autoExpFwd = new THREE.Vector3();
+  // GodRays: mood別太陽強度
+  private _sunIntensity = 0.35;
+  private readonly _sunWorld = new THREE.Vector3(); // scratch(毎フレームGC回避)
+  // AdsDofPass: 焦点距離(0.25s更新)
+  private _dofFocusDist = 30;
+  private _dofFocusTimer = 0;
+  // ウォッチドッグ: 実描画フレーム間隔 EMA + 恒久降格ステート
+  private _wdEma = 0.0166;     // ~60fps 初期値(閾値 0.022 未満)
+  private _wdOverAccum = 0;    // EMA > 22ms の連続秒数
+  private _wdStep = 0;         // 0=full, 1=dof off, 2=godrays off, 3=ao-low
+  private _wdNextStepAt = 0;   // 次の降格を許可する elapsed(秒)
 
   // ── R16 spot-time知覚: setup時にpaletteから保持(Matchはpalette非保持=fog/ambientが必要)──
   private stageFogDensity = 0;
@@ -737,6 +765,16 @@ export class Match {
     this.camera.rotation.order = 'YXZ';
     this.scene.add(this.camera);
 
+    // PCSS: high tier の場合、マテリアル生成前にシェーダチャンクへパッチする。
+    // buildStageScene より先に行わないとコンパイル済みシェーダへは反映されない。
+    const _graphicsTier = resolveGraphicsTier(settings.graphicsQuality, renderer.capabilities.isWebGL2);
+    if (_graphicsTier === 'high' && !isPcssPatched()) {
+      this._prevShadowType = renderer.shadowMap.type;
+      patchPcss();
+      renderer.shadowMap.type = THREE.BasicShadowMap;
+      this._pcssPatched = true;
+    }
+
     const layout = generateStage(config.stage);
     this.playerSpawns = layout.playerSpawns.map(([x, y, z]) => new THREE.Vector3(x, y, z));
     this.botSpawns = layout.botSpawns.map(([x, y, z]) => new THREE.Vector3(x, y, z));
@@ -816,7 +854,7 @@ export class Match {
     this.viewModel.setWeapon(this.activeWeapon.def);
     this.activeWeapon.raise();
 
-    this.buildComposer(resolveGraphicsTier(settings.graphicsQuality, renderer.capabilities.isWebGL2));
+    this.buildComposer(_graphicsTier);
     // シェーダ事前コンパイル(初フレーム/初撃破のスタッター防止)。ディゾルブ変種(dissolve1)は
     // defineを一時点火してcompile→消灯の順で両プログラムをキャッシュへ載せる
     for (const bot of this.bots) bot.prewarmDissolve(true);
@@ -829,13 +867,18 @@ export class Match {
   private buildComposer(tier: GraphicsQuality): void {
     if (tier === 'low') {
       this.postfxActive = false; // low: シェーダPostFX無し(CSSフォールバックのみ)
+      // AutoExposure: low tier でも有効(コストゼロ)
+      this._autoExposure.configure({ baseExposure: this.config.stage.palette.exposure ?? 1.0 });
       return;
     }
     this.postfxActive = true;
     const p = this.config.stage.palette;
     const size = this.renderer.getSize(new THREE.Vector2());
     const composer = new EffectComposer(this.renderer);
-    composer.addPass(new RenderPass(this.scene, this.camera));
+
+    // AutoExposure: baseExposure を現行パレットの露出値で初期化(全tier共通)
+    this._autoExposure.configure({ baseExposure: p.exposure ?? 1.0 });
+
     const bloom = new HalfBloom(
       new THREE.Vector2(size.x, size.y),
       p.bloomStrength ?? 0.5, // strength: 真の発光体だけ拾う控えめな値
@@ -845,37 +888,119 @@ export class Match {
       // ネオン/信号灯など発光演出は各パレットが明示 threshold(yoichi0.7/haieki0.8/neon0.85)を持つ。
       p.bloomThreshold ?? 0.9, // threshold
     );
-    composer.addPass(bloom);
-    // アトモスフィアの映画的カラーグレード(ムード別・HDR空間=bloom後/SMAA前)
-    composer.addPass(
-      createGradePass(resolveGrade(resolveMood(p), p), {
-        reduceMotion: this.settings.reduceMotion,
-        width: size.x,
-        height: size.y,
-      }),
-    );
-    composer.addPass(new SMAAPass(size.x, size.y));
-    composer.addPass(new OutputPass()); // Neutral+exposure+sRGB を renderer から自動適用
-    // ジュース専用PostFX(被弾パルスの赤tint+収差)。表示空間(Neutral後)・被弾時のみenable
-    const postfx = new PostFXPass();
-    postfx.setParams({
-      vigInner: 0.95, // 静的グレードはgradePassが持つ=ここは実質パススルー
-      vigOuter: 1.0,
-      grain: 0,
-      aberration: 0,
-      desat: 0,
-      hitPulse: 0,
-      hitTint: [1, 0.32, 0.28],
-      enabled: false, // hitPulse>0 のフレームだけ有効化(idleコストゼロ)
-    });
-    composer.addPass(postfx);
-    this.postfx = postfx;
-    // R21: Teal & Orange グレーディング。high tier のみ 0.3 を設定し常時1パス(予算内)
+
     if (tier === 'high') {
-      postfx.setGrade(0.3);
+      // ── HIGH TIER: N8AOPass(RenderPass代替) + GodRays + AdsDofPass ──
+      // N8AOPass はシーンを内部の beautyRenderTarget へ描画し AO を合成して出力する。
+      const n8ao = new N8AOPass(this.scene, this.camera, size.x, size.y);
+      n8ao.configuration.aoRadius = 2.0;
+      n8ao.configuration.distanceFalloff = 0.4;
+      n8ao.configuration.intensity = 2.5;
+      n8ao.configuration.halfRes = true;
+      n8ao.configuration.depthAwareUpsampling = true;
+      n8ao.configuration.transparencyAware = true;
+      // gammaCorrection=false: 後段 OutputPass が sRGB 変換するため二重 gamma を防ぐ
+      n8ao.configuration.gammaCorrection = false;
+      n8ao.setQualityMode('Medium');
+      this._n8aoPass = n8ao;
+
+      const godRays = new GodRaysPass();
+      godRays.setSize(size.x, size.y);
+      this._godRaysPass = godRays;
+
+      const dof = new AdsDofPass(this.scene, this.camera as THREE.PerspectiveCamera);
+      dof.setSize(size.x, size.y);
+      this._adsDofPass = dof;
+
+      // ムード別太陽強度を算出して保持(毎フレーム setIntensity に渡す)
+      this._sunIntensity = this._resolveSunIntensity(resolveMood(p));
+
+      // パス順: N8AO → GodRays → Bloom → Grade → DOF → SMAA → Output → PostFX
+      composer.addPass(n8ao); // RenderPass 代替
+
+      // 深度ブリッジ: N8AOPass は beautyRenderTarget に深度を書くが GodRaysPass は
+      // readBuffer.depthTexture を参照する。EffectComposer の ping-pong 両バッファに
+      // 同じ DepthTexture 参照を共有することで、どちらが readBuffer になっても深度が届く。
+      // setSize() は depthTexture JS オブジェクトを置換しないため resize 後も参照は有効。
+      const n8aoDepth = n8ao.beautyRenderTarget.depthTexture;
+      composer.readBuffer.depthTexture = n8aoDepth;
+      composer.readBuffer.depthBuffer = true;
+      composer.writeBuffer.depthTexture = n8aoDepth;
+      composer.writeBuffer.depthBuffer = true;
+
+      composer.addPass(godRays);
+      composer.addPass(bloom);
+      // アトモスフィアの映画的カラーグレード(ムード別・HDR空間=bloom後)
+      composer.addPass(
+        createGradePass(resolveGrade(resolveMood(p), p), {
+          reduceMotion: this.settings.reduceMotion,
+          width: size.x,
+          height: size.y,
+        }),
+      );
+      composer.addPass(dof); // bloom後/SMAA前(dof.ts の推奨位置)
+      composer.addPass(new SMAAPass(size.x, size.y));
+      composer.addPass(new OutputPass()); // Neutral+exposure+sRGB を renderer から自動適用
+      // ジュース専用PostFX(被弾パルスの赤tint+収差)。表示空間(Neutral後)・被弾時のみenable
+      const postfxH = new PostFXPass();
+      postfxH.setParams({
+        vigInner: 0.95, // 静的グレードはgradePassが持つ=ここは実質パススルー
+        vigOuter: 1.0,
+        grain: 0,
+        aberration: 0,
+        desat: 0,
+        hitPulse: 0,
+        hitTint: [1, 0.32, 0.28],
+        enabled: false, // hitPulse>0 のフレームだけ有効化(idleコストゼロ)
+      });
+      // R21: Teal & Orange グレーディング。high tier のみ 0.3 を設定し常時1パス(予算内)
+      postfxH.setGrade(0.3);
       this.postfxGrade = 0.3;
+      composer.addPass(postfxH);
+      this.postfx = postfxH;
+    } else {
+      // ── MID TIER: 既存チェーン(変更なし) ──
+      composer.addPass(new RenderPass(this.scene, this.camera));
+      composer.addPass(bloom);
+      // アトモスフィアの映画的カラーグレード(ムード別・HDR空間=bloom後/SMAA前)
+      composer.addPass(
+        createGradePass(resolveGrade(resolveMood(p), p), {
+          reduceMotion: this.settings.reduceMotion,
+          width: size.x,
+          height: size.y,
+        }),
+      );
+      composer.addPass(new SMAAPass(size.x, size.y));
+      composer.addPass(new OutputPass()); // Neutral+exposure+sRGB を renderer から自動適用
+      // ジュース専用PostFX(被弾パルスの赤tint+収差)。表示空間(Neutral後)・被弾時のみenable
+      const postfxM = new PostFXPass();
+      postfxM.setParams({
+        vigInner: 0.95, // 静的グレードはgradePassが持つ=ここは実質パススルー
+        vigOuter: 1.0,
+        grain: 0,
+        aberration: 0,
+        desat: 0,
+        hitPulse: 0,
+        hitTint: [1, 0.32, 0.28],
+        enabled: false, // hitPulse>0 のフレームだけ有効化(idleコストゼロ)
+      });
+      composer.addPass(postfxM);
+      this.postfx = postfxM;
     }
+
     this.composer = composer;
+  }
+
+  /** ムード別の GodRays 太陽強度を返す(仕様: 晴れ0.35/夕0.45/夜0.12/曇0.08) */
+  private _resolveSunIntensity(mood: MoodId): number {
+    switch (mood) {
+      case 'day':      return 0.35;
+      case 'dusk':     return 0.45;
+      case 'night':    return 0.12;
+      case 'overcast': return 0.08;
+      case 'snow':     return 0.20; // 冬の淡い日差し
+      default:         return 0.35;
+    }
   }
 
   // R12軽量化(適応): スパイク時に実解像度を段階的に下げてfps床を維持する。
@@ -2255,6 +2380,95 @@ export class Match {
       this.postfx.setHitPulse(pulse);
       this.postfx.setCombat(this.hitDir.x, this.hitDir.y, healthRatio, killSurge, rm ? 0 : 1);
       this.postfx.setTime(this.elapsed);
+    }
+
+    // ── AutoExposure: 全tier有効(コストゼロ・CPU only) ──
+    // camera forward を取得し、indoor01(天井有無の指数平滑値)と合わせて更新する。
+    this.camera.getWorldDirection(this._autoExpFwd);
+    this.renderer.toneMappingExposure = this._autoExposure.update(dt, this._autoExpFwd, this._indoor01);
+
+    // Indoor 検出: 0.25s ごとにプレイヤー頭上へ上向きレイ(world限定・~25m)を飛ばし
+    // 天井の有無を検出する。指数平滑 tau≈3s で緩やかに推移させる。
+    this._indoorCheckTimer -= dt;
+    if (this._indoorCheckTimer <= 0) {
+      this._indoorCheckTimer = 0.25;
+      const eyePos = this.player.alive ? this.player.eyePosition : this.camera.position;
+      const rawIndoor = this.castRay(
+        eyePos,
+        new THREE.Vector3(0, 1, 0),
+        25,
+        this.player.body,
+        (col) => this.tags.get(col.handle)?.kind === 'world',
+      ) ? 1 : 0;
+      // alpha = 1 - exp(-dt_check / tau) = 1 - exp(-0.25 / 3)
+      const indoorAlpha = 1 - Math.exp(-0.25 / 3);
+      this._indoor01 += indoorAlpha * (rawIndoor - this._indoor01);
+    }
+
+    // ── High tier 専用パス更新 ──
+    if (this._godRaysPass !== null) {
+      // GodRays: 太陽ワールド位置 = カメラ位置 + sunDir × (stage.size * 3)
+      const stageSz = this.config.stage.size;
+      this._sunWorld.copy(this.camera.position).addScaledVector(this.sunDir, stageSz * 3);
+      this._godRaysPass.setSun(this._sunWorld, this.camera);
+      this._godRaysPass.setIntensity(this._sunIntensity);
+    }
+
+    if (this._adsDofPass !== null) {
+      const wp = this.activeWeapon;
+      // スコープ武器(def.scope===true)は DOF 無効(全画面スコープ演出と干渉するため)
+      const ads01 = wp.def.scope === true ? 0 : wp.adsProgress;
+      // 焦点距離を 0.25s ごとに更新(照準中心レイ流用)
+      this._dofFocusTimer -= dt;
+      if (this._dofFocusTimer <= 0) {
+        this._dofFocusTimer = 0.25;
+        if (ads01 > 0.01 && this.player.alive) {
+          const dofHit = this.castRay(
+            this.player.eyePosition,
+            this.cameraForward(),
+            200,
+            this.player.body,
+          );
+          this._dofFocusDist = dofHit ? Math.min(200, Math.max(0.5, hitToi(dofHit))) : 30;
+        }
+      }
+      this._adsDofPass.update(ads01, this._dofFocusDist, dt);
+    }
+
+    // ── ウォッチドッグ: high tier のみ、実描画フレームEMA > 22ms(≒45fps)が
+    // 2.5s 続いたら段階的降格(DOF→GodRays→AO-Low の 3 段)。
+    // main.ts の adaptResolution(DPR 削減)と独立して動作する。
+    // N8AOPass は "シーンを描く唯一のパス" なので絶対に無効化しない。
+    if (this._wdStep < 3 && (this._n8aoPass !== null || this._godRaysPass !== null)) {
+      this._wdEma += (dt - this._wdEma) * 0.06; // ~0.5s平滑(main.ts adaptResolution と同方式)
+      if (this._wdEma > 0.022) {
+        this._wdOverAccum += dt;
+      } else {
+        this._wdOverAccum = 0; // 閾値を下回ったらリセット(連続超過のみ発火)
+      }
+      if (this._wdOverAccum > 2.5 && this.elapsed > this._wdNextStepAt) {
+        this._wdStep++;
+        this._wdNextStepAt = this.elapsed + 2.0; // 次の降格は 2 秒後以降
+        this._wdOverAccum = 0;
+        const emaMs = (this._wdEma * 1000).toFixed(1);
+        switch (this._wdStep) {
+          case 1:
+            // forceDisable で以後の update() 内 enabled 上書きを封じる
+            if (this._adsDofPass) this._adsDofPass.forceDisable();
+            console.info(`[watchdog] step1: AdsDofPass disabled (EMA ${emaMs}ms)`);
+            break;
+          case 2:
+            if (this._godRaysPass) this._godRaysPass.enabled = false;
+            console.info(`[watchdog] step2: GodRaysPass disabled (EMA ${emaMs}ms)`);
+            break;
+          case 3:
+            this._n8aoPass?.setQualityMode('Low');
+            console.info(`[watchdog] step3: N8AO → Low quality (EMA ${emaMs}ms)`);
+            break;
+          default:
+            break;
+        }
+      }
     }
   }
 
@@ -5495,6 +5709,45 @@ export class Match {
       (this.zombieBoxAnimMesh.material as THREE.Material).dispose();
       this.zombieBoxAnimMesh = null;
     }
+    // ── R22 新パスの解放 ──
+    // AdsDofPass/GodRaysPass は composer.passes ループで一括 dispose されるため明示呼び出し不要
+    this._adsDofPass = null;
+    this._godRaysPass = null;
+    // N8AOPass は dispose() を持たないため、内部 RT/マテリアル/FSQuad を明示破棄する
+    if (this._n8aoPass) {
+      const n = this._n8aoPass;
+      n.beautyRenderTarget.depthTexture?.dispose();
+      n.beautyRenderTarget.dispose();
+      n.writeTargetInternal?.dispose();
+      n.readTargetInternal?.dispose();
+      n.accumulationRenderTarget?.dispose();
+      n.depthDownsampleTarget?.dispose();
+      n.transparencyRenderTargetDWFalse?.dispose();
+      n.transparencyRenderTargetDWTrue?.depthTexture?.dispose();
+      n.transparencyRenderTargetDWTrue?.dispose();
+      n.effectShaderQuad?.material?.dispose();
+      n.effectShaderQuad?.dispose();
+      n.poissonBlurQuad?.material?.dispose();
+      n.poissonBlurQuad?.dispose();
+      n.effectCompositerQuad?.material?.dispose();
+      n.effectCompositerQuad?.dispose();
+      n.accumulationQuad?.material?.dispose();
+      n.accumulationQuad?.dispose();
+      n.depthDownsampleQuad?.material?.dispose();
+      n.depthDownsampleQuad?.dispose();
+      n.depthCopyPass?.material?.dispose();
+      n.depthCopyPass?.dispose();
+      n.bluenoise?.dispose();
+      this._n8aoPass = null;
+    }
+
+    // PCSS: このMatchがパッチを適用していた場合のみ復元する(連戦冪等性)
+    if (this._pcssPatched) {
+      unpatchPcss();
+      this.renderer.shadowMap.type = this._prevShadowType;
+      this._pcssPatched = false;
+    }
+
     this.effects.dispose();
     this.viewModel.dispose();
     for (const item of this.thrown) {

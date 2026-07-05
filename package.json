@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.14.0",
+    "n8ao": "1.10.2",
     "three": "^0.170.0"
   },
   "devDependencies": {
