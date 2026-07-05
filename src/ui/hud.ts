@@ -240,6 +240,44 @@ export class Hud {
             <line class="sc-core" x1="0" y1="6" x2="0" y2="30"></line>
             <circle class="sc-dot" r="0.9"></circle>
           </g>
+          <!-- DSR精密レティクル: BO2 DSR-50風極細十字(native スナイパー専用) -->
+          <g class="rk rk-dsr">
+            <!-- メイン十字アーム(ハロー/薄影) -->
+            <line class="sc-dsr-halo" x1="-92" y1="0" x2="-4" y2="0"></line>
+            <line class="sc-dsr-halo" x1="4" y1="0" x2="92" y2="0"></line>
+            <line class="sc-dsr-halo" x1="0" y1="-92" x2="0" y2="-4"></line>
+            <line class="sc-dsr-halo" x1="0" y1="4" x2="0" y2="92"></line>
+            <!-- メイン十字アーム(白0.85) -->
+            <line class="sc-dsr-line" x1="-92" y1="0" x2="-4" y2="0"></line>
+            <line class="sc-dsr-line" x1="4" y1="0" x2="92" y2="0"></line>
+            <line class="sc-dsr-line" x1="0" y1="-92" x2="0" y2="-4"></line>
+            <line class="sc-dsr-line" x1="0" y1="4" x2="0" y2="92"></line>
+            <!-- ミル目盛り 水平左: マイナー(±10,30,50,70)・メジャー(±20,40,60) -->
+            <line class="sc-dsr-tick" x1="-10" y1="-1.5" x2="-10" y2="1.5"></line>
+            <line class="sc-dsr-tick" x1="-20" y1="-3" x2="-20" y2="3"></line>
+            <line class="sc-dsr-tick" x1="-30" y1="-1.5" x2="-30" y2="1.5"></line>
+            <line class="sc-dsr-tick" x1="-40" y1="-3" x2="-40" y2="3"></line>
+            <line class="sc-dsr-tick" x1="-50" y1="-1.5" x2="-50" y2="1.5"></line>
+            <line class="sc-dsr-tick" x1="-60" y1="-3" x2="-60" y2="3"></line>
+            <line class="sc-dsr-tick" x1="-70" y1="-1.5" x2="-70" y2="1.5"></line>
+            <line class="sc-dsr-tick" x1="-80" y1="-2" x2="-80" y2="2"></line>
+            <!-- ミル目盛り 水平右(左の鏡) -->
+            <line class="sc-dsr-tick" x1="10" y1="-1.5" x2="10" y2="1.5"></line>
+            <line class="sc-dsr-tick" x1="20" y1="-3" x2="20" y2="3"></line>
+            <line class="sc-dsr-tick" x1="30" y1="-1.5" x2="30" y2="1.5"></line>
+            <line class="sc-dsr-tick" x1="40" y1="-3" x2="40" y2="3"></line>
+            <line class="sc-dsr-tick" x1="50" y1="-1.5" x2="50" y2="1.5"></line>
+            <line class="sc-dsr-tick" x1="60" y1="-3" x2="60" y2="3"></line>
+            <line class="sc-dsr-tick" x1="70" y1="-1.5" x2="70" y2="1.5"></line>
+            <line class="sc-dsr-tick" x1="80" y1="-2" x2="80" y2="2"></line>
+            <!-- ホールドオーバーマーク(垂直下方・距離推定) -->
+            <line class="sc-dsr-hold" x1="-4" y1="20" x2="4" y2="20"></line>
+            <line class="sc-dsr-hold" x1="-6" y1="34" x2="6" y2="34"></line>
+            <line class="sc-dsr-hold" x1="-8" y1="48" x2="8" y2="48"></line>
+            <!-- 中央アンバー照準点(ハロー+コア) -->
+            <circle class="sc-dsr-center-halo" r="2"></circle>
+            <circle class="sc-dsr-center" r="1"></circle>
+          </g>
           <circle class="sc-lock" r="5"></circle>
         </svg>
       </div>

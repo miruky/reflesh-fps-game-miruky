@@ -659,6 +659,19 @@ export class Match {
   private whiteout = 0;
   private readonly grenadeGeometry = new THREE.SphereGeometry(0.09, 10, 8);
 
+  // ── ロケット弾体(業火RL) ──
+  private readonly rocketGeo = new THREE.CylinderGeometry(0.055, 0.04, 0.42, 8, 1);
+  private readonly rocketTrailGeo = new THREE.CylinderGeometry(0.025, 0.0, 0.22, 6, 1);
+  private readonly rocketMat = new THREE.MeshStandardMaterial({ color: 0xff6a3c, emissive: 0xff3300, emissiveIntensity: 2.2, roughness: 0.6 });
+  private readonly rocketTrailMat = new THREE.MeshStandardMaterial({ color: 0x999999, transparent: true, opacity: 0.35, roughness: 1 });
+  private rockets: Array<{
+    mesh: THREE.Mesh;
+    trailMesh: THREE.Mesh;
+    pos: THREE.Vector3;
+    vel: THREE.Vector3;
+    timer: number;
+  }> = [];
+
   private feed: FeedEntry[] = [];
   private hits: Array<'hit' | 'head' | 'kill' | 'snipe' | 'limb'> = [];
   private hitExpand = 0; // ヒットマーカー拡大の減衰値
@@ -906,15 +919,31 @@ export class Match {
       // ゾンビ: 通常のBOTは湧かせず、ディレクタが初回updateでラウンド1を開始する
       this.setupZombie();
     } else {
-      // 通常対戦: チーム戦は人数の少ない側にプレイヤーが入る
+      // 通常対戦: チーム戦は人数の少ない側にプレイヤーが入る。
+      // R30修正: スポーン点数を超えた分が同一座標へ折り返して重なり、kinematic同士が
+      // 押し出せず永久スタックするバグを根治。使用済み位置(プレイヤー初期位置含む)から
+      // 1.2m未満の候補は決定論的なリングオフセットでずらして配置する。
       const botCount = config.stage.botCount;
       const allyCount = this.modeDef.teamBased ? Math.floor((botCount - 1) / 2) : 0;
+      const placed: THREE.Vector3[] = [this.player.position];
+      const MIN_GAP = 1.2;
       for (let i = 0; i < botCount; i += 1) {
         const name = BOT_NAMES[i % BOT_NAMES.length] ?? `BOT-${i}`;
         const team = this.modeDef.teamBased ? (i < allyCount ? PLAYER_TEAM : ENEMY_TEAM) : i + 1;
         const isAlly = team === PLAYER_TEAM;
         const spawnList = isAlly ? this.playerSpawns : this.botSpawns;
-        const botSpawn = spawnList[(i + (isAlly ? 1 : 0)) % spawnList.length] ?? new THREE.Vector3();
+        const base = spawnList[(i + (isAlly ? 1 : 0)) % spawnList.length] ?? new THREE.Vector3();
+        const botSpawn = base.clone();
+        // 既配置と近すぎる限りリング状にずらす(半径2.5mずつ拡大・角度は決定論)
+        for (let ring = 1; ring <= 6; ring += 1) {
+          const tooClose = placed.some(
+            (p) => Math.hypot(p.x - botSpawn.x, p.z - botSpawn.z) < MIN_GAP,
+          );
+          if (!tooClose) break;
+          const a = i * 1.7 + ring * 0.9;
+          botSpawn.set(base.x + Math.cos(a) * 2.5 * ring, base.y, base.z + Math.sin(a) * 2.5 * ring);
+        }
+        placed.push(botSpawn.clone());
         this.spawnBot(
           name,
           botSpawn,
@@ -2118,6 +2147,17 @@ export class Match {
           }
           continue;
         }
+        // ロケットランチャー: ヒットスキャン無し。弾体エンティティを発射して終わり。
+        if (weapon.def.class === 'launcher') {
+          this.player.yaw -= event.recoil.yaw;
+          this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
+          this.fireRocket();
+          this.viewModel.fire(false);
+          this.addShake(0.09);
+          this.sounds.rocketLaunch();
+          this.alertBots(ALERT_RADIUS);
+          continue;
+        }
         // RecoilStepの規約はyaw正=右。rotation.yは正で左回りなので符号を反転する
         this.player.yaw -= event.recoil.yaw;
         this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
@@ -2171,6 +2211,7 @@ export class Match {
     this.prevScopeProgress = scopeProg;
 
     this.updateGrenades(dt);
+    this.updateRockets(dt);
     this.updateFirePatches(dt);
     this.smokeZones = this.smokeZones.filter((zone) => zone.until > this.elapsed);
     this.updateZones(dt);
@@ -3056,6 +3097,136 @@ export class Match {
   // ゲームパッド使用時のみ触覚フィードバック。input.vibrate は設定offで自動的に無音
   private haptic(durationMs: number, weak: number, strong: number): void {
     if (this.input.lastDevice === 'gamepad') this.input.vibrate(durationMs, weak, strong);
+  }
+
+  // ── ロケット弾体(業火RL) ──
+
+  private fireRocket(): void {
+    if (!this.player.alive) return;
+    if (this.rockets.length >= 6) return; // 同時上限6
+    this.haptic(120, 0.4, 0.8);
+
+    // 発射基点: 視線基点から前方オフセット
+    const fwd = this.cameraForward();
+    const origin = this.player.eyePosition.clone().add(fwd.clone().multiplyScalar(0.5));
+    const vel = fwd.clone().multiplyScalar(55); // 55 m/s 直進
+
+    // 弾頭メッシュ(縦長シリンダーを進行方向に沿わせる)
+    const mesh = new THREE.Mesh(this.rocketGeo, this.rocketMat);
+    mesh.position.copy(origin);
+    // シリンダーはデフォルト Y 軸。進行方向(vel)へ向ける
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vel.clone().normalize());
+    this.scene.add(mesh);
+
+    // 煙トレイル(弾頭後端にアタッチ)
+    const trailMesh = new THREE.Mesh(this.rocketTrailGeo, this.rocketTrailMat);
+    // トレイルは弾頭の後ろ(-Y 方向に 0.3 )
+    trailMesh.position.set(0, -0.3, 0);
+    mesh.add(trailMesh);
+
+    this.rockets.push({ mesh, trailMesh, pos: origin, vel, timer: 0 });
+  }
+
+  private updateRockets(dt: number): void {
+    const ROCKET_SPEC = { radius: 7, maxDamage: 180, name: '業火RL' } as const;
+    const SELF_FACTOR = 0.35;
+    const MAX_LIFE = 8; // 8秒で自爆
+    const kept: typeof this.rockets = [];
+
+    for (const r of this.rockets) {
+      r.timer += dt;
+      // 直進移動(重力なし)
+      r.pos.addScaledVector(r.vel, dt);
+      r.mesh.position.copy(r.pos);
+
+      // 世界/ボットへの衝突チェック(小さなスフィアキャスト近似: 前方短レイ)
+      const dir = r.vel.clone().normalize();
+      const step = r.vel.length() * dt * 1.05;
+      const worldHit = this.castRay(r.pos, dir, step, null);
+      const worldTag = worldHit ? this.tags.get(worldHit.collider.handle) : undefined;
+
+      let detonated = false;
+
+      if (worldTag?.kind === 'world' || (worldHit && worldTag?.kind !== 'bot')) {
+        // 壁/地面に当たった
+        detonated = true;
+      }
+
+      if (!detonated) {
+        // ボットへの接触チェック
+        for (const bot of this.bots) {
+          if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+          if (r.pos.distanceTo(bot.position) < 0.7) {
+            detonated = true;
+            break;
+          }
+        }
+      }
+
+      if (!detonated && r.timer >= MAX_LIFE) detonated = true;
+
+      if (!detonated) {
+        kept.push(r);
+        continue;
+      }
+
+      // ── 起爆処理 ──
+      const point = r.pos.clone();
+      const { pan, distance } = this.panAndDistance(point);
+      this.effects.explosion(point, ROCKET_SPEC.radius * 0.55);
+      this.sounds.explosion(pan, distance);
+
+      // ボットへの爆発ダメージ
+      for (const bot of this.bots) {
+        if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+        const center = bot.position;
+        const dist = Math.min(center.distanceTo(point), bot.headPosition().distanceTo(point));
+        if (dist > ROCKET_SPEC.radius) continue;
+        const dmg = ROCKET_SPEC.maxDamage * Math.max(0, 1 - dist / ROCKET_SPEC.radius);
+        if (dmg <= 0 || !this.explosionReaches(point, center)) continue;
+        this.applyBotDamage(bot, dmg, center, false, ROCKET_SPEC.name);
+      }
+
+      // 自爆ダメージ(0.35倍で自殺しにくく)
+      if (this.player.alive) {
+        const selfDist = this.player.position.distanceTo(point);
+        if (selfDist < ROCKET_SPEC.radius && this.explosionReaches(point, this.player.position)) {
+          const rawDmg = ROCKET_SPEC.maxDamage * Math.max(0, 1 - selfDist / ROCKET_SPEC.radius);
+          const selfDmg = rawDmg * SELF_FACTOR;
+          if (selfDmg > 0) {
+            const died = this.player.takeDamage(selfDmg);
+            if (selfDist < 4) this.sounds.tinnitus((4 - selfDist) / 4);
+            this.tookDamage = true;
+            this.haptic(120, 0.6, 0.7);
+            this.addShake(Math.min(0.7, selfDmg * 0.012));
+            this.addUltCharge(selfDmg * ULT_ON_DAMAGE_PER_HP);
+            this.incoming.push(this.incomingAngle(point));
+            this.sounds.hurt();
+            if (died) {
+              this.feed.push({
+                killer: PLAYER_NAME,
+                victim: PLAYER_NAME,
+                weapon: ROCKET_SPEC.name,
+                headshot: false,
+              });
+              this.sounds.death();
+              this.notePlayerDeath();
+            }
+          }
+        }
+      }
+
+      // メッシュ後始末
+      this.scene.remove(r.mesh);
+    }
+    this.rockets = kept;
+  }
+
+  private clearRockets(): void {
+    for (const r of this.rockets) {
+      this.scene.remove(r.mesh);
+    }
+    this.rockets = [];
   }
 
   private fireShot(spreadRad: number): void {
@@ -5879,6 +6050,8 @@ export class Match {
     this.disposeLightningKirin();
     this.disposeAllDarkSlashWaves();
     this.lightningBeastTimer = 0;
+    // ロケット弾体も凍結表示させない
+    this.clearRockets();
     // V26修正: 真月の溜め(0.4s)中に試合が決まると deathVeil=0.72 がファイナルキルカムへ
     // 凍結され画面が暗いままになる。キルカム開始時に演出ベールを必ずリセットする
     this.deathVeil = 0;
@@ -6604,6 +6777,11 @@ export class Match {
       (item.mesh.material as THREE.Material).dispose();
     }
     this.thrown = [];
+    this.clearRockets();
+    this.rocketGeo.dispose();
+    this.rocketTrailGeo.dispose();
+    this.rocketMat.dispose();
+    this.rocketTrailMat.dispose();
     this.grenadeGeometry.dispose();
     // ポストプロセスとIBLを解放(scene.traverseの前。怠ると再戦ごとにVRAMリーク)
     if (this.composer) {

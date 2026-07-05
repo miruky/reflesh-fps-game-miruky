@@ -319,6 +319,24 @@ const SHAPE_SPECS: Record<ViewModelShape, Silhouette> = {
     bodyScale: 0.72,
     cylinder: true,
   },
+  // ロケットランチャー: 肩担ぎの太い発射筒。前後グリップ相当はshroudハンドガード+AR gripで表現。
+  // 排気ベント: ventSlots=5 の shroud ハンドガード。簡易照門: ironSight='bead'(前ビード)。
+  // muzzle.z<0 契約: barFrontZ = -(recHalf+0.1*bs) - barLen/2*bs で常に負。brake は前端開放。
+  launcher: {
+    receiver: { w: 0.12, h: 0.12, d: 0.48 },
+    barrelGauge: 0.054,
+    barrelLen: 0.16,
+    feed: 'none',
+    handguard: 'shroud',
+    stock: 'skeleton',
+    scope: null,
+    boltHandle: false,
+    muzzle: 'brake',
+    accentBand: 'receiver',
+    bodyScale: 1.4,
+    ventSlots: 5,
+    ironSight: 'bead',
+  },
 };
 
 // classDefault は optics.ts の単一真実源から import(shape 解決を viewmodel/match/optics で共有)。

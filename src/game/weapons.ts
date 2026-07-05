@@ -8,6 +8,7 @@ export type WeaponSlot = 'primary' | 'secondary';
 export type SoundProfile = 'ar' | 'smg' | 'dmr' | 'shotgun' | 'lmg' | 'pistol' | 'br' | 'marksman';
 // 武器カテゴリ。メダル判定(LONGSHOT閾値・距離系)とエイムアシストの分岐に使う。
 // 'marksman'=セミオート精密射手(boltの'sniper'と区別)
+// 'launcher'=ロケットランチャー(爆発物。ヒットスキャンを使わず弾体を飛ばす)
 export type WeaponClass =
   | 'ar'
   | 'smg'
@@ -16,7 +17,8 @@ export type WeaponClass =
   | 'br'
   | 'lmg'
   | 'pistol'
-  | 'marksman';
+  | 'marksman'
+  | 'launcher';
 
 // procedural な銃シルエットの形状キー(viewmodel が SHAPE_SPECS で解決)。
 // 同クラスでも別シルエットに振り分けて見分けを付ける。
@@ -37,7 +39,8 @@ export type ViewModelShape =
   | 'lmg-belt'
   | 'lmg-drum'
   | 'pistol'
-  | 'revolver';
+  | 'revolver'
+  | 'launcher'; // ロケットランチャー(肩担ぎ発射筒)
 
 // 兵装画面のステータスバー(6軸・0..10)。computeWeaponBars で WeaponDef から導出する
 export interface WeaponBars {
@@ -225,7 +228,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 0.6,
     bloomRecoveryDegPerS: 2.5,
     movementSpreadDeg: 0.8,
-    falloff: { start: 80, end: 140, minFactor: 0.92 }, // 胴は全域>=101
+    falloff: { start: 480, end: 620, minFactor: 0.9 }, // 最大ステージ対角509m超の全域でOSK維持
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.32, // 約3.1倍ズーム
@@ -236,7 +239,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // 画面シェイク(0.12)・ボルト音の演出層で出す。
     recoilPattern: risingPattern(4, 0.5, 0.08),
     recoilRecoveryPerS: 7, // やや遅い収束で重量感(視覚のキック側に効く)
-    range: 300,
+    range: 620,
     tracerColor: 0x9bd1ff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -724,7 +727,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 0.6,
     bloomRecoveryDegPerS: 2.5,
     movementSpreadDeg: 0.8,
-    falloff: { start: 40, end: 90, minFactor: 0.85 },
+    falloff: { start: 60, end: 135, minFactor: 0.85 }, // marksman 1.5x 射程拡張
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.45,
@@ -732,7 +735,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 520,
     recoilPattern: buildRecoil({ steps: 6, pitchDeg: 0.45, driftDeg: 0.08 }),
     recoilRecoveryPerS: 6.5,
-    range: 280,
+    range: 420,
     tracerColor: 0x33e0ff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -763,7 +766,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 0.6,
     bloomRecoveryDegPerS: 2.5,
     movementSpreadDeg: 0.85,
-    falloff: { start: 50, end: 110, minFactor: 0.9 },
+    falloff: { start: 75, end: 165, minFactor: 0.9 }, // marksman 1.5x 射程拡張
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.42,
@@ -772,7 +775,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // 初弾はクロスヘア通り(<=0.5°)に保つ。重い手応えは画面シェイク/音で演出
     recoilPattern: buildRecoil({ steps: 5, pitchDeg: 0.48, driftDeg: 0.1 }),
     recoilRecoveryPerS: 6,
-    range: 290,
+    range: 435,
     tracerColor: 0x00b3ff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -802,7 +805,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 0.6,
     bloomRecoveryDegPerS: 2.5,
     movementSpreadDeg: 0.8,
-    falloff: { start: 90, end: 150, minFactor: 0.9 },
+    falloff: { start: 480, end: 620, minFactor: 0.9 }, // 最大ステージ対角509m超の全域でOSK維持
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.34,
@@ -811,7 +814,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // クイックスコープのドカン感: frontLoad で初弾を強く跳ねさせる
     recoilPattern: buildRecoil({ steps: 4, pitchDeg: 0.5, driftDeg: 0.08 }),
     recoilRecoveryPerS: 7,
-    range: 300,
+    range: 620,
     tracerColor: 0xc8d8ff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -841,7 +844,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 0.6,
     bloomRecoveryDegPerS: 2.5,
     movementSpreadDeg: 0.8,
-    falloff: { start: 100, end: 160, minFactor: 0.95 },
+    falloff: { start: 480, end: 620, minFactor: 0.9 }, // 最大ステージ対角509m超の全域でOSK維持
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.3,
@@ -849,7 +852,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 560,
     recoilPattern: buildRecoil({ steps: 4, pitchDeg: 0.5, driftDeg: 0.08 }),
     recoilRecoveryPerS: 7,
-    range: 320,
+    range: 620,
     tracerColor: 0xe8f4ff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -1192,6 +1195,46 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     airSpreadDeg: 0,
     shape: 'fists',
   },
+  // ── ゴウカRL(業火): ロケットランチャー。発砲イベントは match が弾体発射へ差し替える ──
+  // damage=120 は直撃基準(実効は爆発ダメージ)。class='launcher' で爆発物扱い。
+  // ヒットスキャン不使用: fireShot は呼ばず、match の 'launcher' 分岐でロケットを飛ばす。
+  'gouka-rl': {
+    id: 'gouka-rl',
+    name: '業火RL',
+    slot: 'primary',
+    damage: 120, // 直撃基準。実効ダメージは爆発半径内の距離減衰で処理
+    headshotMultiplier: 1.0, // 爆発物のため頭部乗算は無意味
+    rpm: 48, // ≈1250ms/発。重い発射感
+    magazineSize: 5,
+    reloadTacticalMs: 3200,
+    reloadEmptyMs: 3800,
+    spreadHipDeg: 5.0, // ロケット=着弾爆発なので拡散は非本質
+    spreadAdsDeg: 0.5,
+    bloomPerShotDeg: 0.0,
+    bloomMaxDeg: 0.0,
+    bloomRecoveryDegPerS: 1.0,
+    movementSpreadDeg: 1.0,
+    falloff: { start: 300, end: 400, minFactor: 0.8 }, // hitscan 非使用だが start<end 制約
+    mode: 'semi',
+    burstCount: 1,
+    adsFovScale: 0.85,
+    adsTimeMs: 350,
+    switchMs: 650,
+    // 強い発射反動(frontLoad で初弾をドカン)
+    recoilPattern: buildRecoil({ steps: 2, pitchDeg: 0.75, driftDeg: 0.0, frontLoad: 1.2 }),
+    recoilRecoveryPerS: 3.5,
+    range: 400,
+    tracerColor: 0xff6a3c, // 炎色
+    pellets: 1,
+    pelletSpreadDeg: 0,
+    penetrationM: 0,
+    soundProfile: 'shotgun', // 発射音はaudioのrocketLaunch()で上書き済みだが型上必須
+    class: 'launcher',
+    adsMoveSuppression: 0.3,
+    airSpreadDeg: 2.0,
+    shape: 'launcher',
+    bodyScale: 1.4,
+  },
 };
 
 export const PRIMARY_IDS: readonly string[] = [
@@ -1221,6 +1264,8 @@ export const PRIMARY_IDS: readonly string[] = [
   'raijin-sg',
   'tsuchigumo-lmg',
   'raitei-lmg',
+  // ロケットランチャー(業火RL)
+  'gouka-rl',
   // おふざけ枠: 武器なし(格闘スタイル)。最初から解放
   'fists',
 ];

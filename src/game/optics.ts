@@ -67,6 +67,8 @@ export function classDefault(cls: WeaponClass): ViewModelShape {
       return 'pistol';
     case 'marksman':
       return 'dmr';
+    case 'launcher':
+      return 'launcher';
   }
 }
 

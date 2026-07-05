@@ -9,34 +9,36 @@ const EYE_STAND = 1.62;
 const EYE_CROUCH = 1.08;
 const EYE_SLIDE = 0.88;
 
-const WALK_SPEED = 4.6;
-const SPRINT_SPEED = 6.4;
-const CROUCH_SPEED = 2.4;
+const WALK_SPEED = 9.2;
+const SPRINT_SPEED = 12.8;
+const CROUCH_SPEED = 4.8;
 const ADS_SPEED_FACTOR = 0.6;
 const GROUND_ACCEL = 40;
 // 空中はQuake系の射影加速で運動量を保ちつつ強い空中制御を効かせる(BO3風)
 const AIR_ACCEL = 16;
-const AIR_WISH_SPEED = SPRINT_SPEED; // 見ている方向への加速の頭打ち
-const AIR_MAX_SPEED = 13; // 水平速度のソフト上限(ストレイフ蓄積の暴走防止)
-// 上限超過分の減衰率。ストレイフの加速(near-cap で ~0.5m/s/フレーム)を
-// 上回る強さにして、空中加速が上限の2倍まで暴走しないようにする
-const AIR_DRAG = 24;
+const AIR_WISH_SPEED = SPRINT_SPEED; // 見ている方向への加速の頭打ち(SPRINT連動で自動2倍)
+const AIR_MAX_SPEED = 40; // 水平速度のソフト上限(スライドジャンプの運動量を空中で長く維持)
+// 上限超過分の減衰率。ストレイフの加速(near-cap で ~3.4m/s/フレーム)を上回る強さにして、
+// 空中加速が上限の2倍(80m/s)まで暴走しないようにする。
+// 比例調整: 旧(AIR_DRAG=24, cap=13)→新(cap=40)で同比率 ≈ 8。
+// スライドジャンプ(92m/s)の余剰速度が約0.5秒で cap 付近まで自然に減衰する値。
+const AIR_DRAG = 8;
 const GRAVITY = 18;
 // 下向き終端速度。24/60 = 0.4m/frame で snapToGround(0.4) と床コライダー半厚(0.5)の
 // 両方を下回るため、長距離落下しても床スイープがスラブを飛び越さない(トンネリング防止)
 export const MAX_FALL_SPEED = 24;
 const JUMP_VELOCITY = 6.4;
-const THRUST_JUMP_VELOCITY = 6.0; // スラスト(二段)ジャンプの上昇量
+const THRUST_JUMP_VELOCITY = 18.0; // スラスト(二段)ジャンプの上昇量(×3: マップ5倍対応)
 const SLIDE_JUMP_VELOCITY = 6.9; // スライドジャンプはやや高く跳ぶ
 const AIR_JUMPS = 1; // 接地・壁取り付きで戻る空中ジャンプ回数
 const COYOTE_TIME = 0.1;
 const JUMP_BUFFER = 0.12;
-const FALL_DAMAGE_THRESHOLD = 16; // 空中戦主体なので落下耐性を少し上げる
+const FALL_DAMAGE_THRESHOLD = 24; // 速度スケール(WALK×2)に合わせ引き上げ(理不尽落下死防止)
 const FALL_DAMAGE_MULT = 4;
 const REGEN_DELAY = 4;
 const REGEN_PER_SECOND = 25;
 
-const SLIDE_BOOST = 9.2; // パワースライド開始時の加速(刷新)
+const SLIDE_BOOST = 92; // パワースライド開始時の加速(×10: マップ5倍対応)
 const SLIDE_MIN_SPEED = 3.0; // スライド終端速度
 const SLIDE_DURATION = 0.85;
 const SLIDE_STEER = 6;
@@ -44,7 +46,7 @@ const SLIDE_ENTER_SPEED = WALK_SPEED * 0.9;
 const SLIDE_COOLDOWN = 0.25; // 連続スライドの最小間隔
 
 const WALLRUN_DURATION = 1.5;
-const WALLRUN_SPEED = 7.6;
+const WALLRUN_SPEED = 15; // ダッシュ2倍(SPRINT×2)に整合
 const WALLRUN_GRAVITY = 0.18; // 重力係数。小さいほどゆっくり落ちる
 const WALLRUN_MIN_SPEED = 3.0; // 取り付きに必要な水平速度
 const WALLRUN_STICK = 1.2; // 壁へ押し付ける速度
@@ -52,8 +54,8 @@ const WALLRUN_DETECT = 0.32; // カプセル表面からの壁検出距離
 const WALLRUN_COOLDOWN = 0.3; // 離脱後の再取り付き禁止時間
 const WALLRUN_FALL_CAP = 2; // ウォールラン中の最大落下速度
 const WALLRUN_TILT_SPEED = 8; // 視点ロールの追従速度
-const WALLJUMP_UP = 6.6;
-const WALLJUMP_PUSH = 5.4;
+const WALLJUMP_UP = 10; // ~×1.5 (気持ちよく)
+const WALLJUMP_PUSH = 8; // ~×1.5 (気持ちよく)
 
 const LEAN_OFFSET = 0.38;
 const LEAN_SPEED = 9;
@@ -389,20 +391,42 @@ export class Player {
       dt,
     );
 
-    const movement = {
-      x: this.vel.x * dt,
-      y: this.velY * dt,
-      z: this.vel.z * dt,
-    };
-    this.controller.computeColliderMovement(this.collider, movement);
-    const moved = this.controller.computedMovement();
+    // ── 移動適用(サブステップ分割でトンネリング防止) ──
+    // SLIDE_BOOST 92m/s → 1フレームで最大 92/60 ≈ 1.53m 移動。
+    // 水平変位が 0.5m を超える場合は 2-4 分割で連続 computeColliderMovement を呼び出し、
+    // 薄い壁への貫通リスクを低減する。
+    // 垂直は MAX_FALL_SPEED=24(0.4m/frame) で保証済みのため分割不要。
+    const hx = this.vel.x * dt;
+    const hz = this.vel.z * dt;
+    const vy = this.velY * dt;
+    const hDist = Math.hypot(hx, hz);
+    const substeps = hDist > 0.5 ? Math.min(4, Math.ceil(hDist / 0.5)) : 1;
+    const moved = new THREE.Vector3();
+    for (let si = 0; si < substeps; si++) {
+      this.controller.computeColliderMovement(this.collider, {
+        x: hx / substeps,
+        y: si === 0 ? vy : 0, // 垂直は最初のサブステップのみ(接地判定・天井検知のため)
+        z: hz / substeps,
+      });
+      const m = this.controller.computedMovement();
+      moved.x += m.x;
+      if (si === 0) moved.y = m.y;
+      moved.z += m.z;
+      // 水平移動が大きく妨げられた場合は後続ステップを打ち切る(壁への二重貫通回避)
+      if (
+        si < substeps - 1 &&
+        Math.hypot(m.x, m.z) < Math.hypot(hx / substeps, hz / substeps) * 0.5
+      ) {
+        break;
+      }
+    }
     const wasGrounded = this.grounded;
     const fallSpeed = -this.velY;
     this.grounded = this.controller.computedGrounded();
 
     if (this.grounded && this.velY < 0) this.velY = -0.5;
     // 頭上に当たって上昇が遮られた場合
-    if (this.velY > 0 && moved.y < movement.y * 0.5) this.velY = 0;
+    if (this.velY > 0 && moved.y < vy * 0.5) this.velY = 0;
 
     if (!wasGrounded && this.grounded) {
       if (this.diving) {

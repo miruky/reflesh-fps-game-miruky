@@ -62,6 +62,7 @@ describe('buildGunBody', () => {
     'lmg-drum': 1,
     pistol: 1,
     revolver: 1,
+    launcher: 1,
   } satisfies Record<ViewModelShape, 1>;
 
   const base = Object.values(WEAPON_DEFS)[0];

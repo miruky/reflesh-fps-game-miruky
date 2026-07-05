@@ -2262,6 +2262,17 @@ export class SoundKit {
     this.noiseBurst({ durationS: 0.18, filterHz: 1100, filterType: 'bandpass', gain: 0.2 });
   }
 
+  // ロケット発射: バックブラスト風の低音ドンッ + 排気シューッ(2層)
+  rocketLaunch(): void {
+    // L1 バックブラスト衝撃体(低い爆発的ドンッ)
+    this.noiseBurst({ durationS: 0.28, filterHz: 180, filterType: 'lowpass', gain: 0.72, drive: 7, attackS: 0.002 });
+    // L2 排気噴射(シューッという高域噴出)
+    this.noiseBurst({ durationS: 0.32, filterHz: 1800, filterType: 'bandpass', q: 1.8, gain: 0.38, attackS: 0.005 });
+    // L3 低域サブ(発射の重さを感じさせる)
+    this.tone({ freq: 80, endFreq: 32, durationS: 0.38, type: 'triangle', gain: 0.4, drive: 4 });
+    this.duck(-8, 0.06);
+  }
+
   bounce(pan: number, distance: number): void {
     const att = 1 / (1 + distance * 0.1);
     this.tone({ freq: 380, endFreq: 240, durationS: 0.06, type: 'triangle', gain: 0.2 * att, pan });

@@ -135,6 +135,8 @@ export const LONGSHOT: Record<WeaponClass, number> = {
   shotgun: Infinity,
   // 精密射手は遠距離が本領。ARより遠くに閾値を置き「遠射」を特別化
   marksman: 48,
+  // ロケットランチャー: 爆発範囲攻撃のためロングショット無効
+  launcher: Infinity,
 };
 
 // バッジ表示しない(killfeed のアイコンのみに降格する)メダル。HUDが参照

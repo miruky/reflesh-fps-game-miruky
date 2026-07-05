@@ -2200,15 +2200,20 @@ tr.score-ally td {
 .sc-cross > .rk {
   display: none;
 }
-/* 既定=mildot(ネイティブ狙撃/可変倍率)。未知/1x種別も安全網としてmildotへフォールバック */
+/* 既定=mildot(可変倍率)。未知/1x種別も安全網としてmildotへフォールバック。
+   native スナイパー(data-optic-class='native')は後段の rk-dsr で描画するため除外 */
 .hud-scope:not([data-reticle]) .sc-cross > .rk-mildot,
-.hud-scope[data-reticle='mildot'] .sc-cross > .rk-mildot,
+.hud-scope[data-reticle='mildot']:not([data-optic-class='native']) .sc-cross > .rk-mildot,
 .hud-scope[data-reticle='dot'] .sc-cross > .rk-mildot,
 .hud-scope[data-reticle='holo'] .sc-cross > .rk-mildot,
 .hud-scope[data-reticle='delta'] .sc-cross > .rk-mildot,
 .hud-scope[data-reticle='chevron'] .sc-cross > .rk-chevron,
 .hud-scope[data-reticle='circle-dot'] .sc-cross > .rk-circle-dot,
 .hud-scope[data-reticle='thermal'] .sc-cross > .rk-thermal {
+  display: block;
+}
+/* DSR精密: native スナイパー(scope-dmr / scope-sniper / scope-dsr)専用 */
+.hud-scope[data-reticle='mildot'][data-optic-class='native'] .sc-cross > .rk-dsr {
   display: block;
 }
 /* ACOGシェブロンは塗り(sc-cross * の fill:none を path のみ上書き。lineスタジアはstroke維持) */
@@ -2237,6 +2242,38 @@ tr.score-ally td {
 .hud-scope[data-optic-class='magnified'] .sc-back,
 .hud-scope[data-optic-class='magnified'] .sc-mask {
   opacity: 0.32;
+}
+
+/* ── DSR精密レティクル スタイル(native スナイパー専用・極細1px級) ── */
+/* ハロー: 細く絞った黒影でコントラスト確保 */
+.sc-dsr-halo {
+  stroke: rgba(0, 0, 0, 0.72);
+  stroke-width: 1.5;
+}
+/* メイン十字アーム: 白/0.85 opacity・0.5px */
+.sc-dsr-line {
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 0.5;
+}
+/* ミル目盛り: flat butt cap で実銃光学の精密感を演出 */
+.sc-dsr-tick {
+  stroke: rgba(255, 255, 255, 0.70);
+  stroke-width: 0.45;
+  stroke-linecap: butt;
+}
+/* ホールドオーバーマーク: 主線より少し暗め */
+.sc-dsr-hold {
+  stroke: rgba(255, 255, 255, 0.78);
+  stroke-width: 0.5;
+}
+/* 中央アンバー照準点: アクセント色(--scope-reticle)を継承 */
+.sc-dsr-center-halo {
+  fill: rgba(0, 0, 0, 0.85);
+  stroke: none;
+}
+.sc-dsr-center {
+  fill: var(--scope-reticle, var(--accent));
+  stroke: none;
 }
 
 .sc-readout {

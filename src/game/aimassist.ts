@@ -36,6 +36,7 @@ export const CLASS_AA_MUL: Record<WeaponClass, number> = {
   pistol: 0.6,
   marksman: 0.7,
   sniper: 1.0,
+  launcher: 0.4, // ロケットは爆発範囲で当てるのでアシスト最小
 };
 // マウスはパッドより弱い「摩擦」だけを感じる程度に抑える
 export const MOUSE_AA_SCALE = 0.45;

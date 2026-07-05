@@ -103,6 +103,7 @@ const CLASS_LABELS: Record<WeaponClass, string> = {
   br: 'バトルライフル',
   lmg: 'ライトマシンガン',
   pistol: 'ハンドガン',
+  launcher: 'ロケットランチャー',
 };
 const CLASS_ORDER: readonly WeaponClass[] = [
   'ar',
@@ -113,6 +114,7 @@ const CLASS_ORDER: readonly WeaponClass[] = [
   'shotgun',
   'lmg',
   'pistol',
+  'launcher',
 ];
 
 const GRENADE_DESCS: Record<GrenadeKind, string> = {
@@ -292,6 +294,7 @@ const CLASS_SHAPE: Record<WeaponClass, ViewModelShape> = {
   br: 'rifle',
   lmg: 'lmg-belt',
   pistol: 'pistol',
+  launcher: 'launcher',
 };
 
 interface SilSpec {
@@ -320,6 +323,8 @@ const SHAPE_SIL: Record<ViewModelShape, SilSpec> = {
   'lmg-drum': { arch: 'lmg', barrel: 118, mag: 'drum', optic: 'red', stock: 'full' },
   pistol: { arch: 'pistol' },
   revolver: { arch: 'revolver' },
+  // ロケットランチャー: LMG アーチで太い筒シルエットに近似
+  launcher: { arch: 'lmg', barrel: 120, mag: 'tube', optic: 'iron', stock: 'none' },
 };
 
 function tracerHex(color: number): string {

@@ -53,10 +53,11 @@ describe('softAirCap', () => {
   });
 
   it('上限超過分をゆるく引き戻すが、上限を下回らない', () => {
-    const v = new THREE.Vector3(20, 0, 0);
+    // airMax=40 より大きい値(50)でテストする
+    const v = new THREE.Vector3(50, 0, 0);
     softAirCap(v, 1 / 60);
     const sp = Math.hypot(v.x, v.z);
-    expect(sp).toBeLessThan(20);
+    expect(sp).toBeLessThan(50);
     expect(sp).toBeGreaterThanOrEqual(MOVE_SPEEDS.airMax);
   });
 });

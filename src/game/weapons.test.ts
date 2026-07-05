@@ -20,6 +20,7 @@ const WEAPON_CLASSES: WeaponClass[] = [
   'lmg',
   'pistol',
   'marksman',
+  'launcher',
 ];
 const SOUND_PROFILES: SoundProfile[] = [
   'ar',
@@ -237,8 +238,8 @@ describe('拡張ロスターの不変条件', () => {
     }
   });
 
-  it('プライマリ25本(銃24+素手)・セカンダリ4本である', () => {
-    expect(PRIMARY_IDS.length).toBe(25);
+  it('プライマリ26本(銃25+素手)・セカンダリ4本である', () => {
+    expect(PRIMARY_IDS.length).toBe(26);
     expect(PRIMARY_IDS).toContain('fists');
     expect(SECONDARY_IDS.length).toBe(4);
     // ID重複なし
@@ -300,17 +301,18 @@ describe('拡張ロスターの不変条件', () => {
     }
   });
 
-  it('スナイパー以外は素ダメージ<100(ヘッドショット無しの胴即死を回避)', () => {
+  it('スナイパー/ランチャー以外は素ダメージ<100(ヘッドショット無しの胴即死を回避)', () => {
     for (const def of Object.values(WEAPON_DEFS)) {
-      if (def.class === 'sniper') continue;
+      // sniper は胴/頭OSK設計。launcher は爆発物で直撃damage=120だがhitscanを使わない
+      if (def.class === 'sniper' || def.class === 'launcher') continue;
       expect(def.damage, def.id).toBeLessThan(100);
     }
   });
 
-  it('スナイパー/ショットガン以外は1射の合計ダメージ<100(胴即死禁止)', () => {
-    // ショットガンは至近の全弾命中で即死=設計どおり。それ以外のクラスは pellets×damage でも<100
+  it('スナイパー/ショットガン/ランチャー以外は1射の合計ダメージ<100(胴即死禁止)', () => {
+    // ショットガンは至近の全弾命中で即死=設計どおり。ランチャーは爆発物で直撃damage≥100
     for (const def of Object.values(WEAPON_DEFS)) {
-      if (def.class === 'sniper' || def.class === 'shotgun') continue;
+      if (def.class === 'sniper' || def.class === 'shotgun' || def.class === 'launcher') continue;
       expect(def.damage * def.pellets, def.id).toBeLessThan(100);
     }
   });
