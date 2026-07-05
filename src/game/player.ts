@@ -31,7 +31,9 @@ const JUMP_VELOCITY = 6.4;
 const THRUST_JUMP_VELOCITY = 18.0; // スラスト(二段)ジャンプの上昇量(×3: マップ5倍対応)
 const SLIDE_JUMP_VELOCITY = 6.9; // スライドジャンプはやや高く跳ぶ
 const AIR_JUMPS = 1; // 接地・壁取り付きで戻る空中ジャンプ回数
-const COYOTE_TIME = 0.1;
+export const COYOTE_TIME = 0.15; // 0.1→0.15 強化(Titanfall2式コヨーテ拡張)
+export const COYOTE_EDGE_WINDOW = 0.05; // 窓の終端50msがエッジブースト発動域
+export const EDGE_BOOST = 0.08; // エッジブースト: 水平速度+8%
 const JUMP_BUFFER = 0.12;
 const FALL_DAMAGE_THRESHOLD = 24; // 速度スケール(WALK×2)に合わせ引き上げ(理不尽落下死防止)
 const FALL_DAMAGE_MULT = 4;
@@ -230,6 +232,10 @@ export class Player {
     this.wallRunCooldown = Math.max(0, this.wallRunCooldown - dt);
     this.slideCooldown = Math.max(0, this.slideCooldown - dt);
 
+    // eatJump / forceSprint: スライドジャンプキャンセル用の単フレームフラグ
+    let eatJump = false; // trueのときジャンプバッファを充填しない(空中ジャンプ抑止)
+    let forceSprint = false; // trueのときスプリント条件を入力に依らず満たす
+
     // ── スライド開始 / キャンセル ──
     if (
       input.crouchPressed &&
@@ -250,6 +256,13 @@ export class Player {
     } else if (this.sliding && input.crouchPressed) {
       // しゃがみ再入力でスライドキャンセル(再スプリント連係用)
       this.endSlide();
+    } else if (this.sliding && input.jumpPressed && this.grounded) {
+      // MW2019式スライドキャンセル: ジャンプ入力で即スプリントへ直帰(空中へは行かない)。
+      // スライドジャンプ(coyote窓での跳び)とは独立。接地中のみ発動。
+      // クールダウン(SLIDE_COOLDOWN 0.25s)は endSlide() が管理 → 無限スパム不可。
+      this.endSlide();
+      eatJump = true; // ジャンプ入力を消費し、下のバッファ充填を抑止
+      forceSprint = true; // 入力に依らずスプリント復帰を即保証
     }
 
     if (this.sliding) {
@@ -272,8 +285,7 @@ export class Player {
     if (Math.abs(this.lean) < 0.01 && leanTarget === 0) this.lean = 0;
 
     this.sprinting =
-      input.sprint &&
-      input.z > 0.5 &&
+      (forceSprint || (input.sprint && input.z > 0.5)) &&
       !input.crouch &&
       !this.sliding &&
       adsProgress < 0.3 &&
@@ -329,7 +341,10 @@ export class Player {
 
     // ── ジャンプ処理(接地 / スライド / スラスト二段 / 壁蹴り)──
     this.sinceGrounded = this.grounded ? 0 : this.sinceGrounded + dt;
-    this.jumpBuffered = input.jumpPressed ? JUMP_BUFFER : Math.max(0, this.jumpBuffered - dt);
+    // eatJump: スライドキャンセル時にジャンプ入力を消費し、バッファを充填しない
+    this.jumpBuffered = eatJump
+      ? Math.max(0, this.jumpBuffered - dt)
+      : input.jumpPressed ? JUMP_BUFFER : Math.max(0, this.jumpBuffered - dt);
     if (this.grounded) this.airJumpsLeft = AIR_JUMPS;
 
     // ジャンプ系の入力はダイブを解除する(降下をキャンセルした場合スラムは不発=無コスト連打防止)
@@ -348,9 +363,20 @@ export class Player {
     } else if (this.jumpBuffered > 0 && this.sinceGrounded < COYOTE_TIME && !this.wallRunning) {
       // 接地ジャンプ。スライド中なら水平運動量を保ったまま打ち上げる(スライドジャンプ)
       const wasSliding = this.sliding;
+      // エッジブースト(Titanfall2): コヨーテ窓の終端50msで跳んだ場合、水平速度+8%ボーナス。
+      // 「遅らせ入力への報酬」として作用し、ギリギリのタイミングが気持ちよく感じる。
+      const edgeBoost = this.sinceGrounded >= COYOTE_TIME - COYOTE_EDGE_WINDOW;
       this.velY = wasSliding ? SLIDE_JUMP_VELOCITY : JUMP_VELOCITY;
       this.jumpBuffered = 0;
-      this.sinceGrounded = COYOTE_TIME;
+      this.sinceGrounded = COYOTE_TIME; // 二重跳び防止(ウィンドウを即閉鎖)
+      if (edgeBoost) {
+        const sp = Math.hypot(this.vel.x, this.vel.z);
+        if (sp > 0) {
+          this.vel.x *= 1 + EDGE_BOOST;
+          this.vel.z *= 1 + EDGE_BOOST;
+        }
+        this.justBoosted = true;
+      }
       if (wasSliding) {
         this.endSlide();
         this.justBoosted = true;

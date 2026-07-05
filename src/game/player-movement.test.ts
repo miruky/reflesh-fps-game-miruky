@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { airAccelerate, MOVE_SPEEDS, slideSpeedAt, softAirCap } from './player';
+import {
+  airAccelerate,
+  COYOTE_EDGE_WINDOW,
+  COYOTE_TIME,
+  EDGE_BOOST,
+  MOVE_SPEEDS,
+  slideSpeedAt,
+  softAirCap,
+} from './player';
 
 describe('slideSpeedAt', () => {
   it('開始が最速で終端へ単調に落ちる', () => {
@@ -42,6 +50,31 @@ describe('airAccelerate(射影式エアアクセル)', () => {
     airAccelerate(v, 0, 0, 6, 12, 1 / 60);
     expect(v.x).toBe(3);
     expect(v.z).toBe(4);
+  });
+});
+
+describe('コヨーテタイム + エッジブースト定数 (Titanfall2)', () => {
+  it('COYOTE_TIME が 0.15s(旧0.1sから強化)', () => {
+    expect(COYOTE_TIME).toBe(0.15);
+  });
+
+  it('COYOTE_EDGE_WINDOW が 50ms = 0.05s', () => {
+    expect(COYOTE_EDGE_WINDOW).toBe(0.05);
+  });
+
+  it('エッジブースト発動域はコヨーテ窓の後半50ms', () => {
+    // edgeBoost が発動するのは sinceGrounded >= COYOTE_TIME - COYOTE_EDGE_WINDOW の範囲
+    const edgeStart = COYOTE_TIME - COYOTE_EDGE_WINDOW;
+    expect(edgeStart).toBeCloseTo(0.1, 10); // [0.10, 0.15) がブースト域
+  });
+
+  it('EDGE_BOOST が 8%', () => {
+    expect(EDGE_BOOST).toBe(0.08);
+  });
+
+  it('エッジブーストを適用した速度は元速度の1.08倍', () => {
+    const speed = 20;
+    expect(speed * (1 + EDGE_BOOST)).toBeCloseTo(21.6, 6);
   });
 });
 

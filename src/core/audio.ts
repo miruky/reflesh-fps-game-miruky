@@ -722,6 +722,10 @@ export class SoundKit {
   private lastImpactS = 0;
   private lastDarkSlashS = 0; // 黒帝斬撃波の連打スロットル(~0.06s)
   private lastEnemyFootstepS = 0; // 敵足音の全体スロットル(~0.03s)
+  private lastBulletCrackS = 0;   // bulletCrack スロットル(0.05s)
+  private lastSuppressionS = 0;   // suppressionWhoosh スロットル(0.15s)
+  private distantBattleActive = false;
+  private distantBattleTimer = 0; // scheduleDistantBoom の setTimeout ハンドル
   private tinnitusUntilS = 0;
   private duckRecoverTarget = 1; // 低HP時はBGM復帰を抑える
   private lastHealthCutoff = 20000;
@@ -1320,6 +1324,66 @@ export class SoundKit {
     });
   }
 
+  // BF5式弾クラック: 敵弾がプレイヤー至近(~1.5m)を通過した時のクラック/スナップ音。
+  // bulletWhizz(ドップラー「ヒューン」)と役割を分け、こちらは超音速衝撃波の「バンッ/スナップ」を担当。
+  // L1: 鋭い高域トランジェント(2-6kHz bandpass, ~15ms) — closeness高→帯域を絞りピーキーに。
+  // L2: 低域プレッシャーバースト(~80-120Hz lowpass, ~12ms) — 弾道衝撃波の空気圧縮。
+  // スロットル0.05s + ボイス予算ガード。wet:0(至近音=残響なし)。
+  bulletCrack(pan: number, closeness01: number): void {
+    const now = this.ctx?.currentTime ?? 0;
+    if (now - this.lastBulletCrackS < 0.05 || this.liveVoices() > 240) return;
+    this.lastBulletCrackS = now;
+    const c = Math.max(0, Math.min(1, closeness01));
+    // L1: 高域クラック/スナップ(closeness高→中心Hzを上げ帯域を絞って鋭さを増す)
+    this.noiseBurst({
+      durationS: 0.015,
+      filterHz: 2000 + c * 4000,
+      filterType: 'bandpass',
+      q: 3 + c * 4,
+      gain: 0.25 + c * 0.40,
+      pan,
+      attackS: 0.0008,
+      wet: 0,
+    });
+    // L2: 低域プレッシャー(超短・控えめ)
+    this.noiseBurst({
+      durationS: 0.012,
+      filterHz: 80 + c * 40,
+      filterType: 'lowpass',
+      gain: 0.08 + c * 0.12,
+      pan,
+      attackS: 0.001,
+      wet: 0,
+    });
+  }
+
+  // 制圧射撃(近弾連続時)の圧迫音: こもった風圧(lowpassノイズのうねり)。短く控えめ。
+  // スロットル0.15s + ボイス予算ガード。wet:0(体感音=残響なし)。
+  suppressionWhoosh(intensity01: number): void {
+    const now = this.ctx?.currentTime ?? 0;
+    if (now - this.lastSuppressionS < 0.15 || this.liveVoices() > 230) return;
+    this.lastSuppressionS = now;
+    const i = Math.max(0, Math.min(1, intensity01));
+    // こもった低域ノイズのうねり(圧力の風感)
+    this.noiseBurst({
+      durationS: 0.28 + i * 0.12,
+      filterHz: 180 + i * 140,
+      filterType: 'lowpass',
+      gain: 0.11 + i * 0.09,
+      attackS: 0.025,
+      wet: 0,
+    });
+    // 低域トーンの圧力感(衝撃波の輪郭)
+    this.tone({
+      freq: 70 + i * 30,
+      endFreq: 55,
+      durationS: 0.22 + i * 0.08,
+      type: 'sine',
+      gain: 0.05 + i * 0.06,
+      wet: 0,
+    });
+  }
+
   // 着弾の材質音(0.03sスロットル=ショットガン10ペレット対策)。45m超は省略
   setSurfaceMaterial(set: SurfaceSet): void {
     this.surface = set;
@@ -1423,6 +1487,44 @@ export class SoundKit {
     this.noiseBurst({ durationS: 0.012, filterHz: 5500, filterType: 'highpass', gain: 0.12, delayS: 0.04, attackS: 0.001, bus: this.uiBus ?? undefined });
   }
 
+  // Valorant式連続キルピッチラダー: tier(0-4)で半音ずつ(2^(tier/12))ピッチが上昇。
+  // tier>=5はエースの和音ファンファーレ(aceChord)へフォールバック。kill()後方互換。
+  killPitchTier(tier: number): void {
+    const t = Math.max(0, Math.min(5, Math.floor(tier)));
+    if (t >= 5) {
+      this.aceChord();
+      return;
+    }
+    // 半音等比スケール: tier0→1.000, 1→1.059, 2→1.122, 3→1.189, 4→1.260
+    this.kill(Math.pow(2, t / 12));
+  }
+
+  // エース(5キル連続)のC5-E5-G5-C6 上昇アルペジオファンファーレ
+  private aceChord(): void {
+    const freqs = [523, 659, 784, 1047]; // C5-E5-G5-C6
+    for (let i = 0; i < freqs.length; i += 1) {
+      this.tone({
+        freq: freqs[i]!,
+        durationS: 0.20 - i * 0.02,
+        type: 'sine',
+        gain: 0.38 - i * 0.05,
+        delayS: i * 0.055,
+        attackS: 0.001,
+        bus: this.uiBus ?? undefined,
+      });
+    }
+    // 低音サポート C3→E3(確定感の骨格)
+    this.tone({
+      freq: 130.81,
+      endFreq: 164.81,
+      durationS: 0.35,
+      type: 'sine',
+      gain: 0.30,
+      attackS: 0.002,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
   // 連続キルのアナウンサー音声。音声ファイルを持たずSpeechSynthesisで読み上げる。
   // 非対応・無音設定時は合成トーンのジングルにフォールバックする。volは0..1の設定値。
   announceStreak(label: string, vol: number): void {
@@ -1440,6 +1542,67 @@ export class SoundKit {
         type: 'sine',
         gain: 0.18 * vol,
         delayS: i * 0.08,
+        bus: this.uiBus ?? undefined,
+      });
+    }
+  }
+
+  // 5/10/15/20/25キルストリーク到達時の短いスティンガー和音。
+  // level 1→5 で段階的に豪華になる(音数・持続・装飾が増える)。
+  // 既存 announceStreak(TTS) と非衝突(uiBus経由・cancel呼ばず)。
+  streakStinger(level: number): void {
+    const lv = Math.max(1, Math.min(5, Math.floor(level)));
+    const vol = 0.22 + lv * 0.04;
+    // A5-C#6-E6-A6 の上昇アルペジオ(段階的に音数を増やす)
+    const seqs: number[][] = [
+      [880, 1109],                    // lv1: 2音
+      [880, 1109, 1319],              // lv2: 3音
+      [880, 1109, 1319, 1760],        // lv3: 4音(A6でオクターブ到達)
+      [659, 880, 1109, 1319, 1760],   // lv4: 5音(E5 先頭追加)
+      [659, 880, 1109, 1319, 1760],   // lv5: 同音列 + ファンファーレ装飾
+    ];
+    const seq = seqs[lv - 1]!;
+    const durPerNote = 0.07 + lv * 0.014;
+    for (let i = 0; i < seq.length; i += 1) {
+      this.tone({
+        freq: seq[i]!,
+        durationS: durPerNote,
+        type: 'sine',
+        gain: vol * (1 - i * 0.08),
+        delayS: i * 0.048,
+        attackS: 0.001,
+        bus: this.uiBus ?? undefined,
+      });
+    }
+    // lv3+: 低音の支えで厚み(A2→E3)
+    if (lv >= 3) {
+      this.tone({
+        freq: 220,
+        endFreq: 330,
+        durationS: 0.20 + lv * 0.04,
+        type: 'sine',
+        gain: 0.16 + lv * 0.02,
+        attackS: 0.003,
+        bus: this.uiBus ?? undefined,
+      });
+    }
+    // lv5: ノイズシマー + 低音リリース(フルファンファーレ)
+    if (lv >= 5) {
+      this.noiseBurst({
+        durationS: 0.30,
+        filterHz: 6500,
+        filterType: 'highpass',
+        gain: 0.13,
+        attackS: 0.012,
+        bus: this.uiBus ?? undefined,
+      });
+      this.tone({
+        freq: 110,
+        endFreq: 138.59,
+        durationS: 0.50,
+        type: 'sine',
+        gain: 0.28,
+        delayS: 0.12,
         bus: this.uiBus ?? undefined,
       });
     }
@@ -2650,10 +2813,83 @@ export class SoundKit {
     this.ambience?.setPaused(paused);
   }
 
+  // ── 遠方戦場アンビエンス(BF5式 distant battle) ─────────────────────────
+  // 4-12sのランダム間欠で砲声/爆発を合成: 低域ランブル(40-80Hz)+サブトーン+確率的クラック。
+  // 音量控えめ(没入の背景=戦場感の底上げ)。対戦/ゾンビモード中のみ流す想定。
+  // quiesce()で自動停止するため後始末は不要。
+
+  startDistantBattle(): void {
+    if (this.distantBattleActive) return;
+    this.distantBattleActive = true;
+    this.scheduleDistantBoom();
+  }
+
+  stopDistantBattle(): void {
+    this.distantBattleActive = false;
+    if (this.distantBattleTimer) {
+      clearTimeout(this.distantBattleTimer);
+      this.distantBattleTimer = 0;
+    }
+  }
+
+  private scheduleDistantBoom(): void {
+    if (!this.distantBattleActive || typeof window === 'undefined') return;
+    const delayMs = (4 + this.rng() * 8) * 1000; // 4-12s
+    this.distantBattleTimer = window.setTimeout(() => {
+      this.fireDistantBoom();
+      this.scheduleDistantBoom(); // 次イベントをチェーン
+    }, delayMs);
+  }
+
+  // 砲声1発を合成: 低域ランブル(40-80Hz)+サブトーン+確率的クラックトランジェント
+  private fireDistantBoom(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const pan = (this.rng() * 2 - 1) * 0.85;   // ランダムな方向(-0.85..0.85)
+    const gain = 0.05 + this.rng() * 0.035;     // 0.05-0.085 (控えめな背景音)
+    const rumbleHz = 40 + this.rng() * 40;      // 40-80Hz ランブル基音
+    const dur = 0.5 + this.rng() * 0.4;         // 0.5-0.9s
+    // 低域ランブル体(砲声のボディ)。wet:0.3で微かな残響尾を乗せる
+    this.noiseBurst({
+      durationS: dur,
+      filterHz: rumbleHz * 2,
+      filterType: 'lowpass',
+      gain,
+      pan,
+      attackS: 0.04,
+      wet: 0.3,
+    });
+    // サブトーン(衝撃波の低音芯。asymで小型スピーカーにも芯を残す)
+    this.tone({
+      freq: rumbleHz,
+      endFreq: rumbleHz * 0.6,
+      durationS: dur * 0.8,
+      type: 'sine',
+      gain: gain * 0.5,
+      pan,
+      drive: 3,
+      curve: 'asym',
+      wet: 0.25,
+    });
+    // 確率的クラックトランジェント(砲声のアタック感。~55%の確率で加える)
+    if (this.rng() > 0.45) {
+      this.noiseBurst({
+        durationS: 0.02,
+        filterHz: 1200,
+        filterType: 'bandpass',
+        q: 3,
+        gain: gain * 0.55,
+        pan,
+        attackS: 0.001,
+        wet: 0.2,
+      });
+    }
+  }
+
   // quit/試合遷移の後始末を単一路に集約。メニュー往復でオーディオ状態を完全初期化する
   quiesce(): void {
     this.stopBgm();
     this.stopAmbience();
+    this.stopDistantBattle(); // 遠方戦場アンビエンスの setTimeout を確実に解除
     if (this.ctx) {
       const now = this.ctx.currentTime;
       // dmrロングテール/パッドのメニュー漏れ防止(300ms後に設定値へ復帰)

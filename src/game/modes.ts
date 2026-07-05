@@ -1,6 +1,6 @@
 // ゲームモードのルール定義と進行計算。描画・物理に依存しない
 // 'story'=キャンペーン(目的駆動・scoreTarget無効) / 'score'=スコアアタック(時間内キル数)
-export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie';
+export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie' | 'hardpoint' | 'killconfirm';
 
 export type TeamId = number;
 
@@ -38,6 +38,20 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
     teamBased: true,
     scoreTarget: 150,
   },
+  hardpoint: {
+    id: 'hardpoint',
+    name: 'ハードポイント',
+    desc: '60秒ごとに移動する1区域を占拠してポイントを稼ぐ',
+    teamBased: true,
+    scoreTarget: 250,
+  },
+  killconfirm: {
+    id: 'killconfirm',
+    name: 'キルコンファーム',
+    desc: '倒した敵のドッグタグを回収して初めてスコアになる',
+    teamBased: true,
+    scoreTarget: 6500,
+  },
   story: {
     id: 'story',
     name: 'ストーリー',
@@ -62,7 +76,7 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
 };
 
 // メニューで選べる対戦モード。'story' は専用UI、'zombie' は専用ラウンドUI
-export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'score', 'zombie'];
+export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'hardpoint', 'killconfirm', 'score', 'zombie'];
 
 const CAPTURE_PER_S = 0.35;
 const DECAY_PER_S = 0.2;
@@ -174,6 +188,142 @@ export class DominationState {
       }
     }
     return points;
+  }
+}
+
+// ── ハードポイント: 1区域のローテーション管理とスコア計算 ─────────────────────────────
+export const HP_ROTATION_S = 60;
+export const HP_PREVIEW_S = 10;
+
+export class HardpointState {
+  private _zoneIndex = 0;
+  private _timeInZone = 0;
+  private _owner: TeamId | null = null;
+  private _contested = false;
+  private _tickAccumulator = 0;
+
+  constructor(readonly zoneCount: number) {}
+
+  get currentZoneIndex(): number { return this._zoneIndex; }
+  get timeUntilRotation(): number { return HP_ROTATION_S - this._timeInZone; }
+
+  /**
+   * presence: zone内のチームごとの人数 (teamId -> count)
+   * onRotate: ゾーンが切り替わった時に呼ばれる (from, to)
+   * 戻り値: 各チームへ加算するポイント + rotated フラグ
+   */
+  update(
+    dt: number,
+    presence: ReadonlyMap<TeamId, number>,
+    onRotate?: (from: number, to: number) => void,
+  ): { points: Map<TeamId, number>; rotated: boolean } {
+    const points = new Map<TeamId, number>();
+    const present = [...presence.entries()].filter(([, n]) => n > 0);
+    this._contested = present.length >= 2;
+
+    // 1チームのみ在中 → そのチームが占拠
+    if (!this._contested && present.length === 1) {
+      this._owner = present[0]![0];
+    }
+    // 誰もいない or コンテストは owner をそのままにして得点させない
+
+    // 1pt/s: 占拠中・非コンテスト時のみ。
+    // V30修正: 無人ゾーンで前占拠チームが得点し続けないよう present>0 を必須に(BO2仕様)
+    if (this._owner !== null && !this._contested && present.length > 0) {
+      this._tickAccumulator += dt;
+      while (this._tickAccumulator >= 1) {
+        this._tickAccumulator -= 1;
+        points.set(this._owner, (points.get(this._owner) ?? 0) + 1);
+      }
+    }
+
+    // ゾーンローテーション
+    this._timeInZone += dt;
+    let rotated = false;
+    if (this._timeInZone >= HP_ROTATION_S) {
+      this._timeInZone -= HP_ROTATION_S;
+      const from = this._zoneIndex;
+      this._zoneIndex = (this._zoneIndex + 1) % this.zoneCount;
+      this._owner = null;
+      this._contested = false;
+      this._tickAccumulator = 0;
+      rotated = true;
+      onRotate?.(from, this._zoneIndex);
+    }
+
+    return { points, rotated };
+  }
+
+  snapshot(): { zoneIndex: number; owner: TeamId | null; contested: boolean; timeUntilRotation: number } {
+    return {
+      zoneIndex: this._zoneIndex,
+      owner: this._owner,
+      contested: this._contested,
+      timeUntilRotation: this.timeUntilRotation,
+    };
+  }
+}
+
+// ── キルコンファーム: ドッグタグのスポーン・回収・失効管理 ────────────────────────────
+export const KC_TAG_LIFETIME_S = 30;
+export const KC_PICKUP_RADIUS = 2.2;
+export const KC_CONFIRM_PTS = 100;
+export const KC_DENY_PTS = 25;
+
+export interface DogTag {
+  readonly id: number;
+  readonly pos: { x: number; y: number; z: number };
+  readonly deadTeam: TeamId;
+  readonly spawnedAt: number; // elapsed game time (s)
+}
+
+export class KillConfirmState {
+  private readonly tags: Array<DogTag & { collected: boolean }> = [];
+  private _nextId = 0;
+
+  /** 倒されたエンティティの位置にタグをスポーン。タグIDを返す */
+  spawnTag(pos: { x: number; y: number; z: number }, deadTeam: TeamId, elapsed: number): number {
+    const id = this._nextId++;
+    this.tags.push({ id, pos: { ...pos }, deadTeam, spawnedAt: elapsed, collected: false });
+    return id;
+  }
+
+  /**
+   * collectorTeam がタグを拾えるか試みる。
+   * 敵チームのタグ回収 → CONFIRM(+100), 味方タグ回収 → DENY(+25)
+   */
+  tryCollect(
+    collectorTeam: TeamId,
+    pos: { x: number; z: number },
+  ): { id: number; event: 'confirm' | 'deny'; points: number } | null {
+    for (const tag of this.tags) {
+      if (tag.collected) continue;
+      const dx = pos.x - tag.pos.x;
+      const dz = pos.z - tag.pos.z;
+      if (Math.hypot(dx, dz) > KC_PICKUP_RADIUS) continue;
+      tag.collected = true;
+      const event = collectorTeam !== tag.deadTeam ? 'confirm' : 'deny';
+      return { id: tag.id, event, points: event === 'confirm' ? KC_CONFIRM_PTS : KC_DENY_PTS };
+    }
+    return null;
+  }
+
+  /** 期限切れ・回収済みタグを削除し、期限切れのIDリストを返す */
+  pruneExpired(elapsed: number): number[] {
+    const expired: number[] = [];
+    for (let i = this.tags.length - 1; i >= 0; i--) {
+      const tag = this.tags[i]!;
+      if (tag.collected) { this.tags.splice(i, 1); continue; }
+      if (elapsed - tag.spawnedAt >= KC_TAG_LIFETIME_S) {
+        expired.push(tag.id);
+        this.tags.splice(i, 1);
+      }
+    }
+    return expired;
+  }
+
+  activeTags(): ReadonlyArray<DogTag> {
+    return this.tags.filter((t) => !t.collected);
   }
 }
 

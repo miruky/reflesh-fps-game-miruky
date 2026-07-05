@@ -318,6 +318,96 @@ describe('拡張ロスターの不変条件', () => {
   });
 });
 
+describe('リロードキャンセル AddTime (BO7式)', () => {
+  it('65%到達後のキャンセルでは弾倉が満タンになる', () => {
+    const weapon = makeWeapon('kaede-ar');
+    settle(weapon, 1000); // 構え完了
+    // 1発撃って残弾を減らす
+    settle(weapon, 200);
+    weapon.update(5, { trigger: true, ads: false, reloadPressed: false }, CTX);
+    expect(weapon.magazine.rounds).toBe(weapon.def.magazineSize - 1);
+    // リロード開始
+    weapon.update(5, { trigger: false, ads: false, reloadPressed: true }, CTX);
+    expect(weapon.reloading).toBe(true);
+    // 66%(>65%)まで進める(tactical: 1700ms → 66% = 1122ms 経過 → remaining = 578ms)
+    settle(weapon, weapon.def.reloadTacticalMs * 0.66);
+    expect(weapon.reloading).toBe(true); // まだ完了していない
+    // キャンセル(スプリント/ADS/武器切替/スライドを模倣)
+    weapon.cancelReload();
+    expect(weapon.reloading).toBe(false);
+    // 弾が入っている
+    expect(weapon.magazine.rounds).toBe(weapon.def.magazineSize);
+  });
+
+  it('65%未満のキャンセルでは弾倉は変化しない', () => {
+    const weapon = makeWeapon('kaede-ar');
+    settle(weapon, 1000);
+    settle(weapon, 200);
+    weapon.update(5, { trigger: true, ads: false, reloadPressed: false }, CTX);
+    const roundsBefore = weapon.magazine.rounds; // magazineSize - 1
+    // リロード開始 → 64%で止める
+    weapon.update(5, { trigger: false, ads: false, reloadPressed: true }, CTX);
+    settle(weapon, weapon.def.reloadTacticalMs * 0.64);
+    weapon.cancelReload();
+    // 弾倉は増えていない
+    expect(weapon.magazine.rounds).toBe(roundsBefore);
+  });
+
+  it('リロード完了(100%)は従来どおり弾が入る', () => {
+    const weapon = makeWeapon('kaede-ar');
+    settle(weapon, 1000);
+    weapon.update(5, { trigger: true, ads: false, reloadPressed: false }, CTX);
+    weapon.update(5, { trigger: false, ads: false, reloadPressed: true }, CTX);
+    settle(weapon, weapon.def.reloadTacticalMs + 50);
+    expect(weapon.reloading).toBe(false);
+    expect(weapon.magazine.rounds).toBe(weapon.def.magazineSize);
+  });
+
+  it('キャンセル後の次リロードも独立して65%ルールを適用する', () => {
+    const weapon = makeWeapon('kaede-ar');
+    settle(weapon, 1000);
+    // 1発撃って → 66%でキャンセル → 弾入り
+    weapon.update(5, { trigger: true, ads: false, reloadPressed: false }, CTX);
+    weapon.update(5, { trigger: false, ads: false, reloadPressed: true }, CTX);
+    settle(weapon, weapon.def.reloadTacticalMs * 0.66);
+    weapon.cancelReload();
+    expect(weapon.magazine.rounds).toBe(weapon.def.magazineSize); // 満タン
+
+    // もう1発撃つ
+    settle(weapon, 200);
+    weapon.update(5, { trigger: true, ads: false, reloadPressed: false }, CTX);
+    const roundsBefore = weapon.magazine.rounds;
+    // 新リロード → 30%で止める(前回のフラグが引き継がれていないことを確認)
+    weapon.update(5, { trigger: false, ads: false, reloadPressed: true }, CTX);
+    settle(weapon, weapon.def.reloadTacticalMs * 0.30);
+    weapon.cancelReload();
+    expect(weapon.magazine.rounds).toBe(roundsBefore); // 増えていない
+  });
+
+  it('65%境界ジャスト付近の判定が正確(比較: reloadRatio >= 0.65)', () => {
+    // 66%: 充填済み
+    const w1 = makeWeapon('kaede-ar');
+    settle(w1, 1000);
+    settle(w1, 200);
+    w1.update(5, { trigger: true, ads: false, reloadPressed: false }, CTX);
+    w1.update(5, { trigger: false, ads: false, reloadPressed: true }, CTX);
+    settle(w1, w1.def.reloadTacticalMs * 0.66);
+    w1.cancelReload();
+    expect(w1.magazine.rounds).toBe(w1.def.magazineSize);
+
+    // 64%: 未充填
+    const w2 = makeWeapon('kaede-ar');
+    settle(w2, 1000);
+    settle(w2, 200);
+    w2.update(5, { trigger: true, ads: false, reloadPressed: false }, CTX);
+    const before = w2.magazine.rounds;
+    w2.update(5, { trigger: false, ads: false, reloadPressed: true }, CTX);
+    settle(w2, w2.def.reloadTacticalMs * 0.64);
+    w2.cancelReload();
+    expect(w2.magazine.rounds).toBe(before);
+  });
+});
+
 describe('スコープ精度', () => {
   it('覗いて移動・空中でもDMRはほぼ無拡散、腰だめは大きく開く', () => {
     const weapon = new Weapon(WEAPON_DEFS['yamasemi-dmr']!);

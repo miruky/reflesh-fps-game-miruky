@@ -1328,6 +1328,8 @@ export class Weapon {
   private reloadRemainingMs = 0;
   private reloadDurationMs = 1;
   private reloadingKind: 'tactical' | 'empty' | null = null;
+  // AddTime(BO7): リロード65%地点で弾倉を事前充填済みか。以降のキャンセルでも弾を保持。
+  private reloadAmmoRestored = false;
   private burstLeft = 0;
   private triggerWasDown = false;
   private sinceLastShotMs = 0;
@@ -1364,6 +1366,7 @@ export class Weapon {
   raise(): void {
     this.raiseRemainingMs = this.def.switchMs;
     this.cancelReload();
+    this.reloadAmmoRestored = false; // 次のリロードは新規扱い(弾は finishReload 済みで magazine に残る)
     this.burstLeft = 0;
     this.adsProgress = 0;
     this.bloomDeg = 0;
@@ -1421,8 +1424,19 @@ export class Weapon {
 
     if (this.reloadingKind !== null) {
       this.reloadRemainingMs -= dtMs;
-      if (this.reloadRemainingMs <= 0) {
+      // AddTime(BO7式): リロード全体の65%地点で弾倉を先行充填する。
+      // これ以降にスプリント/ADS/武器切替/スライドでキャンセルされても弾は残る。
+      // 65%未満のキャンセルは従来どおり弾なし(マガジンは変化しない)。
+      if (!this.reloadAmmoRestored && this.reloadRatio >= 0.65) {
         this.magazine.finishReload();
+        this.reloadAmmoRestored = true;
+      }
+      if (this.reloadRemainingMs <= 0) {
+        // 65%以降でキャンセルなく完走した場合: 既に充填済みなので二重充填しない
+        if (!this.reloadAmmoRestored) {
+          this.magazine.finishReload();
+        }
+        this.reloadAmmoRestored = false; // 次リロードのためリセット
         this.reloadingKind = null;
         events.push({ type: 'reload-finish' });
       }
@@ -1433,6 +1447,7 @@ export class Weapon {
     if (input.reloadPressed && this.magazine.canReload && this.raiseRemainingMs <= 0) {
       const kind = this.magazine.reloadKind();
       const durationMs = kind === 'tactical' ? this.def.reloadTacticalMs : this.def.reloadEmptyMs;
+      this.reloadAmmoRestored = false; // 新規リロード開始: AddTimeフラグをリセット
       this.reloadingKind = kind;
       this.reloadRemainingMs = durationMs;
       this.reloadDurationMs = durationMs;
@@ -1466,6 +1481,7 @@ export class Weapon {
         // 空マガジンになったら自動リロード
         if (this.magazine.isEmpty && this.magazine.canReload) {
           this.burstLeft = 0; // R14: 空リロードでバースト残を消し、リロード後の幽霊発射を防ぐ
+          this.reloadAmmoRestored = false; // 新規リロード開始
           this.reloadingKind = 'empty';
           this.reloadRemainingMs = this.def.reloadEmptyMs;
           this.reloadDurationMs = this.def.reloadEmptyMs;

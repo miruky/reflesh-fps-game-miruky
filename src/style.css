@@ -1968,28 +1968,26 @@ tr.score-ally td {
   top: 50%;
 }
 
-.hud-incoming-wrap {
-  position: absolute;
-  width: 0;
-  height: 0;
-  animation: fadeout 0.9s forwards;
+/* R30 ダメージ方向アーク(SVG弧セグメント版): 被弾方向に幅40°の赤い弧を0.6sでフェード。
+   .rm(アプリのreduceMotion)/OSのprefers-reduced-motion どちらでもグロー無しへ簡略化 */
+.hud-incoming-arc {
+  position: absolute; left: 50%; top: 50%;
+  width: 200px; height: 200px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  animation: arc-fade 0.6s forwards ease-out;
+  overflow: visible;
 }
-
-.hud-incoming-wedge {
-  position: absolute;
-  left: -14px;
-  top: -86px;
-  width: 28px;
-  height: 14px;
-  background: var(--ember);
-  clip-path: polygon(50% 0, 100% 100%, 0 100%);
-  opacity: 0.9;
+.hud-incoming-arc-path {
+  fill: none; stroke: #ff2a2a; stroke-width: 8; stroke-linecap: round;
+  opacity: 0.88; filter: drop-shadow(0 0 5px rgba(255, 40, 40, 0.65));
 }
-
-@keyframes fadeout {
-  to {
-    opacity: 0;
-  }
+.hud-incoming-arc.rm .hud-incoming-arc-path {
+  stroke-width: 5; filter: none; opacity: 0.65;
+}
+@keyframes arc-fade { 0% { opacity: 1; } 60% { opacity: 0.7; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .hud-incoming-arc-path { stroke-width: 5; filter: none; opacity: 0.65; }
 }
 
 .hud-vignette {
@@ -3467,50 +3465,52 @@ tr.score-ally td {
   mix-blend-mode: screen;
 }
 
-/* ── 追加HUD: スコア獲得トースト ── */
-.hud-score-toast {
+/* ── R30 スコアイベントリボン(右下・ストリークUI付近): 旧中央トーストを置換。
+   +XPイベントが上へ積み上がる(column-reverse)。最大4行・2.5sフェードはhud.tsが管理。
+   右下弾薬パネル/BO2ストリーク列/メダルバナー(中央上)と重ならない座標 ── */
+.hud-xp-ribbon {
   position: fixed;
-  left: 50%;
-  top: 56%;
-  transform: translateX(-50%);
+  right: 220px;
+  bottom: 190px; /* 弾薬パネル(bottom:22+高さ~160)の上・BO2ストリーク列(right:18)の左 */
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  gap: 4px;
   pointer-events: none;
   z-index: 6;
 }
-.score-toast-row {
+.xp-ribbon-row {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 5px;
   opacity: 0;
-  transform: translateY(6px);
+  transform: translateX(14px);
   transition:
-    opacity 0.18s var(--ease-out),
-    transform 0.18s var(--ease-out);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    opacity 0.18s var(--ease-out, ease),
+    transform 0.18s var(--ease-out, ease);
 }
-.score-toast-row.show {
+.xp-ribbon-row.show {
   opacity: 1;
   transform: none;
 }
-.score-toast-row.out {
+.xp-ribbon-row.out {
   opacity: 0;
-  transform: translateY(-10px);
-  transition-duration: 0.26s;
+  transform: translateX(-8px);
+  transition-duration: 0.34s;
 }
-.score-toast-row b {
-  font-family: var(--mono);
+.xp-ribbon-row b {
+  font-family: var(--mono, monospace);
   font-variant-numeric: tabular-nums;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   color: #ffd54a;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
 }
-.score-toast-row span {
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: var(--ink-soft);
+.xp-ribbon-row span {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  color: rgba(220, 225, 232, 0.85);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
 }
 
 /* ── 追加HUD: キル確定リング(クロスヘア中心) ── */
@@ -8937,32 +8937,14 @@ tr.score-ally td {
   }
 }
 
-/* ── H13. ダメージ方向: Titanfall2弧セグメント(三角wedge廃止)+被弾ビネット ── */
-.hud-incoming-wedge {
-  left: -60px;
-  top: -60px;
-  width: 120px;
-  height: 120px;
-  background: none;
-  border-radius: 50%;
-  border: 4px solid transparent;
-  border-top-color: var(--threat);
-  clip-path: none;
-  opacity: 1;
-  -webkit-mask: conic-gradient(from -32deg at 50% 50%, #000 0 64deg, transparent 64deg);
-  mask: conic-gradient(from -32deg at 50% 50%, #000 0 64deg, transparent 64deg);
-  filter: drop-shadow(0 0 9px color-mix(in srgb, var(--threat) 60%, transparent));
-  animation: incoming-in 0.12s var(--ease-out) both;
+/* ── H13. ダメージ方向: R30でSVGアーク(.hud-incoming-arc)へ移行。--threat色へ追従 ── */
+.hud-incoming-arc-path {
+  stroke: var(--threat);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--threat) 60%, transparent));
 }
-@keyframes incoming-in {
-  from {
-    opacity: 0;
-    transform: scale(1.18);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+/* このオーバーライドが基底のreduce-motion簡略化より後段のため、ここでも再宣言して守る */
+@media (prefers-reduced-motion: reduce) {
+  .hud-incoming-arc-path { filter: none; }
 }
 .hud-vignette {
   background: radial-gradient(
@@ -9002,21 +8984,16 @@ tr.score-ally td {
     0 1px 3px rgba(0, 0, 0, 0.85);
 }
 
-/* ── H15. スコアイベント(+100トースト): BO2即時報酬(聖域外58%へ) ── */
-.hud-score-toast {
-  top: 58%;
-}
-.score-toast-row b {
-  font-size: 17px;
+/* ── H15. スコアイベント(+XPリボン): BO2即時報酬をIGNITION FRAME計器色へ ── */
+.xp-ribbon-row b {
   font-weight: 800;
   color: var(--warn);
   text-shadow:
     0 0 10px color-mix(in srgb, var(--warn) 50%, transparent),
     0 1px 3px rgba(0, 0, 0, 0.8);
 }
-.score-toast-row span {
+.xp-ribbon-row span {
   font-family: var(--mono);
-  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em; /* 和文ラベル(キル/ヘッドショット) */
   color: var(--ink-soft);
@@ -10272,4 +10249,125 @@ body.killcam-active .hud-death {
 /* プリセットチップ: attach-options / attach-btn を継承 */
 .zr-presets {
   gap: 6px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   ハードポイント方向インジケータ
+   ══════════════════════════════════════════════════════════════════════ */
+.hud-hp-indicator {
+  position: fixed;
+  bottom: 200px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 40;
+  font-family: var(--font-ui);
+}
+
+.hud-hp-arrow-wrap {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s ease;
+}
+
+.hud-hp-arrow-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.hud-hp-arrow-shape {
+  fill: #ffd700;
+  filter: drop-shadow(0 0 3px #ffd70066);
+  transition: fill 0.2s;
+}
+
+.hud-hp-chip {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 2px 7px;
+  border-radius: 2px;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(255,215,0,0.4);
+  color: #ffd700;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.hud-hp-chip.hp-mine {
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.5);
+}
+
+.hud-hp-chip.hp-enemy {
+  color: #ff5040;
+  border-color: rgba(255,80,64,0.5);
+}
+
+.hud-hp-chip.hp-contested {
+  color: #fff;
+  border-color: rgba(255,255,255,0.5);
+}
+
+.hud-hp-time {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255,255,255,0.7);
+  transition: color 0.2s;
+}
+
+.hud-hp-time.hp-time-warn {
+  color: #ffcc00;
+  animation: hp-warn-pulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes hp-warn-pulse {
+  from { opacity: 0.6; }
+  to   { opacity: 1; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   キルコンファーム CONFIRMED / DENIED バナー
+   ══════════════════════════════════════════════════════════════════════ */
+.hud-kc-event {
+  position: fixed;
+  top: 38%;
+  left: 50%;
+  transform: translateX(-50%) scale(0.7);
+  font-family: var(--font-ui);
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0;
+  color: #ffd700;
+  text-shadow: 0 0 14px #ffd70099, 0 2px 6px rgba(0,0,0,0.9);
+  transition: opacity 0.08s, transform 0.08s;
+}
+
+.hud-kc-event[data-kind="denied"] {
+  color: #ff5858;
+  text-shadow: 0 0 14px #ff585899, 0 2px 6px rgba(0,0,0,0.9);
+}
+
+.hud-kc-event.kc-show {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+  transition: opacity 0.08s, transform 0.08s;
+}
+
+.hud-kc-event.kc-out {
+  opacity: 0;
+  transform: translateX(-50%) scale(1.05);
+  transition: opacity 0.35s ease, transform 0.35s ease;
 }

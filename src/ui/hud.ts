@@ -54,6 +54,8 @@ const DIRECTIONS: Array<[number, string]> = [
 
 const FEED_LIFETIME_MS = 4200;
 const PX_PER_DEG = 2.2;
+// ハードポイント/KC ミニマップ描画: ゾーン半径(match.tsの ZONE_RADIUS=3.5 と合わせる)
+const ZONE_R = 3.5;
 
 // ── R21 マルチキルバナー ──────────────────────────────────────────────────────────────────
 // マルチキル系メダルID(これらはバナーへルーティングし、pushMedalText/pushBadgeを出さない)
@@ -336,9 +338,21 @@ export class Hud {
           <path class="radar-self" d="M0,-5 L4,4 L0,1.5 L-4,4 Z"></path>
         </svg>
       </div>
-      <div class="hud-score-toast" data-id="scoretoast"></div>
+      <!-- ハードポイント方向インジケータ: プレイヤーヨー基準の矢印+状態チップ+カウントダウ��� -->
+      <div class="hud-hp-indicator" data-id="hpindicator" hidden>
+        <div class="hud-hp-arrow-wrap" data-id="hparrowwrap">
+          <svg class="hud-hp-arrow-svg" viewBox="-12 -12 24 24" aria-hidden="true">
+            <polygon class="hud-hp-arrow-shape" points="0,-10 6,6 0,2 -6,6" data-id="hparrowshape"/>
+          </svg>
+        </div>
+        <div class="hud-hp-chip" data-id="hpchip">HP</div>
+        <div class="hud-hp-time" data-id="hptime">60</div>
+      </div>
+      <!-- キルコンファーム演出バナー(CONFIRMED / DENIED) -->
+      <div class="hud-kc-event" data-id="kcevent" hidden></div>
       <div class="hud-dmg-layer" data-id="dmg"></div>
       <div class="hud-incoming" data-id="incoming"></div>
+      <div class="hud-xp-ribbon" data-id="xpribbon" aria-live="polite" aria-atomic="false"></div>
       <div class="hud-vignette" data-id="vignette"></div>
       <div class="hud-flash" data-id="flash"></div>
       <div class="hud-ultflash" data-id="ultflash"></div>
@@ -524,8 +538,9 @@ export class Hud {
     }
     const vign = this.el['kcvign'];
     if (vign) vign.classList.remove('final');
-    const toast = this.el['scoretoast'];
-    if (toast) toast.innerHTML = '';
+    // R30: スコアイベントはXPリボン(右下)へ一本化。試合ごとに残留行をクリア
+    const ribbon = this.el['xpribbon'];
+    if (ribbon) ribbon.innerHTML = '';
     const badges = this.el['badgestack'];
     if (badges) badges.innerHTML = '';
     const medalStack = this.el['medalstack'];
@@ -589,7 +604,7 @@ export class Hud {
     this.pushFeed(snap);
     this.pushHits(snap);
     this.pushDamageNumbers(snap, project);
-    this.pushScoreEvents(snap);
+    this.pushXpRibbon(snap);
     this.pushMedals(snap);
     this.updateRadar(snap);
     this.pushIncoming(snap);
@@ -900,6 +915,38 @@ export class Hud {
     }
     ctx.globalAlpha = 1;
 
+    // ── ハードポイントゾーン(回転コンテキスト内) ──
+    if (snap.hardpointZoneRelX !== undefined && snap.hardpointZoneRelZ !== undefined) {
+      const zx = snap.hardpointZoneRelX * scale;
+      const zz = snap.hardpointZoneRelZ * scale;
+      const zr = ZONE_R * scale;
+      const hpColor = snap.hardpointOwner === 'mine'
+        ? 'rgba(90,176,255,0.85)'
+        : snap.hardpointOwner === 'enemy'
+          ? 'rgba(255,80,64,0.85)'
+          : 'rgba(255,215,0,0.85)';
+      ctx.strokeStyle = hpColor;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(zx, zz, zr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = hpColor;
+      ctx.font = 'bold 7px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('HP', zx, zz);
+    }
+
+    // ── キルコンファーム ドッグタグ(回転コンテキスト内) ──
+    if (snap.kcTagPositions) {
+      for (const tag of snap.kcTagPositions) {
+        ctx.fillStyle = tag.isEnemy ? 'rgba(255,215,0,0.9)' : 'rgba(255,60,60,0.9)';
+        ctx.beginPath();
+        ctx.arc(tag.relX * scale, tag.relZ * scale, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     ctx.restore();
 
     // プレイヤーアロー (中心固定・常に上向き)
@@ -926,6 +973,46 @@ export class Hud {
   }
 
   private updateObjective(snap: MatchSnapshot): void {
+    // ── ハードポイント方向インジケータ ──
+    const hpInd = this.el['hpindicator'];
+    if (hpInd) {
+      const hasHp = snap.hardpointTimeLeft !== undefined;
+      hpInd.hidden = !hasHp;
+      if (hasHp) {
+        // 矢印の回転(0=前方)
+        const wrap = this.el['hparrowwrap'];
+        if (wrap && snap.hardpointZoneAngle !== undefined) {
+          wrap.style.transform = `rotate(${(snap.hardpointZoneAngle * 180) / Math.PI}deg)`;
+        }
+        // 占拠チップの色クラス
+        const chip = this.el['hpchip'];
+        if (chip) {
+          chip.classList.toggle('hp-mine', snap.hardpointOwner === 'mine');
+          chip.classList.toggle('hp-enemy', snap.hardpointOwner === 'enemy');
+          chip.classList.toggle('hp-contested', snap.hardpointContested === true);
+          const label = snap.hardpointContested ? 'CONTEST' : snap.hardpointOwner === 'mine' ? 'SECURE' : snap.hardpointOwner === 'enemy' ? 'LOSING' : 'EMPTY';
+          if (chip.textContent !== label) chip.textContent = label;
+        }
+        // カウントダウン
+        const timeEl = this.el['hptime'];
+        if (timeEl) {
+          const t = Math.ceil(snap.hardpointTimeLeft ?? 60);
+          const txt = String(t);
+          if (timeEl.textContent !== txt) timeEl.textContent = txt;
+          timeEl.classList.toggle('hp-time-warn', (snap.hardpointTimeLeft ?? 60) <= 10);
+        }
+        // 矢印形状の色(SVG fill は style 経由でも効く)
+        const shape = this.el['hparrowshape'];
+        if (shape) {
+          const col = snap.hardpointContested ? '#ffffff' : snap.hardpointOwner === 'mine' ? 'var(--accent)' : snap.hardpointOwner === 'enemy' ? '#ff4040' : '#ffd700';
+          shape.style.fill = col;
+        }
+      }
+    }
+
+    // ── キルコンファーム演出 ──
+    if (snap.kcEvent) this.pushKcEvent(snap.kcEvent);
+
     const isMission = snap.missionId !== undefined;
     // ストーリーは先取スコアを隠し、目的・進捗・波・ボスHPを出す
     const teamscore = this.el['teamscore'];
@@ -1144,24 +1231,6 @@ export class Hud {
     }
   }
 
-  // スコア獲得トースト(+100 キル等)。即時報酬を可視化する。最大3件・1秒で消える
-  private pushScoreEvents(snap: MatchSnapshot): void {
-    const layer = this.el['scoretoast'];
-    if (!layer || snap.scoreEvents.length === 0) return;
-    for (const ev of snap.scoreEvents) {
-      const row = document.createElement('div');
-      row.className = 'score-toast-row';
-      row.innerHTML = `<b>+${ev.xp}</b><span>${ev.label}</span>`;
-      layer.appendChild(row);
-      requestAnimationFrame(() => row.classList.add('show'));
-      window.setTimeout(() => {
-        row.classList.add('out');
-        window.setTimeout(() => row.remove(), 260);
-      }, 900);
-    }
-    while (layer.childElementCount > 3) layer.firstElementChild?.remove();
-  }
-
   // メダル表示: 初取得=中央のバッジ解放カード / 2回目以降=左の大文字。HSは抑止(フィードのみ)
   // R21: マルチキル系はバナーへルーティングし、従来のテキスト行/バッジには出さない
   private pushMedals(snap: MatchSnapshot): void {
@@ -1373,19 +1442,53 @@ export class Hud {
     }
   }
 
+  // R30 ダメージ方向アーク: 画面中央周りの赤い弧セグメント(被弾方向に幅40°、0.6sフェード)。
+  // PostFXの方向ヴィネット(uHitDir)と2チャンネル併走=シェーダは面の赤み、DOMは輪郭の方位。
+  // reduceMotion時はグロー無しの簡略描画(CSSの .rm)。
   private pushIncoming(snap: MatchSnapshot): void {
     const layer = this.el['incoming'];
     if (!layer) return;
     for (const angle of snap.incoming) {
-      const wrap = document.createElement('div');
-      wrap.className = 'hud-incoming-wrap';
-      wrap.style.transform = `rotate(${(angle * 180) / Math.PI}deg)`;
-      const wedge = document.createElement('div');
-      wedge.className = 'hud-incoming-wedge';
-      wrap.appendChild(wedge);
-      layer.appendChild(wrap);
-      window.setTimeout(() => wrap.remove(), 900);
+      const DEG = 40;
+      const R = 82;
+      const halfRad = (DEG / 2) * (Math.PI / 180);
+      const a0 = angle - halfRad;
+      const a1 = angle + halfRad;
+      const x0 = Math.sin(a0) * R;
+      const y0 = -Math.cos(a0) * R;
+      const x1 = Math.sin(a1) * R;
+      const y1 = -Math.cos(a1) * R;
+      const svg = document.createElementNS(SVG_NS, 'svg');
+      svg.setAttribute('class', snap.reduceMotion ? 'hud-incoming-arc rm' : 'hud-incoming-arc');
+      svg.setAttribute('viewBox', '-100 -100 200 200');
+      svg.setAttribute('aria-hidden', 'true');
+      const path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R} ${R} 0 0 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`);
+      path.setAttribute('class', 'hud-incoming-arc-path');
+      svg.appendChild(path);
+      layer.appendChild(svg);
+      window.setTimeout(() => svg.remove(), 620);
     }
+  }
+
+  // R30 スコアイベントリボン: 右下(ストリークUI付近)に「+100 キル」等が上へ積み上がる。
+  // snap.scoreEvents(消費型・キル/HS/確保/メダルXP)を単一コンテナへ append、
+  // 2.5sフェード(2150ms表示+350ms退場)・最大4行。旧中央トーストはR30で本リボンへ一本化。
+  private pushXpRibbon(snap: MatchSnapshot): void {
+    const layer = this.el['xpribbon'];
+    if (!layer || snap.scoreEvents.length === 0) return;
+    for (const ev of snap.scoreEvents) {
+      const row = document.createElement('div');
+      row.className = 'xp-ribbon-row';
+      row.innerHTML = `<b>+${ev.xp}</b><span>${ev.label}</span>`;
+      layer.appendChild(row);
+      requestAnimationFrame(() => row.classList.add('show'));
+      window.setTimeout(() => {
+        row.classList.add('out');
+        window.setTimeout(() => row.remove(), 350);
+      }, 2150);
+    }
+    while (layer.childElementCount > 4) layer.firstElementChild?.remove();
   }
 
   private updateDeath(snap: MatchSnapshot): void {
@@ -1512,6 +1615,22 @@ export class Hud {
       tr.append(name, kills, deaths);
       body.appendChild(tr);
     }
+  }
+
+  /** キルコンファーム CONFIRMED / DENIED バナーを一時表示する */
+  private pushKcEvent(ev: 'confirmed' | 'denied'): void {
+    const el = this.el['kcevent'];
+    if (!el) return;
+    el.textContent = ev === 'confirmed' ? 'CONFIRMED' : 'DENIED';
+    el.dataset.kind = ev;
+    el.hidden = false;
+    el.classList.remove('kc-show', 'kc-out');
+    void (el as HTMLElement).offsetWidth;
+    el.classList.add('kc-show');
+    window.setTimeout(() => {
+      el.classList.add('kc-out');
+      window.setTimeout(() => { el.hidden = true; el.classList.remove('kc-show', 'kc-out'); }, 350);
+    }, 900);
   }
 
   private restartAnimation(id: string, className: string): void {

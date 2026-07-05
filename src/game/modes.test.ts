@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DominationState, ScoreBoard, Zone } from './modes';
+import { DominationState, HardpointState, KillConfirmState, KC_CONFIRM_PTS, KC_DENY_PTS, ScoreBoard, Zone } from './modes';
 
 function counts(entries: Array<[number, number]>): Map<number, number> {
   return new Map(entries);
@@ -135,5 +135,147 @@ describe('ScoreBoard', () => {
     expect(board.leader()).toBeNull();
     board.add(1, 1);
     expect(board.leader()).toBe(1);
+  });
+});
+
+// ── HardpointState ─────────────────────────────────────────────────────────────────────
+
+describe('HardpointState', () => {
+  it('1チームのみ在中でそのチームがスコアを得る', () => {
+    const hp = new HardpointState(3);
+    const presence = new Map([[0, 1]]);
+    let total = 0;
+    // 4秒分(0.25×16)
+    for (let i = 0; i < 16; i += 1) {
+      const { points } = hp.update(0.25, presence);
+      total += points.get(0) ?? 0;
+    }
+    expect(total).toBe(4); // 4秒で4pt
+  });
+
+  it('コンテスト中はスコアが入らない', () => {
+    const hp = new HardpointState(3);
+    const presence = new Map([[0, 1], [1, 1]]);
+    let total = 0;
+    for (let i = 0; i < 8; i += 1) {
+      const { points } = hp.update(0.5, presence);
+      total += (points.get(0) ?? 0) + (points.get(1) ?? 0);
+    }
+    expect(total).toBe(0);
+  });
+
+  it('60秒後にゾーンがローテーションする', () => {
+    const hp = new HardpointState(3);
+    const presence = new Map<number, number>();
+    let rotated = false;
+    let rotateFrom = -1;
+    let rotateTo = -1;
+    // 0.5×120=60秒
+    for (let i = 0; i < 120; i += 1) {
+      const { rotated: r } = hp.update(0.5, presence, (f, t) => { rotated = true; rotateFrom = f; rotateTo = t; });
+      if (r) break;
+    }
+    expect(rotated).toBe(true);
+    expect(rotateFrom).toBe(0);
+    expect(rotateTo).toBe(1);
+  });
+
+  it('ローテーション後はownerがnullにリセットされる', () => {
+    const hp = new HardpointState(3);
+    const presence = new Map([[0, 2]]);
+    // 60秒分進める
+    for (let i = 0; i < 240; i += 1) hp.update(0.25, presence);
+    // 60秒後はzone1になりownerはnull
+    const snap = hp.snapshot();
+    expect(snap.zoneIndex).toBe(1);
+    expect(snap.owner).toBeNull();
+  });
+
+  it('timeUntilRotationが60秒から始まって単調減少する', () => {
+    const hp = new HardpointState(3);
+    const presence = new Map<number, number>();
+    const snap0 = hp.snapshot();
+    expect(snap0.timeUntilRotation).toBeCloseTo(60);
+    hp.update(10, presence);
+    const snap1 = hp.snapshot();
+    expect(snap1.timeUntilRotation).toBeCloseTo(50);
+  });
+
+  it('3ゾーン分を巡回してzoneIndexが0へ戻る', () => {
+    const hp = new HardpointState(3);
+    const presence = new Map<number, number>();
+    let idx = 0;
+    for (let i = 0; i < 3; i += 1) {
+      // 60秒ずつ前進
+      for (let j = 0; j < 240; j += 1) {
+        const { rotated } = hp.update(0.25, presence);
+        if (rotated) { idx = hp.snapshot().zoneIndex; break; }
+      }
+    }
+    expect(idx).toBe(0); // 3周でindex=0へ
+  });
+});
+
+// ── KillConfirmState ────────────────────────────────────────────────────────────────────
+
+describe('KillConfirmState', () => {
+  it('敵チームのタグ回収でCONFIRM(+100pt)', () => {
+    const kc = new KillConfirmState();
+    kc.spawnTag({ x: 0, y: 0, z: 0 }, 1 /* ENEMY_TEAM */, 0);
+    const result = kc.tryCollect(0 /* PLAYER_TEAM */, { x: 0, z: 0 });
+    expect(result).not.toBeNull();
+    expect(result!.event).toBe('confirm');
+    expect(result!.points).toBe(KC_CONFIRM_PTS);
+  });
+
+  it('味方タグ回収でDENY(+25pt)', () => {
+    const kc = new KillConfirmState();
+    kc.spawnTag({ x: 0, y: 0, z: 0 }, 0 /* PLAYER_TEAM */, 0);
+    const result = kc.tryCollect(0 /* PLAYER_TEAM */, { x: 0, z: 0 });
+    expect(result).not.toBeNull();
+    expect(result!.event).toBe('deny');
+    expect(result!.points).toBe(KC_DENY_PTS);
+  });
+
+  it('回収後は同じタグを二重取得できない', () => {
+    const kc = new KillConfirmState();
+    kc.spawnTag({ x: 0, y: 0, z: 0 }, 1, 0);
+    kc.tryCollect(0, { x: 0, z: 0 });
+    const second = kc.tryCollect(0, { x: 0, z: 0 });
+    expect(second).toBeNull();
+  });
+
+  it('半径外のタグは回収できない', () => {
+    const kc = new KillConfirmState();
+    kc.spawnTag({ x: 0, y: 0, z: 0 }, 1, 0);
+    const result = kc.tryCollect(0, { x: 100, z: 100 });
+    expect(result).toBeNull();
+  });
+
+  it('30秒後に期限切れになる', () => {
+    const kc = new KillConfirmState();
+    kc.spawnTag({ x: 0, y: 0, z: 0 }, 1, 0);
+    const expired = kc.pruneExpired(30.1);
+    expect(expired.length).toBe(1);
+    // 期限切れ後は拾えない
+    const result = kc.tryCollect(0, { x: 0, z: 0 });
+    expect(result).toBeNull();
+  });
+
+  it('activeTags は未回収のみを返す', () => {
+    const kc = new KillConfirmState();
+    kc.spawnTag({ x: 0, y: 0, z: 0 }, 1, 0);
+    kc.spawnTag({ x: 5, y: 0, z: 5 }, 1, 0);
+    kc.tryCollect(0, { x: 0, z: 0 });
+    expect(kc.activeTags().length).toBe(1);
+  });
+
+  it('複数タグが同時にある場合、最寄りを優先して1つだけ拾う', () => {
+    const kc = new KillConfirmState();
+    kc.spawnTag({ x: 0.5, y: 0, z: 0 }, 1, 0);
+    kc.spawnTag({ x: -0.5, y: 0, z: 0 }, 1, 0);
+    const res = kc.tryCollect(0, { x: 0, z: 0 });
+    expect(res).not.toBeNull();
+    expect(kc.activeTags().length).toBe(1); // 1つだけ消費
   });
 });

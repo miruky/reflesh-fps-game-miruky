@@ -91,6 +91,8 @@ import {
 import {
   DominationState,
   ENEMY_TEAM,
+  HardpointState,
+  KillConfirmState,
   MODE_DEFS,
   PLAYER_TEAM,
   ScoreBoard,
@@ -139,6 +141,20 @@ interface SkyUniforms {
   mieCoefficient: { value: number };
   mieDirectionalG: { value: number };
   sunPosition: { value: THREE.Vector3 };
+}
+
+// ── R30 動的天候 ────────────────────────────────────────────────────
+// configシード(stage.seed)から決定論的にロール: 晴60% / 濃霧20% / 雨20%。
+// 日付やDate.now()は使わない=同じステージ選択なら常に同じ天候(リプレイ性/テスト安定)。
+export type WeatherKind = 'clear' | 'fog' | 'rain';
+export function rollWeather(seed: number): WeatherKind {
+  // 整数ハッシュ(xorshift-乗算)。Math.imul で32bit演算を保証し、浮動小数の桁落ちを避ける
+  let v = (seed ^ (seed >>> 16)) >>> 0;
+  v = Math.imul(v, 0x45d9f3b) >>> 0;
+  v = (v ^ (v >>> 16)) >>> 0;
+  const r01 = v / 0x100000000;
+  if (r01 < 0.6) return 'clear';
+  return r01 < 0.8 ? 'fog' : 'rain';
 }
 
 // R20 rank3: 床/障害物の onBeforeCompile へ挿す決定論的な値ノイズ(3オクターブfbm)。
@@ -480,6 +496,17 @@ export interface MatchSnapshot {
   minimapEnemies: ReadonlyArray<{ relX: number; relZ: number; opacity: number }>;
   minimapAllies: ReadonlyArray<{ relX: number; relZ: number }>;
   minimapStageSize: number;
+  // ── ハードポイント ──
+  hardpointZoneAngle?: number;       // プレイヤーヨー基準の方向角(rad)。undefined=非対象モード/死亡
+  hardpointZoneRelX?: number;        // プレイヤーからの相対X (ミニマップ表示用)
+  hardpointZoneRelZ?: number;        // プレイヤーからの相対Z
+  hardpointOwner?: 'mine' | 'enemy' | null;
+  hardpointContested?: boolean;
+  hardpointTimeLeft?: number;        // 残り秒数(0-60)
+  hardpointPreview?: boolean;        // true when ≤10s
+  // ── キルコンファーム ──
+  kcEvent?: 'confirmed' | 'denied' | null; // このフレームのタグ回収イベント
+  kcTagPositions?: ReadonlyArray<{ relX: number; relZ: number; isEnemy: boolean }>; // ミニマップ用
 }
 
 interface RayHitLike {
@@ -568,6 +595,14 @@ export class Match {
   private readonly domination: DominationState | null;
   private readonly zoneCenters = new Map<string, THREE.Vector3>();
   private readonly zoneRings = new Map<string, THREE.Mesh>();
+  // ── ハードポイント ──
+  private readonly hardpointState: HardpointState | null;
+  private readonly hardpointZonePositions: THREE.Vector3[] = [];
+  private hardpointRing: THREE.Mesh | null = null;
+  // ── キルコンファーム ──
+  private readonly kcState: KillConfirmState | null;
+  private kcDogTagEntities: Array<{ id: number; group: THREE.Group; isEnemy: boolean; spawnedAt: number }> = [];
+  private kcEvent: 'confirmed' | 'denied' | null = null;
   private announcements: string[] = [];
   private deathPos: THREE.Vector3 | null = null;
   private orbitAngle = 0;
@@ -710,6 +745,13 @@ export class Match {
   private snapPulseDone = false; // 覗き込み時のスナップ補正を撃ったか(1回限り制御)
   private hitFreezeS = 0; // ヒットストップの残り秒(ビューモデル/FXのみ凍結)
   private scoreEvents: Array<{ label: string; xp: number }> = []; // スコア獲得トースト(消費型)
+  // ── R30 制圧/天候 ──
+  private nearBulletLog: number[] = []; // bulletCrack近弾時刻(制圧判定用)
+  private suppressEnv = 0;              // uSuppress エンベロープ 0..1
+  // R30 動的天候: configシード決定論の 晴60%/濃霧20%/雨20%(ゾンビは常に'clear')
+  private weatherKind: WeatherKind = 'clear';
+  private rainPoints: THREE.Points | null = null;
+  private rainTimeUniform: { value: number } | null = null;
   private readonly tracker: MedalTracker; // メダル検出(純ロジック)
   private medals: MedalEvent[] = []; // メダル取得イベント(消費型)
   private medalXpTotal = 0; // 試合中のメダルXP累計(リザルトで1回だけ計上)
@@ -721,6 +763,7 @@ export class Match {
   private readonly sunDir = new THREE.Vector3(); // 太陽方向の単一の真実(空/日光/影を駆動)
   // R29: プレイヤー追従シャドウ(巨大マップで影を常に鮮明に保つ)
   private sunLight: THREE.DirectionalLight | null = null;
+  private hemiLight: THREE.HemisphereLight | null = null; // V30: 天候の環境光補正用
   private shadowTexelWorld = 0.05; // シャドウ1テクセルのワールドサイズ(スナップ用)
   // R29修正: 光空間スナップ用の直交基底(sunDirから1回だけ計算してbuildStageSceneで保存)
   private readonly shadowRight = new THREE.Vector3(1, 0, 0);
@@ -869,6 +912,10 @@ export class Match {
     const layout = generateStage(config.stage);
     this.playerSpawns = layout.playerSpawns.map(([x, y, z]) => new THREE.Vector3(x, y, z));
     this.botSpawns = layout.botSpawns.map(([x, y, z]) => new THREE.Vector3(x, y, z));
+    // R30 天候ロール: buildStageScene 前に確定する(雨天の床wetness最大化は
+    // buildStageScene 内の resolveWetness→applyMacroFloor で焼き込まれるため)。
+    // ゾンビは既存ムード優先=天候ロール無し('clear' のまま)。
+    if (config.mode !== 'zombie') this.weatherKind = rollWeather(config.stage.seed);
     this.buildStageScene(layout.boxes);
     // ミニマップ用ボックスデータを保持(HUD から参照)。ghost/decor ボックスは除外
     for (const b of layout.boxes) {
@@ -957,6 +1004,9 @@ export class Match {
 
     this.domination = config.mode === 'dom' ? new DominationState(['A', 'B', 'C']) : null;
     if (this.domination) this.buildZones();
+    this.hardpointState = config.mode === 'hardpoint' ? new HardpointState(5) : null;
+    if (this.hardpointState) this.buildHardpointZones();
+    this.kcState = config.mode === 'killconfirm' ? new KillConfirmState() : null;
 
     this.effects = new Effects(this.scene);
     this.viewModel = new ViewModel(this.camera);
@@ -964,6 +1014,15 @@ export class Match {
     this.activeWeapon.raise();
 
     this.buildComposer(_graphicsTier);
+
+    // R30: 遠方戦場アンビエンスは対戦モードのみ(zombie=不気味さ優先/story=演出優先で無し)。
+    // quiesce() が自動停止するため後始末はここでは不要
+    if (this.config.mode !== 'zombie' && !this.mission) {
+      this.sounds.startDistantBattle();
+    }
+    // R30 天候適用(ロールはコンストラクタ冒頭で確定済み。zombieは常に'clear'=no-op)
+    this.applyWeather();
+
     // シェーダ事前コンパイル(初フレーム/初撃破のスタッター防止)。ディゾルブ変種(dissolve1)は
     // defineを一時点火してcompile→消灯の順で両プログラムをキャッシュへ載せる
     for (const bot of this.bots) bot.prewarmDissolve(true);
@@ -1176,6 +1235,7 @@ export class Match {
       palette.ambientIntensity * 0.5,
     );
     this.scene.add(hemi);
+    this.hemiLight = hemi; // V30: 天候(濃霧)の環境光減衰をライトへ届かせるため保持
     const sun = new THREE.DirectionalLight(palette.lightColor, palette.lightIntensity);
     sun.position.copy(this.sunDir).multiplyScalar(size); // 見える太陽と影方向を一致させる
     sun.castShadow = true;
@@ -1330,10 +1390,93 @@ export class Match {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   }
 
+  // R30 天候の適用(ロール自体はコンストラクタで rollWeather 済み)。
+  // 濃霧: fogDensity 2.2倍 + ambient微減(スナイパー戦の変化。AI索敵はfog連動=R29係数で自然変化)。
+  // 雨: fog 1.3倍 + 雨ストリーク粒子(wetness最大化は buildStageScene の resolveWetness が担う)。
+  private applyWeather(): void {
+    if (this.weatherKind === 'clear') return;
+    const palette = this.config.stage.palette;
+    const fogMul = this.weatherKind === 'fog' ? 2.2 : 1.3;
+    const newDensity = palette.fogDensity * fogMul;
+    this.stageFogDensity = newDensity;
+    if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = newDensity;
+    if (this.weatherKind === 'fog') {
+      this.stageAmbient *= 0.85;
+      // V30修正: stageAmbientはAI索敵専用フィールドで照明に届かない。HemisphereLightへも適用
+      if (this.hemiLight) this.hemiLight.intensity *= 0.85;
+    } else {
+      this.buildRainParticles();
+    }
+  }
+
+  // R30 雨粒子: stage.ts の ParticleKind を変更せずに standalone THREE.Points で実装。
+  private buildRainParticles(): void {
+    const tier = resolveGraphicsTier(
+      this.settings.graphicsQuality,
+      this.renderer.capabilities.isWebGL2,
+    );
+    if (tier === 'low') return;
+    const count = tier === 'high' ? 800 : 500;
+    const sz = this.config.stage.size * 1.1;
+    const pos = new Float32Array(count * 3);
+    // 決定論的散布(stage.seed派生)。Math.randomを避けアセットレス決定論の流儀に合わせる
+    const rng = mulberry32((this.config.stage.seed ^ 0xb4177) >>> 0);
+    for (let i = 0; i < count; i++) {
+      pos[i * 3] = (rng() - 0.5) * sz;
+      pos[i * 3 + 1] = rng() * 20;
+      pos[i * 3 + 2] = (rng() - 0.5) * sz;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const timeUniform = { value: 0 };
+    this.rainTimeUniform = timeUniform;
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: timeUniform,
+        uCamPos: { value: new THREE.Vector3() },
+        uBoxSz: { value: sz },
+        uBoxH: { value: 20 },
+      },
+      vertexShader: /* glsl */ `
+        uniform float uTime, uBoxSz, uBoxH;
+        uniform vec3 uCamPos;
+        varying float vDist;
+        void main() {
+          vec3 p = position;
+          p.y = mod(p.y - uTime * 7.0, uBoxH);
+          p.xz = mod(p.xz - uCamPos.xz + uBoxSz * 0.5, uBoxSz) - uBoxSz * 0.5;
+          p += uCamPos;
+          vec4 mv = modelViewMatrix * vec4(p, 1.0);
+          vDist = -mv.z;
+          gl_Position = projectionMatrix * mv;
+          float depth = max(vDist, 0.1);
+          gl_PointSize = clamp(22.0 * (120.0 / depth), 1.0, 6.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        varying float vDist;
+        void main() {
+          vec2 uv = gl_PointCoord - 0.5;
+          float e = uv.x * uv.x * 4.0 + uv.y * uv.y * 0.25;
+          if (e > 0.25) discard;
+          float alpha = (1.0 - e / 0.25) * 0.35 * clamp(1.0 - vDist / 60.0, 0.0, 1.0);
+          gl_FragColor = vec4(0.78, 0.86, 0.96, alpha);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+    });
+    this.rainPoints = new THREE.Points(geo, mat);
+    this.scene.add(this.rainPoints);
+  }
+
   // R20 rank3: ムード/床材質/バイオーム粒子から「濡れ度」(0..0.8)を導く。夜/曇りは雨上がりで
   // 濡れ、溶岩/残り火の荒廃ステージは溶けた地面の照りとして底上げ。砂/雪/芝は濡れパッチが
   // 不自然なので抑える。減光した空IBLを筋状の映り込みで拾わせる濡れアスファルト読み(MW2019)。
   private resolveWetness(palette: StageDef['palette']): number {
+    // R30 雨天: 地面wetnessを最大化(0.8)。コンストラクタで buildStageScene 前に
+    // weatherKind が確定しているため、床マテリアルの焼き込みへそのまま効く
+    if (this.weatherKind === 'rain') return 0.8;
     const mood = resolveMood(palette);
     let base =
       mood === 'night'
@@ -1946,6 +2089,253 @@ export class Match {
     return owner === PLAYER_TEAM ? this.colors.ally : this.colors.enemy;
   }
 
+  // ── ハードポイント ─────────────────────────────────────────────────────────────────────
+
+  /** ハードポイントのゾーン座標を決定論的に配置し、最初のリングを生成する */
+  private buildHardpointZones(): void {
+    const size = this.config.stage.size;
+    // 5カ所を決定論的に配置(ドミネーション3拠点と同じ係数感)
+    const raw: Array<[number, number]> = [
+      [-size * 0.28,  size * 0.1 ],
+      [ size * 0.18, -size * 0.22],
+      [ size * 0.3,   size * 0.15],
+      [-size * 0.15,  size * 0.28],
+      [ 0,            0           ],
+    ];
+    this.hardpointZonePositions.length = 0;
+    for (const [x, z] of raw) this.hardpointZonePositions.push(new THREE.Vector3(x, 0, z));
+
+    const ring = this.makeHardpointRing(0xffd700);
+    ring.rotation.x = -Math.PI / 2;
+    const pos = this.hardpointZonePositions[0]!;
+    ring.position.set(pos.x, 0.07, pos.z);
+    this.hardpointRing = ring;
+    this.scene.add(ring);
+  }
+
+  private makeHardpointRing(color: number): THREE.Mesh {
+    return new THREE.Mesh(
+      new THREE.RingGeometry(ZONE_RADIUS - 0.35, ZONE_RADIUS, 36),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false }),
+    );
+  }
+
+  private updateHardpoint(dt: number): void {
+    const state = this.hardpointState;
+    if (!state) return;
+
+    const zonePos = this.hardpointZonePositions[state.currentZoneIndex];
+    if (!zonePos) return;
+
+    // ゾーン内の在中人数を集計
+    const presence = new Map<TeamId, number>();
+    const countEntity = (pos: THREE.Vector3, team: TeamId) => {
+      const dx = pos.x - zonePos.x;
+      const dz = pos.z - zonePos.z;
+      if (Math.hypot(dx, dz) < ZONE_RADIUS && Math.abs(pos.y - zonePos.y) < 3) {
+        presence.set(team, (presence.get(team) ?? 0) + 1);
+      }
+    };
+    if (this.player.alive) countEntity(this.player.position, PLAYER_TEAM);
+    for (const bot of this.bots) {
+      if (bot.alive) countEntity(bot.position, bot.team);
+    }
+
+    const { points } = state.update(dt, presence, (_from, to) => {
+      const newPos = this.hardpointZonePositions[to];
+      const names = ['HP-1', 'HP-2', 'HP-3', 'HP-4', 'HP-5'];
+      this.announcements.push(`ハードポイント移動 → ${names[to] ?? to + 1}`);
+      if (this.hardpointRing && newPos) {
+        this.hardpointRing.position.set(newPos.x, 0.07, newPos.z);
+      }
+    });
+    for (const [team, n] of points) this.scores.add(team, n);
+
+    // リングの色を占拠状態に同期
+    if (this.hardpointRing) {
+      const mat = this.hardpointRing.material as THREE.MeshBasicMaterial;
+      const snap = state.snapshot();
+      if (snap.contested) {
+        mat.color.setHex(0xffffff);
+        mat.opacity = 0.95;
+      } else if (snap.owner === PLAYER_TEAM) {
+        mat.color.setHex(this.colors.ally);
+        mat.opacity = 0.8;
+      } else if (snap.owner === ENEMY_TEAM) {
+        mat.color.setHex(this.colors.enemy);
+        mat.opacity = 0.8;
+      } else {
+        mat.color.setHex(0xffd700);
+        mat.opacity = 0.65;
+      }
+    }
+
+    // プレイヤーが占拠に貢献した場合の個人スコアイベント(1pt毎秒ごとに1回)
+    if (points.get(PLAYER_TEAM) && this.player.alive) {
+      const snap = state.snapshot();
+      const dx = this.player.position.x - zonePos.x;
+      const dz = this.player.position.z - zonePos.z;
+      if (snap.owner === PLAYER_TEAM && !snap.contested && Math.hypot(dx, dz) < ZONE_RADIUS) {
+        this.playerCaptures += points.get(PLAYER_TEAM)!;
+      }
+    }
+  }
+
+  /** ハードポイントのsnapshotフィールド群を返す(snapshot()のスプレッドで使用) */
+  private buildHardpointSnap(): {
+    hardpointZoneAngle?: number;
+    hardpointZoneRelX?: number;
+    hardpointZoneRelZ?: number;
+    hardpointOwner?: 'mine' | 'enemy' | null;
+    hardpointContested?: boolean;
+    hardpointTimeLeft?: number;
+    hardpointPreview?: boolean;
+  } {
+    if (!this.hardpointState) return {};
+    const snap = this.hardpointState.snapshot();
+    const pos = this.hardpointZonePositions[snap.zoneIndex];
+    const side = (t: TeamId | null): 'mine' | 'enemy' | null =>
+      t === null ? null : t === PLAYER_TEAM ? 'mine' : 'enemy';
+    const base = {
+      hardpointOwner: side(snap.owner),
+      hardpointContested: snap.contested,
+      hardpointTimeLeft: snap.timeUntilRotation,
+      hardpointPreview: snap.timeUntilRotation <= 10,
+    };
+    if (!pos) return base;
+    const relX = pos.x - this.player.position.x;
+    const relZ = pos.z - this.player.position.z;
+    let angle: number | undefined;
+    if (this.player.alive) {
+      const worldAngle = Math.atan2(relX, relZ);
+      const forwardAngle = Math.atan2(-Math.sin(this.player.yaw), -Math.cos(this.player.yaw));
+      // V30修正: 減算順が逆で矢印が左右ミラーしていた。既存レーダー規約(右が正)に統一
+      angle = wrapAngle(forwardAngle - worldAngle);
+    }
+    return { ...base, hardpointZoneRelX: relX, hardpointZoneRelZ: relZ, hardpointZoneAngle: angle };
+  }
+
+  // ── キルコンファーム ───────────────────────────────────────────────────────────────────
+
+  private updateKillConfirm(dt: number): void {
+    if (!this.kcState) return;
+
+    // 期限切れタグを削除
+    const expired = this.kcState.pruneExpired(this.elapsed);
+    for (const id of expired) this.removeDogTagEntity(id);
+
+    // プレイヤーがタグを自動回収(alive時のみ)
+    if (this.player.alive) {
+      const res = this.kcState.tryCollect(PLAYER_TEAM, {
+        x: this.player.position.x,
+        z: this.player.position.z,
+      });
+      if (res) {
+        this.removeDogTagEntity(res.id);
+        this.scores.add(PLAYER_TEAM, res.points);
+        this.kcEvent = res.event === 'confirm' ? 'confirmed' : 'denied';
+        if (res.event === 'confirm') {
+          this.scoreEvents.push({ label: 'CONFIRMED', xp: res.points });
+          this.sounds.capture();
+          this.addUltCharge(ULT_ON_CAPTURE);
+          this.playerCaptures += 1;
+        } else {
+          this.scoreEvents.push({ label: 'DENIED', xp: res.points });
+        }
+      }
+    }
+
+    // ボットが近傍タグを自動回収
+    for (const bot of this.bots) {
+      if (!bot.alive) continue;
+      const res = this.kcState.tryCollect(bot.team, { x: bot.position.x, z: bot.position.z });
+      if (res) {
+        this.removeDogTagEntity(res.id);
+        this.scores.add(bot.team, res.points);
+      }
+    }
+
+    // ドッグタグのボブ + 消える直前の点滅アニメ
+    for (const entity of this.kcDogTagEntities) {
+      entity.group.position.y = 0.45 + Math.sin(this.elapsed * 2.5 + entity.id * 0.7) * 0.1;
+      entity.group.rotation.y += dt * 1.2;
+      const age = this.elapsed - entity.spawnedAt;
+      const remaining = 30 - age;
+      if (remaining < 5) {
+        const v = (Math.sin(this.elapsed * 10) + 1) * 0.5;
+        entity.group.traverse((obj) => {
+          if (obj instanceof THREE.Mesh) {
+            (obj.material as THREE.MeshBasicMaterial).opacity = 0.3 + v * 0.65;
+          }
+        });
+      }
+    }
+  }
+
+  /** ボットが死亡した際にキルコンファームのドッグタグをスポーンする */
+  private spawnDogTag(bot: Bot): void {
+    if (!this.kcState) return;
+    const id = this.kcState.spawnTag(
+      { x: bot.position.x, y: bot.position.y, z: bot.position.z },
+      bot.team,
+      this.elapsed,
+    );
+    const isEnemyTag = bot.team !== PLAYER_TEAM; // 敵チームのタグ = 金
+    const group = this.buildDogTagMesh(isEnemyTag);
+    group.position.set(bot.position.x, bot.position.y + 0.45, bot.position.z);
+    this.scene.add(group);
+    this.kcDogTagEntities.push({ id, group, isEnemy: isEnemyTag, spawnedAt: this.elapsed });
+  }
+
+  /** プレイヤーが死亡した際に味方タグをスポーンする */
+  private spawnPlayerDogTag(): void {
+    if (!this.kcState) return;
+    const id = this.kcState.spawnTag(
+      { x: this.player.position.x, y: this.player.position.y, z: this.player.position.z },
+      PLAYER_TEAM,
+      this.elapsed,
+    );
+    const group = this.buildDogTagMesh(false); // 味方タグ = 赤
+    group.position.set(this.player.position.x, this.player.position.y + 0.45, this.player.position.z);
+    this.scene.add(group);
+    this.kcDogTagEntities.push({ id, group, isEnemy: false, spawnedAt: this.elapsed });
+  }
+
+  /** ドッグタグの3Dメッシュを生成する。enemy=金、ally=赤 */
+  private buildDogTagMesh(isEnemyTag: boolean): THREE.Group {
+    const color = isEnemyTag ? 0xffd700 : 0xff2828;
+    const group = new THREE.Group();
+    // 円盤ボディ
+    const cyl = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.12, 0.12, 0.04, 12),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.92 }),
+    );
+    group.add(cyl);
+    // 光リング
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.19, 0.025, 8, 20),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.75 }),
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.03;
+    group.add(ring);
+    return group;
+  }
+
+  private removeDogTagEntity(id: number): void {
+    const idx = this.kcDogTagEntities.findIndex((e) => e.id === id);
+    if (idx < 0) return;
+    const entity = this.kcDogTagEntities[idx]!;
+    this.scene.remove(entity.group);
+    entity.group.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.geometry.dispose();
+        (obj.material as THREE.Material).dispose();
+      }
+    });
+    this.kcDogTagEntities.splice(idx, 1);
+  }
+
   private updateZones(dt: number): void {
     if (!this.domination) return;
     const presence = new Map<string, Map<TeamId, number>>();
@@ -2215,6 +2605,8 @@ export class Match {
     this.updateFirePatches(dt);
     this.smokeZones = this.smokeZones.filter((zone) => zone.until > this.elapsed);
     this.updateZones(dt);
+    this.updateHardpoint(dt);
+    this.updateKillConfirm(dt);
 
     if (!this.player.alive && this.killcamTimer > 0) this.killcamTimer -= dt;
     // 遷移黒幕/突入フラッシュは死亡ゲート外で無条件減衰(リスポーン後の黒画面固着を防ぐ)
@@ -2528,6 +2920,8 @@ export class Match {
     } else {
       this.darkAuraEnv = Math.max(0, this.darkAuraEnv - dt * 2.0);
     }
+    // R30 制圧封筒: 近弾連続時に立ち上がり、フレームごとに減衰
+    this.suppressEnv = Math.max(0, this.suppressEnv - dt * 3.0);
     if (this.postfx) {
       const rm = this.settings.reduceMotion;
       const pulse = rm ? 0 : this.hitFlashEnv * 0.75;
@@ -2537,13 +2931,21 @@ export class Match {
         ? Math.max(0, Math.min(1, (0.38 - healthRatio) / 0.38))
         : 0;
       const killSurge = rm ? 0 : this.killSurgeEnv;
+      const suppress = rm ? 0 : this.suppressEnv;
       // idleゲート: grade>0(high tier)は常時enabled。それ以外は封筒ゼロ時コストゼロ
       this.postfx.enabled =
-        this.postfxGrade > 0 || pulse > 0.002 || killSurge > 0.002 || lowHpEnv > 0.01 || this.darkAuraEnv > 0.01;
+        this.postfxGrade > 0 || pulse > 0.002 || killSurge > 0.002 || lowHpEnv > 0.01 || this.darkAuraEnv > 0.01 || suppress > 0.002;
       this.postfx.setHitPulse(pulse);
       this.postfx.setCombat(this.hitDir.x, this.hitDir.y, healthRatio, killSurge, rm ? 0 : 1);
       this.postfx.setTime(this.elapsed);
       this.postfx.setDarkAura(this.darkAuraEnv);
+      this.postfx.setSuppress(suppress);
+    }
+    // R30 雨パーティクル: 時間ユニフォームとカメラ位置を毎フレーム更新
+    if (this.rainTimeUniform) this.rainTimeUniform.value = this.elapsed;
+    if (this.rainPoints) {
+      const mat = this.rainPoints.material as THREE.ShaderMaterial;
+      (mat.uniforms['uCamPos']!.value as THREE.Vector3).copy(this.camera.position);
     }
 
     // ── AutoExposure: 全tier有効(コストゼロ・CPU only) ──
@@ -3457,6 +3859,7 @@ export class Match {
       this.bestStreak = Math.max(this.bestStreak, this.player.streak);
       this.playerWeaponKills[weaponName] = (this.playerWeaponKills[weaponName] ?? 0) + 1;
       this.addKillScore(PLAYER_TEAM);
+      this.spawnDogTag(bot);
       this.hits.push(scopeKill ? 'snipe' : 'kill');
       this.feed.push({ killer: PLAYER_NAME, victim: bot.name, weapon: weaponName, headshot });
       this.scoreEvents.push({ label: 'キル', xp: 100 });
@@ -3472,7 +3875,7 @@ export class Match {
         }
       }
       if (scopeKill) this.sounds.snipeKill();
-      else this.sounds.kill(1 + Math.min(this.player.streak, 5) * 0.06);
+      else this.sounds.killPitchTier(Math.min(this.player.streak, 5));
       // 連続キルのアナウンサー(マイルストーンのみ。HUDのバナーと閾値を揃える)
       const callouts: Record<number, string> = {
         3: 'TRIPLE KILL',
@@ -3483,6 +3886,12 @@ export class Match {
       };
       const callout = callouts[this.player.streak];
       if (callout) this.sounds.announceStreak(callout, this.settings.announcerVolume);
+      // R30 ストリークスティンガー(Valorant式マイルストーン音)
+      if (this.player.streak === 5)       this.sounds.streakStinger(1);
+      else if (this.player.streak === 10) this.sounds.streakStinger(2);
+      else if (this.player.streak === 15) this.sounds.streakStinger(3);
+      else if (this.player.streak === 20) this.sounds.streakStinger(4);
+      else if (this.player.streak === 25) this.sounds.streakStinger(5);
       this.botDeathFx(bot);
       if (grantUlt) this.addUltCharge(ULT_ON_KILL);
 
@@ -4090,6 +4499,25 @@ export class Match {
       }
       return best;
     }
+    // ハードポイント: 常にアクティブゾーンへ向かわせる(占拠or防衛)
+    if (this.hardpointState) {
+      return this.hardpointZonePositions[this.hardpointState.currentZoneIndex] ?? null;
+    }
+    // キルコンファーム: 15m以内の最寄りタグへ向かわせる(無ければ交戦優先=null)
+    if (this.kcState) {
+      let best: THREE.Vector3 | null = null;
+      let bestDist = 15;
+      for (const entity of this.kcDogTagEntities) {
+        const dx = entity.group.position.x - bot.position.x;
+        const dz = entity.group.position.z - bot.position.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = entity.group.position.clone();
+        }
+      }
+      return best;
+    }
     if (this.config.mode === 'tdm' && bot.team === PLAYER_TEAM && this.player.alive) {
       return this.player.position;
     }
@@ -4138,6 +4566,23 @@ export class Match {
         const wp = this.panAndDistance(at);
         this.sounds.bulletWhizz(wp.pan, 1 - ca.dist / 2.5);
       }
+      // R30 bulletCrack: 1.5m 以内の至近弾にクラック音 + 制圧エンベロープ更新
+      if (!hitPlayer && ca.dist < 1.5 && ca.along > 2) {
+        const atCrack = origin.clone().addScaledVector(dir, ca.along);
+        const wpc = this.panAndDistance(atCrack);
+        this.sounds.bulletCrack(wpc.pan, 1 - ca.dist / 1.5);
+        const nowSec = this.elapsed;
+        this.nearBulletLog.push(nowSec);
+        const cutoff = nowSec - 1.2;
+        while (this.nearBulletLog.length > 0 && this.nearBulletLog[0]! < cutoff) {
+          this.nearBulletLog.shift();
+        }
+        const n = this.nearBulletLog.length;
+        if (n >= 3) {
+          this.sounds.suppressionWhoosh(Math.min(1, n / 6));
+          this.suppressEnv = Math.min(1, this.suppressEnv + 0.35);
+        }
+      }
     }
     this.sounds.enemyShot(pan, distance, occluded);
 
@@ -4162,6 +4607,7 @@ export class Match {
         if (died) {
           bot.kills += 1;
           this.addKillScore(bot.team);
+          this.spawnPlayerDogTag();
           this.feed.push({ killer: bot.name, victim: PLAYER_NAME, weapon: '戦車砲', headshot: false });
           this.sounds.death();
           this.notePlayerDeath(bot);
@@ -4182,6 +4628,7 @@ export class Match {
       if (died) {
         bot.kills += 1;
         this.addKillScore(bot.team);
+        this.spawnPlayerDogTag();
         this.feed.push({
           killer: bot.name,
           victim: PLAYER_NAME,
@@ -4200,6 +4647,7 @@ export class Match {
       if (died) {
         bot.kills += 1;
         this.addKillScore(bot.team);
+        this.spawnDogTag(tag.bot);
         this.feed.push({
           killer: bot.name,
           victim: tag.bot.name,
@@ -4212,9 +4660,9 @@ export class Match {
     }
   }
 
-  // キルを取ったチームのスコアを進める。ドミネーションは拠点ポイントのみ
+  // キルを取ったチームのスコアを進める。ドミネーション/キルコンファームはキル直接加算なし
   private addKillScore(team: TeamId): void {
-    if (this.config.mode !== 'dom') this.scores.add(team, 1);
+    if (this.config.mode !== 'dom' && this.config.mode !== 'killconfirm') this.scores.add(team, 1);
   }
 
   // killerは敵BOTに倒された場合のみ。自爆や火災ではキルカメラを出さない
@@ -5869,6 +6317,15 @@ export class Match {
       minimapEnemies: this.computeMinimapEnemies(),
       minimapAllies: this.computeMinimapAllies(),
       minimapStageSize: this.config.stage.size,
+      // ── ハードポイント ──
+      ...this.buildHardpointSnap(),
+      // ── キルコンファーム ──
+      kcEvent: this.kcState ? this.kcEvent : undefined,
+      kcTagPositions: this.kcState ? this.kcDogTagEntities.map((e) => ({
+        relX: e.group.position.x - this.player.position.x,
+        relZ: e.group.position.z - this.player.position.z,
+        isEnemy: e.isEnemy,
+      })) : undefined,
     };
     this.feed = [];
     this.hits = [];
@@ -5879,6 +6336,7 @@ export class Match {
     this.scoreEvents = [];
     this.medals = [];
     this.zombiePointFloats = [];
+    this.kcEvent = null;
     return snapshot;
   }
 
@@ -5947,19 +6405,33 @@ export class Match {
   }
 
   private zoneViews(): ZoneView[] {
-    if (!this.domination) return [];
-    const side = (team: TeamId | null): 'mine' | 'enemy' | null =>
-      team === null ? null : team === PLAYER_TEAM ? 'mine' : 'enemy';
-    return this.domination.zones.map((zone): ZoneView => {
-      const snap: ZoneSnapshot = zone.snapshot();
-      return {
-        id: snap.id,
+    if (this.domination) {
+      const side = (team: TeamId | null): 'mine' | 'enemy' | null =>
+        team === null ? null : team === PLAYER_TEAM ? 'mine' : 'enemy';
+      return this.domination.zones.map((zone): ZoneView => {
+        const snap: ZoneSnapshot = zone.snapshot();
+        return {
+          id: snap.id,
+          owner: side(snap.owner),
+          progress: snap.progress,
+          capturing: side(snap.capturingTeam),
+          contested: snap.contested,
+        };
+      });
+    }
+    if (this.hardpointState) {
+      const snap = this.hardpointState.snapshot();
+      const side = (team: TeamId | null): 'mine' | 'enemy' | null =>
+        team === null ? null : team === PLAYER_TEAM ? 'mine' : 'enemy';
+      return [{
+        id: 'HP',
         owner: side(snap.owner),
-        progress: snap.progress,
-        capturing: side(snap.capturingTeam),
+        progress: 0,
+        capturing: null,
         contested: snap.contested,
-      };
-    });
+      }];
+    }
+    return [];
   }
 
   scoreboard(): ScoreRow[] {
@@ -6709,6 +7181,14 @@ export class Match {
     this.darkEmperorTimer = 0;
     this.atmosphere?.dispose(); // 草/フォグ/粒子/遠景/リムライトを解放(scene.traverse前)
     this.atmosphere = null;
+    // R30 雨パーティクル解放
+    if (this.rainPoints) {
+      this.scene.remove(this.rainPoints);
+      this.rainPoints.geometry.dispose();
+      (this.rainPoints.material as THREE.Material).dispose();
+      this.rainPoints = null;
+      this.rainTimeUniform = null;
+    }
     // ゾンビショップオブジェクトを解放
     for (const grp of this.zombieShopGroups) {
       this.scene.remove(grp);
@@ -6725,6 +7205,17 @@ export class Match {
     }
     this.zombieShopGroups.length = 0;
     this.zombieBossBot = null;
+    // ドッグタグエンティティを解放(scene.traverse前に削除してからgeometry/material解放)
+    for (const entity of this.kcDogTagEntities) {
+      this.scene.remove(entity.group);
+      entity.group.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          (obj.material as THREE.Material).dispose();
+        }
+      });
+    }
+    this.kcDogTagEntities.length = 0;
     if (this.zombieBoxAnimMesh) {
       this.scene.remove(this.zombieBoxAnimMesh);
       (this.zombieBoxAnimMesh.geometry as THREE.BufferGeometry).dispose();

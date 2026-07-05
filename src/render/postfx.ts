@@ -37,6 +37,8 @@ const POSTFX_SHADER = {
     uGrade: { value: 0 },
     // R27 黒帝オーラ暗紫ビネット(0=off。medium/high tier のみ有効化される PostFX パス上に置く)
     uDarkAura: { value: 0 },
+    // R30 制圧ビジュアル: 周辺暗縁/脱色(0=no-op)
+    uSuppress: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -48,7 +50,7 @@ const POSTFX_SHADER = {
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
     uniform float uTime, uVigInner, uVigOuter, uGrain, uAberration, uDesat, uHitPulse;
-    uniform float uHealth, uKillSurge, uMotion, uGrade, uDarkAura;
+    uniform float uHealth, uKillSurge, uMotion, uGrade, uDarkAura, uSuppress;
     uniform vec2 uHitDir;
     uniform vec3 uHitTint;
     varying vec2 vUv;
@@ -117,6 +119,13 @@ const POSTFX_SHADER = {
         float auraBeat = mix(0.5, 0.5 + 0.5 * sin(uTime * 1.8), uMotion);
         col = mix(col, col * vec3(0.10, 0.0, 0.20), auraEdge * auraBeat * 0.28);
       }
+      // R30 制圧ビジュアル: 周辺暗縁+脱色(uSuppress=0 → 完全no-op)
+      if (uSuppress > 0.0) {
+        float suppEdge = smoothstep(0.30, 1.0, r) * uSuppress;
+        col = mix(col, col * vec3(0.55, 0.60, 0.65), suppEdge * 0.55);
+        float suppLum = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        col = mix(col, vec3(suppLum), suppEdge * uSuppress * 0.35);
+      }
       // フィルムグレイン(大係数のhashで擬似高周波、uResolution不要)
       col += (hash(vUv * 1873.0 + uTime) - 0.5) * uGrain;
       gl_FragColor = vec4(max(col, 0.0), 1.0);
@@ -169,5 +178,10 @@ export class PostFXPass extends ShaderPass {
   // R27 黒帝オーラ暗紫ビネット封筒(0=off, 1=max。黒帝中のみ > 0)
   setDarkAura(v: number): void {
     this.uniforms['uDarkAura']!.value = v;
+  }
+
+  // R30 制圧エンベロープ(0=no-op, 1=max。近弾連続時のみ > 0)
+  setSuppress(v: number): void {
+    this.uniforms['uSuppress']!.value = v;
   }
 }
