@@ -559,10 +559,21 @@ export class Effects {
     group.rotation.y = angle;
     group.rotation.z = tiltRad;
 
-    // 暗芯(NormalBlending=暗く塗る): innerR=1.85/outerR=2.2=厚み0.35m、arc=153°
-    // 弦長 = 2×2.2×sin(76.5°) ≈ 4.28m → 「長さ~4.2m」達成。両端の弧端が尖るシルエット。
-    const INNER = 1.85, OUTER = 2.2, ARC = Math.PI * 0.85;
-    const coreGeo = new THREE.RingGeometry(INNER, OUTER, 24, 1, -ARC / 2, ARC);
+    // R28修正: 三日月(曲線)をやめ、両端が尖った「真っ直ぐな斬線」(細長いひし形)へ。
+    // ローカルXY平面にX軸方向の細長ダイヤ: tilt=0で水平線、tilt=π/2で垂直線になる(曲率ゼロ)。
+    const makeLineGeo = (len: number, thick: number): THREE.BufferGeometry => {
+      const geo = new THREE.BufferGeometry();
+      const h = len / 2;
+      const t = thick / 2;
+      // 4頂点のひし形(左端尖り・上・右端尖り・下)を2三角形で
+      const verts = new Float32Array([
+        -h, 0, 0,  0, t, 0,  0, -t, 0, // 左半分
+         h, 0, 0,  0, -t, 0,  0, t, 0, // 右半分
+      ]);
+      geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+      return geo;
+    };
+    // 暗芯(NormalBlending=暗く塗る): 長さ4.2m×厚み0.30mの直線刃
     const coreMat = new THREE.MeshBasicMaterial({
       color: 0x0a0812,
       transparent: true,
@@ -571,11 +582,10 @@ export class Effects {
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    const coreMesh = new THREE.Mesh(makeLineGeo(4.2, 0.3), coreMat);
     group.add(coreMesh);
 
-    // 深紫縁(AdditiveBlending): 刃のエッジを細く強調
-    const edgeGeo = new THREE.RingGeometry(INNER - 0.12, OUTER + 0.12, 24, 1, -ARC / 2 - 0.1, ARC + 0.2);
+    // 深紫縁(AdditiveBlending): ひと回り大きい直線ダイヤでエッジの光を纏わせる
     const edgeMat = new THREE.MeshBasicMaterial({
       color: 0x7800cc,
       transparent: true,
@@ -584,7 +594,8 @@ export class Effects {
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    const edgeMesh = new THREE.Mesh(edgeGeo, edgeMat);
+    const edgeMesh = new THREE.Mesh(makeLineGeo(4.6, 0.46), edgeMat);
+    edgeMesh.position.z = -0.01; // 暗芯の背面に重ねる
     group.add(edgeMesh);
 
     this.scene.add(group);
