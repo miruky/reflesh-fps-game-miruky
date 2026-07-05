@@ -208,6 +208,15 @@ const MELEE_COOLDOWN = 0.8;
 // ── クナイ(ニンジャ・ダガー)専用パラメータ(素手=id 'fists' 装備時のみ) ──
 const DAGGER_MELEE_RANGE = 3.2; // 薙ぎ払いのリーチ(拳の 2.6 より広い)
 const DAGGER_MELEE_CONE = 0.34; // 前方コーンの内積しきい値(約±70°=広い薙ぎ払い)
+// ── 黒技・シュヴァルツヴァルト(M ウルト: fists装備時のみ) ──
+const SCHWARZWALD_DAMAGE = 800;     // 発動時の全域ダメージ(遮蔽無視)
+const DARK_EMPEROR_DURATION = 300;  // 黒帝モードの持続秒(5分)
+const DARK_EMPEROR_MUL_MELEE = 3;   // 通常攻撃/薙ぎ払いのダメージ倍率
+const DARK_EMPEROR_MUL_BLINK = 3;   // ブリンク斬撃のダメージ倍率
+const DARK_EMPEROR_MUL_SLAM = 4;    // ダイブスラムのダメージ倍率
+const DARK_EMPEROR_MUL_ULTS = 2;    // F/B/N ウルトのダメージ倍率
+const DARK_BLINK_RANGE = 10;        // 黒帝中のブリンク射程(通常7→10m)
+const DARK_EMPEROR_COLOR = 0x1a0030;// 黒帝中の三日月/衝撃波の暗色
 const BLINK_RANGE = 7; // ブリンク斬撃の瞬間移動距離(m)。壁の手前で停止
 const BLINK_DAMAGE = 130; // ブリンク斬撃で経路上の敵を切り裂くダメージ
 const BLINK_RADIUS = 1.8; // ブリンク経路(線分)の判定太さ(m)
@@ -445,6 +454,7 @@ export interface MatchSnapshot {
   zombieBossFlash?: number; // ボス出現の赤フラッシュ 0..1
   zombiePointFloats?: Array<{ amount: number; world: THREE.Vector3 }>;
   zombieReviveFlash?: number; // 0..1
+  darkEmperorS?: number; // 黒帝モードの残り秒(undefined=非発動またはfists以外)
   incoming: number[]; // 被弾方向(カメラ基準の角度rad)
   tookDamage: boolean;
   scoreboard: ScoreRow[];
@@ -587,6 +597,9 @@ export class Match {
   private slamCooldownS = 0; // ダイブスラムの再発動クールダウン(連打支配の防止)
   private blinkCooldownS = 0; // ADSブリンク斬撃の再発動クールダウン
   private punchMotion = 0; // クナイ斬撃モーションサイクル(0=右薙ぎ/1=左薙ぎ/2=突き)
+  // ── 黒技・シュヴァルツヴァルト ──
+  private darkEmperorTimer = 0; // 黒帝モードの残り秒(0=非発動)
+  private darkSmokeTimer = 0;   // 足元黒煙エミッタの次発生タイマー
 
   // ── 風神・極大手裏剣(B ウルト): 発射中の手裏剣エンティティ ──
   private windShuriken: {
@@ -2111,6 +2124,7 @@ export class Match {
     }
     this.updateWindShuriken(dt);
     this.updateLightningBeast(dt);
+    this.updateDarkEmperor(dt);
     this.updateBots(dt);
     this.physics.step();
     this.syncCamera();
@@ -3994,7 +4008,9 @@ export class Match {
   // アルティメットの充填・発動・オーバードライブ持続。player.update前に呼ぶ
   private updateUltimate(dt: number): void {
     // 死亡中はオーバードライブを終了し、バフを残さない(ゲージ自体は維持)。
-    // 落下死などnotePlayerDeathを通らない経路も含めて確実に解除する
+    // 落下死などnotePlayerDeathを通らない経路も含めて確実に解除する。
+    // 黒帝モードは死亡で解除しない(解除条件は300秒経過 or 試合終了のみ。
+    // タイマー減算は updateDarkEmperor が死亡ゲート外で継続する)
     if (!this.player.alive) {
       this.ultActive = 0;
       this.player.speedMul = this.zombiePerkMoveMul;
@@ -4013,6 +4029,9 @@ export class Match {
       } else if (this.isNinja && this.input.wasPressed('ult3')) {
         // N: 雷帝・神獣降臨(fists装備時のみ。ゲージ全消費)
         this.activateLightningBeast();
+      } else if (this.isNinja && this.input.wasPressed('ult4') && this.darkEmperorTimer <= 0 && !this.killcamCamActive) {
+        // M: 黒技・シュヴァルツヴァルト(fists装備時のみ。ゲージ全消費)
+        this.activateSchwarzwald();
       }
     }
 
@@ -4042,7 +4061,8 @@ export class Match {
     // コンボ進行(0.8s窓=rpm480の連撃に合わせて延長)。スライドキックは常に最終段扱い
     this.punchStep = this.player.sliding ? 3 : this.punchWindowS > 0 ? Math.min(this.punchStep + 1, 3) : 1;
     this.punchWindowS = 0.8;
-    const dmg = this.punchStep >= 3 ? 90 : this.punchStep === 2 ? 63 : 45;
+    const darkMul = this.darkEmperorTimer > 0 ? DARK_EMPEROR_MUL_MELEE : 1;
+    const dmg = (this.punchStep >= 3 ? 90 : this.punchStep === 2 ? 63 : 45) * darkMul;
 
     // 3連モーション巡回(右薙ぎ→左薙ぎ→突き)。スライドキックは突き固定
     const motion = this.player.sliding ? 2 : this.punchMotion;
@@ -4092,6 +4112,10 @@ export class Match {
     this.blinkCooldownS = BLINK_COOLDOWN;
     this.punchStep = 0; // ブリンク後は薙ぎ払いコンボをリセット
     this.punchWindowS = 0;
+    const isDarkMode = this.darkEmperorTimer > 0;
+    const blinkRange = isDarkMode ? DARK_BLINK_RANGE : BLINK_RANGE;
+    const blinkDmg = BLINK_DAMAGE * (isDarkMode ? DARK_EMPEROR_MUL_BLINK : 1);
+    const blinkColor = isDarkMode ? DARK_EMPEROR_COLOR : this.activeWeapon.def.tracerColor;
 
     // 進行方向は視線の水平成分。真上/真下を向いていても水平の一貫した方向を確保する
     const dir = this.cameraForward().setY(0);
@@ -4105,26 +4129,26 @@ export class Match {
     const hit = this.castRay(
       start,
       dir,
-      BLINK_RANGE + CAPSULE_RADIUS,
+      blinkRange + CAPSULE_RADIUS,
       this.player.body,
       (c) => this.tags.get(c.handle)?.kind === 'world',
     );
-    let dist = BLINK_RANGE;
+    let dist = blinkRange;
     if (hit) dist = Math.max(0, hitToi(hit) - CAPSULE_RADIUS - 0.05);
     const end = start.clone().addScaledVector(dir, dist);
 
     // 三日月斬撃+並行ゴースト残像+着地点の小衝撃リング+抜刀音
     const eyeY = this.player.eyePosition.y;
     const blinkMid = new THREE.Vector3((start.x + end.x) / 2, eyeY, (start.z + end.z) / 2);
-    this.effects.crescentSlash(blinkMid, dir, this.activeWeapon.def.tracerColor);
+    this.effects.crescentSlash(blinkMid, dir, blinkColor);
     this.effects.blinkGhosts(
       new THREE.Vector3(start.x, eyeY - 0.1, start.z),
       new THREE.Vector3(end.x, eyeY - 0.1, end.z),
-      this.activeWeapon.def.tracerColor,
+      blinkColor,
     );
     this.effects.impactRing(
       new THREE.Vector3(end.x, start.y - PLAYER_FEET_OFFSET + 0.05, end.z),
-      this.activeWeapon.def.tracerColor,
+      blinkColor,
     );
     this.sounds.kunaiSlash(2); // 突き音=ブリンクの刺突
     this.sounds.melee();
@@ -4146,7 +4170,7 @@ export class Match {
       if (dx * dx + dz * dz > BLINK_RADIUS * BLINK_RADIUS) continue;
       if (Math.abs(bp.y - start.y) > 2.0) continue; // 高さ方向は緩く許容
       const point = new THREE.Vector3(bp.x, bp.y + 0.3, bp.z);
-      this.applyBotDamage(bot, BLINK_DAMAGE, point, false, '近接');
+      this.applyBotDamage(bot, blinkDmg, point, false, '近接');
     }
 
     // テレポート(水平のみ)。player.update が設定済みの次kinematic変位を上書きする
@@ -4163,11 +4187,18 @@ export class Match {
     const dmg = Math.min(300, (110 + fallH * 25) * heightMul);
     const radius = 9; // ドロップ(ダイブスラム)の衝撃波範囲を拡大(旧6→9)
     const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
+    const isDarkMode = this.darkEmperorTimer > 0;
+    const slamMul = isDarkMode ? DARK_EMPEROR_MUL_SLAM : 1;
     this.effects.explosion(ground, radius * 0.55);
     // 神化演出: 地を走るリング+放射クラック+小型土煙+飛散火花(判定は不変)
-    this.effects.shockwaveRing(ground, radius, this.colors.ally);
+    this.effects.shockwaveRing(ground, radius, isDarkMode ? DARK_EMPEROR_COLOR : this.colors.ally);
     this.effects.smokeCloud(ground, radius * 0.4, 0.6);
     this.effects.slamSparks(ground, this.activeWeapon.def.tracerColor);
+    if (isDarkMode) {
+      this.effects.darkSmokeEmit(ground);
+      this.effects.darkSmokeEmit(new THREE.Vector3(ground.x + 0.5, ground.y, ground.z));
+      this.effects.darkSmokeEmit(new THREE.Vector3(ground.x - 0.5, ground.y, ground.z + 0.5));
+    }
     this.sounds.groundPound();
     this.addShake(0.65);
     this.haptic(220, 0.8, 1.0);
@@ -4180,8 +4211,9 @@ export class Match {
       // グレネード/アルトと同じ遮蔽規約: 壁越しには効かない
       if (!this.explosionReaches(center, bot.position)) continue;
       const scaled = dmg * (1 - (dist / radius) * 0.5); // 中心ほど痛い
+      const scaledFinal = scaled * slamMul;
       // アルティメット同様、スラムキルでのアルト自己充填はしない
-      this.applyBotDamage(bot, scaled, bot.position, false, 'ダイブスラム', false);
+      this.applyBotDamage(bot, scaledFinal, bot.position, false, 'ダイブスラム', false);
     }
   }
 
@@ -4222,6 +4254,7 @@ export class Match {
     this.ultCharge = 0;
     this.ultReadyNotified = false;
     const center = this.player.position;
+    const darkBoost = this.darkEmperorTimer > 0 ? DARK_EMPEROR_MUL_ULTS : 1;
     // 演出はカメラ内側だと裏面カリングで消えるため、足元の地面で炸裂させて衝撃波を広げる
     const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
     this.effects.explosion(ground, NINJA_ULT_RADIUS * 0.6);
@@ -4243,7 +4276,7 @@ export class Match {
       if (dist > NINJA_ULT_RADIUS) continue;
       // グレネード/スラムと同じ遮蔽規約: 壁越しには効かない
       if (!this.explosionReaches(center, bot.position)) continue;
-      const scaled = NINJA_ULT_DAMAGE * (1 - (dist / NINJA_ULT_RADIUS) * 0.4); // 中心ほど痛い
+      const scaled = NINJA_ULT_DAMAGE * darkBoost * (1 - (dist / NINJA_ULT_RADIUS) * 0.4); // 中心ほど痛い
       // ウルト同様、衝撃波キルでのアルト自己充填はしない(自己還元の連鎖を防ぐ)
       this.applyBotDamage(bot, scaled, bot.position, false, 'グラビティスラム', false);
     }
@@ -4329,7 +4362,7 @@ export class Match {
     const SHURIKEN_SPEED = 35; // m/s(45mを約1.3秒で駆け抜ける)
     const SHURIKEN_RANGE = 45;
     const SHURIKEN_RADIUS = 3.0;
-    const SHURIKEN_DAMAGE = 400;
+    const SHURIKEN_DAMAGE = 400 * (this.darkEmperorTimer > 0 ? DARK_EMPEROR_MUL_ULTS : 1);
 
     const move = SHURIKEN_SPEED * dt;
     s.pos.addScaledVector(s.dir, move);
@@ -4458,13 +4491,72 @@ export class Match {
     this.alertBots(40);
   }
 
+  // ── 黒技・シュヴァルツヴァルト(M ウルト: fists装備時のみ) ──
+  // ゲージ全消費。アリーナ全域の敵に遮蔽無視の超絶ダメージ + 300秒の黒帝モード起動。
+  // killcam中は発動不可(既存ウルト規約に従う)。
+  private activateSchwarzwald(): void {
+    this.ultCharge = 0;
+    this.ultReadyNotified = false;
+    this.darkEmperorTimer = DARK_EMPEROR_DURATION;
+    this.darkSmokeTimer = 0;
+
+    const center = this.player.position;
+    const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
+
+    // 発動演出: 一瞬の暗転 + 暗黒ノヴァ + 強シェイク(reduceMotionで暗転を減衰)
+    this.effects.darkNova(ground, 14, this.settings.reduceMotion ? 0.5 : 1);
+    this.sounds.schwarzwald();
+    this.addShake(this.settings.reduceMotion ? 0.35 : 1.1);
+    this.haptic(400, 1.0, 1.0);
+    this.announcements.push('黒帝・シュヴァルツヴァルト');
+    this.alertBots(60); // 全域に銃声情報を伝播
+
+    // アリーナ全域の敵を全消費(遮蔽無視=究極技の特権)
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+      this.applyBotDamage(bot, SCHWARZWALD_DAMAGE, point, false, '黒技・シュヴァルツヴァルト', false);
+    }
+
+    // 黒帝モード起動: viewModel の常時黒オーラを点灯(setKunaiDarkMode 契約)
+    this.viewModel.setKunaiDarkMode(true);
+  }
+
+  // 黒帝モードの毎フレーム更新: タイマー減算 + 足元黒煙エミッタ
+  private updateDarkEmperor(dt: number): void {
+    if (this.darkEmperorTimer <= 0) return;
+    this.darkEmperorTimer = Math.max(0, this.darkEmperorTimer - dt);
+
+    // 足元から低頻度で漂う黒煙(R12予算準拠: ~1s間隔)
+    if (this.player.alive) {
+      this.darkSmokeTimer -= dt;
+      if (this.darkSmokeTimer <= 0) {
+        this.darkSmokeTimer = 0.75 + Math.random() * 0.5;
+        const feet = new THREE.Vector3(
+          this.player.position.x + (Math.random() - 0.5) * 0.4,
+          this.player.position.y - PLAYER_FEET_OFFSET,
+          this.player.position.z + (Math.random() - 0.5) * 0.4,
+        );
+        this.effects.darkSmokeEmit(feet);
+      }
+    }
+
+    if (this.darkEmperorTimer <= 0) this.endDarkEmperor();
+  }
+
+  // 黒帝モード解除: エミッタ停止 + viewModel通知 + バフリセット
+  private endDarkEmperor(): void {
+    this.darkEmperorTimer = 0;
+    this.viewModel.setKunaiDarkMode(false);
+  }
+
   // 雷帝の毎フレーム更新(落雷・麒麟疾走・波状ダメージ・終了dispose)
   private updateLightningBeast(dt: number): void {
     if (this.lightningBeastTimer <= 0) return;
     this.lightningBeastTimer -= dt;
 
     const BEAST_RADIUS = 14;
-    const WAVE_DAMAGE = 80; // 6波×80≈480(演出3秒に集中する高密度DoT)
+    const WAVE_DAMAGE = 80 * (this.darkEmperorTimer > 0 ? DARK_EMPEROR_MUL_ULTS : 1); // 6波×80≈480(演出3秒に集中する高密度DoT)
     const WAVE_INTERVAL = 0.5;
     const ARC_INTERVAL = 0.1;
     const arcColor = 0x88ddff;
@@ -5306,6 +5398,7 @@ export class Match {
       zombieBossFlash: this.config.mode === 'zombie' && this.zombieBossFlash > 0 ? this.zombieBossFlash : undefined,
       zombiePointFloats: this.config.mode === 'zombie' ? this.zombiePointFloats : undefined,
       zombieReviveFlash: this.config.mode === 'zombie' && this.zombieReviveFlash > 0 ? this.zombieReviveFlash : undefined,
+      darkEmperorS: this.isNinja && this.darkEmperorTimer > 0 ? Math.ceil(this.darkEmperorTimer) : undefined,
       // ── BO2 スコアストリーク ──
       streakProgress: this.streakManager.state.progress,
       streakBanked: this.streakManager.state.banked,
@@ -6124,8 +6217,8 @@ export class Match {
     }
     const newWeapon = new Weapon(newDef);
     newWeapon.raise();
-    (this.weapons as Weapon[])[0] = newWeapon;
-    this.activeIndex = 0;
+    // BO2式: 構えているスロット(activeIndex)を置換し、アクティブスロットは変えない
+    (this.weapons as Weapon[])[this.activeIndex] = newWeapon;
     this.viewModel.setWeapon(newWeapon.def);
     this.adsLatch = false;
   }
@@ -6142,6 +6235,8 @@ export class Match {
     this.disposeWindShuriken();
     this.disposeLightningKirin();
     this.lightningBeastTimer = 0;
+    if (this.darkEmperorTimer > 0) this.endDarkEmperor();
+    this.darkEmperorTimer = 0;
     this.atmosphere?.dispose(); // 草/フォグ/粒子/遠景/リムライトを解放(scene.traverse前)
     this.atmosphere = null;
     // ゾンビショップオブジェクトを解放

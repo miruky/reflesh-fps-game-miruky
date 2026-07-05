@@ -2148,6 +2148,21 @@ export class SoundKit {
     this.tone({ freq: 45, endFreq: 28, durationS: 1.8, type: 'sawtooth', gain: 0.35, drive: 5, delayS: 0.3 });
   }
 
+  // M ウルト: 黒技・シュヴァルツヴァルト(超低域ブーム+逆再生風スウィープ+暗いコーラス風パッド)
+  schwarzwald(): void {
+    // 超低域ブーム(非対称歪みで小型スピーカーにも芯を残す)
+    this.tone({ freq: 42, endFreq: 14, durationS: 0.9, type: 'sine', gain: 0.68, drive: 8, curve: 'asym' });
+    this.tone({ freq: 28, endFreq: 10, durationS: 0.7, type: 'sine', gain: 0.48, drive: 6, delayS: 0.1 });
+    // 逆再生風の高域スウィープ(下降で「収束」感)
+    this.noiseBurst({ durationS: 0.5, filterHz: 4800, filterType: 'bandpass', filterEndHz: 180, gain: 0.38 });
+    this.noiseBurst({ durationS: 0.8, filterHz: 320, filterType: 'lowpass', gain: 0.55, delayS: 0.12 });
+    // 暗いコーラス風パッド(のこぎり波の遅いスウィープ=合唱の倍音)
+    this.tone({ freq: 55, endFreq: 62, durationS: 1.6, type: 'sawtooth', gain: 0.28, drive: 3, delayS: 0.2 });
+    this.tone({ freq: 82, endFreq: 68, durationS: 1.4, type: 'sawtooth', gain: 0.22, drive: 2, delayS: 0.35 });
+    // 金属共鳴の余韻(「黒」の質感)
+    this.tone({ freq: 210, endFreq: 130, durationS: 0.6, type: 'triangle', gain: 0.18, delayS: 0.08 });
+  }
+
   slide(): void {
     this.noiseBurst({ durationS: 0.35, filterHz: 420, filterType: 'lowpass', gain: 0.25 });
   }

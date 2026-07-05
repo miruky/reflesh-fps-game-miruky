@@ -151,6 +151,10 @@ export class Hud {
         </div>
       </div>
       <div class="hud-announce" data-id="announce"></div>
+      <div class="hud-dark-emperor" data-id="darkemperor" hidden>
+        <span class="hud-de-badge">黒帝</span>
+        <span class="hud-de-timer" data-id="detimer">5:00</span>
+      </div>
       <div class="hud-feed" data-id="feed"></div>
       <div class="hud-crosshair" data-id="crosshair">
         <span class="ch-dot"></span>
@@ -462,6 +466,8 @@ export class Hud {
     if (zperks) { zperks.innerHTML = ''; zperks.hidden = true; }
     const zbuy = this.el['zbuy'];
     if (zbuy) { zbuy.hidden = true; zbuy.textContent = ''; }
+    const deEl = this.el['darkemperor'];
+    if (deEl) deEl.hidden = true;
     // R21 マルチキルバナーのリセット(前試合の残表示・タイマーを完全クリア)
     if (this.mkTimerId) { window.clearTimeout(this.mkTimerId); this.mkTimerId = 0; }
     this.mkBannerMs = 0;
@@ -559,6 +565,7 @@ export class Hud {
     this.pushZombiePointFloats(snap, project);
     this.updateZombieReviveFlash(snap);
     this.updateZombieBossFlash(snap);
+    this.updateDarkEmperorHud(snap);
     this.drawMinimap(snap);
 
     const scoreboard = this.el['scoreboard'];
@@ -1608,5 +1615,19 @@ export class Hud {
     if (!el) return;
     const v = snap.zombieBossFlash ?? 0;
     el.style.opacity = v > 0.001 ? String(v) : '0';
+  }
+
+  private updateDarkEmperorHud(snap: MatchSnapshot): void {
+    const el = this.el['darkemperor'];
+    if (!el) return;
+    const secs = snap.darkEmperorS ?? 0;
+    const active = secs > 0;
+    el.hidden = !active;
+    if (active) {
+      const mm = Math.floor(secs / 60);
+      const ss = Math.floor(secs % 60);
+      const timeStr = `${mm}:${String(ss).padStart(2, '0')}`;
+      this.text('detimer', timeStr);
+    }
   }
 }

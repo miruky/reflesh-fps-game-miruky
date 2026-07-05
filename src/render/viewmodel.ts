@@ -680,11 +680,14 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
       rx = 0,
       ry = 0,
       rz = 0,
+      kunaiGlow = false,
     ): void => {
       const m = new THREE.Mesh(geo, accent);
       m.position.set(px, py, pz);
       m.rotation.set(rx, ry, rz);
       m.castShadow = false;
+      // setKunaiDarkMode がこのフラグで刃紋メッシュを特定し、emissive を切り替える
+      if (kunaiGlow) m.userData.kunaiGlow = true;
       blade.add(m);
     };
     // 刃身(薄板・幅Y0.03/厚みX0.013)。切先を前方(-Z)へ
@@ -693,8 +696,8 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
     steel(new THREE.BoxGeometry(0.008, 0.033, 0.2), metalVC, C_DARK, 'gradY', 0, 0.006, -0.3);
     // 切先(四角錐)
     steel(new THREE.ConeGeometry(0.02, 0.1, 4), polishVC, C_STEEL, 'machined', 0, 0.006, -0.46, Math.PI / 2, Math.PI / 4, 0);
-    // 刃紋(下端の発光ライン)
-    glow(new THREE.BoxGeometry(0.016, 0.006, 0.2), 0, -0.009, -0.3);
+    // 刃紋(下端の発光ライン) — kunaiGlow=true で setKunaiDarkMode が emissive を切替
+    glow(new THREE.BoxGeometry(0.016, 0.006, 0.2), 0, -0.009, -0.3, 0, 0, 0, true);
     // 鍔(クロスガード)
     steel(new THREE.BoxGeometry(0.075, 0.016, 0.022), metalVC, C_DARK, 'gradY', 0, 0.004, -0.175);
     // 柄(Z軸シリンダ)
@@ -1579,6 +1582,11 @@ interface FistPose {
   ads: { p: [number, number, number]; r: [number, number, number] };
 }
 const FIST_KUNAI = 'vm:kunai';
+// ── スイングトレイル / 黒帝オーラの定数 ──────────────────────────────────
+const TRAIL_POOL_SIZE = 3;
+const TRAIL_MAX_LIFE = 0.12; // s
+const DARK_AURA_POOL_SIZE = 10;
+const DARK_AURA_SPAWN_INTERVAL = 0.03; // s
 const FIST_POSES: FistPose[] = [
   // 刃: 順手(切先-Z前方)→ 逆手(切先を下〜後ろへ倒し、刃腹をカメラへロール)
   { name: FIST_KUNAI, rest: { p: [0.02, -0.05, 0], r: [-0.12, 0.06, 0] }, ads: { p: [-0.05, -0.02, -0.02], r: [-2.0, 0.15, 0.5] } },
@@ -1636,6 +1644,30 @@ export class ViewModel {
   private cylTarget = 0; // シリンダ目標角(発砲ごとに -60°)
   private cylCur = 0; // シリンダ現在角(補間)
 
+  // ── スイングアニメーション(クナイ専用) ──────────────────────────────────
+  private swingTimer = 0; // 残り時間(0=終了)
+  private swingDuration = 0; // 総時間
+  private swingType = -1; // -1=なし, 0=右薙ぎ, 1=左薙ぎ, 2=突き
+  private _trailLastSpawnProg = -1; // トレイルスポーン済みフェーズ(重複防止)
+  private readonly _trailGroup = new THREE.Group();
+  private readonly _trailPool: Array<{ mesh: THREE.Mesh; life: number; maxLife: number }> = [];
+
+  // ── 黒帝モード ───────────────────────────────────────────────────────────
+  private _darkMode = false;
+  private readonly _darkAuraGroup = new THREE.Group();
+  private readonly _darkAuraPool: Array<{
+    mesh: THREE.Mesh;
+    life: number;
+    maxLife: number;
+    vel: THREE.Vector3;
+  }> = [];
+  private _darkAuraSpawnTimer = 0;
+  private _darkOverlayMeshes: THREE.Mesh[] = [];
+
+  // ── スクラッチ変数(Vector3/Matrix4 alloc を避ける) ──────────────────────
+  private readonly _v3scratch = new THREE.Vector3();
+  private readonly _m4scratch = new THREE.Matrix4();
+
   constructor(camera: THREE.Camera) {
     camera.add(this.root);
     this.root.position.copy(HIP_POSITION);
@@ -1653,6 +1685,50 @@ export class ViewModel {
     this.flashMesh.visible = false;
     // intensity=0(オフ時), distance=4(4m到達で完全減衰), decay=2(物理正則フォールオフ)
     this.flashLight = new THREE.PointLight(0xffaa44, 0, 4, 2);
+
+    // ── トレイルプール初期化(三日月形 ShapeGeometry × TRAIL_POOL_SIZE) ──
+    const trailShape = new THREE.Shape();
+    trailShape.moveTo(-0.09, 0);
+    trailShape.quadraticCurveTo(0, 0.012, 0.09, 0);
+    trailShape.quadraticCurveTo(0, -0.006, -0.09, 0);
+    const trailGeoBase = new THREE.ShapeGeometry(trailShape, 6);
+    for (let _ti = 0; _ti < TRAIL_POOL_SIZE; _ti += 1) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x8ab4ff,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(trailGeoBase.clone(), mat);
+      mesh.visible = false;
+      mesh.renderOrder = 5;
+      this._trailGroup.add(mesh);
+      this._trailPool.push({ mesh, life: 0, maxLife: 0 });
+    }
+    trailGeoBase.dispose();
+    this.root.add(this._trailGroup);
+
+    // ── 黒帝オーラプール初期化(暗色 PlaneGeometry × DARK_AURA_POOL_SIZE) ──
+    const auraGeoBase = new THREE.PlaneGeometry(0.04, 0.04);
+    for (let _ai = 0; _ai < DARK_AURA_POOL_SIZE; _ai += 1) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x1a0030,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.NormalBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(auraGeoBase.clone(), mat);
+      mesh.visible = false;
+      mesh.renderOrder = 4;
+      this._darkAuraGroup.add(mesh);
+      this._darkAuraPool.push({ mesh, life: 0, maxLife: 0, vel: new THREE.Vector3() });
+    }
+    auraGeoBase.dispose();
+    this.root.add(this._darkAuraGroup);
   }
 
   setWeapon(def: WeaponDef): void {
@@ -1674,6 +1750,13 @@ export class ViewModel {
     // 各武器のサイト高さを ADS 収束 Y へ反映(attachmentIds 可変にも追従)。キャッシュ両経路後。
     this.adsY = -resolveSightY(def);
     this.adsTarget.set(ADS_X, this.adsY, ADS_Z);
+    // 黒帝モード状態保持: 武器切替を跨いで _darkMode=true を維持。fists再装備でビジュアル再適用。
+    if (this._darkMode) {
+      this._removeDarkRimOverlay(); // 古い銃のリムオーバーレイを削除
+      if (def.shape === 'fists') {
+        this._applyDarkModeVisuals();
+      }
+    }
   }
 
   // 可動ノード参照を一度だけ引き、メカ状態をrest(identity変形)へ戻す。銃はキャッシュ
@@ -1765,24 +1848,30 @@ export class ViewModel {
   // variation: クナイ斬撃モーション(0=右薙ぎ / 1=左薙ぎ / 2=突き)。fists専用で他武器は未指定
   fire(scoped = false, flash = true, variation?: number): void {
     if (variation !== undefined) {
-      // クナイ3連モーション: 横ロール+前キックの組み合わせで薙ぎ/突きを描き分ける
+      // クナイ3連モーション: 小さな root 揺れ + fistNodes スイングアニメーション開始
+      // ━ root 揺れは従来より抑え気味(スイングオフセットが主役)
       const v = ((variation % 3) + 3) % 3;
       if (v === 0) {
-        // 右薙ぎ: 右ロール+軽い前キック
-        this.kickZ = Math.min(0.09, this.kickZ + 0.06);
-        this.kickRot = Math.min(0.16, this.kickRot + 0.1);
-        this.kickSide = Math.min(0.18, this.kickSide + 0.14);
+        // 右薙ぎ: 右ロール + 軽い前キック
+        this.kickZ = Math.min(0.05, this.kickZ + 0.03);
+        this.kickRot = Math.min(0.08, this.kickRot + 0.05);
+        this.kickSide = Math.min(0.06, this.kickSide + 0.04);
       } else if (v === 1) {
-        // 左薙ぎ: 左ロール+軽い前キック
-        this.kickZ = Math.min(0.09, this.kickZ + 0.06);
-        this.kickRot = Math.min(0.16, this.kickRot + 0.1);
-        this.kickSide = Math.max(-0.18, this.kickSide - 0.14);
+        // 左薙ぎ: 左ロール + 軽い前キック
+        this.kickZ = Math.min(0.05, this.kickZ + 0.03);
+        this.kickRot = Math.min(0.08, this.kickRot + 0.05);
+        this.kickSide = Math.max(-0.06, this.kickSide - 0.04);
       } else {
-        // 突き: 強い前キックのみ(ロールは減衰)
-        this.kickZ = Math.min(0.14, this.kickZ + 0.12);
-        this.kickRot = Math.min(0.12, this.kickRot + 0.08);
-        this.kickSide *= 0.3;
+        // 突き: 前キック
+        this.kickZ = Math.min(0.08, this.kickZ + 0.07);
+        this.kickRot = Math.min(0.07, this.kickRot + 0.05);
+        this.kickSide *= 0.5;
       }
+      // スイングアニメーション開始。進行中は即キャンセル→新規開始(480rpm連打対応)
+      this.swingType = v;
+      this.swingDuration = v === 2 ? 0.13 : 0.15;
+      this.swingTimer = this.swingDuration;
+      this._trailLastSpawnProg = -1; // スポーン状態リセット
       return;
     }
     // スコープ武器はボルト排莢のように大きく後退・跳ね上げる(BO2 DSRの重い一撃)
@@ -1828,6 +1917,18 @@ export class ViewModel {
     this.cache.clear();
     this.flashMesh.geometry.dispose();
     (this.flashMesh.material as THREE.Material).dispose();
+    // トレイルプール解放
+    for (const t of this._trailPool) {
+      t.mesh.geometry.dispose();
+      (t.mesh.material as THREE.Material).dispose();
+    }
+    // オーラプール解放
+    for (const a of this._darkAuraPool) {
+      a.mesh.geometry.dispose();
+      (a.mesh.material as THREE.Material).dispose();
+    }
+    // ダークリムオーバーレイ解放
+    this._removeDarkRimOverlay();
     disposeShared();
   }
 
@@ -1881,6 +1982,8 @@ export class ViewModel {
     this.kickZ *= kickDecay;
     this.kickRot *= kickDecay;
     this.kickSide *= Math.exp(-dt * 14.0); // 横キックは少し速く戻す(斬撃の切れ味)
+    // スイングタイマー進行(fistNodes ブロックより前に decrement)
+    if (this.swingTimer > 0) this.swingTimer = Math.max(0, this.swingTimer - dt);
     this.flashTimer -= dt;
     this.flashMesh.visible = this.flashTimer > 0;
     // サプレッサー付きは intensity/scale を 1/4 に抑えて炎を消す
@@ -1933,25 +2036,36 @@ export class ViewModel {
     // ゲームプレイ(スプレッド/QS判定)は線形adsのままなので挙動は不変
     const adsVis = 1 - Math.pow(1 - ads, 5);
 
-    // クナイ(素手)逆手ダガー構え: rest(順手・腰だめ)↔ads(逆手・胸前水平)を adsVis で補間。
-    // 各ノードはローカル変形のみ(root非関与=射線/収束Y/スコープ所作に無干渉)。非fistsは空でスキップ。
+    // クナイ(素手)逆手ダガー構え: rest↔ads を adsVis で補間 + スイングオフセット加算。
+    // スイングは加算デルタなので restポーズ/ADS逆手/resolveSightY 契約に無干渉。
     if (this.fistNodes.length) {
       const p = adsVis;
+      // スイングフラクション: 振り出し(0→0.4) は easeOutCubic、戻り(0.4→1) は smoothstep 1→0
+      let swingFrac = 0;
+      if (this.swingTimer > 0 && this.swingDuration > 0) {
+        const sp = 1 - this.swingTimer / this.swingDuration;
+        if (sp < 0.4) {
+          const t = sp / 0.4;
+          swingFrac = 1 - Math.pow(1 - t, 2.5); // easeOut: 鋭く振り抜く
+        } else {
+          const t = (sp - 0.4) / 0.6;
+          swingFrac = 1 - t * t * (3 - 2 * t); // smoothstep 1→0: スッと構えへ戻る
+        }
+      }
       for (const { node, pose } of this.fistNodes) {
         const rp = pose.rest.p;
         const ap = pose.ads.p;
         const rr = pose.rest.r;
         const ar = pose.ads.r;
-        node.position.set(
-          rp[0] + (ap[0] - rp[0]) * p,
-          rp[1] + (ap[1] - rp[1]) * p,
-          rp[2] + (ap[2] - rp[2]) * p,
-        );
-        node.rotation.set(
-          rr[0] + (ar[0] - rr[0]) * p,
-          rr[1] + (ar[1] - rr[1]) * p,
-          rr[2] + (ar[2] - rr[2]) * p,
-        );
+        const bx = rp[0] + (ap[0] - rp[0]) * p;
+        const by = rp[1] + (ap[1] - rp[1]) * p;
+        const bz = rp[2] + (ap[2] - rp[2]) * p;
+        const brx = rr[0] + (ar[0] - rr[0]) * p;
+        const bry = rr[1] + (ar[1] - rr[1]) * p;
+        const brz = rr[2] + (ar[2] - rr[2]) * p;
+        const sd = this._swingDelta(node.name, swingFrac);
+        node.position.set(bx + sd[0], by + sd[1], bz + sd[2]);
+        node.rotation.set(brx + sd[3], bry + sd[4], brz + sd[5]);
       }
     }
 
@@ -2008,5 +2122,257 @@ export class ViewModel {
       this.root.position.y -= wave * 0.09;
     }
     this.root.rotation.set(rotX, this.swayX * 2 + slideYaw, rotZ + this.kickSide * 0.7);
+
+    // スイングトレイルと黒帝オーラの毎フレーム更新
+    this._updateTrails(dt);
+    this._updateDarkAura(dt);
+  }
+
+  // ── スイングデルタ: ノード名とfrac(0→1)から fistNodes への追加変形(6要素配列)を返す ──
+  // 各値は rest/ads ポーズへの加算オフセット。終了(frac=0)でゼロへ収束=休止ポーズ不変。
+  private _swingDelta(
+    name: string,
+    f: number,
+  ): [number, number, number, number, number, number] {
+    if (f <= 0 || this.swingType < 0) return [0, 0, 0, 0, 0, 0];
+    const t = this.swingType;
+    if (name === FIST_KUNAI) {
+      // 右薙ぎ: クナイが右→左へ弧を描き Zロールで切り込む
+      if (t === 0) return [-0.14 * f, -0.03 * f, -0.04 * f, -0.35 * f,  0.6 * f, -1.3 * f];
+      // 左薙ぎ: 逆方向
+      if (t === 1) return [ 0.14 * f, -0.03 * f, -0.04 * f, -0.35 * f, -0.6 * f,  1.3 * f];
+      // 突き: 前方へ鋭く突き込む
+      return [0, 0.01 * f, -0.18 * f, -0.8 * f, 0, 0];
+    }
+    if (name === 'vm:fistRArm') {
+      if (t === 0) return [-0.06 * f, -0.01 * f, -0.02 * f,  0.05 * f,  0.25 * f, -0.45 * f];
+      if (t === 1) return [ 0.06 * f, -0.01 * f, -0.02 * f,  0.05 * f, -0.25 * f,  0.45 * f];
+      return [0, 0, -0.06 * f, -0.3 * f, 0, 0];
+    }
+    if (name === 'vm:fistRHand') {
+      if (t === 0) return [-0.04 * f, -0.01 * f, -0.01 * f, 0.02 * f,  0.18 * f, -0.35 * f];
+      if (t === 1) return [ 0.04 * f, -0.01 * f, -0.01 * f, 0.02 * f, -0.18 * f,  0.35 * f];
+      return [0, 0, -0.04 * f, -0.2 * f, 0, 0];
+    }
+    return [0, 0, 0, 0, 0, 0];
+  }
+
+  // ── トレイルのスポーン ────────────────────────────────────────────────────
+  private _spawnTrail(phase: number): void {
+    const trail = this._trailPool.find((tr) => tr.life <= 0);
+    if (!trail) return;
+    const kunai = this.gun?.getObjectByName(FIST_KUNAI);
+    if (!kunai) return;
+    // 刃先(kunaiローカル座標: 切先付近)を root ローカルへ変換
+    this.root.updateWorldMatrix(true, false);
+    this._v3scratch.set(0, 0.006, -0.46);
+    kunai.localToWorld(this._v3scratch);
+    this._v3scratch.applyMatrix4(this._m4scratch.copy(this.root.matrixWorld).invert());
+    trail.mesh.position.copy(this._v3scratch);
+    // 向き: 薙ぎはロールを加え三日月が刃方向を指す
+    const rz = this.swingType === 0 ? -0.4 : this.swingType === 1 ? 0.4 : 0;
+    trail.mesh.rotation.set(0, 0, rz);
+    trail.life = TRAIL_MAX_LIFE * (1 - phase * 0.35);
+    trail.maxLife = trail.life;
+    trail.mesh.visible = true;
+    const mat = trail.mesh.material as THREE.MeshBasicMaterial;
+    mat.opacity = 0.55;
+    mat.color.setHex(this._darkMode ? 0x6a00b0 : 0x8ab4ff);
+  }
+
+  // ── トレイルの毎フレーム更新 ──────────────────────────────────────────────
+  private _updateTrails(dt: number): void {
+    // 生存トレイルのフェードアウト
+    for (const trail of this._trailPool) {
+      if (trail.life > 0) {
+        trail.life -= dt;
+        const ratio = Math.max(0, trail.life / trail.maxLife);
+        (trail.mesh.material as THREE.MeshBasicMaterial).opacity = ratio * 0.55;
+        if (trail.life <= 0) trail.mesh.visible = false;
+      }
+    }
+    // スポーン(スイング進行中かつクナイが有効なとき)
+    if (this.swingTimer > 0 && this.swingDuration > 0 && this.gun?.getObjectByName(FIST_KUNAI)) {
+      const sp = 1 - this.swingTimer / this.swingDuration;
+      for (const thresh of [0.05, 0.22, 0.42] as const) {
+        if (sp >= thresh && this._trailLastSpawnProg < thresh) {
+          this._spawnTrail(thresh);
+        }
+      }
+      this._trailLastSpawnProg = sp;
+    } else if (this.swingTimer <= 0) {
+      this._trailLastSpawnProg = -1;
+    }
+  }
+
+  // ── 黒帝オーラのスポーン ──────────────────────────────────────────────────
+  private _spawnDarkAura(): void {
+    const slot = this._darkAuraPool.find((a) => a.life <= 0);
+    if (!slot) return;
+    const kunai = this.gun?.getObjectByName(FIST_KUNAI);
+    if (!kunai) return;
+    this.root.updateWorldMatrix(true, false);
+    // 刃の中間付近にランダム散布
+    this._v3scratch.set(
+      (Math.random() - 0.5) * 0.05,
+      0.006 + (Math.random() - 0.5) * 0.05,
+      -0.28 - Math.random() * 0.18,
+    );
+    kunai.localToWorld(this._v3scratch);
+    this._v3scratch.applyMatrix4(this._m4scratch.copy(this.root.matrixWorld).invert());
+    slot.mesh.position.copy(this._v3scratch);
+    slot.mesh.scale.setScalar(0.4 + Math.random() * 0.6);
+    slot.mesh.rotation.z = Math.random() * Math.PI * 2;
+    slot.life = 0.18 + Math.random() * 0.15;
+    slot.maxLife = slot.life;
+    slot.vel.set((Math.random() - 0.5) * 0.008, 0.004 + Math.random() * 0.008, 0);
+    slot.mesh.visible = true;
+    (slot.mesh.material as THREE.MeshBasicMaterial).opacity = 0.38;
+  }
+
+  // ── 黒帝オーラの毎フレーム更新 ────────────────────────────────────────────
+  private _updateDarkAura(dt: number): void {
+    if (!this._darkMode) {
+      // darkMode=false でも生き残りパーティクルをフェードアウト
+      for (const a of this._darkAuraPool) {
+        if (a.life > 0) {
+          a.life -= dt * 3; // 早めにフェード
+          (a.mesh.material as THREE.MeshBasicMaterial).opacity =
+            Math.max(0, a.life / a.maxLife) * 0.38;
+          if (a.life <= 0) a.mesh.visible = false;
+        }
+      }
+      return;
+    }
+    // 生存パーティクルの移動・フェード
+    for (const a of this._darkAuraPool) {
+      if (a.life > 0) {
+        a.life -= dt;
+        a.mesh.position.addScaledVector(a.vel, dt * 60);
+        const ratio = Math.max(0, a.life / a.maxLife);
+        (a.mesh.material as THREE.MeshBasicMaterial).opacity = ratio * 0.38;
+        if (a.life <= 0) a.mesh.visible = false;
+      }
+    }
+    // fists装備中のみスポーン
+    if (this.gun?.getObjectByName(FIST_KUNAI)) {
+      this._darkAuraSpawnTimer -= dt;
+      if (this._darkAuraSpawnTimer <= 0) {
+        this._spawnDarkAura();
+        this._darkAuraSpawnTimer = DARK_AURA_SPAWN_INTERVAL;
+      }
+    }
+  }
+
+  // ── 黒帝モード API ─────────────────────────────────────────────────────────
+  // 公開メソッド: match.ts 側から呼ぶ(Schwarzwald 発動時 active=true)。
+  // active 時: 暗黒の煙オーラ + 刃紋を深紫 emissive へ切替 + 暗紫リムオーバーレイ。
+  // 非 active 時: 即時通常へ復帰。武器切替を跨いでも _darkMode 状態を保持し、
+  // fists 再装備で自動再適用する(setWeapon が担当)。dispose 完全。
+  setKunaiDarkMode(active: boolean): void {
+    if (this._darkMode === active) return;
+    this._darkMode = active;
+    if (active) {
+      this._applyDarkModeVisuals();
+    } else {
+      this._removeDarkRimOverlay();
+      this._restoreKunaiGlow();
+    }
+  }
+
+  // 刃紋を深紫 emissive へ切替 + リムオーバーレイ追加 + トレイルカラー変更
+  private _applyDarkModeVisuals(): void {
+    if (!this.gun) return;
+    const kunai = this.gun.getObjectByName(FIST_KUNAI);
+    if (!kunai) return;
+    // 刃紋(userData.kunaiGlow=true)の material をクローンして深紫 emissive に
+    kunai.traverse((node) => {
+      if (!(node instanceof THREE.Mesh) || !node.userData.kunaiGlow) return;
+      if (node.userData.origMat) return; // 既に切替済み(重複適用防止)
+      const origMat = node.material as THREE.MeshStandardMaterial;
+      const dm = origMat.clone();
+      dm.emissive.setHex(0x6a00b0);
+      dm.emissiveIntensity = 0.9;
+      dm.color.setHex(0x2a0040);
+      dm.userData.shared = false; // clone は個別 dispose が必要
+      node.userData.origMat = origMat;
+      node.userData.darkMat = dm;
+      node.material = dm;
+    });
+    this._addDarkRimOverlay();
+    // トレイルカラーを黒紫へ
+    for (const tr of this._trailPool) {
+      (tr.mesh.material as THREE.MeshBasicMaterial).color.setHex(0x6a00b0);
+    }
+  }
+
+  // 刃紋 material を通常色へ戻す + トレイルカラー復帰。
+  // V24修正: 黒帝終了時にセカンダリを構えているとキャッシュ内のクナイが紫のまま残るため、
+  // 現在の gun だけでなく武器キャッシュ全体を走査して復元する(冪等)。
+  private _restoreKunaiGlow(): void {
+    const targets: THREE.Object3D[] = [];
+    if (this.gun) {
+      const held = this.gun.getObjectByName(FIST_KUNAI);
+      if (held) targets.push(held);
+    }
+    for (const entry of this.cache.values()) {
+      const cached = entry.gun.getObjectByName(FIST_KUNAI);
+      if (cached && !targets.includes(cached)) targets.push(cached);
+    }
+    for (const kunai of targets) {
+      kunai.traverse((node) => {
+        if (!(node instanceof THREE.Mesh) || !node.userData.kunaiGlow) return;
+        if (!node.userData.origMat) return;
+        const dm = node.userData.darkMat as THREE.Material | undefined;
+        if (dm) dm.dispose();
+        node.material = node.userData.origMat as THREE.Material;
+        node.userData.origMat = undefined;
+        node.userData.darkMat = undefined;
+      });
+    }
+    for (const tr of this._trailPool) {
+      (tr.mesh.material as THREE.MeshBasicMaterial).color.setHex(0x8ab4ff);
+    }
+  }
+
+  // 刃の縁に暗紫リムオーバーレイを追加(AdditiveBlending 深紫=「黒いのに視認できる」縁取り)
+  private _addDarkRimOverlay(): void {
+    if (!this.gun) return;
+    const kunai = this.gun.getObjectByName(FIST_KUNAI);
+    if (!kunai) return;
+    // 上縁・下縁それぞれに独立した Material でリムメッシュを追加
+    const configs: [number, number, number, number, number, number][] = [
+      [0, 0.017, -0.3, Math.PI / 2, 0, 0], // 上縁
+      [0, -0.005, -0.3, Math.PI / 2, 0, 0], // 下縁
+    ];
+    for (const [px, py, pz, rx, ry, rz] of configs) {
+      const rimMat = new THREE.MeshBasicMaterial({
+        color: 0x5500aa,
+        transparent: true,
+        opacity: 0.45,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      rimMat.userData.shared = false;
+      const geo = new THREE.PlaneGeometry(0.012, 0.21);
+      const mesh = new THREE.Mesh(geo, rimMat);
+      mesh.position.set(px, py, pz);
+      mesh.rotation.set(rx, ry, rz);
+      mesh.renderOrder = 6;
+      kunai.add(mesh);
+      this._darkOverlayMeshes.push(mesh);
+    }
+  }
+
+  // リムオーバーレイを全削除して GPU 資源を解放
+  private _removeDarkRimOverlay(): void {
+    for (const mesh of this._darkOverlayMeshes) {
+      mesh.parent?.remove(mesh);
+      mesh.geometry.dispose();
+      const mat = mesh.material as THREE.Material;
+      if (mat.userData.shared !== true) mat.dispose();
+    }
+    this._darkOverlayMeshes = [];
   }
 }

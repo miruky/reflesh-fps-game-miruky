@@ -23,6 +23,8 @@ export class Effects {
   private streaks: Timed<THREE.Group>[] = []; // 素手ウルトの放射状クラック斬撃
   private crescents: Timed<THREE.Mesh>[] = []; // ブリンク三日月斬撃(per-callジオメトリ)
   private impactRings: Timed<THREE.Mesh>[] = []; // ブリンク着地/落雷の小衝撃リング
+  private darkNovas: Timed<THREE.Mesh | THREE.Group>[] = []; // 黒技ノヴァ(暗色リング+暗転球)
+  private darkPuffs: Timed<THREE.Mesh>[] = [];               // 黒帝オーラ煙(足元低頻度)
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -320,6 +322,109 @@ export class Effects {
     this.impactRings.push({ obj: mesh, life: 0.22, maxLife: 0.22 });
   }
 
+  // 黒技・シュヴァルツヴァルト発動時の暗黒ノヴァ演出
+  // (1) NormalBlendingの暗転スフィア (2) AdditiveBlendingの深紫コア (3) 暗色地面リング×2 (4) 黒煙群
+  // intensity: 暗転(視界を塗る)成分の減衰係数。reduceMotion時に match 側が下げて渡す
+  darkNova(center: THREE.Vector3, radius: number, intensity = 1): void {
+    const gy = center.y;
+    // (1) 暗転スフィア(NormalBlending=暗く塗る)
+    const darkOpacity = 0.88 * intensity;
+    const darkMat = new THREE.MeshBasicMaterial({
+      color: 0x050008,
+      transparent: true,
+      opacity: darkOpacity,
+      blending: THREE.NormalBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const darkBall = new THREE.Mesh(this.blastGeometry, darkMat);
+    darkBall.position.copy(center);
+    darkBall.scale.setScalar(radius * 0.12);
+    darkBall.userData.targetScale = radius * 0.85;
+    darkBall.userData.baseOpacity = darkOpacity;
+    this.scene.add(darkBall);
+    this.darkNovas.push({ obj: darkBall as THREE.Mesh, life: 0.38, maxLife: 0.38 });
+
+    // (2) 深紫コアフラッシュ(AdditiveBlending)
+    const purpleMat = new THREE.MeshBasicMaterial({
+      color: 0x6a00b0,
+      transparent: true,
+      opacity: 0.72,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const purpleCore = new THREE.Mesh(this.blastGeometry, purpleMat);
+    purpleCore.position.copy(center);
+    purpleCore.scale.setScalar(radius * 0.06);
+    purpleCore.userData.targetScale = radius * 0.42;
+    purpleCore.userData.baseOpacity = 0.72;
+    this.scene.add(purpleCore);
+    this.darkNovas.push({ obj: purpleCore as THREE.Mesh, life: 0.26, maxLife: 0.26 });
+
+    // (3) 地面を走る暗色拡大リング×2
+    const ringSpecs = [
+      { target: radius,        life: 0.68, opacity: 0.82, y: 0.07, color: 0x1a0032 },
+      { target: radius * 0.62, life: 0.90, opacity: 0.40, y: 0.04, color: 0x07000e },
+    ] as const;
+    for (const rs of ringSpecs) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: rs.color,
+        transparent: true,
+        opacity: rs.opacity,
+        blending: THREE.NormalBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const ring = new THREE.Mesh(this.ringGeometry, mat);
+      ring.position.set(center.x, gy + rs.y, center.z);
+      ring.rotation.x = -Math.PI / 2;
+      ring.scale.setScalar(radius * 0.14);
+      ring.userData.targetScale = rs.target;
+      ring.userData.baseOpacity = rs.opacity;
+      this.scene.add(ring);
+      this.darkNovas.push({ obj: ring as THREE.Mesh, life: rs.life, maxLife: rs.life });
+    }
+
+    // (4) 黒煙群(6ブロブ。cloudGeometry共有=disposeしない)
+    const smokeGroup = new THREE.Group();
+    smokeGroup.position.copy(center);
+    smokeGroup.userData.maxLife = 2.2;
+    smokeGroup.userData.age = 0;
+    for (let i = 0; i < 6; i += 1) {
+      const blobMat = new THREE.MeshBasicMaterial({
+        color: 0x08000e,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+      const blob = new THREE.Mesh(this.cloudGeometry, blobMat);
+      blob.position.set(
+        (Math.random() - 0.5) * radius * 0.75,
+        Math.random() * radius * 0.45,
+        (Math.random() - 0.5) * radius * 0.75,
+      );
+      blob.scale.setScalar(radius * (0.18 + Math.random() * 0.22));
+      smokeGroup.add(blob);
+    }
+    this.scene.add(smokeGroup);
+    this.darkNovas.push({ obj: smokeGroup as unknown as THREE.Mesh, life: 2.2, maxLife: 2.2 });
+  }
+
+  // 黒帝オーラ: 足元から低頻度で漂う暗色煙パフ(puffGeometry共有)
+  darkSmokeEmit(pos: THREE.Vector3): void {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x0c0016,
+      transparent: true,
+      opacity: 0.62,
+      depthWrite: false,
+    });
+    const puff = new THREE.Mesh(this.puffGeometry, mat);
+    puff.position.copy(pos);
+    puff.scale.setScalar(0.5 + Math.random() * 0.4);
+    this.scene.add(puff);
+    this.darkPuffs.push({ obj: puff, life: 1.4, maxLife: 1.4 });
+  }
+
   // ダイブスラム追加火花: 放射状に飛ぶ加算シャード(既存explosionを補完)
   slamSparks(pos: THREE.Vector3, color: number): void {
     const group = new THREE.Group();
@@ -534,6 +639,31 @@ export class Effects {
       (mesh.material as THREE.MeshBasicMaterial).opacity =
         ((mesh.userData.baseOpacity as number) ?? 0.75) * ratio;
     });
+    this.darkNovas = this.tick(this.darkNovas as unknown as Timed<THREE.Object3D>[], dt, (obj, ratio) => {
+      if (obj instanceof THREE.Group) {
+        // 黒煙群: 展開フェードイン→末尾フェードアウト
+        const age = ((obj.userData.age as number | undefined) ?? 0) + dt;
+        obj.userData.age = age;
+        const grow = Math.min(1, age / 0.4);
+        const remaining = ratio * (obj.userData.maxLife as number);
+        const fade = Math.min(1, remaining / 1.5);
+        for (const child of obj.children) {
+          (child as THREE.Mesh).scale.multiplyScalar(1 + dt * 0.015);
+          ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.62 * grow * fade;
+        }
+      } else {
+        // 暗転球・リング: 拡大+フェード
+        const target = (obj.userData.targetScale as number) ?? 1;
+        const grown = target * (1 - ratio * ratio);
+        (obj as THREE.Mesh).scale.setScalar(Math.max((obj as THREE.Mesh).scale.x, grown));
+        ((obj as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity =
+          ((obj.userData.baseOpacity as number) ?? 0.85) * ratio;
+      }
+    }) as unknown as Timed<THREE.Mesh | THREE.Group>[];
+    this.darkPuffs = this.tick(this.darkPuffs, dt, (puff, ratio) => {
+      (puff.material as THREE.MeshBasicMaterial).opacity = 0.62 * ratio;
+      puff.scale.multiplyScalar(1 + dt * 0.55); // ゆっくり膨らむ
+    });
     this.streaks = this.tick(this.streaks, dt, (group, ratio) => {
       const grow = 1 - ratio * ratio; // 中心から外へ走る
       for (const child of group.children) {
@@ -574,6 +704,8 @@ export class Effects {
       this.rings,
       this.crescents,
       this.impactRings,
+      this.darkPuffs,
+      this.darkNovas as unknown as Timed<THREE.Object3D>[],
     ]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;

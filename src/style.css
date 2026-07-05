@@ -9988,6 +9988,42 @@ body.killcam-active .hud-death {
   text-shadow: none;
 }
 
+/* ── 黒帝バッジ(黒技・シュヴァルツヴァルト) ─────────────────────────── */
+.hud-dark-emperor {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px 4px 10px;
+  background: rgba(6, 0, 14, 0.88);
+  border: 1px solid rgba(106, 0, 176, 0.65);
+  border-radius: 2px;
+  box-shadow: 0 0 18px rgba(106, 0, 176, 0.45), inset 0 0 10px rgba(26, 0, 50, 0.6);
+  pointer-events: none;
+  z-index: 120;
+}
+.hud-de-badge {
+  font-family: var(--font-ui, 'Rajdhani', 'Share Tech Mono', monospace);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #c084fc;
+  text-shadow: 0 0 10px rgba(106, 0, 176, 0.9), 0 0 22px rgba(106, 0, 176, 0.55);
+}
+.hud-de-timer {
+  font-family: var(--font-mono, 'Share Tech Mono', monospace);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #e9d5ff;
+  text-shadow: 0 0 8px rgba(106, 0, 176, 0.7);
+  min-width: 38px;
+  text-align: right;
+}
+
 /* +N ゾンビポイントフロート(緑系)。インラインの left/top は起点固定に使い、
    上昇は transform で行う(インライン top はクラスの top 指定より優先されるため) */
 .hud-zpfloat {

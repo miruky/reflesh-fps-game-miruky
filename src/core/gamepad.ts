@@ -78,6 +78,7 @@ export const BO3_DEFAULT: GamepadBindings = {
   ultimate: btn(GP.L1),
   ult2: [], // 風神・極大手裏剣(ゲームパッド未割当・キーボード専用)
   ult3: [], // 雷帝・神獣降臨(ゲームパッド未割当・キーボード専用)
+  ult4: [], // 黒技・シュヴァルツヴァルト(ゲームパッド未割当)
   holdBreath: btn(GP.L3), // スプリントと共有(ADS中=息止め / 非ADS=スプリント)
   scoreboard: btn(GP.SHARE),
   // BO2 スコアストリーク発動キー: ゲームパッドは未割当(キーボード専用)

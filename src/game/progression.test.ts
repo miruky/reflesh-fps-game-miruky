@@ -331,3 +331,57 @@ describe('CHALLENGES定義', () => {
     }
   });
 });
+
+// ── MAX_LEVEL=1000 曲線テスト ─────────────────────────────────────────────────────
+// 累積XP定数(テスト内でも同一ロジックで導出できるが、固定値で回帰テストとして保持する)
+// sum(xpToNext(1..99))  = 99*750 + 250*(98*99/2) = 1_287_000
+// sum(xpToNext(100..499)) = 400*25_500 + 100*(399*400/2) = 18_180_000
+// sum(xpToNext(500..998)) = 499*65_500 + 50*(498*499/2) = 38_897_050
+// xpToNext(999) = 65_500 + 499*50 = 90_450
+// sum(xpToNext(1..999)) = 58_454_500
+const XP_FOR_L100  = 1_287_000;
+const XP_FOR_L999  = 1_287_000 + 18_180_000 + 38_897_050; // = 58_364_050
+const XP_FOR_L1000 = 58_454_500;
+
+describe('MAX_LEVEL=1000 進行曲線', () => {
+  it('L1-99 の xpToNext は旧曲線と同一(後方互換)', () => {
+    expect(xpToNext(1)).toBe(750);
+    expect(xpToNext(50)).toBe(750 + 49 * 250);  // 13_000
+    expect(xpToNext(99)).toBe(750 + 98 * 250);  // 25_250
+  });
+
+  it('既存セーブXPで旧L100が下がらない(後方互換)', () => {
+    // 旧L100到達XP = 1_287_000 → 新計算でも level>=100 を保証
+    const state = levelFromXp(XP_FOR_L100);
+    expect(state.level).toBeGreaterThanOrEqual(100);
+  });
+
+  it('xpToNext は L100 で旧曲線と連続する(不連続なし)', () => {
+    // 旧曲線 xpToNext(100) = 750 + 99*250 = 25_500。新曲線も同値で継続。
+    expect(xpToNext(100)).toBe(25_500);
+  });
+
+  it('L999→L1000: toNext 分 XP 積算で上限到達', () => {
+    const before = levelFromXp(XP_FOR_L999);
+    expect(before.level).toBe(999);
+    expect(before.toNext).toBe(xpToNext(999));  // = 90_450
+
+    const after = levelFromXp(XP_FOR_L999 + xpToNext(999));
+    expect(after.level).toBe(MAX_LEVEL);  // = 1000
+    expect(after.toNext).toBe(0);
+  });
+
+  it('L1000(上限)で toNext=0 かつ level=MAX_LEVEL', () => {
+    const state = levelFromXp(XP_FOR_L1000);
+    expect(state.level).toBe(MAX_LEVEL);
+    expect(state.toNext).toBe(0);
+    // 更に XP を積んでも 1000 を超えない
+    expect(levelFromXp(XP_FOR_L1000 + 10_000_000).level).toBe(MAX_LEVEL);
+  });
+
+  it('xpToNext は L1→L999 の全域で単調増加', () => {
+    for (let l = 1; l < 999; l += 1) {
+      expect(xpToNext(l + 1)).toBeGreaterThan(xpToNext(l));
+    }
+  });
+});

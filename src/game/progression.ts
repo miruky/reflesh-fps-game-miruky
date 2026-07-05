@@ -104,12 +104,25 @@ export function emptyProfile(): Profile {
   };
 }
 
-// レベルnからn+1へ必要なXP。緩やかな一次曲線
+// レベルnからn+1へ必要なXP。
+// L1-99: 750 + (n-1)*250 の一次曲線(既存セーブとの後方互換を維持するため不変)。
+// L100-499: +100/レベルで緩やかに成長(高原フェーズ1)。
+// L500-999: +50/レベルでさらに緩やかに成長(高原フェーズ2)。
+// 単調増加・オーバーフロー無し・最大値は xpToNext(999)=90_450 で Number.MAX_SAFE_INTEGER と十分離れている。
 export function xpToNext(level: number): number {
-  return 750 + (level - 1) * 250;
+  if (level < 100) {
+    // L1-99 は旧曲線と同一(後方互換)
+    return 750 + (level - 1) * 250;
+  }
+  if (level < 500) {
+    // L100-499: 25_500 → 65_400 (+100/レベル)
+    return 25_500 + (level - 100) * 100;
+  }
+  // L500-999: 65_500 → 90_450 (+50/レベル)
+  return 65_500 + (level - 500) * 50;
 }
 
-export const MAX_LEVEL = 100;
+export const MAX_LEVEL = 1000;
 
 export interface LevelState {
   level: number;
