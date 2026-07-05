@@ -1947,17 +1947,20 @@ export class SoundKit {
     }
   }
 
-  // 素手: ダイブスラム着地の衝撃波(サブベース+土煙ノイズ)
+  // 素手: ダイブスラム着地の衝撃波(強化サブベース+土煙ノイズ+地面クラック)
   groundPound(): void {
-    this.tone({ freq: 55, endFreq: 22, durationS: 0.5, type: 'sine', gain: 0.6 });
-    this.noiseBurst({ durationS: 0.3, filterHz: 320, filterType: 'lowpass', gain: 0.55 });
+    this.tone({ freq: 58, endFreq: 20, durationS: 0.55, type: 'sine', gain: 0.72, drive: 5, curve: 'asym' });
+    this.tone({ freq: 35, endFreq: 15, durationS: 0.4, type: 'sine', gain: 0.5, delayS: 0.04 });
+    this.noiseBurst({ durationS: 0.35, filterHz: 280, filterType: 'lowpass', gain: 0.6 });
     this.noiseBurst({
-      durationS: 0.08,
-      filterHz: 2200,
+      durationS: 0.1,
+      filterHz: 2600,
       filterType: 'bandpass',
-      gain: 0.25,
+      gain: 0.3,
       bus: this.uiBus ?? undefined,
     });
+    // 地面クラック: 高域のバースト
+    this.noiseBurst({ durationS: 0.06, filterHz: 5000, filterType: 'bandpass', q: 2, gain: 0.25 });
   }
 
   // スコープを目に押し当てる瞬間のスナップ音(scope-in 85%)。BO2 DSRの接眼の所作
@@ -2047,6 +2050,102 @@ export class SoundKit {
 
   melee(): void {
     this.noiseBurst({ durationS: 0.09, filterHz: 600, filterType: 'bandpass', gain: 0.3 });
+  }
+
+  // クナイ斬撃(3バリエーション): 金属抜き音+風切り+刃鳴り"シン"
+  kunaiSlash(variation: number): void {
+    const v = ((variation % 3) + 3) % 3;
+    if (v === 0) {
+      // 右薙ぎ: 高い金属音+鋭い上昇スウィープ
+      this.noiseBurst({ durationS: 0.07, filterHz: 4200, filterType: 'bandpass', q: 3, gain: 0.35 });
+      this.noiseBurst({
+        durationS: 0.12,
+        filterHz: 2800,
+        filterType: 'bandpass',
+        filterEndHz: 5500,
+        gain: 0.28,
+      });
+      this.tone({ freq: 1800, endFreq: 3200, durationS: 0.06, type: 'sine', gain: 0.18, attackS: 0.001 });
+    } else if (v === 1) {
+      // 左薙ぎ: 低めの重い抜き音
+      this.noiseBurst({ durationS: 0.08, filterHz: 3000, filterType: 'bandpass', q: 4, gain: 0.38 });
+      this.noiseBurst({
+        durationS: 0.14,
+        filterHz: 1800,
+        filterType: 'bandpass',
+        filterEndHz: 4000,
+        gain: 0.3,
+      });
+      this.tone({ freq: 1200, endFreq: 2600, durationS: 0.07, type: 'sine', gain: 0.2, attackS: 0.001 });
+    } else {
+      // 突き: 鋭い金属音+刃鳴りの余韻
+      this.noiseBurst({ durationS: 0.05, filterHz: 5500, filterType: 'bandpass', q: 5, gain: 0.32 });
+      this.noiseBurst({
+        durationS: 0.1,
+        filterHz: 3500,
+        filterType: 'bandpass',
+        filterEndHz: 7000,
+        gain: 0.25,
+      });
+      this.tone({ freq: 2400, endFreq: 4800, durationS: 0.09, type: 'sine', gain: 0.22, attackS: 0.001 });
+      this.tone({ freq: 3600, durationS: 0.25, type: 'sine', gain: 0.08, delayS: 0.07, attackS: 0.01 });
+    }
+  }
+
+  // クナイ命中: 肉/金属で差を付ける
+  kunaiHit(material: 'flesh' | 'metal'): void {
+    if (material === 'metal') {
+      this.tone({ freq: 480, endFreq: 220, durationS: 0.08, type: 'triangle', gain: 0.35 });
+      this.noiseBurst({ durationS: 0.05, filterHz: 3800, filterType: 'bandpass', gain: 0.25 });
+    } else {
+      this.tone({ freq: 280, endFreq: 130, durationS: 0.07, type: 'triangle', gain: 0.3 });
+      this.noiseBurst({ durationS: 0.06, filterHz: 900, filterType: 'bandpass', gain: 0.22 });
+    }
+  }
+
+  // B ウルト: 風神・極大手裏剣(風の轟音+高速回転音+低い発射音)
+  kunaiWindShuriken(): void {
+    this.noiseBurst({
+      durationS: 0.6,
+      filterHz: 1200,
+      filterType: 'bandpass',
+      filterEndHz: 400,
+      gain: 0.55,
+    });
+    this.noiseBurst({ durationS: 0.8, filterHz: 600, filterType: 'lowpass', gain: 0.4, delayS: 0.1 });
+    // 回転ヒュンヒュン(交互スウィープで高速スピン感)
+    this.tone({ freq: 380, endFreq: 820, durationS: 0.15, type: 'sawtooth', gain: 0.28 });
+    this.tone({ freq: 820, endFreq: 380, durationS: 0.15, type: 'sawtooth', gain: 0.28, delayS: 0.15 });
+    this.tone({ freq: 380, endFreq: 820, durationS: 0.15, type: 'sawtooth', gain: 0.28, delayS: 0.3 });
+    this.tone({ freq: 90, endFreq: 35, durationS: 0.4, type: 'sine', gain: 0.4, drive: 4 });
+  }
+
+  // N ウルト: 雷帝・神獣降臨(雷鳴連打+神獣の咆哮サブベース)
+  kunaiLightningBeast(): void {
+    this.tone({ freq: 55, endFreq: 18, durationS: 0.8, type: 'sine', gain: 0.7, drive: 8, curve: 'asym' });
+    this.noiseBurst({ durationS: 0.12, filterHz: 4800, filterType: 'bandpass', gain: 0.6, attackS: 0.001 });
+    this.noiseBurst({ durationS: 0.5, filterHz: 650, filterType: 'lowpass', gain: 0.55, delayS: 0.05 });
+    // 連続雷鳴(2発目・3発目)
+    this.tone({ freq: 70, endFreq: 25, durationS: 0.6, type: 'sine', gain: 0.5, drive: 6, delayS: 0.6 });
+    this.noiseBurst({
+      durationS: 0.1,
+      filterHz: 5200,
+      filterType: 'bandpass',
+      gain: 0.5,
+      attackS: 0.001,
+      delayS: 0.6,
+    });
+    this.tone({ freq: 60, endFreq: 20, durationS: 0.5, type: 'sine', gain: 0.45, drive: 6, delayS: 1.4 });
+    this.noiseBurst({
+      durationS: 0.1,
+      filterHz: 4200,
+      filterType: 'bandpass',
+      gain: 0.4,
+      attackS: 0.001,
+      delayS: 1.4,
+    });
+    // 神獣の咆哮(サブベース持続)
+    this.tone({ freq: 45, endFreq: 28, durationS: 1.8, type: 'sawtooth', gain: 0.35, drive: 5, delayS: 0.3 });
   }
 
   slide(): void {

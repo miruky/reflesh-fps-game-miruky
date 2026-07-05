@@ -57,6 +57,13 @@ const AIM_FIRE_COS = Math.cos(0.1);
 // ゾンビ近接。個体クールダウン(match側でグローバルrate-limit + i-frameを重ねる)
 const ZOMBIE_MELEE_RANGE = 2.3;
 const ZOMBIE_MELEE_CD = 1.1;
+// ゾンビボス体格(コライダー×1.8・視覚×2.3)
+const ZOMBIE_BOSS_BODY_HALF = BODY_HALF * 1.8;    // 0.81
+const ZOMBIE_BOSS_BODY_RADIUS = BODY_RADIUS * 1.8; // 0.63
+const ZOMBIE_BOSS_HEAD_RADIUS = HEAD_RADIUS * 1.8; // 0.396
+const ZOMBIE_BOSS_HEAD_OFFSET = HEAD_OFFSET * 1.8; // 1.584
+const ZOMBIE_BOSS_CENTER_TO_FEET = ZOMBIE_BOSS_BODY_HALF + ZOMBIE_BOSS_BODY_RADIUS; // 1.44
+const ZOMBIE_BOSS_MELEE_RANGE = 4.2; // 通常の約2倍の近接射程
 // ── ゾンビ登坂アシスト(箱/瓦礫/低い壁へゆっくり這い上がる)──
 // autostep(0.75m)を越える障害物に前進を阻まれたら、重力の代わりに上向き速度を
 // 与えて乗り上がる。安全弁: 前方レイで実体を確認し、開始足元Yからの上限高さで
@@ -540,9 +547,13 @@ export class Bot {
     this.maxHp = tuning.maxHp;
     this.hp = tuning.maxHp;
     this.moveSpeed = MOVE_SPEED * tuning.moveSpeedMul;
+    // ボスゾン��は体格1.8×スケールのコライダー・フィート/頭オフセットを使う
+    const isBossZombie = kind === 'zombie' && tier === 'boss';
     // humanoidは難度/階層tuningの頭高、他kindは体格から固定(コライダーと常に一致)
-    this.headOff = kind === 'humanoid' ? tuning.headOffset : KIND_HEAD_OFFSET[kind];
-    this.feetOffset = KIND_FEET_OFFSET[kind];
+    this.headOff = kind === 'humanoid' ? tuning.headOffset
+      : isBossZombie ? ZOMBIE_BOSS_HEAD_OFFSET
+      : KIND_HEAD_OFFSET[kind];
+    this.feetOffset = isBossZombie ? ZOMBIE_BOSS_CENTER_TO_FEET : KIND_FEET_OFFSET[kind];
     this.hoverBaseY = spawn.y + DRONE_HOVER_ALT;
     let phase = 0;
     for (let i = 0; i < name.length; i += 1) phase += name.charCodeAt(i);
@@ -589,6 +600,16 @@ export class Bot {
         RAPIER.ColliderDesc.ball(TURRET_HEAD_RADIUS).setTranslation(0, TURRET_HEAD_OFFSET, 0),
         this.body,
       );
+    } else if (isBossZombie) {
+      // ゾンビボス: 1.8倍スケールの巨体コライダー
+      this.bodyCollider = world.createCollider(
+        RAPIER.ColliderDesc.capsule(ZOMBIE_BOSS_BODY_HALF, ZOMBIE_BOSS_BODY_RADIUS),
+        this.body,
+      );
+      this.headCollider = world.createCollider(
+        RAPIER.ColliderDesc.ball(ZOMBIE_BOSS_HEAD_RADIUS).setTranslation(0, ZOMBIE_BOSS_HEAD_OFFSET, 0),
+        this.body,
+      );
     } else {
       this.bodyCollider = world.createCollider(
         RAPIER.ColliderDesc.capsule(BODY_HALF, BODY_RADIUS),
@@ -613,7 +634,7 @@ export class Bot {
     if (kind === 'drone') this.buildDroneMesh(color, tier);
     else if (kind === 'tank') this.buildTankMesh(color, tier);
     else if (kind === 'turret') this.buildTurretMesh(color, tier);
-    else if (kind === 'zombie') this.buildZombieMesh(color);
+    else if (kind === 'zombie') this.buildZombieMesh(color, tier);
     else this.buildMesh(color, tier);
     // 名前ハッシュ由来の決定論的な反応個体差(0.7〜1.4)と初弾オンセット(0〜0.35s)。
     // 分隊の同時発砲を desync し、機械的な一斉射撃を自然に散らす(spot-timeとは別系統)
@@ -780,30 +801,35 @@ export class Bot {
   // mergeByMaterialで (armor/dark/glow)×(cast/no-cast) へ畳む(1体≈3〜4ドローコール)。
   // 影を落とすシルエットは胴と腿のみ。no-cast片は userData.noShadow=true を焼き、
   // 距離LOD/近接影トグル(setCastShadow)が誤って影を点けないようにする。
-  private buildZombieMesh(color: number): void {
-    const c = new THREE.Color(color);
+  private buildZombieMesh(color: number, tier: BotTier = 'normal'): void {
+    const isBoss = tier === 'boss';
+    const c = isBoss ? new THREE.Color(color).multiplyScalar(0.7) : new THREE.Color(color);
     const armor = new THREE.MeshStandardMaterial({
       color: c,
       roughness: 0.85,
-      metalness: 0.05,
+      metalness: isBoss ? 0.1 : 0.05,
       vertexColors: true,
+      emissive: isBoss ? new THREE.Color(0x330800) : undefined,
+      emissiveIntensity: isBoss ? 0.25 : 0,
     });
     this.armorMat = armor;
-    this.tierGlowBase = 0;
+    this.tierGlowBase = isBoss ? 0.25 : 0;
     const dark = new THREE.MeshStandardMaterial({
       color: c.clone().multiplyScalar(0.4),
       roughness: 0.9,
       metalness: 0.02,
       vertexColors: true,
     });
-    // 腐った眼光。bloomThresholdでおもちゃ化しないよう低強度(≤0.5)に抑える
+    // 腐った眼光。ボスは赤い目(0xff2200)。bloomThresholdでおもちゃ化しないよう強度を抑える
+    const eyeColor = isBoss ? 0xff2200 : 0x8fbf4a;
+    const eyeIntensity = isBoss ? 0.9 : 0.42;
     const glow = new THREE.MeshStandardMaterial({
       color: 0x0a0d07,
-      emissive: new THREE.Color(0x8fbf4a),
-      emissiveIntensity: 0.42,
+      emissive: new THREE.Color(eyeColor),
+      emissiveIntensity: eyeIntensity,
       roughness: 0.4,
     });
-    this.glowMats.push({ mat: glow, base: 0.42 });
+    this.glowMats.push({ mat: glow, base: eyeIntensity });
 
     const P = (
       root: THREE.Object3D,
@@ -883,6 +909,27 @@ export class Bot {
     };
     buildLeg(this.legL, this.kneeL, -0.11);
     buildLeg(this.legR, this.kneeR, 0.11);
+
+    // ── ボス専用: 視覚スケール2.3× + 体表の発光裂け目 ──
+    if (isBoss) {
+      const crackMat = new THREE.MeshStandardMaterial({
+        color: 0x0a0502,
+        emissive: new THREE.Color(0xff3300),
+        emissiveIntensity: 1.2,
+        roughness: 0.3,
+      });
+      for (let i = 0; i < 3; i += 1) {
+        const cr = new THREE.Mesh(
+          new THREE.BoxGeometry(0.28 - i * 0.06, 0.025, 0.015),
+          crackMat,
+        );
+        cr.position.set((i - 1) * 0.04, 0.3 - i * 0.12, -0.17);
+        cr.rotation.z = (i - 1) * 0.3;
+        this.rig.add(cr);
+      }
+      this.glowMats.push({ mat: crackMat, base: 1.2 });
+      this.rig.scale.setScalar(2.3);
+    }
 
     this.group.add(this.rig);
   }
@@ -1555,7 +1602,8 @@ export class Bot {
       const spd = this.moveSpeed * this.zombieRunMul;
       wishX = to.x * spd;
       wishZ = to.z * spd;
-      if (dist <= ZOMBIE_MELEE_RANGE) {
+      const meleeRange = this.tier === 'boss' ? ZOMBIE_BOSS_MELEE_RANGE : ZOMBIE_MELEE_RANGE;
+      if (dist <= meleeRange) {
         wishX *= 0.15; // 密着で押し込みすぎない(重なり回避)
         wishZ *= 0.15;
         if (this.meleeTimer <= 0 && ctx.onMelee) {
@@ -1894,8 +1942,10 @@ export class Bot {
     } else {
       this.painDir = null;
     }
-    this.hitFlash = 0.12;
-    this.flinch = 0.14;
+    // ボスゾンビはスーパーアーマー: 被弾エフェクトを弱めて怯まず迫る
+    const isBossZombieHit = this.kind === 'zombie' && this.tier === 'boss';
+    this.hitFlash = isBossZombieHit ? 0.04 : 0.12;
+    this.flinch = isBossZombieHit ? 0.02 : 0.14;
     if (this.hp <= 0) {
       this.hp = 0;
       this.alive = false;

@@ -6,6 +6,10 @@ import {
   zombieRunRate,
   zombieSpawnGap,
   zombieTotal,
+  isBossRound,
+  zombieBossHp,
+  zombieBossSpeedMul,
+  zombieBossDamage,
 } from './zombie';
 
 describe('zombie round curves', () => {
@@ -65,5 +69,44 @@ describe('zombie round curves', () => {
     expect(ZOMBIE_MAX_ALIVE.low).toBeLessThan(ZOMBIE_MAX_ALIVE.medium);
     expect(ZOMBIE_MAX_ALIVE.medium).toBeLessThan(ZOMBIE_MAX_ALIVE.high);
     expect(ZOMBIE_MAX_ALIVE.high).toBe(24);
+  });
+});
+
+describe('zombie boss curves', () => {
+  it('isBossRound: 5の倍数(r>0)だけ true', () => {
+    expect(isBossRound(5)).toBe(true);
+    expect(isBossRound(10)).toBe(true);
+    expect(isBossRound(15)).toBe(true);
+    expect(isBossRound(20)).toBe(true);
+    expect(isBossRound(1)).toBe(false);
+    expect(isBossRound(4)).toBe(false);
+    expect(isBossRound(6)).toBe(false);
+    expect(isBossRound(0)).toBe(false);
+  });
+
+  it('zombieBossHp: r5=3000, r10=7000, r15=14000, r20=26000', () => {
+    expect(zombieBossHp(5)).toBe(3000);
+    expect(zombieBossHp(10)).toBe(7000);
+    expect(zombieBossHp(15)).toBe(14000);
+    expect(zombieBossHp(20)).toBe(26000);
+  });
+
+  it('zombieBossHp: r20超は×1.9で増加し200000でクランプ', () => {
+    expect(zombieBossHp(25)).toBe(Math.min(200000, Math.round(26000 * 1.9)));
+    // 十分大きいラウンドで上限へ
+    expect(zombieBossHp(200)).toBe(200000);
+  });
+
+  it('zombieBossSpeedMul: r5=1.2, r10=1.3, 上限2.0', () => {
+    expect(zombieBossSpeedMul(5)).toBeCloseTo(1.2, 5);
+    expect(zombieBossSpeedMul(10)).toBeCloseTo(1.3, 5);
+    // 十分大きいラウンドで上限
+    expect(zombieBossSpeedMul(200)).toBe(2.0);
+  });
+
+  it('zombieBossDamage: r5=45, r10=51, 上限90', () => {
+    expect(zombieBossDamage(5)).toBe(45);
+    expect(zombieBossDamage(10)).toBe(51);
+    expect(zombieBossDamage(200)).toBe(90);
   });
 });

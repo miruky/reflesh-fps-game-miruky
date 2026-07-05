@@ -85,10 +85,6 @@ describe('WALL_BUYS', () => {
     expect(WALL_BUYS.filter((w) => w.price === 500)).toHaveLength(2);
   });
 
-  it('SMG級1000が2本', () => {
-    expect(WALL_BUYS.filter((w) => w.price === 1000)).toHaveLength(2);
-  });
-
   it('AR級1200が2本', () => {
     expect(WALL_BUYS.filter((w) => w.price === 1200)).toHaveLength(2);
   });
@@ -97,16 +93,26 @@ describe('WALL_BUYS', () => {
     expect(WALL_BUYS.filter((w) => w.price === 1500)).toHaveLength(2);
   });
 
+  it('fists 2000が1本', () => {
+    expect(WALL_BUYS.filter((w) => w.weaponId === 'fists')).toHaveLength(1);
+    expect(WALL_BUYS.find((w) => w.weaponId === 'fists')?.price).toBe(2000);
+  });
+
+  it('yamasemi-dmr 2500が1本', () => {
+    expect(WALL_BUYS.filter((w) => w.weaponId === 'yamasemi-dmr')).toHaveLength(1);
+    expect(WALL_BUYS.find((w) => w.weaponId === 'yamasemi-dmr')?.price).toBe(2500);
+  });
+
   it('全 weaponId が weapons.ts の実在武器', () => {
     const knownIds = new Set([
       'hiiragi-sg',
       'tsubaki-smg',
-      'hayabusa-smg',
-      'sasameki-smg',
       'kaede-ar',
       'ginyanma-ar',
-      'kasasagi-ar',
       'miyama-br',
+      'kasasagi-ar',
+      'fists',
+      'yamasemi-dmr',
     ]);
     for (const wb of WALL_BUYS) {
       expect(knownIds.has(wb.weaponId)).toBe(true);
@@ -240,52 +246,55 @@ describe('getPerkEffect', () => {
 // ─── purchasePerk ─────────────────────────────────────────────────────────────
 
 describe('purchasePerk', () => {
-  it('正常購入: ok=true で残高が減る', () => {
-    const owned = new Set<ZombiePerkId>();
-    const res = purchasePerk(owned, 'juggernog', 3000);
+  it('正常購入: ok=true で残高が減り stackCount=1', () => {
+    const stacks: Partial<Record<ZombiePerkId, number>> = {};
+    const res = purchasePerk(stacks, 'juggernog', 3000);
     expect(res.ok).toBe(true);
     expect(res.remainingPoints).toBe(500); // 3000 - 2500
+    expect(res.stackCount).toBe(1);
+  });
+
+  it('��タック購入: juggernog 2回目購入で stackCount=2', () => {
+    const stacks: Partial<Record<ZombiePerkId, number>> = { juggernog: 1 };
+    const res = purchasePerk(stacks, 'juggernog', 9999);
+    expect(res.ok).toBe(true);
+    expect(res.stackCount).toBe(2);
+    expect(res.remainingPoints).toBe(9999 - 2500);
   });
 
   it('quick-revive (500) を200ポイントで失敗', () => {
-    const owned = new Set<ZombiePerkId>();
-    const res = purchasePerk(owned, 'quick-revive', 200);
+    const stacks: Partial<Record<ZombiePerkId, number>> = {};
+    const res = purchasePerk(stacks, 'quick-revive', 200);
     expect(res.ok).toBe(false);
     expect(res.error).toBe('insufficient-points');
     expect(res.remainingPoints).toBe(200); // 残高不変
   });
 
-  it('重複購入: already-owned エラー・残高不変', () => {
-    const owned = new Set<ZombiePerkId>(['juggernog']);
-    const res = purchasePerk(owned, 'juggernog', 9999);
+  it('quick-revive は charges>0 のとき拒否', () => {
+    const stacks: Partial<Record<ZombiePerkId, number>> = {};
+    const res = purchasePerk(stacks, 'quick-revive', 9999, 1);
     expect(res.ok).toBe(false);
-    expect(res.error).toBe('already-owned');
-    expect(res.remainingPoints).toBe(9999);
+    expect(res.error).toBe('quick-revive-charged');
   });
 
-  it('上限4を超える購入: perk-limit-reached エラー', () => {
-    const owned = new Set<ZombiePerkId>([
-      'juggernog',
-      'speed-cola',
-      'double-tap',
-      'stamin-up',
-    ]);
-    const res = purchasePerk(owned, 'quick-revive', 9999);
-    expect(res.ok).toBe(false);
-    expect(res.error).toBe('perk-limit-reached');
-  });
-
-  it('所持3のとき4つ目の購入は ok', () => {
-    const owned = new Set<ZombiePerkId>(['juggernog', 'speed-cola', 'double-tap']);
-    const res = purchasePerk(owned, 'stamin-up', 9999);
+  it('quick-revive は charges=0 のとき ok', () => {
+    const stacks: Partial<Record<ZombiePerkId, number>> = {};
+    const res = purchasePerk(stacks, 'quick-revive', 9999, 0);
     expect(res.ok).toBe(true);
-    expect(res.remainingPoints).toBe(9999 - 2000);
+    expect(res.stackCount).toBe(1);
   });
 
-  it('purchasePerk は owned を変更しない(純関数)', () => {
-    const owned = new Set<ZombiePerkId>();
-    purchasePerk(owned, 'juggernog', 9999);
-    expect(owned.size).toBe(0); // owned は変更されていない
+  it('残高不足: insufficient-points エラー', () => {
+    const stacks: Partial<Record<ZombiePerkId, number>> = { 'stamin-up': 5 };
+    const res = purchasePerk(stacks, 'stamin-up', 100);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('insufficient-points');
+  });
+
+  it('purchasePerk は stacks を変更しない(純関数)', () => {
+    const stacks: Partial<Record<ZombiePerkId, number>> = {};
+    purchasePerk(stacks, 'juggernog', 9999);
+    expect(Object.keys(stacks)).toHaveLength(0); // stacks は変更されていない
   });
 });
 
@@ -303,11 +312,21 @@ describe('generateShopLayout', () => {
     expect(a.slots).not.toEqual(b.slots);
   });
 
-  it('壁武器スポットが 4〜6 個', () => {
+  it('壁武器スポットが 6〜8 個', () => {
     for (const seed of [163, 167, 173, 179, 181, 191, 193, 197, 199, 211]) {
       const count = generateShopLayout(seed).slots.filter((s) => s.kind === 'wall-buy').length;
-      expect(count).toBeGreaterThanOrEqual(4);
-      expect(count).toBeLessThanOrEqual(6);
+      expect(count).toBeGreaterThanOrEqual(6);
+      expect(count).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it('fists と yamasemi-dmr は常に含まれる', () => {
+    for (const seed of [163, 167, 173, 179, 181, 191]) {
+      const wallIds = generateShopLayout(seed).slots
+        .filter((s) => s.kind === 'wall-buy')
+        .map((s) => s.weaponId);
+      expect(wallIds).toContain('fists');
+      expect(wallIds).toContain('yamasemi-dmr');
     }
   });
 

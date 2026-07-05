@@ -21,6 +21,8 @@ export class Effects {
   private flares: Timed<THREE.Mesh>[] = [];
   private rings: Timed<THREE.Mesh>[] = []; // 素手ウルトの拡大衝撃リング/刃閃フラッシュ
   private streaks: Timed<THREE.Group>[] = []; // 素手ウルトの放射状クラック斬撃
+  private crescents: Timed<THREE.Mesh>[] = []; // ブリンク三日月斬撃(per-callジオメトリ)
+  private impactRings: Timed<THREE.Mesh>[] = []; // ブリンク着地/落雷の小衝撃リング
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -244,6 +246,133 @@ export class Effects {
     this.streaks.push({ obj: group, life: 0.5, maxLife: 0.5 });
   }
 
+  // ブリンク斬撃: 三日月斬撃(加算弧×2、拡大+回転+フェード 0.15s)
+  crescentSlash(pos: THREE.Vector3, dir: THREE.Vector3, color: number): void {
+    const angle = Math.atan2(dir.x, dir.z);
+    const specs = [
+      { inner: 0.2, outer: 0.8, arc: Math.PI * 1.3, opacity: 0.92, target: 2.5, life: 0.15, tilt: Math.PI / 4 },
+      { inner: 0.6, outer: 1.2, arc: Math.PI * 1.6, opacity: 0.45, target: 3.5, life: 0.18, tilt: -Math.PI / 6 },
+    ];
+    for (const s of specs) {
+      const geo = new THREE.RingGeometry(s.inner, s.outer, 16, 1, 0, s.arc);
+      const mat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: s.opacity,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(pos);
+      mesh.rotation.set(-Math.PI / 2, 0, angle + s.tilt);
+      mesh.scale.setScalar(0.3);
+      mesh.userData.targetScale = s.target;
+      mesh.userData.baseOpacity = s.opacity;
+      this.scene.add(mesh);
+      this.crescents.push({ obj: mesh, life: s.life, maxLife: s.life });
+    }
+  }
+
+  // ブリンク残像: 並行ゴーストトレーサー3本(中央が濃く、両脇は薄い)
+  blinkGhosts(from: THREE.Vector3, to: THREE.Vector3, color: number): void {
+    const along = new THREE.Vector3().subVectors(to, from).normalize();
+    const perp = new THREE.Vector3(-along.z, 0, along.x).normalize();
+    const offsets = [-0.14, 0, 0.14];
+    const opacities = [0.35, 0.65, 0.35];
+    for (let i = 0; i < offsets.length; i += 1) {
+      const f = from.clone().addScaledVector(perp, offsets[i]!);
+      const t = to.clone().addScaledVector(perp, offsets[i]!);
+      const geometry = new THREE.BufferGeometry().setFromPoints([f, t]);
+      const material = new THREE.LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity: opacities[i]!,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const line = new THREE.Line(geometry, material);
+      line.userData.baseOpacity = opacities[i]!;
+      this.scene.add(line);
+      const life = 0.1 + i * 0.02;
+      this.tracers.push({ obj: line, life, maxLife: life });
+    }
+  }
+
+  // ブリンク着地/落雷着弾の小衝撃リング(地面水平・拡大フェード)
+  impactRing(pos: THREE.Vector3, color: number): void {
+    const geo = new THREE.RingGeometry(0.5, 0.8, 24);
+    const mat = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.75,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(pos);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.scale.setScalar(0.3);
+    mesh.userData.targetScale = 1.4;
+    mesh.userData.baseOpacity = 0.75;
+    this.scene.add(mesh);
+    this.impactRings.push({ obj: mesh, life: 0.22, maxLife: 0.22 });
+  }
+
+  // ダイブスラム追加火花: 放射状に飛ぶ加算シャード(既存explosionを補完)
+  slamSparks(pos: THREE.Vector3, color: number): void {
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    for (let i = 0; i < 16; i += 1) {
+      const shard = new THREE.Mesh(
+        this.sparkGeometry,
+        new THREE.MeshBasicMaterial({
+          color: i % 3 === 0 ? 0xffffff : color,
+          transparent: true,
+          opacity: 1,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      const a = Math.random() * Math.PI * 2;
+      const spd = 4 + Math.random() * 10;
+      shard.userData.vel = new THREE.Vector3(Math.cos(a) * spd, Math.random() * 8 + 2, Math.sin(a) * spd);
+      group.add(shard);
+    }
+    this.scene.add(group);
+    this.sparks.push({ obj: group, life: 0.65, maxLife: 0.65 });
+  }
+
+  // ジグザグ雷弧(雷帝ウルト)。加算ライン・短寿命(トレーサープールへ相乗り)
+  lightningArc(from: THREE.Vector3, to: THREE.Vector3, color: number): void {
+    const segments = 8;
+    const points: THREE.Vector3[] = [from.clone()];
+    const amp = from.distanceTo(to) * 0.22;
+    for (let i = 1; i < segments; i += 1) {
+      const t = i / segments;
+      const p = from.clone().lerp(to, t);
+      p.x += (Math.random() - 0.5) * amp;
+      p.y += (Math.random() - 0.5) * amp * 0.5;
+      p.z += (Math.random() - 0.5) * amp;
+      points.push(p);
+    }
+    points.push(to.clone());
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const material = new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const line = new THREE.Line(geometry, material);
+    line.userData.baseOpacity = 0.95; // V23: tickのフェード基準(未設定だと0.85フォールバック)
+    this.scene.add(line);
+    const life = 0.08 + Math.random() * 0.06;
+    this.tracers.push({ obj: line, life, maxLife: life });
+  }
+
   smokeCloud(point: THREE.Vector3, radius: number, durationS: number): void {
     const group = new THREE.Group();
     group.position.copy(point);
@@ -340,7 +469,8 @@ export class Effects {
 
   update(dt: number): void {
     this.tracers = this.tick(this.tracers, dt, (line, ratio) => {
-      (line.material as THREE.LineBasicMaterial).opacity = 0.85 * ratio;
+      (line.material as THREE.LineBasicMaterial).opacity =
+        ((line.userData.baseOpacity as number) ?? 0.85) * ratio;
     });
     this.puffs = this.tick(this.puffs, dt, (puff, ratio) => {
       (puff.material as THREE.MeshBasicMaterial).opacity = 0.9 * ratio;
@@ -390,6 +520,20 @@ export class Effects {
       (ring.material as THREE.MeshBasicMaterial).opacity =
         ((ring.userData.baseOpacity as number) ?? 0.9) * ratio;
     });
+    this.crescents = this.tick(this.crescents, dt, (mesh, ratio) => {
+      // 拡大(三乗イーズ)+回転+フェードで「振り抜き」を出す
+      const target = (mesh.userData.targetScale as number) ?? 2.5;
+      mesh.scale.setScalar(0.3 + (target - 0.3) * (1 - ratio * ratio * ratio));
+      mesh.rotation.z += dt * 2.5;
+      (mesh.material as THREE.MeshBasicMaterial).opacity =
+        ((mesh.userData.baseOpacity as number) ?? 0.92) * ratio;
+    });
+    this.impactRings = this.tick(this.impactRings, dt, (mesh, ratio) => {
+      const target = (mesh.userData.targetScale as number) ?? 1.4;
+      mesh.scale.setScalar(Math.max(mesh.scale.x, target * (1 - ratio * ratio)));
+      (mesh.material as THREE.MeshBasicMaterial).opacity =
+        ((mesh.userData.baseOpacity as number) ?? 0.75) * ratio;
+    });
     this.streaks = this.tick(this.streaks, dt, (group, ratio) => {
       const grow = 1 - ratio * ratio; // 中心から外へ走る
       for (const child of group.children) {
@@ -421,7 +565,16 @@ export class Effects {
 
   clear(): void {
     this.hideTrajectory();
-    for (const list of [this.tracers, this.puffs, this.decals, this.blasts, this.flares, this.rings]) {
+    for (const list of [
+      this.tracers,
+      this.puffs,
+      this.decals,
+      this.blasts,
+      this.flares,
+      this.rings,
+      this.crescents,
+      this.impactRings,
+    ]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }

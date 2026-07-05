@@ -110,23 +110,27 @@ export interface WallBuyDef {
 }
 
 /**
- * 壁購入武器リスト。価格帯順(入門500/SMG級1000/AR級1200/強武器1500)で各2本。
+ * 壁購入武器リスト。入門500/AR級1200/強武器1500/クナイ2000/DSR2500の8本。
+ * generateShopLayout は fists・yamasemi-dmr を常に配置し、残りから4〜6本を選ぶ。
  * weapons.ts の WEAPON_DEFS に実在する primary 武器 ID のみを使用する。
  */
 export const WALL_BUYS: readonly WallBuyDef[] = [
   // 入門 500 ─ 初期ラウンドに届く価格
   { weaponId: 'hiiragi-sg', price: 500 },
   { weaponId: 'tsubaki-smg', price: 500 },
-  // SMG級 1000 ─ R3〜5 圏で手が届く
-  { weaponId: 'hayabusa-smg', price: 1000 },
-  { weaponId: 'sasameki-smg', price: 1000 },
   // AR級 1200 ─ R5〜7 圏の主力
   { weaponId: 'kaede-ar', price: 1200 },
   { weaponId: 'ginyanma-ar', price: 1200 },
   // 強武器 1500 ─ R7〜9 以降の高火力枠
-  { weaponId: 'kasasagi-ar', price: 1500 },
   { weaponId: 'miyama-br', price: 1500 },
+  { weaponId: 'kasasagi-ar', price: 1500 },
+  // 必置武器 ─ generateShopLayout が常に配置する
+  { weaponId: 'fists', price: 2000 },
+  { weaponId: 'yamasemi-dmr', price: 2500 },
 ];
+
+/** generateShopLayout が必ず配置する壁武器 ID */
+export const MANDATORY_WALL_BUY_IDS: readonly string[] = ['fists', 'yamasemi-dmr'];
 
 // ─── ミステリーボックス プール ────────────────────────────────────────────────
 
@@ -183,35 +187,39 @@ export function getPerkEffect(perkId: ZombiePerkId): PerkEffect {
 
 export type PurchaseError =
   | 'insufficient-points'
-  | 'already-owned'
-  | 'perk-limit-reached';
+  | 'quick-revive-charged';
 
 export interface PurchaseResult {
   ok: boolean;
   remainingPoints: number;
   error?: PurchaseError;
+  /** 購入後のスタック数。失敗時は購入前の値(0=未所持) */
+  stackCount: number;
 }
 
 /**
- * パーク購入を検証して結果を返す。純関数なので owned を直接変更しない。
- * ok=true のとき呼び出し元が owned へ perkId を追加し、残高を更新すること。
+ * パーク購入を検証して結果を返す。純関数なので stacks を直接変更しない。
+ * ok=true のとき呼び出し元が stacks を更新し、残高を結果の remainingPoints へ置き換えること。
+ * quick-revive 以外はスタック無限購入可能。quick-revive は charge>0 のとき拒否。
  */
 export function purchasePerk(
-  owned: ReadonlySet<ZombiePerkId>,
+  stacks: Readonly<Partial<Record<ZombiePerkId, number>>>,
   perkId: ZombiePerkId,
   points: number,
+  quickReviveCharges?: number,
 ): PurchaseResult {
-  if (owned.has(perkId)) {
-    return { ok: false, remainingPoints: points, error: 'already-owned' };
-  }
-  if (owned.size >= PERK_LIMIT) {
-    return { ok: false, remainingPoints: points, error: 'perk-limit-reached' };
-  }
   const perk = PERKS[perkId];
   if (!canBuy(points, perk.price)) {
-    return { ok: false, remainingPoints: points, error: 'insufficient-points' };
+    return { ok: false, remainingPoints: points, error: 'insufficient-points', stackCount: stacks[perkId] ?? 0 };
   }
-  return { ok: true, remainingPoints: points - perk.price };
+  if (perkId === 'quick-revive') {
+    if ((quickReviveCharges ?? 0) > 0) {
+      return { ok: false, remainingPoints: points, error: 'quick-revive-charged', stackCount: 1 };
+    }
+    return { ok: true, remainingPoints: points - perk.price, stackCount: 1 };
+  }
+  const current = stacks[perkId] ?? 0;
+  return { ok: true, remainingPoints: points - perk.price, stackCount: current + 1 };
 }
 
 // ─── ショップレイアウト生成 ───────────────────────────────────────────────────
@@ -275,7 +283,7 @@ const ALL_PERK_IDS: ZombiePerkId[] = [
 /**
  * seed から決定論的にゾンビステージのショップ配置を生成する。
  *
- * - 壁武器スポット: 4〜6 個(WALL_BUYS から重複なしで選出)
+ * - 壁武器スポット: 6〜8 個(fists+DSR は必置、残りから4〜6本を選出)
  * - パーク自販機 : 3〜4 台(ALL_PERK_IDS から重複なしで選出)
  * - ミステリーボックス: 1 個(常に末尾)
  *
@@ -287,14 +295,21 @@ export function generateShopLayout(seed: number): ShopLayout {
   const slots: ShopSlot[] = [];
   let slotIndex = 0;
 
-  const wallBuyCount = randInt(rand, 4, 6);
   const perkCount = randInt(rand, 3, 4);
 
-  // 壁武器: shuffle して先頭 wallBuyCount 個を採用(重複なし)
-  // wallBuyCount(4〜6) <= WALL_BUYS.length(8) なので範囲内アクセスが保証される
-  const wallBuyPool = shuffle([...WALL_BUYS], rand);
-  for (let i = 0; i < wallBuyCount; i += 1) {
-    const wb = wallBuyPool[i]!;
+  // 壁武器: fists+DSR は必置、残り6本(optional)からoptionalCount個をシャッフル選出
+  // 必置2 + optional4〜6 = 合計6〜8本
+  const optionalCount = randInt(rand, 4, 6);
+  const mandatoryWalls = WALL_BUYS.filter((wb) => MANDATORY_WALL_BUY_IDS.includes(wb.weaponId));
+  const optionalWalls = shuffle(
+    WALL_BUYS.filter((wb) => !MANDATORY_WALL_BUY_IDS.includes(wb.weaponId)),
+    rand,
+  );
+  const selectedWalls = shuffle(
+    [...mandatoryWalls, ...optionalWalls.slice(0, optionalCount)],
+    rand,
+  );
+  for (const wb of selectedWalls) {
     slots.push({
       kind: 'wall-buy',
       slotIndex,

@@ -29,6 +29,8 @@ export type Action =
   | 'leanleft'
   | 'leanright'
   | 'ultimate'
+  | 'ult2'
+  | 'ult3'
   | 'holdBreath'
   | 'scoreboard'
   | 'streak1'
@@ -59,6 +61,8 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   leanleft: ['KeyQ'],
   leanright: ['KeyE'],
   ultimate: ['KeyF'],
+  ult2: ['KeyB'], // 風神・極大手裏剣(fists装備時のみ)
+  ult3: ['KeyN'], // 雷帝・神獣降臨(fists装備時のみ)
   // 息止めはスプリントキーと共有。覗き込み中のみ参照する(ADS中はスプリント不可)
   holdBreath: ['ShiftLeft'],
   scoreboard: ['Tab'],

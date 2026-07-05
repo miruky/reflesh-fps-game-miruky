@@ -8027,9 +8027,12 @@ tr.score-ally td {
 }
 
 /* 配置とセーフエリア(全周22px規約) */
+/* hud-top-left: ミニマップ(fixed 14px, 144px幅)の右隣に配置。
+   #hud には zoom:uiScale が掛かるため CSS 座標 = screen_px / uiScale で補正。
+   screen-x = (14+144+8)=166px, screen-y = 14px(ミニマップ上端に揃える) */
 .hud-top-left {
-  top: 22px;
-  left: 22px;
+  top: calc(14px / var(--ui-scale, 1));
+  left: calc(166px / var(--ui-scale, 1));
   min-width: 200px;
 }
 .hud-bottom-left {
@@ -9414,7 +9417,12 @@ tr.score-ally td {
   clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
   pointer-events: none;
   z-index: 5;
-  /* ミニマップは低負荷のため常に表示 */
+}
+/* ミニマップ非表示時(ゾンビモード等): K/Dパネルをズーム補正なしの左上へ戻す。
+   zoom座標で top/left を固定値にすると各uiScaleで適切に左上近傍に収まる。 */
+#hud:has(.hud-minimap[hidden]) .hud-top-left {
+  top: 22px;
+  left: 22px;
 }
 
 /* ── H24. BO2 スコアストリークパネル (4スロット) ── */
@@ -9921,6 +9929,7 @@ body.killcam-active .hud-death {
 /* 菱形チップ: clip-path は border/box-shadow ごと切り抜くため輪郭線に頼らず、
    パーク色を混ぜた面 + クリップ後に効く drop-shadow の発光で色を示す */
 .zp-icon {
+  position: relative;
   width: 26px;
   height: 26px;
   display: flex;
@@ -9929,6 +9938,18 @@ body.killcam-active .hud-death {
   background: color-mix(in srgb, var(--zp-color, #fff) 32%, rgba(6, 10, 14, 0.92));
   clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); /* 菱形 */
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--zp-color, #fff) 65%, transparent));
+}
+
+.zp-stack {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  font: 700 9px/1 var(--mono, monospace);
+  color: #fff;
+  background: #cc2200;
+  border-radius: 3px;
+  padding: 1px 3px;
+  z-index: 1;
 }
 
 .zp-icon span {
@@ -9998,6 +10019,24 @@ body.killcam-active .hud-death {
   opacity: 0;
   pointer-events: none;
   z-index: 120;
+}
+
+.hud-zboss-flash {
+  position: fixed;
+  inset: 0;
+  background: rgba(200, 20, 0, 0.75);
+  pointer-events: none;
+  opacity: 0;
+  z-index: 55;
+}
+
+.hud-boss--zombie .hud-boss-name {
+  color: #ff3300;
+}
+
+.hud-boss--zombie .hud-boss-bar i {
+  background: linear-gradient(90deg, #cc2200 0%, #ff4400 100%);
+  box-shadow: 0 0 8px rgba(255, 50, 0, 0.7);
 }
 
 /* ── R21 マルチキルバナー: BO2 エスカレーション演出 ─────────────────────────────────── */

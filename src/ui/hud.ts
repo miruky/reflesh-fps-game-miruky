@@ -351,6 +351,7 @@ export class Hud {
         </table>
       </div>
       <div class="hud-zrevive-flash" data-id="zreviveflash"></div>
+      <div class="hud-zboss-flash" data-id="zbossflash"></div>
     `;
     root.querySelectorAll<HTMLElement>('[data-id]').forEach((node) => {
       this.el[node.dataset.id ?? ''] = node;
@@ -516,6 +517,10 @@ export class Hud {
       const teamscore = this.el['teamscore'];
       if (teamscore) teamscore.hidden = true;
     }
+    // ミニマップ: ゾンビモードでは非表示にしてK/Dパネルとの重なりを解消する。
+    // 非表示時、CSS側の #hud:has(.hud-minimap[hidden]) .hud-top-left が左上通常位置へ戻す。
+    const minimapEl = this.el['minimap'];
+    if (minimapEl) minimapEl.hidden = inZombie;
     const timerEl = this.el['timer'];
     if (timerEl && timerEl.parentElement) {
       (timerEl.parentElement as HTMLElement).style.display = inZombie ? 'none' : '';
@@ -553,6 +558,7 @@ export class Hud {
     this.updateZombieShopHud(snap);
     this.pushZombiePointFloats(snap, project);
     this.updateZombieReviveFlash(snap);
+    this.updateZombieBossFlash(snap);
     this.drawMinimap(snap);
 
     const scoreboard = this.el['scoreboard'];
@@ -898,11 +904,21 @@ export class Hud {
     }
     const boss = this.el['boss'];
     if (boss) {
-      const showBoss = isMission && snap.bossHp01 !== undefined;
+      const showBoss = snap.bossHp01 !== undefined;
       boss.hidden = !showBoss;
       if (showBoss) {
         const bb = this.el['boss-bar'];
         if (bb) bb.style.transform = `scaleX(${Math.max(0, Math.min(1, snap.bossHp01 ?? 0))})`;
+        const nameEl = this.el['boss-name'];
+        if (nameEl) {
+          const label = snap.zombieRound !== undefined ? '巨躯' : 'BOSS';
+          if (nameEl.textContent !== label) nameEl.textContent = label;
+        }
+        if (snap.zombieRound !== undefined) {
+          boss.classList.add('hud-boss--zombie');
+        } else {
+          boss.classList.remove('hud-boss--zombie');
+        }
       }
     }
 
@@ -1485,7 +1501,12 @@ export class Hud {
     const zperks = this.el['zperks'];
     if (zperks) {
       zperks.hidden = !inZombie;
-      const key = (snap.zombiePerks ?? []).join(',');
+      const stacks = snap.zombiePerkStacks ?? {};
+      // V23: quick-reviveはスタックMapに入らない(チャージ制)ため、チャージ数をキー/描画に含める
+      const revCharges = snap.zombieQuickReviveCharges ?? 0;
+      const key =
+        (snap.zombiePerks ?? []).map((pid) => `${pid}:${stacks[pid] ?? 1}`).join(',') +
+        `|rev:${revCharges}`;
       if (inZombie && key !== this.lastZombiePerks) {
         this.lastZombiePerks = key;
         zperks.innerHTML = '';
@@ -1511,6 +1532,30 @@ export class Hud {
           const abbr = document.createElement('span');
           abbr.textContent = PERK_LABELS[pid] ?? pid.slice(0, 3).toUpperCase();
           chip.appendChild(abbr);
+          const n = stacks[pid] ?? 1;
+          if (n > 1) {
+            const stackEl = document.createElement('span');
+            stackEl.className = 'zp-stack';
+            stackEl.textContent = `×${n}`;
+            chip.appendChild(stackEl);
+          }
+          zperks.appendChild(chip);
+        }
+        // V23: quick-revive所持チップ(チャージ制のためスタックMap外。所持中のみ表示)
+        if (revCharges > 0) {
+          const chip = document.createElement('div');
+          chip.className = 'zp-icon';
+          chip.title = 'quick-revive';
+          chip.style.setProperty('--zp-color', '#3355ff');
+          const abbr = document.createElement('span');
+          abbr.textContent = 'REV';
+          chip.appendChild(abbr);
+          if (revCharges > 1) {
+            const stackEl = document.createElement('span');
+            stackEl.className = 'zp-stack';
+            stackEl.textContent = `×${revCharges}`;
+            chip.appendChild(stackEl);
+          }
           zperks.appendChild(chip);
         }
       }
@@ -1555,6 +1600,13 @@ export class Hud {
     const el = this.el['zreviveflash'];
     if (!el) return;
     const v = snap.zombieReviveFlash ?? 0;
+    el.style.opacity = v > 0.001 ? String(v) : '0';
+  }
+
+  private updateZombieBossFlash(snap: MatchSnapshot): void {
+    const el = this.el['zbossflash'];
+    if (!el) return;
+    const v = snap.zombieBossFlash ?? 0;
     el.style.opacity = v > 0.001 ? String(v) : '0';
   }
 }

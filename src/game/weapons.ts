@@ -1161,7 +1161,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     slot: 'primary',
     damage: 45, // コンボ1段目。2段目x1.4 / 3段目x2 は match 側で乗算
     headshotMultiplier: 1.2,
-    rpm: 150, // パンチのテンポ
+    rpm: 480, // クナイ連撃のテンポ(480rpm=125ms/発)
     magazineSize: 999, // 弾は使わない(表示上も∞感を出す)
     reloadTacticalMs: 300,
     reloadEmptyMs: 300,

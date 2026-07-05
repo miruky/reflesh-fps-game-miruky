@@ -37,3 +37,39 @@ export function zombieEliteRate(r: number): number {
 export function zombieSpawnGap(r: number): number {
   return Math.max(0.6, 1.8 - r * 0.09);
 }
+
+// ─── ボス曲線(5ラウンドごとに1体出現) ────────────────────────────────────────
+
+/** r が 5 の倍数(r>0)のときボスラウンド */
+export function isBossRound(r: number): boolean {
+  return r > 0 && r % 5 === 0;
+}
+
+/**
+ * ボスのHP。r5=3000/r10=7000/r15=14000/r20=26000/以降×1.9毎5ラウンド、上限200000。
+ */
+export function zombieBossHp(r: number): number {
+  const tier = Math.floor(r / 5);
+  if (tier <= 0) return 3000;
+  const base = [0, 3000, 7000, 14000, 26000] as const;
+  if (tier <= 4) return base[tier] ?? 3000;
+  // r20超: 26000 × 1.9^(tier-4)
+  const steps = tier - 4;
+  return Math.min(200000, Math.round(26000 * Math.pow(1.9, steps)));
+}
+
+/**
+ * ボスの移動速度倍率(ZOMBIE_MOVE_MUL への係数)。r5=1.2→上限2.0。
+ */
+export function zombieBossSpeedMul(r: number): number {
+  const tier = Math.floor(r / 5);
+  return Math.min(2.0, 1.2 + (tier - 1) * 0.1);
+}
+
+/**
+ * ボスの近接ダメージ。r5=45→上限90。
+ */
+export function zombieBossDamage(r: number): number {
+  const tier = Math.floor(r / 5);
+  return Math.min(90, 45 + (tier - 1) * 6);
+}

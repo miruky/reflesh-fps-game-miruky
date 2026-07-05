@@ -1620,6 +1620,8 @@ export class ViewModel {
   private landBobStrength = 0;
   // ボルト閉鎖の二段演出。発砲キックの後、わずかに逆回転して落ち着く
   private counterKickTimer = 0;
+  // クナイ斬撃の横キック(右薙ぎ=正/左薙ぎ=負のロール。fire(variation)で加算)
+  private kickSide = 0;
   // スプリント中に銃を下げる量(滑らかに追従)。raiseRatioとは独立した加算項
   private sprintLower = 0;
   // 呼吸スウェイ位相(~0.295 Hz サイン波。ADS 収束でゼロ収束)
@@ -1760,7 +1762,29 @@ export class ViewModel {
     return { gun, muzzle };
   }
 
-  fire(scoped = false, flash = true): void {
+  // variation: クナイ斬撃モーション(0=右薙ぎ / 1=左薙ぎ / 2=突き)。fists専用で他武器は未指定
+  fire(scoped = false, flash = true, variation?: number): void {
+    if (variation !== undefined) {
+      // クナイ3連モーション: 横ロール+前キックの組み合わせで薙ぎ/突きを描き分ける
+      const v = ((variation % 3) + 3) % 3;
+      if (v === 0) {
+        // 右薙ぎ: 右ロール+軽い前キック
+        this.kickZ = Math.min(0.09, this.kickZ + 0.06);
+        this.kickRot = Math.min(0.16, this.kickRot + 0.1);
+        this.kickSide = Math.min(0.18, this.kickSide + 0.14);
+      } else if (v === 1) {
+        // 左薙ぎ: 左ロール+軽い前キック
+        this.kickZ = Math.min(0.09, this.kickZ + 0.06);
+        this.kickRot = Math.min(0.16, this.kickRot + 0.1);
+        this.kickSide = Math.max(-0.18, this.kickSide - 0.14);
+      } else {
+        // 突き: 強い前キックのみ(ロールは減衰)
+        this.kickZ = Math.min(0.14, this.kickZ + 0.12);
+        this.kickRot = Math.min(0.12, this.kickRot + 0.08);
+        this.kickSide *= 0.3;
+      }
+      return;
+    }
     // スコープ武器はボルト排莢のように大きく後退・跳ね上げる(BO2 DSRの重い一撃)
     this.kickZ = Math.min(scoped ? 0.2 : 0.08, this.kickZ + (scoped ? 0.18 : 0.045));
     this.kickRot = Math.min(scoped ? 0.34 : 0.18, this.kickRot + (scoped ? 0.22 : 0.09));
@@ -1856,6 +1880,7 @@ export class ViewModel {
     const kickDecay = Math.exp(-dt * 12.0);
     this.kickZ *= kickDecay;
     this.kickRot *= kickDecay;
+    this.kickSide *= Math.exp(-dt * 14.0); // 横キックは少し速く戻す(斬撃の切れ味)
     this.flashTimer -= dt;
     this.flashMesh.visible = this.flashTimer > 0;
     // サプレッサー付きは intensity/scale を 1/4 に抑えて炎を消す
@@ -1982,6 +2007,6 @@ export class ViewModel {
       rotZ = wave * 0.25;
       this.root.position.y -= wave * 0.09;
     }
-    this.root.rotation.set(rotX, this.swayX * 2 + slideYaw, rotZ);
+    this.root.rotation.set(rotX, this.swayX * 2 + slideYaw, rotZ + this.kickSide * 0.7);
   }
 }
