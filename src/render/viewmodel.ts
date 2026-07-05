@@ -1603,6 +1603,28 @@ const FIST_POSES: FistPose[] = [
   { name: 'vm:fistLHand', rest: { p: [-0.11, -0.09, -0.16], r: [0.25, 0.1, 0] }, ads: { p: [-0.17, -0.16, 0.04], r: [0.3, 0, 0] } },
 ];
 
+// 黒帝モード専用の腰だめ構え(darkHip)。ADS 逆手は既存 FIST_POSES.ads のままで不変。
+// _darkPoseBlend(0→1)で 0.25s かけて FIST_POSES.rest → darkHip へ遷移する。
+interface DarkPose {
+  name: string;
+  darkHip: { p: [number, number, number]; r: [number, number, number] };
+}
+const DARK_POSES: DarkPose[] = [
+  // 刀: 右手で柄を握り左手を柄下部に添える両手持ち。刃は右→前上方へ中段〜八相の構え
+  { name: FIST_KUNAI,        darkHip: { p: [0.04, -0.07, -0.03], r: [-0.52, 0.12, 0.18] } },
+  // 右腕: わずかに前傾・上げ(柄を前へ押し出す所作)
+  { name: 'vm:fistRArm',     darkHip: { p: [0.08, -0.18, 0.10],  r: [0.48, -0.10, 0.05] } },
+  // 右手: 柄上部グリップ位置
+  { name: 'vm:fistRHand',    darkHip: { p: [0.03, -0.06, -0.08], r: [0.22, 0.06, 0.10] } },
+  // 左腕: 左側から柄下部へ寄せる(添え手。rest[-0.1→0.02]で画面中央寄りへ)
+  { name: 'vm:fistLArm',     darkHip: { p: [0.02, -0.15, -0.04], r: [0.38, 0.10, 0.04] } },
+  // 左手: 柄下端に添える(rest[-0.11→0.02]で柄位置へ収束)
+  { name: 'vm:fistLHand',    darkHip: { p: [0.02, -0.08, -0.13], r: [0.26, 0.07, 0.06] } },
+];
+// ノード名 → darkHip の高速引き(update ループで毎フレーム使う・モジュール初期化時に構築)
+const DARK_POSE_MAP = new Map<string, { p: [number, number, number]; r: [number, number, number] }>();
+for (const dp of DARK_POSES) DARK_POSE_MAP.set(dp.name, dp.darkHip);
+
 // カメラ直付けの一人称武器モデル。procedural な銃本体に一人称腕を足し、
 // スウェイ・ボブ・リコイルキック・リロードを手続きで動かす。
 export class ViewModel {
@@ -1657,6 +1679,9 @@ export class ViewModel {
 
   // ── 黒帝モード ───────────────────────────────────────────────────────────
   private _darkMode = false;
+  // 刀構えブレンド係数。0=通常クナイ構え(FIST_POSES.rest), 1=黒帝刀構え(DARK_POSES.darkHip)
+  // update()内で _darkMode に追従して 0.25s lerp。解除でも 0.25s かけてクナイ構えへ戻る。
+  private _darkPoseBlend = 0;
   private readonly _darkAuraGroup = new THREE.Group();
   private readonly _darkAuraPool: Array<{
     mesh: THREE.Mesh;
@@ -1873,7 +1898,9 @@ export class ViewModel {
       }
       // スイングアニメーション開始。進行中は即キャンセル→新規開始(480rpm連打対応)
       this.swingType = v;
-      this.swingDuration = v === 2 ? 0.13 : 0.15;
+      // 黒帝中は大太刀の重み+15%。480rpmキャンセル制(即再開始)は維持
+      const darkDurScale = this._darkMode ? 1.15 : 1.0;
+      this.swingDuration = (v === 2 ? 0.13 : 0.15) * darkDurScale;
       this.swingTimer = this.swingDuration;
       this._trailLastSpawnProg = -1; // スポーン状態リセット
       return;
@@ -2040,8 +2067,14 @@ export class ViewModel {
     // ゲームプレイ(スプレッド/QS判定)は線形adsのままなので挙動は不変
     const adsVis = 1 - Math.pow(1 - ads, 5);
 
+    // 黒帝刀構えブレンド: _darkMode時に 0.25s(lerp≈dt*4)かけて darkHipポーズへ遷移。
+    // 解除でも同速で通常クナイ構えへ戻る。_darkPoseBlend は fistNodes ループ内で使用する。
+    const _darkPoseTarget = this._darkMode ? 1.0 : 0.0;
+    this._darkPoseBlend += (_darkPoseTarget - this._darkPoseBlend) * Math.min(1, dt * 4);
+
     // クナイ(素手)逆手ダガー構え: rest↔ads を adsVis で補間 + スイングオフセット加算。
     // スイングは加算デルタなので restポーズ/ADS逆手/resolveSightY 契約に無干渉。
+    // 黒帝中は rest を DARK_POSES.darkHip へブレンドした上で ADS 補間する。
     if (this.fistNodes.length) {
       const p = adsVis;
       // スイングフラクション: 振り出し(0→0.4) は easeOutCubic、戻り(0.4→1) は smoothstep 1→0
@@ -2056,20 +2089,43 @@ export class ViewModel {
           swingFrac = 1 - t * t * (3 - 2 * t); // smoothstep 1→0: スッと構えへ戻る
         }
       }
+      // 黒帝刀構え用呼吸ゆらぎ: 大太刀の刀先が僅かに揺れる(~0.21Hz, 振幅0.008rad)。
+      // ADS 収束と _darkPoseBlend の積でゼロへ収束させる(resolveSightY 契約を守る)。
+      const darkBreathRot =
+        this._darkMode
+          ? Math.sin(this.breathPhase * 0.7 + 0.5) * 0.008 * (1 - adsVis) * this._darkPoseBlend
+          : 0;
       for (const { node, pose } of this.fistNodes) {
         const rp = pose.rest.p;
         const ap = pose.ads.p;
         const rr = pose.rest.r;
         const ar = pose.ads.r;
-        const bx = rp[0] + (ap[0] - rp[0]) * p;
-        const by = rp[1] + (ap[1] - rp[1]) * p;
-        const bz = rp[2] + (ap[2] - rp[2]) * p;
-        const brx = rr[0] + (ar[0] - rr[0]) * p;
-        const bry = rr[1] + (ar[1] - rr[1]) * p;
-        const brz = rr[2] + (ar[2] - rr[2]) * p;
+        // 黒帝中: rest をdarkHip へブレンドしてから ads 収束補間
+        let rpx = rp[0], rpy = rp[1], rpz = rp[2];
+        let rrx = rr[0], rry = rr[1], rrz = rr[2];
+        if (this._darkPoseBlend > 0) {
+          const dh = DARK_POSE_MAP.get(node.name);
+          if (dh) {
+            const b = this._darkPoseBlend;
+            rpx += (dh.p[0] - rp[0]) * b;
+            rpy += (dh.p[1] - rp[1]) * b;
+            rpz += (dh.p[2] - rp[2]) * b;
+            rrx += (dh.r[0] - rr[0]) * b;
+            rry += (dh.r[1] - rr[1]) * b;
+            rrz += (dh.r[2] - rr[2]) * b;
+          }
+        }
+        const bx = rpx + (ap[0] - rpx) * p;
+        const by = rpy + (ap[1] - rpy) * p;
+        const bz = rpz + (ap[2] - rpz) * p;
+        const brx = rrx + (ar[0] - rrx) * p;
+        const bry = rry + (ar[1] - rry) * p;
+        const brz = rrz + (ar[2] - rrz) * p;
         const sd = this._swingDelta(node.name, swingFrac);
+        // 黒帝中かつ刀ノードには呼吸ゆらぎ(X軸回転)を加算して刀先が微動する演出を加える
+        const breathAdd = node.name === FIST_KUNAI ? darkBreathRot : 0;
         node.position.set(bx + sd[0], by + sd[1], bz + sd[2]);
-        node.rotation.set(brx + sd[3], bry + sd[4], brz + sd[5]);
+        node.rotation.set(brx + sd[3] + breathAdd, bry + sd[4], brz + sd[5]);
       }
     }
 
@@ -2140,23 +2196,25 @@ export class ViewModel {
   ): [number, number, number, number, number, number] {
     if (f <= 0 || this.swingType < 0) return [0, 0, 0, 0, 0, 0];
     const t = this.swingType;
+    // 黒帝中は大太刀にふさわしい振り幅1.4倍(3モーションの回転/移動デルタに適用)
+    const amp = this._darkMode ? 1.4 : 1.0;
     if (name === FIST_KUNAI) {
       // 右薙ぎ: クナイが右→左へ弧を描き Zロールで切り込む
-      if (t === 0) return [-0.14 * f, -0.03 * f, -0.04 * f, -0.35 * f,  0.6 * f, -1.3 * f];
+      if (t === 0) return [-0.14 * f * amp, -0.03 * f, -0.04 * f, -0.35 * f * amp,  0.6 * f * amp, -1.3 * f * amp];
       // 左薙ぎ: 逆方向
-      if (t === 1) return [ 0.14 * f, -0.03 * f, -0.04 * f, -0.35 * f, -0.6 * f,  1.3 * f];
+      if (t === 1) return [ 0.14 * f * amp, -0.03 * f, -0.04 * f, -0.35 * f * amp, -0.6 * f * amp,  1.3 * f * amp];
       // 突き: 前方へ鋭く突き込む
-      return [0, 0.01 * f, -0.18 * f, -0.8 * f, 0, 0];
+      return [0, 0.01 * f, -0.18 * f * amp, -0.8 * f * amp, 0, 0];
     }
     if (name === 'vm:fistRArm') {
-      if (t === 0) return [-0.06 * f, -0.01 * f, -0.02 * f,  0.05 * f,  0.25 * f, -0.45 * f];
-      if (t === 1) return [ 0.06 * f, -0.01 * f, -0.02 * f,  0.05 * f, -0.25 * f,  0.45 * f];
-      return [0, 0, -0.06 * f, -0.3 * f, 0, 0];
+      if (t === 0) return [-0.06 * f * amp, -0.01 * f, -0.02 * f,  0.05 * f * amp,  0.25 * f * amp, -0.45 * f * amp];
+      if (t === 1) return [ 0.06 * f * amp, -0.01 * f, -0.02 * f,  0.05 * f * amp, -0.25 * f * amp,  0.45 * f * amp];
+      return [0, 0, -0.06 * f * amp, -0.3 * f * amp, 0, 0];
     }
     if (name === 'vm:fistRHand') {
-      if (t === 0) return [-0.04 * f, -0.01 * f, -0.01 * f, 0.02 * f,  0.18 * f, -0.35 * f];
-      if (t === 1) return [ 0.04 * f, -0.01 * f, -0.01 * f, 0.02 * f, -0.18 * f,  0.35 * f];
-      return [0, 0, -0.04 * f, -0.2 * f, 0, 0];
+      if (t === 0) return [-0.04 * f * amp, -0.01 * f, -0.01 * f, 0.02 * f * amp,  0.18 * f * amp, -0.35 * f * amp];
+      if (t === 1) return [ 0.04 * f * amp, -0.01 * f, -0.01 * f, 0.02 * f * amp, -0.18 * f * amp,  0.35 * f * amp];
+      return [0, 0, -0.04 * f * amp, -0.2 * f * amp, 0, 0];
     }
     return [0, 0, 0, 0, 0, 0];
   }
@@ -2167,9 +2225,9 @@ export class ViewModel {
     if (!trail) return;
     const kunai = this.gun?.getObjectByName(FIST_KUNAI);
     if (!kunai) return;
-    // 刃先(kunaiローカル座標)を root ローカルへ変換。黒帝モード中は黒刀の刃先(3.5倍延長後)を使う
+    // 刃先(kunaiローカル座標)を root ローカルへ変換。黒帝モード中は大型化後の黒刀刃先を使う
     this.root.updateWorldMatrix(true, false);
-    const tipZ = this._darkMode ? -1.31 : -0.46;
+    const tipZ = this._darkMode ? -1.59 : -0.46;
     this._v3scratch.set(0, 0.006, tipZ);
     kunai.localToWorld(this._v3scratch);
     this._v3scratch.applyMatrix4(this._m4scratch.copy(this.root.matrixWorld).invert());
@@ -2217,9 +2275,9 @@ export class ViewModel {
     const kunai = this.gun?.getObjectByName(FIST_KUNAI);
     if (!kunai) return;
     this.root.updateWorldMatrix(true, false);
-    // 刃の中間付近にランダム散布。黒帝モード中は黒刀刀身(Z: -0.19〜-0.91)をカバー
+    // 刃の中間付近にランダム散布。黒帝モード中は大型化後の黒刀刀身(Z: -0.19〜-1.09)をカバー
     const auraZ = this._darkMode
-      ? -0.19 - Math.random() * 0.72   // 黒刀刀身全域
+      ? -0.19 - Math.random() * 0.90   // 黒刀刀身全域(大型化後 0.90m)
       : -0.28 - Math.random() * 0.18;  // 通常クナイ刃中間
     this._v3scratch.set(
       (Math.random() - 0.5) * 0.05,
@@ -2325,9 +2383,9 @@ export class ViewModel {
     }
   }
 
-  // 超長黒刀メッシュ群を 'vm:darkBlade' Group として kunai に追加する。
+  // 大型黒刀メッシュ群を 'vm:darkBlade' Group として kunai に追加する。
   // 刀身(0x0a0812/低metalness高rough/NormalBlending)+深紫エミシブエッジ+暗紫リムオーバーレイ。
-  // 刃先は元クナイの約3.5倍(~1.12m)。Group ごと _darkOverlayMeshes へ積んで一括 dispose。
+  // 刃先は約1.4m(大太刀)・幅1.2倍。Group ごと _darkOverlayMeshes へ積んで一括 dispose。
   private _buildDarkBladeMeshes(kunai: THREE.Object3D): void {
     const group = new THREE.Group();
     group.name = 'vm:darkBlade';
@@ -2350,21 +2408,23 @@ export class ViewModel {
     });
     darkSpineMat.userData.shared = false;
 
-    // 刀身板: 幅 0.022×高 0.048×長 0.72m。ガード直後(-0.19)から始まり -0.91 まで
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.048, 0.72), darkSteelMat);
-    body.position.set(0, 0.006, -0.55); // center = -0.19 - 0.36
+    // 刀身板: 幅 0.026×高 0.058×長 0.90m(大型化: 1.4m大太刀, 幅1.2倍)
+    // ガード直後(-0.19)から始まり -1.09 まで。center = -0.19 - 0.45 = -0.64
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.058, 0.90), darkSteelMat);
+    body.position.set(0, 0.006, -0.64); // center = -0.19 - 0.45
     group.add(body);
 
-    // 峰板: やや細い
-    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.013, 0.054, 0.65), darkSpineMat);
-    spine.position.set(0, 0.006, -0.515); // center = -0.19 - 0.325
+    // 峰板: やや細い。center = -0.19 - 0.41 = -0.60
+    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.065, 0.82), darkSpineMat);
+    spine.position.set(0, 0.006, -0.60); // center = -0.19 - 0.41
     group.add(spine);
 
-    // 切先(漆黒四角錐): tip が z≈-1.31 → 0.32m×3.5 = 1.12m の刃先に一致
+    // 切先(漆黒四角錐): 刃先z≈-1.59 → 全長1.4m大太刀
+    // center = -1.09 - 0.25 = -1.34。tip apex = -1.59
     const tipMat = darkSteelMat.clone();
     tipMat.userData.shared = false;
-    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.4, 4), tipMat);
-    tip.position.set(0, 0.006, -1.11); // center = -0.91 - 0.20
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.036, 0.50, 4), tipMat);
+    tip.position.set(0, 0.006, -1.34); // center = -1.09 - 0.25
     tip.rotation.set(Math.PI / 2, Math.PI / 4, 0);
     group.add(tip);
 
@@ -2378,13 +2438,13 @@ export class ViewModel {
       side: THREE.DoubleSide,
     });
     edgeMat.userData.shared = false;
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.007, 0.68), edgeMat);
-    edge.position.set(0, -0.022, -0.53);
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.008, 0.88), edgeMat);
+    edge.position.set(0, -0.026, -0.63);
     edge.renderOrder = 6;
     group.add(edge);
 
-    // 暗紫リムオーバーレイ(上縁・下縁): 黒刀の長さに合わせた幅
-    const rimY = [0.029, -0.016] as const;
+    // 暗紫リムオーバーレイ(上縁・下縁): 大型化した刀身に合わせた幅・長さ
+    const rimY = [0.035, -0.019] as const;
     for (const py of rimY) {
       const rimMat = new THREE.MeshBasicMaterial({
         color: 0x5500aa,
@@ -2395,8 +2455,8 @@ export class ViewModel {
         side: THREE.DoubleSide,
       });
       rimMat.userData.shared = false;
-      const rimMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.015, 0.72), rimMat);
-      rimMesh.position.set(0, py, -0.55);
+      const rimMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.016, 0.90), rimMat);
+      rimMesh.position.set(0, py, -0.64);
       rimMesh.rotation.set(Math.PI / 2, 0, 0);
       rimMesh.renderOrder = 6;
       group.add(rimMesh);

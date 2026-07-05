@@ -720,6 +720,7 @@ export class SoundKit {
   private lastExplosionS = 0; // 爆発の0.08sスロットル
   private lastWhizzS = 0;
   private lastImpactS = 0;
+  private lastDarkSlashS = 0; // 黒帝斬撃波の連打スロットル(~0.06s)
   private lastEnemyFootstepS = 0; // 敵足音の全体スロットル(~0.03s)
   private tinnitusUntilS = 0;
   private duckRecoverTarget = 1; // 低HP時はBGM復帰を抑える
@@ -2161,6 +2162,43 @@ export class SoundKit {
     this.tone({ freq: 82, endFreq: 68, durationS: 1.4, type: 'sawtooth', gain: 0.22, drive: 2, delayS: 0.35 });
     // 金属共鳴の余韻(「黒」の質感)
     this.tone({ freq: 210, endFreq: 130, durationS: 0.6, type: 'triangle', gain: 0.18, delayS: 0.08 });
+  }
+
+  // 黒帝通常攻撃: 超低域ブーム + 重い風切りスウィープ + 金属残響尾
+  // 連打破綻防止のスロットル(~0.06s)とボイス予算ガード
+  darkSlash(): void {
+    const now = this.ctx?.currentTime ?? 0;
+    if (now - this.lastDarkSlashS < 0.06 || this.liveVoices() > 230) return;
+    this.lastDarkSlashS = now;
+    // 超低域ブーム(小型スピーカー向け非対称歪み)
+    this.tone({ freq: 50, endFreq: 20, durationS: 0.32, type: 'sine', gain: 0.52, drive: 6, curve: 'asym' });
+    // 重い風切りノイズスウィープ(高域→低域で「斬り抜け」感)
+    this.noiseBurst({ durationS: 0.28, filterHz: 3200, filterType: 'bandpass', filterEndHz: 280, gain: 0.38 });
+    // 金属残響尾(「ズン」と空気を切る)
+    this.tone({ freq: 180, endFreq: 60, durationS: 0.35, type: 'triangle', gain: 0.22, delayS: 0.04 });
+  }
+
+  // 真月: 溜め音(低い唸り 0.4s)
+  shingetsuCharge(): void {
+    this.tone({ freq: 38, endFreq: 28, durationS: 0.5, type: 'sine', gain: 0.62, drive: 7, curve: 'asym' });
+    this.noiseBurst({ durationS: 0.4, filterHz: 180, filterType: 'lowpass', gain: 0.35 });
+    this.tone({ freq: 66, endFreq: 44, durationS: 0.4, type: 'sawtooth', gain: 0.28, drive: 4, delayS: 0.05 });
+  }
+
+  // 真月: 解放轟音(シュヴァルツヴァルト超強化版 + 余韻)
+  shingetsuRelease(): void {
+    // 超低域ブーム連打(全方位を断裂させる感覚)
+    this.tone({ freq: 45, endFreq: 12, durationS: 1.1, type: 'sine', gain: 0.72, drive: 10, curve: 'asym' });
+    this.tone({ freq: 30, endFreq: 9,  durationS: 0.9, type: 'sine', gain: 0.52, drive: 8,  curve: 'asym', delayS: 0.05 });
+    // 全域スウィープ(下降=収束の轟音)
+    this.noiseBurst({ durationS: 0.7, filterHz: 6000, filterType: 'bandpass', filterEndHz: 120, gain: 0.55 });
+    this.noiseBurst({ durationS: 1.1, filterHz: 380, filterType: 'lowpass', gain: 0.65, delayS: 0.08 });
+    // 金属共鳴+暗黒コーラスパッド(余韻 ~1.5s)
+    this.tone({ freq: 55, endFreq: 72, durationS: 1.8, type: 'sawtooth', gain: 0.3, drive: 4, delayS: 0.15 });
+    this.tone({ freq: 88, endFreq: 66, durationS: 1.5, type: 'sawtooth', gain: 0.24, drive: 3, delayS: 0.3 });
+    this.tone({ freq: 220, endFreq: 110, durationS: 0.8, type: 'triangle', gain: 0.2, delayS: 0.1 });
+    // 金属の高域余韻「斬」
+    this.noiseBurst({ durationS: 0.12, filterHz: 5500, filterType: 'bandpass', q: 6, gain: 0.32, attackS: 0.001 });
   }
 
   slide(): void {

@@ -25,6 +25,7 @@ export class Effects {
   private impactRings: Timed<THREE.Mesh>[] = []; // ブリンク着地/落雷の小衝撃リング
   private darkNovas: Timed<THREE.Mesh | THREE.Group>[] = []; // 黒技ノヴァ(暗色リング+暗転球)
   private darkPuffs: Timed<THREE.Mesh>[] = [];               // 黒帝オーラ煙(足元低頻度)
+  private shingetsuRings: Timed<THREE.Group>[] = [];         // 真月拡大リング
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -547,6 +548,139 @@ export class Effects {
     this.flames.push({ obj: group, life: durationS, maxLife: durationS });
   }
 
+  // 黒帝通常攻撃: 三日月弧×2(NormalBlendingの暗芯+AdditiveBlendingの深紫縁)
+  // 返却した Group は match.ts 側が位置更新・破棄を管理する
+  darkSlashWave(origin: THREE.Vector3, dir: THREE.Vector3, tiltRad: number): THREE.Group {
+    const group = new THREE.Group();
+    group.position.copy(origin);
+    const angle = Math.atan2(dir.x, dir.z);
+    group.rotation.y = angle;
+    group.rotation.z = tiltRad;
+
+    // 暗芯(NormalBlending=暗く塗る)
+    const innerR = 0.6, outerR = 1.8;
+    const coreGeo = new THREE.RingGeometry(innerR, outerR, 24, 1, 0, Math.PI * 1.6);
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0x0a0812,
+      transparent: true,
+      opacity: 0.88,
+      blending: THREE.NormalBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    group.add(coreMesh);
+
+    // 深紫縁(AdditiveBlending)
+    const edgeGeo = new THREE.RingGeometry(outerR * 0.85, outerR * 1.15, 24, 1, 0, Math.PI * 1.7);
+    const edgeMat = new THREE.MeshBasicMaterial({
+      color: 0x6a00b0,
+      transparent: true,
+      opacity: 0.72,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const edgeMesh = new THREE.Mesh(edgeGeo, edgeMat);
+    group.add(edgeMesh);
+
+    this.scene.add(group);
+    return group;
+  }
+
+  // 黒帝斬撃波のスモークトレイル(puffGeometry共有)
+  darkSlashSmoke(pos: THREE.Vector3): void {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x06000c,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+    });
+    const puff = new THREE.Mesh(this.puffGeometry, mat);
+    puff.position.copy(pos);
+    puff.scale.setScalar(0.35 + Math.random() * 0.3);
+    this.scene.add(puff);
+    this.darkPuffs.push({ obj: puff, life: 0.9, maxLife: 0.9 });
+  }
+
+  // 真月: ステージ全域へ広がる暗黒リング + 一瞬の白閃スラッシュ + 黒煙ブロブ
+  shingetsuWave(center: THREE.Vector3, maxRadius: number, reduceMotion = false): void {
+    const life = 1.6;
+    const group = new THREE.Group();
+    group.position.copy(center);
+
+    // 暗黒コアリング(NormalBlending)
+    const coreRingGeo = new THREE.RingGeometry(0.82, 1.0, 64);
+    const coreRingMat = new THREE.MeshBasicMaterial({
+      color: 0x060010,
+      transparent: true,
+      opacity: reduceMotion ? 0.5 : 0.8,
+      blending: THREE.NormalBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const coreRing = new THREE.Mesh(coreRingGeo, coreRingMat);
+    coreRing.rotation.x = -Math.PI / 2;
+    coreRing.scale.setScalar(0.5);
+    coreRing.userData.targetScale = maxRadius;
+    coreRing.userData.baseOpacity = coreRingMat.opacity;
+    group.add(coreRing);
+
+    // 深紫縁リング(AdditiveBlending)
+    const edgeGeo = new THREE.RingGeometry(0.88, 1.06, 64);
+    const edgeMat = new THREE.MeshBasicMaterial({
+      color: 0x4a0080,
+      transparent: true,
+      opacity: reduceMotion ? 0.35 : 0.62,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const edgeRing = new THREE.Mesh(edgeGeo, edgeMat);
+    edgeRing.rotation.x = -Math.PI / 2;
+    edgeRing.scale.setScalar(0.5);
+    edgeRing.userData.targetScale = maxRadius * 1.04;
+    edgeRing.userData.baseOpacity = edgeMat.opacity;
+    group.add(edgeRing);
+
+    // 黒煙ブロブ(cloudGeometry共有=disposeしない)
+    for (let i = 0; i < 5; i++) {
+      const blobMat = new THREE.MeshBasicMaterial({
+        color: 0x04000a,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+      const blob = new THREE.Mesh(this.cloudGeometry, blobMat);
+      const a = (i / 5) * Math.PI * 2 + Math.random() * 0.5;
+      const r = maxRadius * (0.3 + Math.random() * 0.5);
+      blob.position.set(Math.sin(a) * r, 0.3 + Math.random() * 1.5, Math.cos(a) * r);
+      blob.scale.setScalar(maxRadius * (0.04 + Math.random() * 0.06));
+      blob.userData.isSmoke = true;
+      group.add(blob);
+    }
+
+    // 横断スラッシュフラッシュ(reduceMotion無効時のみ)
+    if (!reduceMotion) {
+      const slashGeo = new THREE.BoxGeometry(maxRadius * 2.2, 0.06, 0.22);
+      const slashMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const slash = new THREE.Mesh(slashGeo, slashMat);
+      slash.position.y = 0.1;
+      slash.userData.isSlashFlash = true;
+      slash.userData.baseOpacity = 0.9;
+      group.add(slash);
+    }
+
+    this.scene.add(group);
+    this.shingetsuRings.push({ obj: group, life, maxLife: life });
+  }
+
   // 投擲軌道のプレビュー。毎フレーム差し替え、非表示はhideTrajectoryで行う
   showTrajectory(points: THREE.Vector3[]): void {
     this.hideTrajectory();
@@ -664,6 +798,39 @@ export class Effects {
       (puff.material as THREE.MeshBasicMaterial).opacity = 0.62 * ratio;
       puff.scale.multiplyScalar(1 + dt * 0.55); // ゆっくり膨らむ
     });
+    this.shingetsuRings = this.tick(this.shingetsuRings, dt, (group, ratio) => {
+      const grow = 1 - ratio * ratio; // ratio=1(開始)→0(終了)なので拡大
+      for (const child of group.children) {
+        const mesh = child as THREE.Mesh;
+        if (mesh.userData.isSmoke === true) {
+          // 黒煙ブロブ: フェードイン→ゆっくりフェードアウト
+          const age = 1 - ratio;
+          const fadeIn = Math.min(1, age / 0.3);
+          const fadeOut = Math.min(1, ratio * 2);
+          (mesh.material as THREE.MeshBasicMaterial).opacity = 0.55 * fadeIn * fadeOut;
+          mesh.scale.multiplyScalar(1 + dt * 0.4);
+          continue;
+        }
+        if (mesh.userData.isSlashFlash === true) {
+          // スラッシュフラッシュ: 素早くフェードアウト
+          // V26修正: ratio*8のclampは寿命の大半を全開輝度で残す(逆挙動)。二乗減衰で
+          // 「出現時に最も明るく短時間で消える」本来の斬り線フラッシュへ
+          const flashRatio = ratio * ratio;
+          (mesh.material as THREE.MeshBasicMaterial).opacity =
+            (mesh.userData.baseOpacity as number) * flashRatio;
+          (mesh.material as THREE.MeshBasicMaterial).color.setHex(
+            ratio > 0.7 ? 0xffffff : 0x6a00b0,
+          );
+          continue;
+        }
+        // リングメッシュ: 拡大しながらフェードアウト
+        const target = (mesh.userData.targetScale as number) ?? 10;
+        const current = target * grow;
+        mesh.scale.setScalar(Math.max(mesh.scale.x, current));
+        (mesh.material as THREE.MeshBasicMaterial).opacity =
+          (mesh.userData.baseOpacity as number) * ratio;
+      }
+    });
     this.streaks = this.tick(this.streaks, dt, (group, ratio) => {
       const grow = 1 - ratio * ratio; // 中心から外へ走る
       for (const child of group.children) {
@@ -706,6 +873,7 @@ export class Effects {
       this.impactRings,
       this.darkPuffs,
       this.darkNovas as unknown as Timed<THREE.Object3D>[],
+      this.shingetsuRings as unknown as Timed<THREE.Object3D>[],
     ]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;

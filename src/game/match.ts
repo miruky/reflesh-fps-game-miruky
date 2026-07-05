@@ -217,6 +217,13 @@ const DARK_EMPEROR_MUL_SLAM = 4;    // ダイブスラムのダメージ倍率
 const DARK_EMPEROR_MUL_ULTS = 2;    // F/B/N ウルトのダメージ倍率
 const DARK_BLINK_RANGE = 10;        // 黒帝中のブリンク射程(通常7→10m)
 const DARK_EMPEROR_COLOR = 0x1a0030;// 黒帝中の三日月/衝撃波の暗色
+const DARK_SLASH_SPEED = 38;      // m/s
+const DARK_SLASH_RANGE = 35;      // m
+const DARK_SLASH_RADIUS = 2.5;    // m ヒット円柱半径
+const DARK_SLASH_DAMAGE = 250;    // ダメージ(固定)
+const DARK_SLASH_MAX = 8;         // 同時存在上限
+const SHINGETSU_DAMAGE = 1500;    // 真月 ステージ全体ダメージ
+const SHINGETSU_CHARGE_S = 0.4;   // 真月 溜め秒数
 const BLINK_RANGE = 7; // ブリンク斬撃の瞬間移動距離(m)。壁の手前で停止
 const BLINK_DAMAGE = 130; // ブリンク斬撃で経路上の敵を切り裂くダメージ
 const BLINK_RADIUS = 1.8; // ブリンク経路(線分)の判定太さ(m)
@@ -519,6 +526,15 @@ interface ThrownGrenade {
   mesh: THREE.Mesh;
 }
 
+interface DarkSlashWave {
+  group: THREE.Group;
+  pos: THREE.Vector3;
+  dir: THREE.Vector3;
+  traveled: number;
+  hitSet: Set<number>; // 既ヒット bot.uid(多段ヒット防止)
+  smokeTimer: number;
+}
+
 export class Match {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
@@ -600,6 +616,11 @@ export class Match {
   // ── 黒技・シュヴァルツヴァルト ──
   private darkEmperorTimer = 0; // 黒帝モードの残り秒(0=非発動)
   private darkSmokeTimer = 0;   // 足元黒煙エミッタの次発生タイマー
+  // ── 黒帝通常攻撃: 黒い斬撃波 ──
+  private darkSlashWaves: DarkSlashWave[] = [];
+  // ── 黒技奥伝・真月 ──
+  private shingetsuPhase: 'idle' | 'charge' | 'release' = 'idle';
+  private shingetsuTimer = 0;
 
   // ── 風神・極大手裏剣(B ウルト): 発射中の手裏剣エンティティ ──
   private windShuriken: {
@@ -2125,6 +2146,8 @@ export class Match {
     this.updateWindShuriken(dt);
     this.updateLightningBeast(dt);
     this.updateDarkEmperor(dt);
+    this.updateDarkSlashWaves(dt);
+    this.updateShingetsu(dt);
     this.updateBots(dt);
     this.physics.step();
     this.syncCamera();
@@ -4029,9 +4052,14 @@ export class Match {
       } else if (this.isNinja && this.input.wasPressed('ult3')) {
         // N: 雷帝・神獣降臨(fists装備時のみ。ゲージ全消費)
         this.activateLightningBeast();
-      } else if (this.isNinja && this.input.wasPressed('ult4') && this.darkEmperorTimer <= 0 && !this.killcamCamActive) {
-        // M: 黒技・シュヴァルツヴァルト(fists装備時のみ。ゲージ全消費)
-        this.activateSchwarzwald();
+      } else if (this.isNinja && this.input.wasPressed('ult4') && !this.killcamCamActive) {
+        if (this.darkEmperorTimer > 0) {
+          // M: 黒技奥伝・真月(黒帝中 + ゲージ満タン)
+          this.activateShingetsu();
+        } else {
+          // M: 黒技・シュヴァルツヴァルト(fists装備時のみ。ゲージ全消費)
+          this.activateSchwarzwald();
+        }
       }
     }
 
@@ -4105,6 +4133,12 @@ export class Match {
     if (hitAny) {
       this.sounds.kunaiHit('flesh');
       this.haptic(70, 0.4, 0.5);
+    }
+
+    // ── 黒帝中: 視線方向へ黒い斬撃波を発射 ──
+    if (this.darkEmperorTimer > 0) {
+      const slashTilt = motion === 0 ? Math.PI / 5 : motion === 1 ? -Math.PI / 5 : 0;
+      this.spawnDarkSlashWave(slashTilt);
     }
   }
 
@@ -4637,6 +4671,161 @@ export class Match {
     this.lightningKirinMesh = null;
     this.lightningKirinGeos = [];
     this.lightningKirinMats = [];
+  }
+
+  // ── 黒帝斬撃波 ──────────────────────────────────────────────────
+  private spawnDarkSlashWave(tiltRad: number): void {
+    if (!this.player.alive) return;
+    const dir = this.cameraForward();
+    const origin = this.player.eyePosition.clone();
+
+    // 上限超過時: 最古エンティティを排除
+    if (this.darkSlashWaves.length >= DARK_SLASH_MAX) {
+      const oldest = this.darkSlashWaves.shift()!;
+      this.disposeDarkSlashWave(oldest);
+    }
+
+    const group = this.effects.darkSlashWave(origin, dir, tiltRad);
+    this.darkSlashWaves.push({
+      group,
+      pos: origin.clone(),
+      dir: dir.clone(),
+      traveled: 0,
+      hitSet: new Set(),
+      smokeTimer: 0,
+    });
+    this.sounds.darkSlash();
+  }
+
+  private updateDarkSlashWaves(dt: number): void {
+    if (this.darkSlashWaves.length === 0) return;
+    const remaining: DarkSlashWave[] = [];
+    for (const w of this.darkSlashWaves) {
+      const move = DARK_SLASH_SPEED * dt;
+      w.pos.addScaledVector(w.dir, move);
+      w.traveled += move;
+      w.group.position.copy(w.pos);
+      w.group.rotation.z += dt * 1.8;
+
+      // スモークトレイル(0.08s周期)
+      w.smokeTimer += dt;
+      if (w.smokeTimer >= 0.08) {
+        w.smokeTimer = 0;
+        this.effects.darkSlashSmoke(w.pos.clone());
+      }
+
+      // 前方に壁があれば手前で終端
+      const wallHit = this.castRay(
+        w.pos.clone().addScaledVector(w.dir, -0.3),
+        w.dir,
+        DARK_SLASH_SPEED * dt + 1.0,
+        null,
+        (c) => this.tags.get(c.handle)?.kind === 'world',
+      );
+      if (wallHit) {
+        this.disposeDarkSlashWave(w);
+        continue;
+      }
+
+      // ヒットボックス: 水平半径2.5m + 高さ±2.5m の円柱
+      for (const bot of this.bots) {
+        if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+        if (w.hitSet.has(bot.uid)) continue;
+        const bp = bot.position;
+        const dx = bp.x - w.pos.x;
+        const dz = bp.z - w.pos.z;
+        if (dx * dx + dz * dz > DARK_SLASH_RADIUS * DARK_SLASH_RADIUS) continue;
+        if (Math.abs(bp.y - w.pos.y) > 2.5) continue;
+        w.hitSet.add(bot.uid);
+        const point = new THREE.Vector3(bp.x, bp.y + 0.3, bp.z);
+        this.applyBotDamage(bot, DARK_SLASH_DAMAGE, point, false, '黒帝斬撃', false);
+        this.effects.hitPuff(point);
+      }
+
+      if (w.traveled >= DARK_SLASH_RANGE) {
+        this.disposeDarkSlashWave(w);
+        continue;
+      }
+      remaining.push(w);
+    }
+    this.darkSlashWaves = remaining;
+  }
+
+  private disposeDarkSlashWave(w: DarkSlashWave): void {
+    this.scene.remove(w.group);
+    w.group.traverse((node) => {
+      if (node instanceof THREE.Mesh) {
+        node.geometry.dispose();
+        (node.material as THREE.Material).dispose();
+      }
+    });
+  }
+
+  private disposeAllDarkSlashWaves(): void {
+    for (const w of this.darkSlashWaves) this.disposeDarkSlashWave(w);
+    this.darkSlashWaves = [];
+  }
+
+  // ── 黒技奥伝・真月 ──────────────────────────────────────────────
+  private activateShingetsu(): void {
+    if (this.shingetsuPhase !== 'idle') return;
+    if (!this.player.alive) return;
+    this.ultCharge = 0;
+    this.ultReadyNotified = false;
+    this.shingetsuPhase = 'charge';
+    this.shingetsuTimer = SHINGETSU_CHARGE_S;
+    this.sounds.shingetsuCharge();
+    this.addShake(this.settings.reduceMotion ? 0.1 : 0.25);
+  }
+
+  private updateShingetsu(dt: number): void {
+    if (this.shingetsuPhase === 'idle') return;
+
+    if (this.shingetsuPhase === 'charge') {
+      // 溜め中は画面を暗くキープ
+      this.deathVeil = Math.max(this.deathVeil, this.settings.reduceMotion ? 0.35 : 0.72);
+      this.shingetsuTimer -= dt;
+      if (this.shingetsuTimer <= 0) {
+        this.shingetsuPhase = 'idle';
+        this.releaseShingetsu();
+      }
+    }
+  }
+
+  private releaseShingetsu(): void {
+    if (!this.player.alive) return;
+    const center = this.player.position.clone();
+    const stageRadius = this.config.stage.size / 2 + 8;
+    const chestY = center.y + 0.4;
+
+    // ビジュアル: ステージ全域に広がる暗黒リング + スラッシュフラッシュ
+    this.effects.shingetsuWave(
+      new THREE.Vector3(center.x, chestY, center.z),
+      stageRadius,
+      this.settings.reduceMotion,
+    );
+
+    // 画面フラッシュ + 最大シェイク
+    if (!this.settings.reduceMotion) {
+      this.whiteout = Math.max(this.whiteout, 0.6);
+      this.addShake(1.4);
+    } else {
+      this.addShake(0.4);
+    }
+    this.deathVeil = 0;
+
+    // 全敵を一撃(遮蔽無視=奥伝の特権)
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+      this.applyBotDamage(bot, SHINGETSU_DAMAGE, point, false, '黒技奥伝・真月', false);
+      this.effects.hitPuff(point);
+    }
+
+    this.sounds.shingetsuRelease();
+    this.haptic(600, 1.0, 1.0);
+    this.announcements.push('黒技奥伝・真月');
+    this.alertBots(80);
   }
 
   // 手裏剣メッシュの解放(飛行中の試合破棄経路から呼ぶ)
@@ -5588,10 +5777,16 @@ export class Match {
       (hk.mesh.material as THREE.Material).dispose();
     }
     this.hkEntities.length = 0;
-    // 同様に飛行中の風神手裏剣・疾走中の雷麒麟も凍結表示させない
+    // 同様に飛行中の風神手裏剣・疾走中の雷麒麟・黒帝斬撃波も凍結表示させない
     this.disposeWindShuriken();
     this.disposeLightningKirin();
+    this.disposeAllDarkSlashWaves();
     this.lightningBeastTimer = 0;
+    // V26修正: 真月の溜め(0.4s)中に試合が決まると deathVeil=0.72 がファイナルキルカムへ
+    // 凍結され画面が暗いままになる。キルカム開始時に演出ベールを必ずリセットする
+    this.deathVeil = 0;
+    this.whiteout = 0;
+    this.shingetsuPhase = 'idle';
     const killT  = this.fkKillElapsed;
     const oldIdx = (this.fkHead - this.fkFill + FK_MAX_FRAMES) % FK_MAX_FRAMES;
     const oldest = this.fkTimeArr[oldIdx]!;
@@ -6235,9 +6430,10 @@ export class Match {
       (hk.mesh.material as THREE.Material).dispose();
     }
     this.hkEntities.length = 0;
-    // クナイウルト: 飛行中の風神手裏剣・疾走中の雷麒麟を解放
+    // クナイウルト: 飛行中の風神手裏剣・疾走中の雷麒麟・黒帝斬撃波を解放
     this.disposeWindShuriken();
     this.disposeLightningKirin();
+    this.disposeAllDarkSlashWaves();
     this.lightningBeastTimer = 0;
     if (this.darkEmperorTimer > 0) this.endDarkEmperor();
     this.darkEmperorTimer = 0;
