@@ -69,6 +69,8 @@ export interface MenuSelection {
   grenade: GrenadeKind;
   difficulty: Difficulty;
   secondaryId: string;
+  // ゾンビモード専用: 開始ラウンド(1-50)。他モードでは無視される
+  zombieStartRound?: number;
 }
 
 export interface MenuCallbacks {
@@ -560,6 +562,10 @@ export class Menu {
       if (saved.difficulty && ['easy', 'normal', 'hard'].includes(saved.difficulty)) {
         this.selection.difficulty = saved.difficulty;
       }
+      // V27修正: 保存はされるが復元されていなかった(往復の非対称)。クランプして復元
+      if (typeof saved.zombieStartRound === 'number') {
+        this.selection.zombieStartRound = Math.max(1, Math.min(50, Math.round(saved.zombieStartRound)));
+      }
       for (const id of saved.attachments ?? []) {
         const def = ATTACHMENT_DEFS[id];
         if (def) this.attachmentBySlot[def.slot] = id;
@@ -792,6 +798,10 @@ export class Menu {
                     <h2>交戦規定</h2>
                     <div class="mode-list" data-id="modes"></div>
                   </section>
+                  <section class="menu-section zombie-round-section" data-id="zombie-round-wrap" hidden>
+                    <h2>開始ラウンド</h2>
+                    <div class="zombie-round-selector" data-id="zombie-round-selector"></div>
+                  </section>
                   <section class="menu-section">
                     <h2>脅威レベル</h2>
                     <div class="difficulty-list" data-id="difficulties"></div>
@@ -866,6 +876,7 @@ export class Menu {
     this.renderChallenges();
     this.renderStages();
     this.renderModes();
+    this.renderZombieRoundSelector();
     this.renderWeapons();
     this.renderSecondaries();
     this.renderAttachments();
@@ -1789,6 +1800,7 @@ export class Menu {
         this.markSelected(list, 'mode', id);
         // R16: モード別のステージ一覧を作り直す(ゾンビ⇔通常でステージ集合が変わる)
         this.renderStages();
+        this.renderZombieRoundSelector();
         this.renderBriefing();
       });
       list.appendChild(card);
@@ -1916,6 +1928,49 @@ export class Menu {
     }
     this.stagger(list);
     this.markSelected(list, 'difficulty', this.selection.difficulty);
+  }
+
+  // ── ゾンビモード専用: 開始ラウンドセレクタ ──────────────────────────
+  // ゾンビ選択時のみ表示。ステッパー(±)とプリセットチップを並べる。
+  // IGNITION FRAME 意匠: attach-btn チップ + ember アクセント。
+  private renderZombieRoundSelector(): void {
+    const wrap = this.root.querySelector<HTMLElement>('[data-id="zombie-round-wrap"]');
+    if (!wrap) return;
+    const isZombie = this.selection.mode === 'zombie';
+    wrap.hidden = !isZombie;
+    if (!isZombie) return;
+
+    const sel = wrap.querySelector<HTMLElement>('[data-id="zombie-round-selector"]');
+    if (!sel) return;
+
+    const ZR_PRESETS = [1, 5, 10, 15, 20, 30, 40, 50] as const;
+    const cur = this.selection.zombieStartRound ?? 1;
+
+    sel.innerHTML = `
+      <div class="zr-stepper">
+        <button class="zr-step" data-id="zr-dec" aria-label="開始ラウンドを下げる"${cur <= 1 ? ' disabled' : ''}>−</button>
+        <span class="zr-val" aria-live="polite" aria-label="開始ラウンド ${cur}"><b>${cur}</b><small>/ 50</small></span>
+        <button class="zr-step" data-id="zr-inc" aria-label="開始ラウンドを上げる"${cur >= 50 ? ' disabled' : ''}>+</button>
+      </div>
+      <div class="attach-options zr-presets">
+        ${ZR_PRESETS.map((r) => `<button class="attach-btn${r === cur ? ' selected' : ''}" data-zr="${r}" aria-pressed="${r === cur}">R${r}</button>`).join('')}
+      </div>
+    `;
+
+    const setRound = (v: number, refocus?: string): void => {
+      this.selection.zombieStartRound = Math.max(1, Math.min(50, v));
+      this.renderZombieRoundSelector();
+      this.renderBriefing();
+      // V27修正: innerHTML全置換でフォーカスがbodyへ落ち、パッド/キーボードのナビが
+      // ページ先頭へ吹き飛ぶ。再描画後に同じ操作ボタンへフォーカスを戻す(連打可能に)
+      if (refocus) sel.querySelector<HTMLElement>(refocus)?.focus();
+    };
+
+    sel.querySelector<HTMLElement>('[data-id="zr-dec"]')?.addEventListener('click', () => setRound(cur - 1, '[data-id="zr-dec"]'));
+    sel.querySelector<HTMLElement>('[data-id="zr-inc"]')?.addEventListener('click', () => setRound(cur + 1, '[data-id="zr-inc"]'));
+    sel.querySelectorAll<HTMLElement>('[data-zr]').forEach((btn) => {
+      btn.addEventListener('click', () => setRound(Number(btn.dataset.zr), `[data-zr="${btn.dataset.zr}"]`));
+    });
   }
 
   private renderBriefing(): void {

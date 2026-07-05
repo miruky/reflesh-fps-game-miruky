@@ -35,6 +35,8 @@ const POSTFX_SHADER = {
     uMotion: { value: 1 }, // 1=通常 / 0=省モーション(時間依存の脈動を凍結)
     // R21 Teal & Orange カラーグレーディング(0=完全no-op・high tier のみ 0.3 を設定)
     uGrade: { value: 0 },
+    // R27 黒帝オーラ暗紫ビネット(0=off。medium/high tier のみ有効化される PostFX パス上に置く)
+    uDarkAura: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -46,7 +48,7 @@ const POSTFX_SHADER = {
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
     uniform float uTime, uVigInner, uVigOuter, uGrain, uAberration, uDesat, uHitPulse;
-    uniform float uHealth, uKillSurge, uMotion, uGrade;
+    uniform float uHealth, uKillSurge, uMotion, uGrade, uDarkAura;
     uniform vec2 uHitDir;
     uniform vec3 uHitTint;
     varying vec2 vUv;
@@ -108,6 +110,13 @@ const POSTFX_SHADER = {
         col = mix(vec3(gLum2), col, 1.0 + uGrade * 0.10);
         col = clamp(col, 0.0, 1.0); // 白飛び完全防止
       }
+      // R27 黒帝オーラ暗紫ビネット(uDarkAura=0 → 完全no-op)
+      // 画面端(r>0.4)へ暗紫を薄く乗せ、uMotion=1 時は 1.8Hz で脈動、0(省モーション)時は固定 0.5
+      if (uDarkAura > 0.0) {
+        float auraEdge = smoothstep(0.40, 1.05, r) * uDarkAura;
+        float auraBeat = mix(0.5, 0.5 + 0.5 * sin(uTime * 1.8), uMotion);
+        col = mix(col, col * vec3(0.10, 0.0, 0.20), auraEdge * auraBeat * 0.28);
+      }
       // フィルムグレイン(大係数のhashで擬似高周波、uResolution不要)
       col += (hash(vUv * 1873.0 + uTime) - 0.5) * uGrain;
       gl_FragColor = vec4(max(col, 0.0), 1.0);
@@ -155,5 +164,10 @@ export class PostFXPass extends ShaderPass {
   // R21 Teal & Orange グレーディング強度(0=no-op, high tier では 0.3 を設定)
   setGrade(v: number): void {
     this.uniforms['uGrade']!.value = v;
+  }
+
+  // R27 黒帝オーラ暗紫ビネット封筒(0=off, 1=max。黒帝中のみ > 0)
+  setDarkAura(v: number): void {
+    this.uniforms['uDarkAura']!.value = v;
   }
 }

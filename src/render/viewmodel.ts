@@ -648,9 +648,9 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
   if (def.shape === 'fists') {
     const { metalVC, polishVC } = getShared();
     const accent = getAccent(def.tracerColor); // 刃紋/柄巻きの発光帯(tracerColor)
-    const C_STEEL = 0x3a424e; // 研磨鋼(刃)
-    const C_DARK = 0x1b1f26; // 峰・鍔の暗鋼
-    const C_GRIP = 0x101216; // 柄(黒)
+    const C_STEEL = 0x30383e; // 暗研磨鋼(刃) — Apex Wraith ダーク基調
+    const C_DARK  = 0x181c22; // 峰・鍔の漆黒
+    const C_GRIP  = 0x0e1014; // 柄(最暗)
     const blade = new THREE.Group();
     // steel=頂点カラー鋼、glow=accent発光(頂点カラー不要)
     // bladeCore=true のメッシュは黒帝モード中に setKunaiDarkMode が非表示にし、黒刀に差し替える
@@ -693,14 +693,28 @@ export function buildGunBody(def: WeaponDef): { gun: THREE.Group; muzzle: THREE.
       if (kunaiGlow) m.userData.kunaiGlow = true;
       blade.add(m);
     };
-    // 刃身(薄板・幅Y0.03/厚みX0.013)。切先を前方(-Z)へ。bladeCore=true → 黒帝時非表示
-    steel(new THREE.BoxGeometry(0.013, 0.03, 0.22), polishVC, C_STEEL, 'machined', 0, 0.006, -0.3, 0, 0, 0, true);
-    // 峰(暗い芯)を薄く重ねて厚みと稜線を出す
-    steel(new THREE.BoxGeometry(0.008, 0.033, 0.2), metalVC, C_DARK, 'gradY', 0, 0.006, -0.3, 0, 0, 0, true);
-    // 切先(四角錐)
-    steel(new THREE.ConeGeometry(0.02, 0.1, 4), polishVC, C_STEEL, 'machined', 0, 0.006, -0.46, Math.PI / 2, Math.PI / 4, 0, true);
-    // 刃紋(下端の発光ライン) — kunaiGlow=true で setKunaiDarkMode が emissive を切替
-    glow(new THREE.BoxGeometry(0.016, 0.006, 0.2), 0, -0.009, -0.3, 0, 0, 0, true);
+    // ── APEX WRAITH クナイ: 屈曲刃シルエット ────────────────────────────────
+    // (a) 「く」字屈曲刃: セグメント1(直線前方) + セグメント2(下向き屈曲) で構成。
+    //     back_face 接続点 = (0, 0.005, -0.355)。
+    //     セグメント2 center: back_face - half_len * R_x(-0.5)*(0,0,1)
+    //       = (0, 0.005-0.038, -0.355-0.070) = (0,-0.033,-0.425)
+    // (b) 刃の両縁発光ライン(kunaiGlow=true / setKunaiDarkMode が emissive 切替)
+    // (c) 短柄 + 柄尻リング(下記ガード以降で共通維持)
+    // (d) 全体 ダーク基調(C_STEEL=暗鋼/C_DARK=漆黒)
+    // セグメント1: グリップ前方の幅広直線刃 (Z中心:-0.265, Z範囲:-0.175〜-0.355)
+    steel(new THREE.BoxGeometry(0.014, 0.044, 0.18), polishVC, C_STEEL, 'machined', 0, 0.005, -0.265, 0, 0, 0, true);
+    // 峰(芯板): 稜線感を出すやや太い暗板
+    steel(new THREE.BoxGeometry(0.008, 0.048, 0.16), metalVC, C_DARK, 'gradY', 0, 0.005, -0.255, 0, 0, 0, true);
+    // セグメント2: rx=-0.5(≈29°下向き屈曲)。「く」字の屈曲刃先
+    steel(new THREE.BoxGeometry(0.013, 0.038, 0.16), polishVC, C_STEEL, 'machined', 0, -0.033, -0.425, -0.5, 0, 0, true);
+    // 峰(セグメント2): 同角度で薄く重ねる
+    steel(new THREE.BoxGeometry(0.008, 0.042, 0.14), metalVC, C_DARK, 'gradY', 0, -0.033, -0.425, -0.5, 0, 0, true);
+    // 発光ライン — 下縁:セグメント1 (bottom edge, kunaiGlow=true)
+    glow(new THREE.BoxGeometry(0.018, 0.005, 0.17), 0, -0.014, -0.265, 0, 0, 0, true);
+    // 発光ライン — 上縁:セグメント1 (top edge, Apex 両縁発光)
+    glow(new THREE.BoxGeometry(0.016, 0.004, 0.16), 0, 0.025, -0.263, 0, 0, 0, true);
+    // 発光ライン — 下縁:セグメント2 (rx=-0.5 で刃に追従, world中心≈(0,-0.050,-0.416))
+    glow(new THREE.BoxGeometry(0.016, 0.005, 0.15), 0, -0.052, -0.416, -0.5, 0, 0, true);
     // 鍔(クロスガード)
     steel(new THREE.BoxGeometry(0.075, 0.016, 0.022), metalVC, C_DARK, 'gradY', 0, 0.004, -0.175);
     // 柄(Z軸シリンダ)
@@ -1610,16 +1624,18 @@ interface DarkPose {
   darkHip: { p: [number, number, number]; r: [number, number, number] };
 }
 const DARK_POSES: DarkPose[] = [
-  // 刀: 右手で柄を握り左手を柄下部に添える両手持ち。刃は右→前上方へ中段〜八相の構え
-  { name: FIST_KUNAI,        darkHip: { p: [0.04, -0.07, -0.03], r: [-0.52, 0.12, 0.18] } },
-  // 右腕: わずかに前傾・上げ(柄を前へ押し出す所作)
-  { name: 'vm:fistRArm',     darkHip: { p: [0.08, -0.18, 0.10],  r: [0.48, -0.10, 0.05] } },
-  // 右手: 柄上部グリップ位置
-  { name: 'vm:fistRHand',    darkHip: { p: [0.03, -0.06, -0.08], r: [0.22, 0.06, 0.10] } },
-  // 左腕: 左側から柄下部へ寄せる(添え手。rest[-0.1→0.02]で画面中央寄りへ)
-  { name: 'vm:fistLArm',     darkHip: { p: [0.02, -0.15, -0.04], r: [0.38, 0.10, 0.04] } },
-  // 左手: 柄下端に添える(rest[-0.11→0.02]で柄位置へ収束)
-  { name: 'vm:fistLHand',    darkHip: { p: [0.02, -0.08, -0.13], r: [0.26, 0.07, 0.06] } },
+  // 刀: Ghostrunner水平構え — 刀身が画面下部を横切るほぼ水平の構え。
+  // 柄は画面右下(x+, y-)、刃は左前方へ長く伸びる。
+  // ry=1.35 で local -Z 軸が (-0.976, 0, -0.22) ≈ -X方向(左)へ横断するため刀身が水平になる。
+  { name: FIST_KUNAI,        darkHip: { p: [0.12, -0.16, -0.02], r: [0.10, 1.35, -0.30] } },
+  // 右腕: 右下から柄を支える
+  { name: 'vm:fistRArm',     darkHip: { p: [0.09, -0.21, 0.12],  r: [0.42, 0.10, -0.06] } },
+  // 右手: 柄グリップ位置(画面右下)
+  { name: 'vm:fistRHand',    darkHip: { p: [0.08, -0.14, -0.07], r: [0.28, 0.13, -0.08] } },
+  // 左腕: 刀身に添える左腕
+  { name: 'vm:fistLArm',     darkHip: { p: [0.02, -0.17, -0.04], r: [0.34, 0.14, 0.02] } },
+  // 左手: 柄下端に添える
+  { name: 'vm:fistLHand',    darkHip: { p: [0.02, -0.10, -0.14], r: [0.25, 0.08, 0.03] } },
 ];
 // ノード名 → darkHip の高速引き(update ループで毎フレーム使う・モジュール初期化時に構築)
 const DARK_POSE_MAP = new Map<string, { p: [number, number, number]; r: [number, number, number] }>();
@@ -2227,7 +2243,8 @@ export class ViewModel {
     if (!kunai) return;
     // 刃先(kunaiローカル座標)を root ローカルへ変換。黒帝モード中は大型化後の黒刀刃先を使う
     this.root.updateWorldMatrix(true, false);
-    const tipZ = this._darkMode ? -1.59 : -0.46;
+    // 通常クナイ刃先: セグメント2 前面 ≈ (0,-0.071,-0.495) → tipZ=-0.50
+    const tipZ = this._darkMode ? -1.59 : -0.50;
     this._v3scratch.set(0, 0.006, tipZ);
     kunai.localToWorld(this._v3scratch);
     this._v3scratch.applyMatrix4(this._m4scratch.copy(this.root.matrixWorld).invert());
@@ -2278,7 +2295,7 @@ export class ViewModel {
     // 刃の中間付近にランダム散布。黒帝モード中は大型化後の黒刀刀身(Z: -0.19〜-1.09)をカバー
     const auraZ = this._darkMode
       ? -0.19 - Math.random() * 0.90   // 黒刀刀身全域(大型化後 0.90m)
-      : -0.28 - Math.random() * 0.18;  // 通常クナイ刃中間
+      : -0.22 - Math.random() * 0.26;  // 新クナイ刃身域(Z: -0.22 ～ -0.48)
     this._v3scratch.set(
       (Math.random() - 0.5) * 0.05,
       0.006 + (Math.random() - 0.5) * 0.05,
@@ -2428,28 +2445,58 @@ export class ViewModel {
     tip.rotation.set(Math.PI / 2, Math.PI / 4, 0);
     group.add(tip);
 
-    // 深紫エミシブエッジ: 刃先沿いに走る発光ライン(AdditiveBlending, 0x6a00b0)
+    // 深紫エミシブエッジ(下縁): 幅を狭め・輝度を上げて1本のネオンラインとして読める
     const edgeMat = new THREE.MeshBasicMaterial({
       color: 0x6a00b0,
+      transparent: true,
+      opacity: 0.90,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    edgeMat.userData.shared = false;
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.004, 0.90), edgeMat);
+    edge.position.set(0, -0.026, -0.63);
+    edge.renderOrder = 6;
+    group.add(edge);
+
+    // コアライン(最輝点): さらに細く明るい紫白で「1本のネオン線」を強調
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xb430ff,
       transparent: true,
       opacity: 0.72,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    edgeMat.userData.shared = false;
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.008, 0.88), edgeMat);
-    edge.position.set(0, -0.026, -0.63);
-    edge.renderOrder = 6;
-    group.add(edge);
+    coreMat.userData.shared = false;
+    const core = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.002, 0.90), coreMat);
+    core.position.set(0, -0.027, -0.63);
+    core.renderOrder = 7;
+    group.add(core);
 
-    // 暗紫リムオーバーレイ(上縁・下縁): 大型化した刀身に合わせた幅・長さ
+    // 上縁エッジ(Apex 両縁発光): 上端にも薄い発光を追加してシンメトリック
+    const topEdgeMat = new THREE.MeshBasicMaterial({
+      color: 0x5500cc,
+      transparent: true,
+      opacity: 0.50,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    topEdgeMat.userData.shared = false;
+    const topEdge = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.003, 0.88), topEdgeMat);
+    topEdge.position.set(0, 0.033, -0.63);
+    topEdge.renderOrder = 6;
+    group.add(topEdge);
+
+    // 暗紫リムオーバーレイ(上縁・下縁): opacity 引き上げでシャープに
     const rimY = [0.035, -0.019] as const;
     for (const py of rimY) {
       const rimMat = new THREE.MeshBasicMaterial({
         color: 0x5500aa,
         transparent: true,
-        opacity: 0.42,
+        opacity: 0.55,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         side: THREE.DoubleSide,

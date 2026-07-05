@@ -25,6 +25,7 @@ export class Effects {
   private impactRings: Timed<THREE.Mesh>[] = []; // ブリンク着地/落雷の小衝撃リング
   private darkNovas: Timed<THREE.Mesh | THREE.Group>[] = []; // 黒技ノヴァ(暗色リング+暗転球)
   private darkPuffs: Timed<THREE.Mesh>[] = [];               // 黒帝オーラ煙(足元低頻度)
+  private darkAuras: Timed<THREE.Mesh>[] = [];               // 黒帝オーラ渦ウィスプ(螺旋上昇)
   private shingetsuRings: Timed<THREE.Group>[] = [];         // 真月拡大リング
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
@@ -548,8 +549,9 @@ export class Effects {
     this.flames.push({ obj: group, life: durationS, maxLife: durationS });
   }
 
-  // 黒帝通常攻撃: 三日月弧×2(NormalBlendingの暗芯+AdditiveBlendingの深紫縁)
-  // 返却した Group は match.ts 側が位置更新・破棄を管理する
+  // 黒帝通常攻撃: 長く薄い斬線×2(暗芯+深紫縁)。
+  // 形状: 長さ~4.2m×厚み~0.35m の細セクタ弧。tilt=0=水平(右薙ぎ/左薙ぎ)、tilt=π/2=垂直(突き)。
+  // 飛翔中の回転は廃止し向きを保持。返却した Group は match.ts 側が位置更新・破棄を管理する
   darkSlashWave(origin: THREE.Vector3, dir: THREE.Vector3, tiltRad: number): THREE.Group {
     const group = new THREE.Group();
     group.position.copy(origin);
@@ -557,13 +559,14 @@ export class Effects {
     group.rotation.y = angle;
     group.rotation.z = tiltRad;
 
-    // 暗芯(NormalBlending=暗く塗る)
-    const innerR = 0.6, outerR = 1.8;
-    const coreGeo = new THREE.RingGeometry(innerR, outerR, 24, 1, 0, Math.PI * 1.6);
+    // 暗芯(NormalBlending=暗く塗る): innerR=1.85/outerR=2.2=厚み0.35m、arc=153°
+    // 弦長 = 2×2.2×sin(76.5°) ≈ 4.28m → 「長さ~4.2m」達成。両端の弧端が尖るシルエット。
+    const INNER = 1.85, OUTER = 2.2, ARC = Math.PI * 0.85;
+    const coreGeo = new THREE.RingGeometry(INNER, OUTER, 24, 1, -ARC / 2, ARC);
     const coreMat = new THREE.MeshBasicMaterial({
       color: 0x0a0812,
       transparent: true,
-      opacity: 0.88,
+      opacity: 0.90,
       blending: THREE.NormalBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -571,12 +574,12 @@ export class Effects {
     const coreMesh = new THREE.Mesh(coreGeo, coreMat);
     group.add(coreMesh);
 
-    // 深紫縁(AdditiveBlending)
-    const edgeGeo = new THREE.RingGeometry(outerR * 0.85, outerR * 1.15, 24, 1, 0, Math.PI * 1.7);
+    // 深紫縁(AdditiveBlending): 刃のエッジを細く強調
+    const edgeGeo = new THREE.RingGeometry(INNER - 0.12, OUTER + 0.12, 24, 1, -ARC / 2 - 0.1, ARC + 0.2);
     const edgeMat = new THREE.MeshBasicMaterial({
-      color: 0x6a00b0,
+      color: 0x7800cc,
       transparent: true,
-      opacity: 0.72,
+      opacity: 0.60,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -586,6 +589,37 @@ export class Effects {
 
     this.scene.add(group);
     return group;
+  }
+
+  // 黒帝オーラ渦: プレイヤー周囲にリング状に配置した暗色ウィスプが螺旋上昇(puffGeometry共有・低コスト)
+  // pos = プレイヤー足元付近。6個のウィスプが半径0.6-0.9mの円環上に湧き上がる
+  darkAuraSwirl(pos: THREE.Vector3): void {
+    const COUNT = 6;
+    for (let i = 0; i < COUNT; i++) {
+      const angle = (i / COUNT) * Math.PI * 2 + Math.random() * 0.5;
+      const radius = 0.6 + Math.random() * 0.3;
+      const mat = new THREE.MeshBasicMaterial({
+        color: i % 2 === 0 ? 0x0a0018 : 0x180030,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+      const wisp = new THREE.Mesh(this.puffGeometry, mat);
+      wisp.position.set(
+        pos.x + Math.cos(angle) * radius,
+        pos.y + Math.random() * 0.3,
+        pos.z + Math.sin(angle) * radius,
+      );
+      wisp.scale.setScalar(0.22 + Math.random() * 0.18);
+      wisp.userData.swirlVelY = 0.65 + Math.random() * 0.55;
+      wisp.userData.swirlOmega = (1.5 + Math.random() * 1.0) * (Math.random() < 0.5 ? 1 : -1);
+      wisp.userData.swirlAngle = angle;
+      wisp.userData.swirlRadius = radius;
+      wisp.userData.swirlCx = pos.x;
+      wisp.userData.swirlCz = pos.z;
+      this.scene.add(wisp);
+      this.darkAuras.push({ obj: wisp, life: 1.1, maxLife: 1.1 });
+    }
   }
 
   // 黒帝斬撃波のスモークトレイル(puffGeometry共有)
@@ -798,6 +832,18 @@ export class Effects {
       (puff.material as THREE.MeshBasicMaterial).opacity = 0.62 * ratio;
       puff.scale.multiplyScalar(1 + dt * 0.55); // ゆっくり膨らむ
     });
+    this.darkAuras = this.tick(this.darkAuras, dt, (wisp, ratio) => {
+      // 素早くフェードイン→ゆっくりフェードアウト
+      const fadeIn = Math.min(1, (1 - ratio) * 4);
+      (wisp.material as THREE.MeshBasicMaterial).opacity = 0.48 * ratio * fadeIn;
+      // 螺旋上昇
+      wisp.position.y += (wisp.userData.swirlVelY as number) * dt;
+      const newAngle = (wisp.userData.swirlAngle as number) + (wisp.userData.swirlOmega as number) * dt;
+      wisp.userData.swirlAngle = newAngle;
+      wisp.position.x = (wisp.userData.swirlCx as number) + Math.cos(newAngle) * (wisp.userData.swirlRadius as number);
+      wisp.position.z = (wisp.userData.swirlCz as number) + Math.sin(newAngle) * (wisp.userData.swirlRadius as number);
+      wisp.scale.multiplyScalar(1 + dt * 0.35);
+    });
     this.shingetsuRings = this.tick(this.shingetsuRings, dt, (group, ratio) => {
       const grow = 1 - ratio * ratio; // ratio=1(開始)→0(終了)なので拡大
       for (const child of group.children) {
@@ -872,6 +918,7 @@ export class Effects {
       this.crescents,
       this.impactRings,
       this.darkPuffs,
+      this.darkAuras,
       this.darkNovas as unknown as Timed<THREE.Object3D>[],
       this.shingetsuRings as unknown as Timed<THREE.Object3D>[],
     ]) {

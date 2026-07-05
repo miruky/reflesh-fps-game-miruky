@@ -316,18 +316,31 @@ describe('キャンペーン進行', () => {
 });
 
 describe('XP乗数', () => {
-  it('xpMul=10 で1試合のXP合計・各行とも10倍になる', () => {
+  it('xpMul=50 で1試合のXP合計・各行とも50倍になる(非ゾンビ相当)', () => {
     const profile = emptyProfile();
-    // won=true, kills=5: 勝利500+キル500+初陣チャレンジ200 = 1200 → ×10 = 12000
-    const progress = applyMatch(profile, summary({ won: true, kills: 5 }), 10);
-    expect(progress.xpTotal).toBe(12000);
-    expect(profile.xp).toBe(12000);
-    // breakdown のキルXPも10倍
+    // won=true, kills=5: 勝利500+キル500+初陣チャレンジ200 = 1200 → ×50 = 60000
+    const progress = applyMatch(profile, summary({ won: true, kills: 5 }), 50);
+    expect(progress.xpTotal).toBe(60000);
+    expect(profile.xp).toBe(60000);
+    // breakdown のキルXPも50倍
     const killEntry = progress.xpBreakdown.find((e) => e.label.startsWith('キル'));
-    expect(killEntry?.xp).toBe(5000); // 5 * 100 * 10
+    expect(killEntry?.xp).toBe(25000); // 5 * 100 * 50
   });
 
-  it('xpMul=1 は省略時と同一(ゾンビ相当)', () => {
+  it('xpMul=5 でゾンビモード相当の5倍になる', () => {
+    const p1 = emptyProfile();
+    const p2 = emptyProfile();
+    const s = summary({ won: false, kills: 3 });
+    const base = applyMatch(p1, { ...s }); // xpMul=1 の基準
+    const scaled = applyMatch(p2, { ...s }, 5);
+    expect(scaled.xpTotal).toBe(base.xpTotal * 5);
+    expect(p2.xp).toBe(p1.xp * 5);
+    // breakdown のキルXPも5倍
+    const killEntry = scaled.xpBreakdown.find((e) => e.label.startsWith('キル'));
+    expect(killEntry?.xp).toBe(3 * 100 * 5); // 3 * 100 * 5 = 1500
+  });
+
+  it('xpMul=1 は省略時と同一(乗算なし)', () => {
     const p1 = emptyProfile();
     const p2 = emptyProfile();
     const s = summary({ won: false, kills: 3 });
@@ -343,17 +356,17 @@ describe('XP乗数', () => {
     expect(xpToNext(999)).toBe(65_500 + 499 * 50); // = 90_450
   });
 
-  it('キャンペーンミッションでも xpMul=10 が効く(初制圧ボーナス込み)', () => {
+  it('キャンペーンミッションでも xpMul=50 が効く(初制圧ボーナス込み)', () => {
     const ch1 = CAMPAIGN[0]!;
     const m1 = ch1.missions[0]!;
     const p1 = emptyProfile();
     const p2 = emptyProfile();
-    // won=true, kills=0: 勝利500+初制圧ボーナス800 = 1300 → ×10 = 13000
+    // won=true, kills=0: 勝利500+初制圧ボーナス800 = 1300 → ×50 = 65000
     const ms = missionSummary(m1.id, ch1.id, true, 30);
     const base = applyCampaignMission(p1, { ...ms });
-    const scaled = applyCampaignMission(p2, { ...ms }, 10);
-    expect(scaled.xpTotal).toBe(base.xpTotal * 10);
-    expect(p2.xp).toBe(p1.xp * 10);
+    const scaled = applyCampaignMission(p2, { ...ms }, 50);
+    expect(scaled.xpTotal).toBe(base.xpTotal * 50);
+    expect(p2.xp).toBe(p1.xp * 50);
   });
 });
 

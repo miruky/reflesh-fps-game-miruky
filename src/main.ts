@@ -190,6 +190,7 @@ function startMatch(selection: MenuSelection): void {
     durationS: settings.matchLengthS,
     scoreAttack: selection.mode === 'score',
     secondaryId: selection.secondaryId,
+    zombieStartRound: selection.zombieStartRound,
   });
 }
 
@@ -308,17 +309,17 @@ function showResult(): void {
   if (activeMissionId) {
     const ms = match!.missionSummary();
     if (ms) {
-      // ストーリーモードは常に非ゾンビ → ×10
-      const cp = applyCampaignMission(profile, ms, 10);
+      // ストーリーモードは常に非ゾンビ → ×50
+      const cp = applyCampaignMission(profile, ms, 50);
       saveProfile(profile);
       menu.showMissionResult(result, cp);
     } else {
-      // ストーリー途中離脱のフォールバック(非ゾンビ → ×10)
-      menu.showResult(result, applyMatch(profile, result.summary, 10));
+      // ストーリー途中離脱のフォールバック(非ゾンビ → ×50)
+      menu.showResult(result, applyMatch(profile, result.summary, 50));
     }
   } else {
     const isZombie = lastSelection?.mode === 'zombie';
-    const xpMul = isZombie ? 1 : 10; // ゾンビは現状維持, それ以外は ×10 爆増
+    const xpMul = isZombie ? 5 : 50; // ゾンビ×5, それ以外は×50 爆増
     const isScore = lastSelection?.mode === 'score';
     const summary = isScore ? { ...result.summary, rated: false } : result.summary;
     const progress = applyMatch(profile, summary, xpMul);

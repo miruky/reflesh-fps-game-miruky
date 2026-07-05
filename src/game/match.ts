@@ -328,6 +328,7 @@ export interface MatchConfig {
   wildcard?: 'gunfighter' | 'tactician' | null; // ワイルドカード
   secondaryId?: string; // 副武器の上書き
   scoreAttack?: boolean; // スコアアタック(自己ベスト記録)
+  zombieStartRound?: number; // R27: ゾンビモードの開始ラウンド(1-50、未指定=1)
 }
 
 export interface FeedEntry {
@@ -582,6 +583,7 @@ export class Match {
   private hitFlashEnv = 0; // 被弾フラッシュのエンベロープ 0..1
   private killSurgeEnv = 0; // R20: キル確定サージのエンベロープ 0..1(キルで1へ、毎フレーム減衰)
   private postfxGrade = 0; // R21: Teal & Orange グレーディング強度(high=0.3, low/mid=0)
+  private darkAuraEnv = 0; // R27: 黒帝オーラビネット封筒 0..1(黒帝中のみ > 0)
   private readonly hitDir = new THREE.Vector2(0, 0); // R20: 被弾方向(画面空間の単位ベクトル・平滑)
   // キルカメラ補間: 死亡時に固定するアンカー + 現在の補間カメラ姿勢(exp damping)
   private readonly killcamAnchorHead = new THREE.Vector3(); // 死亡時のkiller頭位置(固定)
@@ -2436,6 +2438,12 @@ export class Match {
       this.hitDir.set(sx, sy);
       if (this.hitDir.lengthSq() > 1e-6) this.hitDir.normalize();
     }
+    // 黒帝オーラ封筒: 黒帝発動中にフェードイン(2.5/s)、非発動時フェードアウト(2/s)
+    if (this.darkEmperorTimer > 0) {
+      this.darkAuraEnv = Math.min(1, this.darkAuraEnv + dt * 2.5);
+    } else {
+      this.darkAuraEnv = Math.max(0, this.darkAuraEnv - dt * 2.0);
+    }
     if (this.postfx) {
       const rm = this.settings.reduceMotion;
       const pulse = rm ? 0 : this.hitFlashEnv * 0.75;
@@ -2446,10 +2454,12 @@ export class Match {
         : 0;
       const killSurge = rm ? 0 : this.killSurgeEnv;
       // idleゲート: grade>0(high tier)は常時enabled。それ以外は封筒ゼロ時コストゼロ
-      this.postfx.enabled = this.postfxGrade > 0 || pulse > 0.002 || killSurge > 0.002 || lowHpEnv > 0.01;
+      this.postfx.enabled =
+        this.postfxGrade > 0 || pulse > 0.002 || killSurge > 0.002 || lowHpEnv > 0.01 || this.darkAuraEnv > 0.01;
       this.postfx.setHitPulse(pulse);
       this.postfx.setCombat(this.hitDir.x, this.hitDir.y, healthRatio, killSurge, rm ? 0 : 1);
       this.postfx.setTime(this.elapsed);
+      this.postfx.setDarkAura(this.darkAuraEnv);
     }
 
     // ── AutoExposure: 全tier有効(コストゼロ・CPU only) ──
@@ -4136,8 +4146,9 @@ export class Match {
     }
 
     // ── 黒帝中: 視線方向へ黒い斬撃波を発射 ──
+    // tilt=0=水平(右薙ぎ/左薙ぎ)、tilt=π/2=垂直(突き)
     if (this.darkEmperorTimer > 0) {
-      const slashTilt = motion === 0 ? Math.PI / 5 : motion === 1 ? -Math.PI / 5 : 0;
+      const slashTilt = motion === 2 ? Math.PI / 2 : 0;
       this.spawnDarkSlashWave(slashTilt);
     }
   }
@@ -4565,17 +4576,24 @@ export class Match {
     if (this.darkEmperorTimer <= 0) return;
     this.darkEmperorTimer = Math.max(0, this.darkEmperorTimer - dt);
 
-    // 足元から低頻度で漂う黒煙(R12予算準拠: ~1s間隔)
+    // 足元から漂う黒煙(頻度~3倍: 0.25-0.4s間隔、1回に2-3パフ)+ 周囲の渦ウィスプ
     if (this.player.alive) {
       this.darkSmokeTimer -= dt;
       if (this.darkSmokeTimer <= 0) {
-        this.darkSmokeTimer = 0.75 + Math.random() * 0.5;
-        const feet = new THREE.Vector3(
-          this.player.position.x + (Math.random() - 0.5) * 0.4,
-          this.player.position.y - PLAYER_FEET_OFFSET,
-          this.player.position.z + (Math.random() - 0.5) * 0.4,
+        this.darkSmokeTimer = 0.25 + Math.random() * 0.15;
+        const base = this.player.position;
+        const puffCount = 2 + (this.rand() < 0.4 ? 1 : 0);
+        for (let _pi = 0; _pi < puffCount; _pi++) {
+          this.effects.darkSmokeEmit(new THREE.Vector3(
+            base.x + (Math.random() - 0.5) * 0.5,
+            base.y - PLAYER_FEET_OFFSET,
+            base.z + (Math.random() - 0.5) * 0.5,
+          ));
+        }
+        // 黒い焔の渦: 周囲に螺旋上昇するウィスプリング
+        this.effects.darkAuraSwirl(
+          new THREE.Vector3(base.x, base.y - PLAYER_FEET_OFFSET + 0.15, base.z),
         );
-        this.effects.darkSmokeEmit(feet);
       }
     }
 
@@ -4705,11 +4723,11 @@ export class Match {
       w.pos.addScaledVector(w.dir, move);
       w.traveled += move;
       w.group.position.copy(w.pos);
-      w.group.rotation.z += dt * 1.8;
+      // 飛翔中の回転は廃止 → 向き(tilt)を保持し「鋭い斬線」が向きを保つ
 
-      // スモークトレイル(0.08s周期)
+      // スモークトレイル(控えめ: 0.18s周期)
       w.smokeTimer += dt;
-      if (w.smokeTimer >= 0.08) {
+      if (w.smokeTimer >= 0.18) {
         w.smokeTimer = 0;
         this.effects.darkSlashSmoke(w.pos.clone());
       }
@@ -5035,7 +5053,15 @@ export class Match {
       return;
     }
     if (this.zombieRound === 0) {
-      this.startZombieRound(1);
+      // R27: 任意ラウンド開始。開始ラウンド>1 の場合は装備差を補う開始ポイントを付与
+      const startRound = Math.max(1, Math.min(50, this.config.zombieStartRound ?? 1));
+      if (startRound > 1) {
+        const ZOMBIE_CATCHUP_BASE = 500;
+        const ZOMBIE_CATCHUP_PER_ROUND = 300;
+        const ZOMBIE_CATCHUP_CAP = 8000;
+        this.zombiePoints = Math.min(ZOMBIE_CATCHUP_CAP, ZOMBIE_CATCHUP_BASE + ZOMBIE_CATCHUP_PER_ROUND * (startRound - 1));
+      }
+      this.startZombieRound(startRound);
       return;
     }
     const aliveZ = this.aliveZombieCount();

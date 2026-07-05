@@ -10172,3 +10172,67 @@ body.killcam-active .hud-death {
     transform: none;
   }
 }
+
+/* ── ゾンビモード: 開始ラウンドセレクタ ── */
+.zombie-round-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 8px;
+}
+
+/* ステッパー行: [−] [value] [+] */
+.zr-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zr-step {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.18s var(--ease), color 0.18s var(--ease), background-color 0.18s var(--ease);
+}
+
+.zr-step:not(:disabled):hover {
+  border-color: var(--ember);
+  color: var(--ember-ink);
+  background: var(--ember-wash);
+}
+
+.zr-step:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.zr-val {
+  min-width: 52px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.zr-val b {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--ember-ink);
+  letter-spacing: -0.01em;
+}
+
+.zr-val small {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-left: 2px;
+}
+
+/* プリセットチップ: attach-options / attach-btn を継承 */
+.zr-presets {
+  gap: 6px;
+}
