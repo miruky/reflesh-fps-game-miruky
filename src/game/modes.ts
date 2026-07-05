@@ -1,6 +1,6 @@
 // ゲームモードのルール定義と進行計算。描画・物理に依存しない
 // 'story'=キャンペーン(目的駆動・scoreTarget無効) / 'score'=スコアアタック(時間内キル数)
-export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie' | 'hardpoint' | 'killconfirm' | 'gungame';
+export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie' | 'hardpoint' | 'killconfirm' | 'gungame' | 'training';
 
 export type TeamId = number;
 
@@ -80,10 +80,17 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
     teamBased: false,
     scoreTarget: Infinity, // ラウンド制。ダウンするまで無限
   },
+  training: {
+    id: 'training',
+    name: '訓練場',
+    desc: '的当て専用の無制限練習場。スコア記録なし・無敵・ウルト即満タン',
+    teamBased: false,
+    scoreTarget: Infinity,
+  },
 };
 
 // メニューで選べる対戦モード。'story' は専用UI、'zombie' は専用ラウンドUI
-export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'hardpoint', 'killconfirm', 'gungame', 'score', 'zombie'];
+export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'hardpoint', 'killconfirm', 'gungame', 'score', 'zombie', 'training'];
 
 const CAPTURE_PER_S = 0.35;
 const DECAY_PER_S = 0.2;
@@ -470,5 +477,48 @@ export class GunGameState {
     let best = 0;
     for (const uid of botUids) best = Math.max(best, this.getBotRank(uid));
     return best;
+  }
+}
+
+// ── TrainingStats: 訓練場モードの計測ロジック(描画・物理に依存しない) ────────────────
+export class TrainingStats {
+  private readonly dmgWindow: Array<{ t: number; dmg: number }> = [];
+  /** セッション通算・発射数 */
+  shotsFired = 0;
+  /** セッション通算・命中数 */
+  shotsHit = 0;
+  /** セッション通算・HS数 */
+  headshots = 0;
+  /** 連続ヒット数(ミスでリセット) */
+  consecutiveHits = 0;
+
+  /** 被弾登録(直近3秒ウィンドウへ追加) */
+  addDamage(elapsed: number, dmg: number): void {
+    this.dmgWindow.push({ t: elapsed, dmg });
+  }
+
+  /** ミス発生(連続ヒットをリセット) */
+  addMiss(): void {
+    this.consecutiveHits = 0;
+  }
+
+  /** DPS を計算(elapsed は現在のゲーム経過秒) */
+  dps(elapsed: number): number {
+    const cutoff = elapsed - 3;
+    let i = 0;
+    while (i < this.dmgWindow.length && (this.dmgWindow[i]?.t ?? 0) < cutoff) i += 1;
+    if (i > 0) this.dmgWindow.splice(0, i);
+    const total = this.dmgWindow.reduce((s, e) => s + e.dmg, 0);
+    return total / 3;
+  }
+
+  /** 命中率 0..1 */
+  accuracy(): number {
+    return this.shotsFired > 0 ? this.shotsHit / this.shotsFired : 0;
+  }
+
+  /** HS率 0..1 */
+  hsRate(): number {
+    return this.shotsHit > 0 ? this.headshots / this.shotsHit : 0;
   }
 }

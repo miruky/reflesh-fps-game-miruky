@@ -4093,6 +4093,38 @@ tr.score-ally td {
 .hud-zombie-stat span {
   color: #f4c05a;
 }
+
+/* ── 訓練場 計測HUD ── */
+.hud-training {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  margin-top: 2px;
+}
+.hud-training-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+.hud-training-row small {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.4em;
+  color: color-mix(in srgb, #40c8ff 65%, #fff);
+  text-indent: 0.4em;
+}
+.hud-training-row strong {
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 800;
+  color: #40c8ff;
+  text-shadow: 0 0 10px rgba(40, 160, 240, 0.65);
+  min-width: 2.5em;
+  text-align: center;
+}
+
 .hud-mission-obj {
   font-size: 13px;
   letter-spacing: 0.04em;

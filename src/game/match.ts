@@ -99,6 +99,7 @@ import {
   MODE_DEFS,
   PLAYER_TEAM,
   ScoreBoard,
+  TrainingStats,
   type GameMode,
   type ModeDef,
   type TeamId,
@@ -521,6 +522,13 @@ export interface MatchSnapshot {
   ggRankUpFlash?: boolean;   // このフレームにランクアップした(HUD演出トリガ)
   ggSetback?: boolean;       // このフレームに setback(ランクダウン)した
   ggTop3?: ReadonlyArray<{ name: string; rank: number; isPlayer: boolean }>; // トップ3
+  // ── 訓練場 ──
+  trainingStats?: {
+    dps: number;
+    accuracy: number;
+    hsRate: number;
+    streak: number;
+  };
   // 破壊済み breakable プロップのコライダーハンドルセット(将来のミニマップ連携用)
   destroyedPropHandles: ReadonlySet<number>;
 }
@@ -543,7 +551,8 @@ type ColliderTag =
   | { kind: 'world' }
   | { kind: 'boundary' }   // ghost 壁専用(弾/視線/斬撃が素通り, ブリンク/KCCは止まる)
   | { kind: 'player' }
-  | { kind: 'bot'; bot: Bot; part: HitPart };
+  | { kind: 'bot'; bot: Bot; part: HitPart }
+  | { kind: 'trainingTarget'; target: TrainingTarget; part: 'head' | 'body' };
 
 interface SmokeZone {
   pos: THREE.Vector3;
@@ -580,6 +589,26 @@ interface DarkSlashWave {
   traveled: number;
   hitSet: Set<number>; // 既ヒット bot.uid(多段ヒット防止)
   smokeTimer: number;
+}
+
+// 訓練場ターゲット(bot非使用の軽量エンティティ)
+interface TrainingTarget {
+  group: THREE.Group;
+  body: RAPIER.RigidBody;
+  bodyCollider: RAPIER.Collider;
+  headCollider: RAPIER.Collider;
+  hp: number;
+  isDown: boolean;
+  downTimer: number;
+  kind: 'static' | 'moving' | 'popup';
+  moveDir: number;
+  moveSpeed: number;
+  moveRange: number;
+  moveOriginX: number;
+  moveOriginZ: number;
+  /** right軸方向ベクトル(XZ平面, 往復運動の軸) */
+  moveRightX: number;
+  moveRightZ: number;
 }
 
 // BF5簡易破壊可能プロップ: buildStageScene で個別メッシュ+コライダーを生成し登録。
@@ -922,6 +951,10 @@ export class Match {
   // 破壊済みハンドルセット(MatchSnapshot経由でHUDへ公開=将来のミニマップ連携用)
   private readonly destroyedPropHandles = new Set<number>();
 
+  // ── 訓練場 ──
+  private trainingTargets: TrainingTarget[] = [];
+  private trainingStats: TrainingStats | null = null;
+
   // ── ファイナルキルカム: リングバッファ + ステートマシン ──
   private readonly fkBuf     = new Float32Array(FK_MAX_FRAMES * FK_FRAME_STRIDE);
   private readonly fkTimeArr = new Float32Array(FK_MAX_FRAMES);
@@ -955,6 +988,8 @@ export class Match {
   ) {
     this.tracker = new MedalTracker(knownMedals);
     this.timeLeft = config.durationS;
+    // 訓練場: 時間無制限(Infinity <= 0 は常に false なので時間切れ判定を透過する)
+    if (config.mode === 'training') this.timeLeft = Infinity;
     this.mission = config.mission ?? null;
     this.modifierSet = new Set(config.mission?.modifiers ?? []);
     this.colors = teamPalette(settings.teamPaletteId);
@@ -981,7 +1016,7 @@ export class Match {
     // R30 天候ロール: buildStageScene 前に確定する(雨天の床wetness最大化は
     // buildStageScene 内の resolveWetness→applyMacroFloor で焼き込まれるため)。
     // ゾンビは既存ムード優先=天候ロール無し('clear' のまま)。
-    if (config.mode !== 'zombie') this.weatherKind = rollWeather(config.stage.seed);
+    if (config.mode !== 'zombie' && config.mode !== 'training') this.weatherKind = rollWeather(config.stage.seed);
     this.buildStageScene(layout.boxes);
     // ミニマップ用ボックスデータは buildStageScene 内で ghost/decor 除外しながら登録済み
     // ステージの床材質(足音に使用)
@@ -1029,6 +1064,20 @@ export class Match {
     } else if (config.mode === 'zombie') {
       // ゾンビ: 通常のBOTは湧かせず、ディレクタが初回updateでラウンド1を開始する
       this.setupZombie();
+    } else if (config.mode === 'training') {
+      // 訓練場: ボットなし。的エンティティを生成する
+      this.trainingStats = new TrainingStats();
+      this.spawnTrainingTargets();
+      // 的方向へ初期yaw設定(spawn → マップ中心ベクトルをプレイヤー前方へ)
+      // player.ts の forward = (-sin yaw, 0, -cos yaw) より yaw = atan2(-fwd.x, -fwd.z)
+      {
+        const tSpawn = this.playerSpawns[0] ?? new THREE.Vector3();
+        const toC = new THREE.Vector3(-tSpawn.x, 0, -tSpawn.z);
+        if (toC.lengthSq() > 0.0001) {
+          const fwdN = toC.normalize();
+          this.player.yaw = Math.atan2(-fwdN.x, -fwdN.z);
+        }
+      }
     } else {
       // 通常対戦: チーム戦は人数の少ない側にプレイヤーが入る。
       // R30修正: スポーン点数を超えた分が同一座標へ折り返して重なり、kinematic同士が
@@ -1082,7 +1131,7 @@ export class Match {
 
     // R30: 遠方戦場アンビエンスは対戦モードのみ(zombie=不気味さ優先/story=演出優先で無し)。
     // quiesce() が自動停止するため後始末はここでは不要
-    if (this.config.mode !== 'zombie' && !this.mission) {
+    if (this.config.mode !== 'zombie' && this.config.mode !== 'training' && !this.mission) {
       this.sounds.startDistantBattle();
     }
     // R30 天候適用(ロールはコンストラクタ冒頭で確定済み。zombieは常に'clear'=no-op)
@@ -2754,6 +2803,7 @@ export class Match {
     this.syncCamera();
     this.handleRespawns();
     if (this.config.mode === 'zombie') this.updateZombieDirector(dt);
+    if (this.config.mode === 'training') this.updateTrainingTargets(dt);
     if (this.config.mode === 'zombie') {
       this.updateZombieShopProximity();
       this.updateZombieBoxAnim(dt);
@@ -3527,7 +3577,8 @@ export class Match {
     if (this.player.alive) {
       const dist = this.player.position.distanceTo(point);
       const damage = explosionDamage(spec, dist);
-      if (damage > 0 && this.explosionReaches(point, this.player.position)) {
+      // F5: training モードはプレイヤー被弾だけをスキップ(関数 return しないことでプロップ破壊ループを継続)
+      if (damage > 0 && this.explosionReaches(point, this.player.position) && this.config.mode !== 'training') {
         const died = this.player.takeDamage(damage);
         // 至近爆発は耳鳴り(世界の音が一瞬遠のく)
         if (dist < 6) this.sounds.tinnitus((6 - dist) / 6);
@@ -3654,7 +3705,7 @@ export class Match {
             this.applyBotDamage(bot, tickDamage, bot.position, false, spec.name);
           }
         }
-        if (this.player.alive && this.insidePatch(patch, this.player.position)) {
+        if (this.player.alive && this.insidePatch(patch, this.player.position) && this.config.mode !== 'training') {
           const died = this.player.takeDamage(tickDamage);
           this.tookDamage = true;
           this.haptic(70, 0.35, 0.3); // 燃焼ダメージは弱く連続的に
@@ -3813,7 +3864,7 @@ export class Match {
         if (selfDist < ROCKET_SPEC.radius && this.explosionReaches(point, this.player.position)) {
           const rawDmg = ROCKET_SPEC.maxDamage * Math.max(0, 1 - selfDist / ROCKET_SPEC.radius);
           const selfDmg = rawDmg * SELF_FACTOR;
-          if (selfDmg > 0) {
+          if (selfDmg > 0 && this.config.mode !== 'training') {
             const died = this.player.takeDamage(selfDmg);
             if (selfDist < 4) this.sounds.tinnitus((4 - selfDist) / 4);
             this.tookDamage = true;
@@ -3860,6 +3911,7 @@ export class Match {
   private fireShot(spreadRad: number): void {
     if (!this.player.alive) return;
     this.player.shotsFired += 1;
+    if (this.trainingStats) this.trainingStats.shotsFired += 1;
     this.haptic(55, 0.15, 0.4); // 発砲のリコイル振動(トリガー1引きにつき1回)
     const weapon = this.activeWeapon;
     const origin = this.player.eyePosition;
@@ -3874,6 +3926,9 @@ export class Match {
 
     // ペレット武器は1発の命中・部位を集約して扱う
     const results = new Map<Bot, { damage: number; headshot: boolean; point: THREE.Vector3 }>();
+    const trainingResults = this.config.mode === 'training'
+      ? new Map<TrainingTarget, { damage: number; headshot: boolean; point: THREE.Vector3 }>()
+      : undefined;
 
     // 基準方向を1回だけ算出。バレットマグネティズムで対象が極近ならわずかに寄せる。
     // 曲げ角は強度に加えて距離でも減衰させ、遠距離での過剰な自動命中を防ぐ。
@@ -3898,7 +3953,25 @@ export class Match {
         .addScaledVector(right, Math.tan(offset.yaw))
         .addScaledVector(up, Math.tan(offset.pitch))
         .normalize();
-      this.tracePellet(origin, dir, muzzle, results);
+      this.tracePellet(origin, dir, muzzle, results, trainingResults);
+    }
+
+    // 訓練場: 的へのヒットを集計
+    if (trainingResults && this.trainingStats) {
+      for (const [target, result] of trainingResults) {
+        this.player.shotsHit += 1;
+        this.trainingStats.shotsHit += 1;
+        this.trainingStats.consecutiveHits += 1;
+        if (result.headshot) {
+          this.player.headshots += 1;
+          this.trainingStats.headshots += 1;
+        }
+        this.trainingStats.addDamage(this.elapsed, result.damage);
+        this.applyTrainingTargetDamage(target, result.damage, result.headshot, result.point);
+      }
+      if (results.size === 0 && trainingResults.size === 0) {
+        this.trainingStats.addMiss();
+      }
     }
 
     let kills = 0;
@@ -3934,6 +4007,7 @@ export class Match {
     dir: THREE.Vector3,
     muzzle: THREE.Vector3,
     results: Map<Bot, { damage: number; headshot: boolean; point: THREE.Vector3 }>,
+    trainingResults?: Map<TrainingTarget, { damage: number; headshot: boolean; point: THREE.Vector3 }>,
   ): void {
     const weapon = this.activeWeapon;
     let from = origin.clone();
@@ -3954,6 +4028,17 @@ export class Match {
       const tag = this.tags.get(hit.collider.handle);
       // boundary(ghost壁)は素通り: 着弾エフェクト/衝撃音なしで弾道終端(開放境界演出)
       if (tag?.kind === 'boundary') return;
+      if (tag?.kind === 'trainingTarget' && !tag.target.isDown && trainingResults) {
+        const distance = traveled + hitToi(hit);
+        const base = damageAtDistance(weapon.def.damage, distance, weapon.def.falloff);
+        const damage = base * (tag.part === 'head' ? (weapon.def.headshotMultiplier ?? 2) : 1);
+        const entry = trainingResults.get(tag.target) ?? { damage: 0, headshot: false, point: end };
+        entry.damage += damage;
+        entry.headshot = entry.headshot || tag.part === 'head';
+        entry.point = end;
+        trainingResults.set(tag.target, entry);
+        return;
+      }
       if (tag?.kind === 'bot' && tag.bot.alive) {
         // 味方への誤射はダメージなしで弾が止まる
         if (tag.bot.team === PLAYER_TEAM) return;
@@ -5138,7 +5223,7 @@ export class Match {
       const boom = this.panAndDistance(end);
       this.sounds.explosion(boom.pan, boom.distance);
       const splashD = this.player.alive ? this.player.position.distanceTo(end) : Infinity;
-      if (splashD < 3.2 && tag?.kind !== 'player') {
+      if (splashD < 3.2 && tag?.kind !== 'player' && this.config.mode !== 'training') {
         const died = this.player.takeDamage(14);
         this.tookDamage = true;
         this.addShake(0.25);
@@ -5160,6 +5245,7 @@ export class Match {
     if (tag?.kind === 'player' && this.player.alive) {
       // 味方の流れ弾はダメージにしない
       if (bot.team === PLAYER_TEAM) return;
+      if (this.config.mode === 'training') return;
       const died = this.player.takeDamage(damage);
       this.tookDamage = true;
       this.haptic(110, 0.5, 0.55);
@@ -5262,6 +5348,8 @@ export class Match {
 
   // killerは敵BOTに倒された場合のみ。自爆や火災ではキルカメラを出さない
   private notePlayerDeath(killer: Bot | null = null): void {
+    // 訓練場: プレイヤーは無敵なので呼ばれないはずだが念のためガード
+    if (this.config.mode === 'training') return;
     // BO2 スコアストリーク: 死亡でprogress リセット (バンク保持)
     this.streakManager.onDeath();
     // RC-XD操縦中に死亡した場合は強制終了(本体は無防備という仕様)
@@ -5344,6 +5432,8 @@ export class Match {
     }
 
     this.ultCharge = Math.min(1, this.ultCharge + dt * ULT_PASSIVE_PER_S);
+    // 訓練場: ウルトは常に即満タン(練習用)
+    if (this.config.mode === 'training') this.ultCharge = 1;
 
     if (this.ultCharge >= 1 && this.ultActive <= 0 && !this.cooking) {
       if (this.input.wasPressed('ultimate')) {
@@ -6272,6 +6362,167 @@ export class Match {
     return n;
   }
 
+  // ── 訓練場ターゲット ────────────────────────────────────────────────────────────
+  private spawnTrainingTargets(): void {
+    // F2: static的5基をright軸方向へ (i-2)*3 で横に散らして相互遮蔽を防ぐ
+    const staticDists = [5, 10, 20, 30, 50];
+    for (let i = 0; i < staticDists.length; i += 1) {
+      this.createTrainingTarget('static', (i - 2) * 3, staticDists[i]!, 0);
+    }
+    const movingSpeeds = [1, 2, 3];
+    for (let i = 0; i < 3; i += 1) {
+      this.createTrainingTarget('moving', (i - 1) * 4, 15, movingSpeeds[i] ?? 1);
+    }
+    for (let i = 0; i < 4; i += 1) {
+      this.createTrainingTarget('popup', (i - 1.5) * 2, 8, 0);
+    }
+  }
+
+  private createTrainingTarget(
+    kind: 'static' | 'moving' | 'popup',
+    offsetX: number,
+    dist: number,
+    speed: number,
+  ): void {
+    const spawn = this.playerSpawns[0] ?? new THREE.Vector3();
+    // F3: spawn → マップ中心(原点) 方向の水平単位ベクトル forward と直交 right を使って配置
+    // これにより隅スポーンでも全的が場内に収まり、境界外へのはみ出しがなくなる
+    const toCenter = new THREE.Vector3(-spawn.x, 0, -spawn.z);
+    const fwdLen = toCenter.length();
+    const fwd = fwdLen > 0.01 ? toCenter.clone().divideScalar(fwdLen) : new THREE.Vector3(0, 0, -1);
+    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+    const cx = spawn.x + fwd.x * dist + right.x * offsetX;
+    const cz = spawn.z + fwd.z * dist + right.z * offsetX;
+    const groundY = spawn.y;
+
+    const group = new THREE.Group();
+    const bodyGeo = new THREE.BoxGeometry(0.5, 1.3, 0.05);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x3a4a5a, roughness: 0.8 });
+    const bodyMesh = new THREE.Mesh(bodyGeo, mat);
+    bodyMesh.position.y = 0.65;
+    bodyMesh.castShadow = true;
+    group.add(bodyMesh);
+    const headGeo = new THREE.SphereGeometry(0.18, 8, 8);
+    const headMat = new THREE.MeshStandardMaterial({ color: 0x2a3a4a, roughness: 0.8 });
+    const headMesh = new THREE.Mesh(headGeo, headMat);
+    headMesh.position.y = 1.55;
+    headMesh.castShadow = true;
+    group.add(headMesh);
+    const baseGeo = new THREE.CylinderGeometry(0.25, 0.28, 0.06, 8);
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x5a6a7a, roughness: 0.9 });
+    const baseMesh = new THREE.Mesh(baseGeo, baseMat);
+    baseMesh.position.y = 0.03;
+    group.add(baseMesh);
+    group.position.set(cx, groundY, cz);
+    this.scene.add(group);
+
+    const body = this.physics.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(cx, groundY, cz),
+    );
+    const bodyCollider = this.physics.createCollider(
+      RAPIER.ColliderDesc.cuboid(0.25, 0.65, 0.025).setTranslation(0, 0.65, 0),
+      body,
+    );
+    const headCollider = this.physics.createCollider(
+      RAPIER.ColliderDesc.ball(0.18).setTranslation(0, 1.55, 0),
+      body,
+    );
+
+    const target: TrainingTarget = {
+      group,
+      body,
+      bodyCollider,
+      headCollider,
+      hp: 100,
+      isDown: false,
+      downTimer: 0,
+      kind,
+      moveDir: 1,
+      moveSpeed: speed,
+      moveRange: 3.5,
+      moveOriginX: cx,
+      moveOriginZ: cz,
+      // F3: 往復運動は right 軸方向へ(コーナースポーンでも場内で往復する)
+      moveRightX: right.x,
+      moveRightZ: right.z,
+    };
+    this.tags.set(bodyCollider.handle, { kind: 'trainingTarget', target, part: 'body' });
+    this.tags.set(headCollider.handle, { kind: 'trainingTarget', target, part: 'head' });
+    this.trainingTargets.push(target);
+  }
+
+  private updateTrainingTargets(dt: number): void {
+    for (const t of this.trainingTargets) {
+      if (t.isDown) {
+        const targetRot = Math.PI / 2;
+        if (t.group.rotation.z < targetRot) {
+          t.group.rotation.z = Math.min(targetRot, t.group.rotation.z + dt * 3);
+        }
+        // F1: static/moving も popup と同じ2秒自動復活で射場が劣化しない
+        t.downTimer -= dt;
+        if (t.downTimer <= 0) this.reviveTrainingTarget(t);
+      } else if (t.kind === 'moving' && t.moveSpeed > 0) {
+        const cur = t.body.translation();
+        // F3: 往復運動を right 軸方向に沿わせる
+        const step = t.moveDir * t.moveSpeed * dt;
+        const nextX = cur.x + step * t.moveRightX;
+        const nextZ = cur.z + step * t.moveRightZ;
+        // right 軸に投影した原点からの符号付き距離でrange判定
+        const proj = (nextX - t.moveOriginX) * t.moveRightX + (nextZ - t.moveOriginZ) * t.moveRightZ;
+        if (Math.abs(proj) >= t.moveRange) t.moveDir *= -1;
+        t.body.setNextKinematicTranslation({ x: nextX, y: cur.y, z: nextZ });
+        t.group.position.x = nextX;
+        t.group.position.z = nextZ;
+      }
+    }
+  }
+
+  private reviveTrainingTarget(t: TrainingTarget): void {
+    t.hp = 100;
+    t.isDown = false;
+    t.downTimer = 0;
+    t.group.rotation.z = 0;
+    // F1: bot.ts 死亡/復活イディオムと同型: 復活時にコライダーを再有効化
+    t.bodyCollider.setEnabled(true);
+    t.headCollider.setEnabled(true);
+  }
+
+  private applyTrainingTargetDamage(
+    target: TrainingTarget,
+    damage: number,
+    headshot: boolean,
+    point: THREE.Vector3,
+  ): void {
+    if (target.isDown) return;
+    target.hp -= damage;
+    this.damageNumbers.push({
+      amount: Math.round(damage),
+      world: point.clone(),
+      kind: headshot ? 'head' : 'body',
+    });
+    this.hits.push(headshot ? 'head' : 'hit');
+    if (headshot) this.sounds.headshot();
+    else this.sounds.hit(1 + THREE.MathUtils.clamp((damage - 12) / 90, 0, 0.45));
+    if (target.hp <= 0) {
+      target.hp = 0;
+      target.isDown = true;
+      // F1: static/moving も popup と同じ2秒で再出現(全的が2秒で復活=射場が劣化しない)
+      target.downTimer = 2;
+      // F1: bot.ts 死亡イディオムと同型: ダウン中は被弾しないようコライダーを無効化
+      target.bodyCollider.setEnabled(false);
+      target.headCollider.setEnabled(false);
+    }
+  }
+
+  private disposeTrainingTargets(): void {
+    for (const t of this.trainingTargets) {
+      this.tags.delete(t.bodyCollider.handle);
+      this.tags.delete(t.headCollider.handle);
+      this.scene.remove(t.group);
+    }
+    this.trainingTargets.length = 0;
+  }
+
   // ── R16 BO2式ラウンド制ゾンビディレクタ ─────────────────────────
   // 同時生存上限をtierへ連動させる(多数描画/物理予算を守る主レバー)
   private setupZombie(): void {
@@ -6442,6 +6693,7 @@ export class Match {
     const now = this.elapsed;
     if (now < this.zombieMeleeIframe || now < this.zombieMeleeGlobal) return;
     const dmg = bot.tuning.damage;
+    if (this.config.mode === 'training') return;
     const died = this.player.takeDamage(dmg);
     this.tookDamage = true;
     this.haptic(90, 0.5, 0.6);
@@ -6938,6 +7190,13 @@ export class Match {
       })) : undefined,
       // ── ガンゲーム ──
       ...this.buildGunGameSnap(),
+      // ── 訓練場 ──
+      trainingStats: this.config.mode === 'training' && this.trainingStats ? {
+        dps: this.trainingStats.dps(this.elapsed),
+        accuracy: this.trainingStats.accuracy(),
+        hsRate: this.trainingStats.hsRate(),
+        streak: this.trainingStats.consecutiveHits,
+      } : undefined,
       // 破壊済み breakable プロップのハンドルセット(HUD ミニマップ将来連携用)
       destroyedPropHandles: this.destroyedPropHandles,
     };
@@ -7954,6 +8213,7 @@ export class Match {
         light.shadow?.dispose?.();
       }
     });
+    this.disposeTrainingTargets();
     this.physics.free();
   }
 }

@@ -1293,6 +1293,45 @@ export const STAGES: StageDef[] = [
       buildings: ['tower', 'hangar', 'arena'],
     },
   },
+  // ── 訓練場専用ステージ ──
+  {
+    id: 'renshujo',
+    name: '練習場',
+    subtitle: '無人の的当て専用フィールド',
+    seed: 227,
+    size: 200,
+    obstacleCount: 0,
+    maxHeight: 4,
+    botCount: 0,
+    palette: {
+      sky: '#b8dff5',
+      fog: '#c8e8f8',
+      floor: '#b0b8a0',
+      wall: '#8a9480',
+      obstacle: '#7a8870',
+      accent: '#ff8040',
+      mood: 'day',
+      grassKind: 'none',
+      particle: 'none',
+      silhouette: 'skyline',
+      lightColor: '#fff8e8',
+      lightIntensity: 1.8,
+      ambientIntensity: 1.0,
+      fogDensity: 0.003,
+      emissiveAccent: false,
+      turbidity: 2,
+      rayleigh: 1.0,
+      mieCoefficient: 0.003,
+      elevation: 55,
+      azimuth: 180,
+      exposure: 0.98,
+      environmentIntensity: 1.0,
+    },
+    recipe: {
+      theme: '平坦な的当て訓練場',
+      buildings: [],
+    },
+  },
 ];
 
 // ⑥ ゾンビモード専用ステージのID一覧(z01〜z10)。string[] にして modes.ts の GameMode 順序に非依存。
@@ -1311,10 +1350,16 @@ export const ZOMBIE_STAGE_IDS: readonly string[] = [
 
 // モード名でステージ集合を切り替える。'zombie' はゾンビ専用ステージのみ、
 // それ以外(既存の対戦モード)はゾンビ用を除いた従来20ステージを返す。
+// 訓練モード専用ステージID
+export const TRAINING_STAGE_ID = 'renshujo';
+
 // mode を string で受けることで modes.ts の GameMode 定義に依存しない。
 export function stagesForMode(mode: string): StageDef[] {
   const isZombieStage = (s: StageDef): boolean => ZOMBIE_STAGE_IDS.includes(s.id);
-  return mode === 'zombie' ? STAGES.filter(isZombieStage) : STAGES.filter((s) => !isZombieStage(s));
+  const isTrainingStage = (s: StageDef): boolean => s.id === TRAINING_STAGE_ID;
+  if (mode === 'zombie') return STAGES.filter(isZombieStage);
+  if (mode === 'training') return STAGES.filter(isTrainingStage);
+  return STAGES.filter((s) => !isZombieStage(s) && !isTrainingStage(s));
 }
 
 export function stageById(id: string): StageDef {

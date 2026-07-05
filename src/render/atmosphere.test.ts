@@ -63,6 +63,7 @@ const STAGE_MOOD: Record<string, MoodId> = {
   z08: 'night',
   z09: 'overcast',
   z10: 'night',
+  renshujo: 'day',
 };
 
 const BIOME_MOOD: Record<string, MoodId> = {

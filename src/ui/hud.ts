@@ -146,6 +146,12 @@ export class Hud {
             <div class="hud-zombie-round"><small>ROUND</small><strong data-id="zround">1</strong></div>
             <div class="hud-zombie-stat"><span data-id="zkills">0</span> KILLS · <span data-id="zpoints">0</span> PTS</div>
           </div>
+          <div class="hud-training" data-id="training" hidden>
+            <div class="hud-training-row"><small>DPS</small><strong data-id="tr-dps">0.0</strong></div>
+            <div class="hud-training-row"><small>命中率</small><strong data-id="tr-acc">0%</strong></div>
+            <div class="hud-training-row"><small>HS率</small><strong data-id="tr-hs">0%</strong></div>
+            <div class="hud-training-row"><small>連続HIT</small><strong data-id="tr-streak">0</strong></div>
+          </div>
           <div class="hud-boss" data-id="boss" hidden>
             <div class="hud-boss-name" data-id="boss-name">BOSS</div>
             <div class="hud-boss-bar"><i data-id="boss-bar"></i></div>
@@ -589,19 +595,34 @@ export class Hud {
       const teamscore = this.el['teamscore'];
       if (teamscore) teamscore.hidden = true;
     }
-    // ミニマップ: ゾンビモードでは非表示にしてK/Dパネルとの重なりを解消する。
+
+    // 訓練場: タイマー/チームスコア/ミニマップを隠し、計測HUDを表示する
+    const inTraining = snap.trainingStats !== undefined;
+    const trainingEl = this.el['training'];
+    if (trainingEl) trainingEl.hidden = !inTraining;
+    if (inTraining && snap.trainingStats) {
+      const ts = snap.trainingStats;
+      this.text('tr-dps', ts.dps.toFixed(1));
+      this.text('tr-acc', `${Math.round(ts.accuracy * 100)}%`);
+      this.text('tr-hs', `${Math.round(ts.hsRate * 100)}%`);
+      this.text('tr-streak', String(ts.streak));
+      const teamscore = this.el['teamscore'];
+      if (teamscore) teamscore.hidden = true;
+    }
+
+    // ミニマップ: ゾンビ/訓練場モードでは非表示にしてK/Dパネルとの重なりを解消する。
     // 非表示時、CSS側の #hud:has(.hud-minimap[hidden]) .hud-top-left が左上通常位置へ戻す。
     const minimapEl = this.el['minimap'];
-    if (minimapEl) minimapEl.hidden = inZombie;
+    if (minimapEl) minimapEl.hidden = inZombie || inTraining;
     const timerEl = this.el['timer'];
     if (timerEl && timerEl.parentElement) {
-      (timerEl.parentElement as HTMLElement).style.display = inZombie ? 'none' : '';
+      (timerEl.parentElement as HTMLElement).style.display = (inZombie || inTraining) ? 'none' : '';
     }
     if (inZombie) {
       this.text('zround', String(snap.zombieRound ?? 1));
       this.text('zkills', String(snap.zombieKills ?? 0));
       this.text('zpoints', String(snap.zombiePoints ?? 0));
-    } else {
+    } else if (!inTraining) {
       const minutes = Math.floor(snap.timeLeft / 60);
       const seconds = Math.floor(snap.timeLeft % 60);
       this.text('timer', `${minutes}:${String(seconds).padStart(2, '0')}`);

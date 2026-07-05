@@ -38,9 +38,9 @@ describe('generateStage', () => {
     }
   });
 
-  it('ステージは30個あり、idが重複しない', () => {
-    expect(STAGES).toHaveLength(30);
-    expect(new Set(STAGES.map((s) => s.id)).size).toBe(30);
+  it('ステージは31個あり、idが重複しない', () => {
+    expect(STAGES).toHaveLength(31);
+    expect(new Set(STAGES.map((s) => s.id)).size).toBe(31);
   });
 
   it('seedが重複しない(レイアウトの独自性を保証)', () => {
@@ -68,8 +68,10 @@ describe('generateStage', () => {
     }
   });
 
-  it('size は 280〜360 の範囲(R21 エリア超拡大)', () => {
+  it('size は 280〜360 の範囲(R21 エリア超拡大。訓練場専用ステージを除く)', () => {
+    const SMALL_STAGES = new Set(['renshujo']); // 訓練場専用は小サイズ
     for (const def of STAGES) {
+      if (SMALL_STAGES.has(def.id)) continue;
       expect(def.size, `${def.id}: size`).toBeGreaterThanOrEqual(280);
       expect(def.size, `${def.id}: size`).toBeLessThanOrEqual(360);
     }
@@ -91,11 +93,11 @@ describe('generateStage', () => {
     }
   });
 
-  it('recipe を持つステージは theme が文字列で buildings が 1〜4 棟', () => {
+  it('recipe を持つステージは theme が文字列で buildings が 0〜4 棟(訓練場は0棟)', () => {
     for (const def of STAGES) {
       if (!def.recipe) continue;
       expect(typeof def.recipe.theme).toBe('string');
-      expect(def.recipe.buildings.length).toBeGreaterThanOrEqual(1);
+      expect(def.recipe.buildings.length).toBeGreaterThanOrEqual(0);
       expect(def.recipe.buildings.length).toBeLessThanOrEqual(4);
     }
   });
