@@ -19,6 +19,7 @@ import {
   BULLET_MAG_MAX_DEG,
   BULLET_MAG_CONE_SCOPED_DEG,
   BULLET_MAG_MAX_SCOPED_DEG,
+  SNIPER_SNAP_CONE_DEG,
   CLASS_AA_MUL,
   distanceFactor,
   MOUSE_AA_SCALE,
@@ -308,7 +309,7 @@ const FIRE_TICK_S = 0.5;
 
 // ── ファイナルキルカム リングバッファ(R19) ──
 const FK_MAX_FRAMES   = 90;  // 4.5 s @ 20 Hz
-const FK_MAX_BOTS     = 32;
+const FK_MAX_BOTS     = 36; // V32修正: 増員(最大36体)を全記録(32だとhigh tierで被害者を取りこぼす)
 const FK_TICK_INT     = 3;   // 60 Hz の何 tick おきに記録(→ 20 Hz)
 const FK_WIN_PRE      = 2.2; // キル前の窓 (s)
 const FK_WIN_POST     = 1.0; // キル後の窓 (s)
@@ -906,7 +907,7 @@ export class Match {
   // ── R16 spot-time知覚: setup時にpaletteから保持(Matchはpalette非保持=fog/ambientが必要)──
   private stageFogDensity = 0;
   private stageAmbient = 1;
-  private botFrameIdx = 0; // uid%5 のLOSバケット(観測者を間引いてO(N^2)castRayを~1/5に。botCount増員対応)
+  private botFrameIdx = 0; // uid%8 のLOSバケット(観測者を間引いてO(N^2)castRayを~1/8に。botCount増員対応)
   // ── R16 ゾンビディレクタ(mode==='zombie'のみ稼働。matchが唯一の状態保持者)──
   private zombieRound = 0;
   private zombieKills = 0;
@@ -1126,7 +1127,14 @@ export class Match {
       // R30修正: スポーン点数を超えた分が同一座標へ折り返して重なり、kinematic同士が
       // 押し出せず永久スタックするバグを根治。使用済み位置(プレイヤー初期位置含む)から
       // 1.2m未満の候補は決定論的なリングオフセットでずらして配置する。
-      const botCount = config.stage.botCount;
+      // tier別パフォーマンスクランプ(low:16/medium:28/high:設定値。config読み込み点でMath.min)
+      const rawBotCount = config.stage.botCount;
+      const botCount =
+        _graphicsTier === 'high'
+          ? rawBotCount
+          : _graphicsTier === 'medium'
+            ? Math.min(28, rawBotCount)
+            : Math.min(16, rawBotCount);
       const allyCount = this.modeDef.teamBased ? Math.floor((botCount - 1) / 2) : 0;
       const placed: THREE.Vector3[] = [this.player.position];
       const MIN_GAP = 1.2;
@@ -1151,7 +1159,8 @@ export class Match {
         const base = effectiveSpawnList[(i + (isAlly ? 1 : 0)) % effectiveSpawnList.length] ?? new THREE.Vector3();
         const botSpawn = base.clone();
         // 既配置と近すぎる限りリング状にずらす(半径2.5mずつ拡大・角度は決定論)
-        for (let ring = 1; ring <= 6; ring += 1) {
+        // 36bot増員対応: ring上限を6→12に拡大(最大30m分散で重複を確実に解消)
+        for (let ring = 1; ring <= 12; ring += 1) {
           const tooClose = placed.some(
             (p) => Math.hypot(p.x - botSpawn.x, p.z - botSpawn.z) < MIN_GAP,
           );
@@ -4016,6 +4025,39 @@ export class Match {
       if (frac > 0) base = base.lerp(this.aimAssistTargetDir, frac).normalize();
     }
 
+    // ── スナイパースナップアシスト ──
+    // scope武器のADS完全時(adsProgress>0.85)に ~1.2° 円錐内の可視ターゲットを胸へスナップ。
+    // 「絶対当たる」: 手動照準が円錐内なら必ず胴体に当たる。ヘッド誘導なし=公平感(胴スナップ)。
+    // BO2アシスト/バレットマグネティズムとは独立した追加層。距離999m有効。
+    // botには影響なし: fireShot はプレイヤー専用。gungame/training でも同条件。
+    // V32修正: エイムアシスト設定を尊重(マグネティズムと同じトグル規約)
+    if (scopedShot && this.settings.aimAssist) {
+      const snapCand = this.aimAssistTarget(weapon.def.range);
+      if (snapCand && snapCand.angle <= SNIPER_SNAP_CONE_DEG * DEG) {
+        const bp = snapCand.bot.position;
+        const chest = new THREE.Vector3(bp.x, bp.y + 0.15, bp.z);
+        // V32修正: 胸点が遮蔽されている(頭出しだけの敵)なら可視エイム点へフォールバック
+        // (胸へ曲げて壁に吸われる=「絶対当たる」の逆効果を防ぐ)
+        const chestBlocked = this.castRay(
+          origin,
+          chest.clone().sub(origin).normalize(),
+          origin.distanceTo(chest) - 0.4,
+          this.player.body,
+          (c) => {
+            const k = this.tags.get(c.handle)?.kind;
+            return k === 'world' || k === 'boundary';
+          },
+        );
+        if (chestBlocked) {
+          base = snapCand.dir.clone().normalize(); // 可視部位(頭出し等)へのスナップ
+        } else {
+          const snapVec = chest.clone().sub(origin);
+          const snapLen = snapVec.length();
+          if (snapLen > 1e-4) base = snapVec.multiplyScalar(1 / snapLen);
+        }
+      }
+    }
+
     for (let i = 0; i < weapon.def.pellets; i += 1) {
       const offset = coneOffset(spreadRad + pelletSpreadRad, Math.random);
       const dir = base
@@ -4871,7 +4913,7 @@ export class Match {
     // 歩き/しゃがみは無音なので、静かに近づけば背後を取れる
     const noisy = this.player.alive && (this.player.sprinting || this.player.sliding);
     const playerPos = this.player.position;
-    this.botFrameIdx = (this.botFrameIdx + 1) % 5; // 今フレームにLOSを走らせる観測者バケット(14bot対応)
+    this.botFrameIdx = (this.botFrameIdx + 1) % 8; // 今フレームにLOSを走らせる観測者バケット(36bot増員対応)
     for (const bot of this.bots) {
       if (
         noisy &&
@@ -4955,9 +4997,9 @@ export class Match {
     let cand: SpotCand | null = null;
     let rawVisible = false;
     if (cands.length > 0) {
-      // 前回の対象がまだコーン内なら継続、無ければ最至近。LOSは uid%5 バケットで間引く
+      // 前回の対象がまだコーン内なら継続、無ければ最至近。LOSは uid%8 バケットで間引く(36bot増員対応)
       const cached = cands.find((c) => c.uid === bot.lastCandidateUid) ?? null;
-      const runLos = bot.uid % 5 === this.botFrameIdx || cached === null;
+      const runLos = bot.uid % 8 === this.botFrameIdx || cached === null;
       if (runLos) {
         // 近い順にLOSを試し、最初に通った候補を採用(遮蔽された最至近に固着しない)
         for (const c of cands) {
@@ -6671,17 +6713,25 @@ export class Match {
 
   // ── R16 BO2式ラウンド制ゾンビディレクタ ─────────────────────────
   // 同時生存上限をtierへ連動させる(多数描画/物理予算を守る主レバー)
+  // tier別パフォーマンスクランプ: low上限40/medium上限84/high=設定値のまま(Math.minで保護)
   private setupZombie(): void {
     const tier = resolveGraphicsTier(
       this.settings.graphicsQuality,
       this.renderer.capabilities.isWebGL2,
     );
-    this.zombieTierCap =
+    const rawCap =
       tier === 'high'
         ? ZOMBIE_MAX_ALIVE.high
         : tier === 'medium'
           ? ZOMBIE_MAX_ALIVE.medium
           : ZOMBIE_MAX_ALIVE.low;
+    // low:40/medium:84/high:rawCap(108)。ZOMBIE_MAX_ALIVE増員(54/84/108)に対する描画/物理上限
+    this.zombieTierCap =
+      tier === 'high'
+        ? rawCap
+        : tier === 'medium'
+          ? Math.min(84, rawCap)
+          : Math.min(40, rawCap);
     this.buildZombieShop();
   }
 

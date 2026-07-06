@@ -228,7 +228,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 0.6,
     bloomRecoveryDegPerS: 2.5,
     movementSpreadDeg: 0.8,
-    falloff: { start: 600, end: 800, minFactor: 0.9 }, // 最大ステージ対角509m超の全域でOSK維持
+    falloff: { start: 600, end: 999, minFactor: 0.9 }, // range999まで全域でOSK維持(end999=フォールオフ終端)
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.32, // 約3.1倍ズーム
@@ -239,7 +239,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // 画面シェイク(0.12)・ボルト音の演出層で出す。
     recoilPattern: risingPattern(4, 0.5, 0.08),
     recoilRecoveryPerS: 7, // やや遅い収束で重量感(視覚のキック側に効く)
-    range: 800,
+    range: 999,
     tracerColor: 0x9bd1ff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -805,7 +805,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 0.6,
     bloomRecoveryDegPerS: 2.5,
     movementSpreadDeg: 0.8,
-    falloff: { start: 600, end: 800, minFactor: 0.9 }, // 最大ステージ対角509m超の全域でOSK維持
+    falloff: { start: 600, end: 999, minFactor: 0.9 }, // range999まで全域でOSK維持(end999=フォールオフ終端)
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.34,
@@ -814,7 +814,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // クイックスコープのドカン感: frontLoad で初弾を強く跳ねさせる
     recoilPattern: buildRecoil({ steps: 4, pitchDeg: 0.5, driftDeg: 0.08 }),
     recoilRecoveryPerS: 7,
-    range: 800,
+    range: 999,
     tracerColor: 0xc8d8ff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -844,7 +844,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 0.6,
     bloomRecoveryDegPerS: 2.5,
     movementSpreadDeg: 0.8,
-    falloff: { start: 600, end: 800, minFactor: 0.9 }, // 最大ステージ対角509m超の全域でOSK維持
+    falloff: { start: 600, end: 999, minFactor: 0.9 }, // range999まで全域でOSK維持(end999=フォールオフ終端)
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.3,
@@ -852,7 +852,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 560,
     recoilPattern: buildRecoil({ steps: 4, pitchDeg: 0.5, driftDeg: 0.08 }),
     recoilRecoveryPerS: 7,
-    range: 800,
+    range: 999,
     tracerColor: 0xe8f4ff,
     pellets: 1,
     pelletSpreadDeg: 0,

@@ -13,7 +13,7 @@ export const STAGES: StageDef[] = [
     size: 310,
     obstacleCount: 100,
     maxHeight: 8,
-    botCount: 14,
+    botCount: 28,
     palette: {
       sky: '#cfe8f5',
       fog: '#cfe8f5',
@@ -51,7 +51,7 @@ export const STAGES: StageDef[] = [
     size: 336,
     obstacleCount: 130,
     maxHeight: 12,
-    botCount: 16,
+    botCount: 32,
     palette: {
       sky: '#9fb4c4',
       fog: '#9fb4c4',
@@ -90,7 +90,7 @@ export const STAGES: StageDef[] = [
     size: 320,
     obstacleCount: 110,
     maxHeight: 9,
-    botCount: 16,
+    botCount: 32,
     palette: {
       sky: '#bfe3ee',
       fog: '#c8e6e8',
@@ -129,7 +129,7 @@ export const STAGES: StageDef[] = [
     size: 300,
     obstacleCount: 100,
     maxHeight: 10,
-    botCount: 14,
+    botCount: 28,
     palette: {
       sky: '#f0e3c8',
       fog: '#ecdcbc',
@@ -168,7 +168,7 @@ export const STAGES: StageDef[] = [
     size: 360,
     obstacleCount: 150,
     maxHeight: 13,
-    botCount: 18,
+    botCount: 36,
     palette: {
       sky: '#aac8dd',
       fog: '#aac8dd',
@@ -207,7 +207,7 @@ export const STAGES: StageDef[] = [
     size: 326,
     obstacleCount: 110,
     maxHeight: 14,
-    botCount: 16,
+    botCount: 32,
     palette: {
       sky: '#e8b08a',
       fog: '#d9a08c',
@@ -248,7 +248,7 @@ export const STAGES: StageDef[] = [
     size: 350,
     obstacleCount: 120,
     maxHeight: 8,
-    botCount: 18,
+    botCount: 36,
     palette: {
       sky: '#eedfb8',
       fog: '#e8d6a8',
@@ -289,7 +289,7 @@ export const STAGES: StageDef[] = [
     size: 336,
     obstacleCount: 120,
     maxHeight: 10,
-    botCount: 16,
+    botCount: 32,
     palette: {
       sky: '#dce8f4',
       fog: '#9cbcd8',
@@ -330,7 +330,7 @@ export const STAGES: StageDef[] = [
     size: 314,
     obstacleCount: 120,
     maxHeight: 13,
-    botCount: 14,
+    botCount: 28,
     palette: {
       sky: '#6b7077',
       fog: '#5d6166',
@@ -369,7 +369,7 @@ export const STAGES: StageDef[] = [
     size: 302,
     obstacleCount: 100,
     maxHeight: 10,
-    botCount: 14,
+    botCount: 28,
     palette: {
       sky: '#1a1c24',
       fog: '#22242e',
@@ -410,7 +410,7 @@ export const STAGES: StageDef[] = [
     size: 300,
     obstacleCount: 90,
     maxHeight: 6,
-    botCount: 14,
+    botCount: 28,
     palette: {
       sky: '#86c0ea',
       fog: '#b7d7e7',
@@ -448,7 +448,7 @@ export const STAGES: StageDef[] = [
     size: 320,
     obstacleCount: 110,
     maxHeight: 13,
-    botCount: 16,
+    botCount: 32,
     palette: {
       sky: '#bcd2da',
       fog: '#d9c39c',
@@ -489,7 +489,7 @@ export const STAGES: StageDef[] = [
     size: 288,
     obstacleCount: 130,
     maxHeight: 14,
-    botCount: 12,
+    botCount: 24,
     palette: {
       sky: '#c4ddb8',
       fog: '#b5cfa3',
@@ -529,7 +529,7 @@ export const STAGES: StageDef[] = [
     size: 310,
     obstacleCount: 100,
     maxHeight: 7,
-    botCount: 14,
+    botCount: 28,
     palette: {
       sky: '#e2d5ae',
       fog: '#ddd6a0',
@@ -570,7 +570,7 @@ export const STAGES: StageDef[] = [
     size: 302,
     obstacleCount: 90,
     maxHeight: 11,
-    botCount: 14,
+    botCount: 28,
     palette: {
       sky: '#8fc3e8',
       fog: '#c2dcea',
@@ -609,7 +609,7 @@ export const STAGES: StageDef[] = [
     size: 314,
     obstacleCount: 110,
     maxHeight: 10,
-    botCount: 14,
+    botCount: 28,
     palette: {
       sky: '#d9d3c4',
       fog: '#d5cfc0',
@@ -650,7 +650,7 @@ export const STAGES: StageDef[] = [
     size: 326,
     obstacleCount: 100,
     maxHeight: 16,
-    botCount: 16,
+    botCount: 32,
     palette: {
       sky: '#8fc3e8',
       fog: '#d9ae88',
@@ -691,7 +691,7 @@ export const STAGES: StageDef[] = [
     size: 292,
     obstacleCount: 80,
     maxHeight: 8,
-    botCount: 12,
+    botCount: 24,
     palette: {
       sky: '#c2d3d6',
       fog: '#c6d3cd',
@@ -731,7 +731,7 @@ export const STAGES: StageDef[] = [
     size: 336,
     obstacleCount: 60,
     maxHeight: 8,
-    botCount: 16,
+    botCount: 32,
     palette: {
       sky: '#c4c3b6',
       fog: '#cfc9ba',
@@ -772,7 +772,7 @@ export const STAGES: StageDef[] = [
     size: 280,
     obstacleCount: 100,
     maxHeight: 11,
-    botCount: 12,
+    botCount: 24,
     palette: {
       sky: '#c4d8d0',
       fog: '#cdd8d2',

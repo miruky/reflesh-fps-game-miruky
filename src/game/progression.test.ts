@@ -15,6 +15,7 @@ import {
   levelFromXp,
   MAX_LEVEL,
   rankFromRating,
+  rankNameFor,
   starRate,
   UNLOCKS,
   xpToNext,
@@ -55,7 +56,8 @@ describe('levelFromXp', () => {
   });
 
   it('レベル上限で頭打ちになる', () => {
-    const state = levelFromXp(100_000_000);
+    // XP_FOR_L9999 = 1_884_801_550。2Bは確実にL9999超え
+    const state = levelFromXp(2_000_000_000);
     expect(state.level).toBe(MAX_LEVEL);
     expect(state.toNext).toBe(0);
   });
@@ -494,18 +496,22 @@ describe('CHALLENGES定義', () => {
   });
 });
 
-// ── MAX_LEVEL=1000 曲線テスト ─────────────────────────────────────────────────────
+// ── MAX_LEVEL=9999 曲線テスト ─────────────────────────────────────────────────────
 // 累積XP定数(テスト内でも同一ロジックで導出できるが、固定値で回帰テストとして保持する)
-// sum(xpToNext(1..99))  = 99*750 + 250*(98*99/2) = 1_287_000
+// sum(xpToNext(1..99))    = 99*750 + 250*(98*99/2) = 1_287_000
 // sum(xpToNext(100..499)) = 400*25_500 + 100*(399*400/2) = 18_180_000
 // sum(xpToNext(500..998)) = 499*65_500 + 50*(498*499/2) = 38_897_050
 // xpToNext(999) = 65_500 + 499*50 = 90_450
-// sum(xpToNext(1..999)) = 58_454_500
+// sum(xpToNext(1..999))   = 58_454_500
+// sum(xpToNext(1000..4999)) = 4000*90_450 + 25*(4000*4001/2) = 561_850_000
+// sum(xpToNext(1000..9998)) = 8999*90_450 + 25*(8999*9000/2) = 1_826_347_050
 const XP_FOR_L100  = 1_287_000;
 const XP_FOR_L999  = 1_287_000 + 18_180_000 + 38_897_050; // = 58_364_050
 const XP_FOR_L1000 = 58_454_500;
+const XP_FOR_L5000 = 620_304_500;  // XP_FOR_L1000 + 561_850_000
+const XP_FOR_L9999 = 1_884_801_550; // XP_FOR_L1000 + 1_826_347_050
 
-describe('MAX_LEVEL=1000 進行曲線', () => {
+describe('MAX_LEVEL=9999 進行曲線', () => {
   it('L1-99 の xpToNext は旧曲線と同一(後方互換)', () => {
     expect(xpToNext(1)).toBe(750);
     expect(xpToNext(50)).toBe(750 + 49 * 250);  // 13_000
@@ -523,27 +529,81 @@ describe('MAX_LEVEL=1000 進行曲線', () => {
     expect(xpToNext(100)).toBe(25_500);
   });
 
-  it('L999→L1000: toNext 分 XP 積算で上限到達', () => {
+  it('L999→L1000: xpToNext(999) 分積んでL1000に上がる', () => {
     const before = levelFromXp(XP_FOR_L999);
     expect(before.level).toBe(999);
     expect(before.toNext).toBe(xpToNext(999));  // = 90_450
 
-    const after = levelFromXp(XP_FOR_L999 + xpToNext(999));
-    expect(after.level).toBe(MAX_LEVEL);  // = 1000
-    expect(after.toNext).toBe(0);
+    // XP_FOR_L1000 = XP_FOR_L999 + xpToNext(999) = 58_454_500
+    const after = levelFromXp(XP_FOR_L1000);
+    expect(after.level).toBe(1000);
+    expect(after.toNext).toBe(xpToNext(1000));  // = 90_475
   });
 
-  it('L1000(上限)で toNext=0 かつ level=MAX_LEVEL', () => {
-    const state = levelFromXp(XP_FOR_L1000);
-    expect(state.level).toBe(MAX_LEVEL);
+  it('xpToNext は L1000 で L999 より 25 多い(高原化継続)', () => {
+    expect(xpToNext(1000)).toBe(90_450 + 25);       // 90_475
+    expect(xpToNext(9998)).toBe(90_450 + 8999 * 25); // 315_425
+  });
+
+  it('L5000 到達累積XP が正しい', () => {
+    const state = levelFromXp(XP_FOR_L5000);
+    expect(state.level).toBe(5000);
+    expect(state.toNext).toBe(xpToNext(5000));
+  });
+
+  it('L9999(上限)で toNext=0 かつ level=MAX_LEVEL', () => {
+    const state = levelFromXp(XP_FOR_L9999);
+    expect(state.level).toBe(MAX_LEVEL);  // = 9999
     expect(state.toNext).toBe(0);
-    // 更に XP を積んでも 1000 を超えない
-    expect(levelFromXp(XP_FOR_L1000 + 10_000_000).level).toBe(MAX_LEVEL);
+    // 更に XP を積んでも 9999 を超えない
+    expect(levelFromXp(XP_FOR_L9999 + 10_000_000).level).toBe(MAX_LEVEL);
   });
 
-  it('xpToNext は L1→L999 の全域で単調増加', () => {
-    for (let l = 1; l < 999; l += 1) {
+  it('xpToNext は L1〜L(MAX_LEVEL-1) の全域で単調増加', () => {
+    for (let l = 1; l < MAX_LEVEL - 1; l += 1) {
       expect(xpToNext(l + 1)).toBeGreaterThan(xpToNext(l));
+    }
+  });
+});
+
+describe('rankNameFor', () => {
+  it('L1-99 は新兵(tier 0)', () => {
+    expect(rankNameFor(1)).toEqual({ name: '新兵', tier: 0 });
+    expect(rankNameFor(99)).toEqual({ name: '新兵', tier: 0 });
+  });
+
+  it('L100 ちょうどで足軽(tier 1)', () => {
+    expect(rankNameFor(100)).toEqual({ name: '足軽', tier: 1 });
+    expect(rankNameFor(199)).toEqual({ name: '足軽', tier: 1 });
+  });
+
+  it('L999 は覇王(tier 9)', () => {
+    expect(rankNameFor(999)).toEqual({ name: '覇王', tier: 9 });
+  });
+
+  it('L1000 ちょうどで剣聖(tier 10)', () => {
+    expect(rankNameFor(1000)).toEqual({ name: '剣聖', tier: 10 });
+    expect(rankNameFor(1999)).toEqual({ name: '剣聖', tier: 10 });
+  });
+
+  it('L9999 ちょうどで創世神(tier 19)', () => {
+    expect(rankNameFor(9999)).toEqual({ name: '創世神', tier: 19 });
+  });
+
+  it('L9000-9998 は神話(tier 18)', () => {
+    expect(rankNameFor(9000)).toEqual({ name: '神話', tier: 18 });
+    expect(rankNameFor(9998)).toEqual({ name: '神話', tier: 18 });
+  });
+
+  it('全20段の名称が揃っている', () => {
+    const samples: Array<[number, string]> = [
+      [1, '新兵'], [100, '足軽'], [200, '武者'], [300, '侍'], [400, '侍大将'],
+      [500, '剣豪'], [600, '修羅'], [700, '鬼神'], [800, '羅刹'], [900, '覇王'],
+      [1000, '剣聖'], [2000, '武神'], [3000, '雷神'], [4000, '戦神'], [5000, '天下無双'],
+      [6000, '軍神'], [7000, '破壊神'], [8000, '神威'], [9000, '神話'], [9999, '創世神'],
+    ];
+    for (const [lvl, name] of samples) {
+      expect(rankNameFor(lvl).name).toBe(name);
     }
   });
 });

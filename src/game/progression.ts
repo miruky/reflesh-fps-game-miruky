@@ -144,10 +144,11 @@ export function emptyProfile(): Profile {
 }
 
 // レベルnからn+1へ必要なXP。
-// L1-99: 750 + (n-1)*250 の一次曲線(既存セーブとの後方互換を維持するため不変)。
+// L1-99:   750 + (n-1)*250 の一次曲線(既存セーブとの後方互換を維持するため不変)。
 // L100-499: +100/レベルで緩やかに成長(高原フェーズ1)。
 // L500-999: +50/レベルでさらに緩やかに成長(高原フェーズ2)。
-// 単調増加・オーバーフロー無し・最大値は xpToNext(999)=90_450 で Number.MAX_SAFE_INTEGER と十分離れている。
+// L1000-9998: +25/レベルでさらに高原化(L999=90_450 との連続性を維持)。
+// 単調増加・オーバーフロー無し・最大値は xpToNext(9998)=315_425 で Number.MAX_SAFE_INTEGER と十分離れている。
 export function xpToNext(level: number): number {
   if (level < 100) {
     // L1-99 は旧曲線と同一(後方互換)
@@ -157,11 +158,15 @@ export function xpToNext(level: number): number {
     // L100-499: 25_500 → 65_400 (+100/レベル)
     return 25_500 + (level - 100) * 100;
   }
-  // L500-999: 65_500 → 90_450 (+50/レベル)
-  return 65_500 + (level - 500) * 50;
+  if (level < 1000) {
+    // L500-999: 65_500 → 90_450 (+50/レベル)
+    return 65_500 + (level - 500) * 50;
+  }
+  // L1000-9998: さらに高原化(+25/レベル)。xpToNext(999)=90_450 との連続性を維持。
+  return 90_450 + (level - 999) * 25;
 }
 
-export const MAX_LEVEL = 1000;
+export const MAX_LEVEL = 9999;
 
 export interface LevelState {
   level: number;
@@ -366,6 +371,44 @@ export function rankFromRating(rating: number): RankDef {
     if (rating >= rank.rating) current = rank;
   }
   return current;
+}
+
+// ── レベル帯ランク名(レーティングとは独立した、累積レベルによる階位) ────────────────
+// L1-999: 100刻み10段 / L1000-9999: 1000刻み10段(L9999のみ単独「創世神」)
+export interface RankName {
+  name: string;
+  tier: number; // 0(新兵) 〜 19(創世神)
+}
+
+// 降順に並べ、初めて level >= minLevel となるエントリを返す
+const LEVEL_RANK_TABLE: ReadonlyArray<{ minLevel: number; name: string; tier: number }> = [
+  { minLevel: 9999, name: '創世神',   tier: 19 },
+  { minLevel: 9000, name: '神話',     tier: 18 },
+  { minLevel: 8000, name: '神威',     tier: 17 },
+  { minLevel: 7000, name: '破壊神',   tier: 16 },
+  { minLevel: 6000, name: '軍神',     tier: 15 },
+  { minLevel: 5000, name: '天下無双', tier: 14 },
+  { minLevel: 4000, name: '戦神',     tier: 13 },
+  { minLevel: 3000, name: '雷神',     tier: 12 },
+  { minLevel: 2000, name: '武神',     tier: 11 },
+  { minLevel: 1000, name: '剣聖',     tier: 10 },
+  { minLevel:  900, name: '覇王',     tier:  9 },
+  { minLevel:  800, name: '羅刹',     tier:  8 },
+  { minLevel:  700, name: '鬼神',     tier:  7 },
+  { minLevel:  600, name: '修羅',     tier:  6 },
+  { minLevel:  500, name: '剣豪',     tier:  5 },
+  { minLevel:  400, name: '侍大将',   tier:  4 },
+  { minLevel:  300, name: '侍',       tier:  3 },
+  { minLevel:  200, name: '武者',     tier:  2 },
+  { minLevel:  100, name: '足軽',     tier:  1 },
+  { minLevel:    1, name: '新兵',     tier:  0 },
+];
+
+export function rankNameFor(level: number): RankName {
+  for (const r of LEVEL_RANK_TABLE) {
+    if (level >= r.minLevel) return { name: r.name, tier: r.tier };
+  }
+  return { name: '新兵', tier: 0 };
 }
 
 const RATING_WIN = 25;

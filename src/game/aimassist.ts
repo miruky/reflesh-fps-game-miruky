@@ -24,6 +24,9 @@ export const BULLET_MAG_MAX_DEG = 0.15;
 // スコープ覗き込み中(クイックスコープ成立後)はやや広め。それでも救済の域を出ない
 export const BULLET_MAG_CONE_SCOPED_DEG = 0.6;
 export const BULLET_MAG_MAX_SCOPED_DEG = 0.25;
+// スナイパースナップ: scope武器のADS完全時(85%)に弾道を胸へ完全スナップする円錐。
+// 「絶対当たる」補助。1.2°=FULL_CONE_DEG と同値。ヘッド誘導なし=公平感(胴スナップ)。
+export const SNIPER_SNAP_CONE_DEG = 1.2;
 
 // クラス別のアシスト倍率(全武器適用の土台)。スナイパーのみ満額、
 // 拡散武器ほど弱く(exhaustive Record: クラス追加時はtscが漏れを検出)

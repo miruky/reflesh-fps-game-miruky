@@ -47,6 +47,7 @@ import {
   isUnlocked,
   levelFromXp,
   rankFromRating,
+  rankNameFor,
   unlockLevelOf,
   type CampaignProgress,
   type MatchProgress,
@@ -62,11 +63,11 @@ import {
   isCamoUnlocked,
   type CamoId,
 } from '../game/camo';
-import { generateStage } from '../game/stage';
 import { STAGES, stagesForMode } from '../game/stages';
 import { TEAM_PALETTES } from '../game/teamcolors';
 import type { SpaceBg } from './menu-bg';
 import { WeaponPreview } from '../render/weapon-preview';
+import { requestStageThumb } from '../render/stage-thumbs';
 import {
   computeWeaponBars,
   PRIMARY_IDS,
@@ -213,66 +214,6 @@ function cloneBindings(b: GamepadBindings): GamepadBindings {
   for (const key of Object.keys(b) as PadAction[]) out[key] = b[key].map((x) => ({ ...x }));
   return out;
 }
-
-// ── ステージプレビュー: generateStage() の実BoxSpecを等角投影して本物のサムネを描く ──
-const ISO = { CX: 80, CY: 34, SX: 38, SY: 20, H: 3.4, VH: 92 } as const;
-
-// 床平面の正規化座標(nx,nz∈[-1,1])とスクリーン高さ hScreen をSVG座標へ等角投影
-function projectIso(nx: number, nz: number, hScreen: number): { x: number; y: number } {
-  const x = ISO.CX + (nx - nz) * ISO.SX;
-  let y = ISO.CY + (nx + nz) * ISO.SY - hScreen;
-  if (y < 2) y = 2;
-  else if (y > ISO.VH - 2) y = ISO.VH - 2;
-  return { x, y };
-}
-
-function hexToRgb(hex: string): [number, number, number] {
-  let h = hex.replace('#', '');
-  if (h.length === 3) h = h[0]! + h[0]! + h[1]! + h[1]! + h[2]! + h[2]!;
-  const n = Number.parseInt(h, 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
-// HSLの明度を dL だけシフトした #rrggbb を返す(立体の陰影づけ用)
-function shadeHex(hex: string, dL: number): string {
-  const [r, g, b] = hexToRgb(hex);
-  const rn = r / 255;
-  const gn = g / 255;
-  const bn = b / 255;
-  const max = Math.max(rn, gn, bn);
-  const min = Math.min(rn, gn, bn);
-  const l = (max + min) / 2;
-  const d = max - min;
-  let hue = 0;
-  let s = 0;
-  if (d > 1e-6) {
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === rn) hue = (gn - bn) / d + (gn < bn ? 6 : 0);
-    else if (max === gn) hue = (bn - rn) / d + 2;
-    else hue = (rn - gn) / d + 4;
-    hue /= 6;
-  }
-  const nl = Math.min(1, Math.max(0, l + dL));
-  const q = nl < 0.5 ? nl * (1 + s) : nl + s - nl * s;
-  const p = 2 * nl - q;
-  const hue2rgb = (t: number): number => {
-    let tt = t;
-    if (tt < 0) tt += 1;
-    if (tt > 1) tt -= 1;
-    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
-    if (tt < 1 / 2) return q;
-    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
-    return p;
-  };
-  const to2 = (v: number): string =>
-    Math.round((s === 0 ? nl : v) * 255)
-      .toString(16)
-      .padStart(2, '0');
-  return '#' + to2(hue2rgb(hue + 1 / 3)) + to2(hue2rgb(hue)) + to2(hue2rgb(hue - 1 / 3));
-}
-
-// id→SVG文字列のメモ化(generateStageは決定論)。LRU上限でlocalStorage非依存に肥大を防ぐ
-const stageSvgCache = new Map<string, string>();
 
 // R10 IGNITION FRAME: 盾型ベゼル2層+十字計器+発光スパークの多層エンブレム。
 // viewBox / role / aria-label / .spark クラスは旧ロゴと同一に保ち、CSSフックを壊さない
@@ -795,7 +736,7 @@ export class Menu {
               <p class="menu-tagline"><span lang="en">Orbital Dropdeck</span><span lang="ja">軌道降下管制盤</span></p>
             </div>
             <div class="nav-readout" aria-hidden="true">
-              <span class="nav-opr">OPR <b>LV.${this.playerLevel()}</b></span><span>ALT <b>408</b>KM</span><span>VEL <b>7.62</b>KM·S⁻¹</span><span class="nav-eta">DROP WINDOW <b>T-00:43</b></span>
+              <span class="nav-opr">OPR <b>LV.${this.playerLevel()} ${rankNameFor(this.playerLevel()).name}</b></span><span>ALT <b>408</b>KM</span><span>VEL <b>7.62</b>KM·S⁻¹</span><span class="nav-eta">DROP WINDOW <b>T-00:43</b></span>
             </div>
           </header>
           <p class="menu-touchnote">この作品はキーボードとマウスで操作します。スマートフォンやタブレットでは遊べません。PCで開いてください。</p>
@@ -921,7 +862,7 @@ export class Menu {
             </div>
           </div>
           <footer class="console-status" aria-hidden="true">
-            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span class="status-opr">OPR <b>LV.${this.playerLevel()}</b></span><span class="status-fill"></span><span>reFlesh // tactical sim · BUILD R13</span>
+            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span class="status-opr">OPR <b>LV.${this.playerLevel()} ${rankNameFor(this.playerLevel()).name}</b></span><span class="status-fill"></span><span>reFlesh // tactical sim · BUILD R13</span>
           </footer>
         </div>
       </div>
@@ -1336,7 +1277,7 @@ export class Menu {
         <div class="result-panel" role="dialog" aria-modal="true" aria-label="試合結果">
           <div class="aar-telemetry" aria-hidden="true">
             <span class="aar-tele-mode">${result.modeName}</span>
-            <span class="aar-tele-item">OPR <b>LV.${progress.levelAfter.level}</b></span>
+            <span class="aar-tele-item">OPR <b>LV.${progress.levelAfter.level} ${rankNameFor(progress.levelAfter.level).name}</b></span>
             <span class="aar-tele-item">${dateStr}</span>
             <span class="aar-tele-live">AFTER-ACTION</span>
           </div>
@@ -1455,7 +1396,7 @@ export class Menu {
         <ul class="result-xp-list">${xpRows}</ul>
         <p class="result-xp-total">獲得 <span data-id="xptotal">0</span> XP</p>
         <div class="result-levelrow">
-          <span class="result-level">Lv ${level.level}</span>
+          <span class="result-level">Lv ${level.level} ${rankNameFor(level.level).name}</span>
           <span class="profile-xpbar"><i style="width:${xpRatio}%"></i></span>
         </div>
         ${levelUp}
@@ -1523,8 +1464,13 @@ export class Menu {
       card.className = 'stage-card';
       card.dataset.stage = stage.id;
       const palette = stage.palette;
+      // プレースホルダ背景: 空→床のグラデで即座に「ステージの雰囲気」を伝える。
+      // img.src が WebGL サムネで埋まった時点でプレースホルダは img に隠れる。
       card.innerHTML = `
-        <span class="stage-preview">${this.stagePreview(stage)}<span class="stage-no" aria-hidden="true">LZ ${String(idx + 1).padStart(2, '0')}</span></span>
+        <span class="stage-preview" style="background:linear-gradient(160deg,${palette.sky} 0%,${palette.floor} 100%)">
+          <img class="stage-thumb" alt="" aria-hidden="true">
+          <span class="stage-no" aria-hidden="true">LZ ${String(idx + 1).padStart(2, '0')}</span>
+        </span>
         <span class="stage-card-body">
           <span class="stage-swatch" aria-hidden="true">
             <i style="background:${palette.floor}"></i><i style="background:${palette.wall}"></i>
@@ -1532,9 +1478,15 @@ export class Menu {
           </span>
           <span class="stage-name">${stage.name}</span>
           <span class="stage-sub">${stage.subtitle}</span>
-          <span class="stage-meta"><span class="stage-seed">SEED ${stage.seed}</span>${stage.size}m 四方 / BOT ${stage.botCount}体 / 障害物 ${stage.obstacleCount}</span>
+          <span class="stage-meta"><span class="stage-seed">SEED ${stage.seed}</span>${stage.size}m 四方 / BOT 最大${stage.botCount}体 / 障害物 ${stage.obstacleCount}</span>
         </span>
       `;
+      const img = card.querySelector<HTMLImageElement>('.stage-thumb');
+      if (img !== null) {
+        requestStageThumb(stage, (url) => {
+          img.src = url;
+        });
+      }
       card.addEventListener('click', () => {
         this.selection.stageId = stage.id;
         this.markSelected(grid, 'stage', stage.id);
@@ -1546,89 +1498,6 @@ export class Menu {
     this.markSelected(grid, 'stage', this.selection.stageId);
   }
 
-  // 実レイアウト(generateStageのBoxSpec)を等角投影した本物のミニチュア。
-  // 外周壁を除外し、奥→手前のpainter順で各箱を上面/右面/左面の3polygonで立体描画する。
-  private stagePreview(stage: (typeof STAGES)[number]): string {
-    const cached = stageSvgCache.get(stage.id);
-    if (cached !== undefined) return cached;
-    const palette = stage.palette;
-    const half = stage.size / 2;
-    const boxes = generateStage(stage).boxes;
-    // 外周壁は w または d が size+2 になる。両辺が size 以内の箱だけ=障害物
-    const obst = boxes.filter((b) => b.w <= stage.size && b.d <= stage.size);
-    obst.sort((a, b) => a.x + a.z - (b.x + b.z));
-
-    const corners: Array<[number, number]> = [
-      [-1, -1],
-      [1, -1],
-      [1, 1],
-      [-1, 1],
-    ];
-    const floorPts = corners
-      .map(([u, v]) => {
-        const p = projectIso(u, v, 0);
-        return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
-      })
-      .join(' ');
-
-    const fid = `g${stage.id.replace(/[^a-z0-9]/gi, '')}`;
-    const pp = (pts: Array<{ x: number; y: number }>): string =>
-      pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-    let shadows = '';
-    let polys = '';
-    let anyGlow = false;
-    for (const b of obst) {
-      const nx = b.x / half;
-      const nz = b.z / half;
-      const hw = b.w / 2 / half;
-      const hd = b.d / 2 / half;
-      const hTop = b.h * ISO.H;
-      const t0 = projectIso(nx - hw, nz - hd, hTop);
-      const t1 = projectIso(nx + hw, nz - hd, hTop);
-      const t2 = projectIso(nx + hw, nz + hd, hTop);
-      const t3 = projectIso(nx - hw, nz + hd, hTop);
-      const bR = projectIso(nx + hw, nz + hd, 0);
-      const bF = projectIso(nx + hw, nz - hd, 0);
-      const bL = projectIso(nx - hw, nz + hd, 0);
-      const b0 = projectIso(nx - hw, nz - hd, 0);
-      const glow = b.emissive ? ` filter="url(#${fid})"` : '';
-      if (b.emissive) anyGlow = true;
-      // 落ち影: 接地矩形を太陽と逆側(左下)へ高さぶん伸ばした平行四辺形。立体感が跳ねる
-      const sdx = 3 + b.h * 1.6;
-      const sdy = 1.5 + b.h * 0.8;
-      shadows += `<polygon points="${pp([b0, bF, { x: bF.x - sdx, y: bF.y + sdy }, { x: b0.x - sdx, y: b0.y + sdy }])}" fill="#000" opacity="0.16"/>`;
-      // 右面(暗め基準) / 左面(さらに暗) / 上面(明るめ)で陰影をつける
-      polys +=
-        `<polygon points="${pp([t1, t2, bR, bF])}" fill="${b.color}"${glow}/>` +
-        `<polygon points="${pp([t2, t3, bL, bR])}" fill="${shadeHex(b.color, -0.22)}"${glow}/>` +
-        `<polygon points="${pp([t0, t1, t2, t3])}" fill="${shadeHex(b.color, 0.18)}"${glow}/>`;
-    }
-    // 空グラデ(天頂→地平で明るく)・太陽グロー・ビネットで「キーアート」感を出す
-    const glowFilter = anyGlow
-      ? `<filter id="${fid}" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="1.6"/><feComponentTransfer><feFuncA type="linear" slope="1.6"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>`
-      : '';
-    const defs =
-      `<defs>${glowFilter}` +
-      `<linearGradient id="sky${fid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${shadeHex(palette.sky, -0.06)}"/><stop offset="1" stop-color="${shadeHex(palette.sky, 0.12)}"/></linearGradient>` +
-      `<radialGradient id="vg${fid}" cx="0.5" cy="0.45" r="0.75"><stop offset="0.62" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.3"/></radialGradient>` +
-      `</defs>`;
-    const svg =
-      `<svg viewBox="0 0 160 92" role="img" aria-label="${stage.name}の戦域プレビュー">` +
-      `<title>${stage.name}の戦域</title>${defs}` +
-      `<rect width="160" height="92" fill="url(#sky${fid})"/>` +
-      `<circle cx="126" cy="12" r="16" fill="${shadeHex(palette.sky, 0.28)}" opacity="0.55"/>` +
-      `<circle cx="126" cy="12" r="6" fill="${shadeHex(palette.sky, 0.4)}" opacity="0.85"/>` +
-      `<polygon points="${floorPts}" fill="${palette.floor}" opacity="0.92"/>` +
-      `${shadows}${polys}` +
-      `<rect width="160" height="92" fill="url(#vg${fid})"/></svg>`;
-
-    if (stageSvgCache.size >= 64) {
-      const oldest = stageSvgCache.keys().next().value;
-      if (oldest !== undefined) stageSvgCache.delete(oldest);
-    }
-    stageSvgCache.set(stage.id, svg);
-    return svg;
-  }
 
   private renderWeapons(): void {
     const list = this.query('weapons');
@@ -1894,7 +1763,7 @@ export class Menu {
       <div class="profile-top">
         <span class="profile-rank">${rank.name}</span>
         <span class="profile-rating">レート ${this.profile.rating}</span>
-        <span class="profile-level">Lv ${level.level}</span>
+        <span class="profile-level">Lv ${level.level} ${rankNameFor(level.level).name}</span>
       </div>
       <div class="profile-xpbar"><i style="width:${xpRatio}%"></i></div>
       <div class="profile-stats">${stats.matches}戦 / 勝率 ${winRate}% / K/D ${kd} / 命中 ${accuracy}%</div>
