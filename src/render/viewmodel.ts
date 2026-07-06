@@ -1283,10 +1283,25 @@ export function buildGunBody(
       }
     }
     if (det.iron === 'bead') {
-      // ショットガン等: バレル上の前照星ビード(brassはresolveSightY契約=polish top cluster)
-      const bead = new THREE.SphereGeometry(0.006, 10, 8);
-      bakeAt(polishParts, bead, C_BRASS, 0, BARREL_Y + gauge * 0.6, barFrontZ + 0.02, 0, 0, 0, 'flat');
-      amberDot(0, BARREL_Y + gauge * 0.6, barFrontZ + 0.024, 0.0026);
+      if (def.shape === 'launcher') {
+        // ランチャー: ゴーストリングサイト(レシーバ天板上にポスト+アパーチャリング+琥珀センタードット)。
+        // ADS時にリング中心(y=0.088)が射線へ来る — resolveSightY 0.088 と一致させること。
+        // これにより太い発射筒がカメラより下に逃げ、リング+ドット越しに視界が通る。
+        const RING_Y = 0.088;
+        const RING_Z = -recHalf * 0.35; // レシーバ前方寄りの位置
+        // マウンティングポスト(レシーバ天板 r.h/2 〜 リング中心 RING_Y)
+        boxP(metalParts, C_DARK, 0.009, RING_Y - r.h / 2, 0.009, 0, (r.h / 2 + RING_Y) / 2, RING_Z);
+        // アパーチャリング(ゴーストリング)
+        const ringGeo = new THREE.RingGeometry(0.012, 0.017, 22);
+        bakeAt(polishParts, ringGeo, C_POLISH_HI, 0, RING_Y, RING_Z, 0, 0, 0, 'flat');
+        // センター琥珀ドット(着弾点の直感的な目安)
+        amberDot(0, RING_Y, RING_Z - 0.005, 0.003);
+      } else {
+        // ショットガン等: バレル上の前照星ビード(brassはresolveSightY契約=polish top cluster)
+        const bead = new THREE.SphereGeometry(0.006, 10, 8);
+        bakeAt(polishParts, bead, C_BRASS, 0, BARREL_Y + gauge * 0.6, barFrontZ + 0.02, 0, 0, 0, 'flat');
+        amberDot(0, BARREL_Y + gauge * 0.6, barFrontZ + 0.024, 0.0026);
+      }
     } else if (det.iron !== 'none') {
       // 前照星の小ポスト(黒・やや太く0.006)+ 目立つ琥珀ビード(0.0032)。狙点=resolveSightY 0.062 に一致・
       // 凍結(x0/y0.062/z0.14 は不変)。広げた耳の間に中央で載る。
@@ -1786,8 +1801,11 @@ export function buildGunBody(
 //   telescopic 着脱(scope無)  → 0.08                (buildGunBody 着脱 telescopic tubeZ(…, 0.08, …))
 //   iron bead                → BARREL_Y + gauge*0.6  (buildGunBody アイアンサイト bead bakeAt(…, BARREL_Y+gauge*0.6, …))
 //   iron post(fixed/flip/ghost)→ 0.062              (R15: 狙点は前照星の琥珀ビード amberDot(0, 0.062, 0.14, …)。前ポスト箱は y=0.056 に降下)
+//   launcher ghost-ring        → 0.088               (buildGunBody launcher: amberDot(0, 0.088, …) ゴーストリング中心)
 export function resolveSightY(def: WeaponDef): number {
   if (def.shape === 'fists') return 0;
+  // ランチャー: ゴーストリングサイト中心(0.088)。ADS時に筒/レシーバを射線より下へ逃がして視界を通す。
+  if (def.shape === 'launcher') return 0.088;
   // 光学(内蔵スコープ/着脱reflex/holo/…)は OPTIC_SPECS.sightY を単一真実源に。
   // 内蔵スコープは resolveOpticId が shape から scope-dmr/sniper/dsr を最優先で返す。
   const om = OPTIC_SPECS[resolveOpticId(def)];

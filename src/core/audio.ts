@@ -2493,6 +2493,15 @@ export class SoundKit {
     this.duck(-9, 0.08);
   }
 
+  // ロケット着弾の至近低域サブブーム(explosion()に重ねる1層。25m以内のみ発火)。
+  // 超低域(42→18Hz)の非対称歪みトーンで小型スピーカーにも胴体の圧を届ける。
+  rocketSubBoom(pan: number, distance: number): void {
+    if (distance > 25) return;
+    const att = 1 / (1 + distance * 0.06);
+    this.tone({ freq: 44, endFreq: 18, durationS: 0.6, type: 'sine', gain: 0.52 * att, pan, drive: 8, curve: 'asym' });
+    this.noiseBurst({ durationS: 0.38, filterHz: 68, filterType: 'lowpass', gain: 0.35 * att, pan, drive: 5 });
+  }
+
   // 至近爆発の耳鳴り(tinnitus)。専用duckノードに掛けるので音量設定と競合しない
   tinnitus(strength: number): void {
     if (!this.ctx || !this.tinnitusDuck) return;

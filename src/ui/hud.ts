@@ -1017,6 +1017,20 @@ export class Hud {
       }
     }
 
+    // 発砲ブリップ(BO2本物仕様: 敵発砲位置を1秒間赤点表示。UAV赤点とは別レイヤ)
+    if (snap.fireBlips) {
+      for (const blip of snap.fireBlips) {
+        const alpha = (1 - blip.age01) * 0.9;
+        if (alpha <= 0) continue;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#ff3020';
+        ctx.beginPath();
+        ctx.arc(blip.relX * scale, blip.relZ * scale, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
     ctx.restore();
 
     // プレイヤーアロー (中心固定・常に上向き)

@@ -141,6 +141,121 @@ export class Effects {
     }
   }
 
+  // ロケット着弾専用の超強化爆発エフェクト。
+  // (a) 白熱コア→オレンジ外殻の二段火球、(b) 地面衝撃波リング(shockwaveRing流用)、
+  // (c) 放射する火花ストリーク×12、(d) 立ち上る黒煙柱×4(velYで上昇)、
+  // (e) 一瞬の白フラッシュ球(0.12s)。全て加算+NormalBlendingを使い分け、bloom超過は0.12s内のみ。
+  rocketBlast(point: THREE.Vector3, radius: number): void {
+    // (e) 白フラッシュ球(最短寿命・白飛び禁則内)
+    const flash = new THREE.Mesh(
+      this.blastGeometry,
+      new THREE.MeshBasicMaterial({
+        color: 0xfff8f0,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    flash.position.copy(point);
+    flash.scale.setScalar(radius * 0.12);
+    flash.userData.targetScale = radius * 0.75;
+    this.scene.add(flash);
+    this.blasts.push({ obj: flash, life: 0.12, maxLife: 0.12 });
+
+    // (a) 白熱コア(急速拡大)
+    const core = new THREE.Mesh(
+      this.blastGeometry,
+      new THREE.MeshBasicMaterial({
+        color: 0xffecc8,
+        transparent: true,
+        opacity: 0.95,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    core.position.copy(point);
+    core.scale.setScalar(radius * 0.08);
+    core.userData.targetScale = radius * 0.55;
+    this.scene.add(core);
+    this.blasts.push({ obj: core, life: 0.42, maxLife: 0.42 });
+
+    // (a) オレンジ外殻(コアより遅れ・より大きく広がる)
+    const outer = new THREE.Mesh(
+      this.blastGeometry,
+      new THREE.MeshBasicMaterial({
+        color: 0xff5a10,
+        transparent: true,
+        opacity: 0.78,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    outer.position.copy(point);
+    outer.scale.setScalar(radius * 0.18);
+    outer.userData.targetScale = radius;
+    this.scene.add(outer);
+    this.blasts.push({ obj: outer, life: 0.62, maxLife: 0.62 });
+
+    // (b) 地面を走る衝撃波リング(shockwaveRing 流用・白→オレンジ)
+    this.shockwaveRing(point.clone(), radius * 0.85, 0xff6820);
+
+    // (c) 放射する火花ストリーク × 12
+    const sparkGroup = new THREE.Group();
+    sparkGroup.position.copy(point);
+    const STREAK_N = 12;
+    for (let i = 0; i < STREAK_N; i += 1) {
+      const a = (i / STREAK_N) * Math.PI * 2 + Math.random() * 0.4;
+      const elev = (Math.random() - 0.25) * 0.9;
+      const spd = (5 + Math.random() * 7) * Math.min(1, radius * 0.07);
+      const shard = new THREE.Mesh(
+        this.sparkGeometry,
+        new THREE.MeshBasicMaterial({
+          color: i % 4 === 0 ? 0xffffff : 0xff7030,
+          transparent: true,
+          opacity: 1,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      shard.userData.vel = new THREE.Vector3(
+        Math.cos(a) * Math.cos(elev) * spd,
+        Math.abs(Math.sin(elev)) * spd + 1.5 + Math.random() * 3,
+        Math.sin(a) * Math.cos(elev) * spd,
+      );
+      sparkGroup.add(shard);
+    }
+    this.scene.add(sparkGroup);
+    this.sparks.push({ obj: sparkGroup, life: 0.85, maxLife: 0.85 });
+
+    // (d) 立ち上る黒煙柱 × 4(blasts + velY で上昇)
+    const SMOKE_N = 4;
+    for (let i = 0; i < SMOKE_N; i += 1) {
+      const smoke = new THREE.Mesh(
+        this.cloudGeometry,
+        new THREE.MeshBasicMaterial({
+          color: 0x1a1812,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        }),
+      );
+      smoke.position.copy(point).add(
+        new THREE.Vector3(
+          (Math.random() - 0.5) * radius * 0.28,
+          Math.random() * radius * 0.18,
+          (Math.random() - 0.5) * radius * 0.28,
+        ),
+      );
+      smoke.scale.setScalar(radius * (0.12 + Math.random() * 0.1));
+      smoke.userData.targetScale = radius * (0.42 + Math.random() * 0.22);
+      smoke.userData.velY = 0.7 + Math.random() * 1.1;
+      smoke.userData.baseOpacity = 0.48;
+      this.scene.add(smoke);
+      this.blasts.push({ obj: smoke, life: 2.2, maxLife: 2.2 });
+    }
+  }
+
   // 撃破時の発光バーストと飛散する破片(チーム色)
   deathBurst(point: THREE.Vector3, color: number): void {
     const flash = new THREE.Mesh(
@@ -809,7 +924,17 @@ export class Effects {
       const target = (blast.userData.targetScale as number) ?? 1;
       const grown = target * (1 - ratio * ratio);
       blast.scale.setScalar(Math.max(blast.scale.x, grown));
-      (blast.material as THREE.MeshBasicMaterial).opacity = 0.95 * ratio;
+      const velY = blast.userData.velY as number | undefined;
+      if (velY !== undefined) {
+        // 上昇煙: 位置を上昇させ、フェードイン→フェードアウトで煙の自然な立ち上りを表現
+        blast.position.y += velY * dt;
+        const baseOp = (blast.userData.baseOpacity as number) ?? 0.5;
+        const age = 1 - ratio;
+        const fadeIn = Math.min(1, age * 8); // 寿命の12.5%でフルオパシティ
+        (blast.material as THREE.MeshBasicMaterial).opacity = baseOp * fadeIn * ratio;
+      } else {
+        (blast.material as THREE.MeshBasicMaterial).opacity = 0.95 * ratio;
+      }
     });
     this.clouds = this.tick(this.clouds, dt, (group, ratio) => {
       const age = ((group.userData.age as number | undefined) ?? 0) + dt;
