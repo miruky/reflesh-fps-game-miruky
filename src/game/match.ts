@@ -5751,6 +5751,8 @@ export class Match {
     // 2押し目以降ゲージ 0 でも継続する必要がある(1押し目の発動で全消費されるため)。
     // killcam/alive/fists ガードは従来の ult4 経路と同一(alive は本メソッド冒頭で return 済み)。
     const mPressed = this.isNinja && this.input.wasPressed('ult4') && !this.killcamCamActive;
+    const nPressed = this.isNinja && this.input.wasPressed('ult3') && !this.killcamCamActive;
+    let nUltFired = false;
     let mUltFired = false;
 
     if (this.ultCharge >= 1 && this.ultActive <= 0 && !this.cooking) {
@@ -5759,7 +5761,8 @@ export class Match {
       } else if (this.isNinja && this.input.wasPressed('ult2')) {
         // B: 風神・極大手裏剣(fists装備時のみ。ゲージ全消費)
         this.activateWindShuriken();
-      } else if (this.isNinja && this.input.wasPressed('ult3')) {
+      } else if (nPressed) {
+        nUltFired = true;
         if (this.raiteiMode) {
           // N: 雷帝中→月花雷轟(マップ全域嵐)
           this.activateGeppaRaigou();
@@ -5784,6 +5787,8 @@ export class Match {
     }
     // triple-M 黒雷帝化: 1.5s 内の3押し(1押し目がウルト発動済み=armed)で追加発動
     if (mPressed) this.registerMPress(mUltFired);
+    // triple-N 黒雷帝化(黒帝中限定): 黒帝になるとMは真月に取られるため、Nの3連打でも到達できる救済経路
+    if (nPressed && this.darkEmperorTimer > 0 && !this.kokuraiteiMode) this.registerNPress(nUltFired);
 
     // ③ 黒雷帝バフ: 移動+15% / 被ダメ-30%。ult上書きと非衝突(乗算スタック)
     const kokuraiSpeedMul = this.kokuraiteiMode ? KOKURAITEI_SPEED_MUL : 1;
@@ -6326,6 +6331,24 @@ export class Match {
   // armed 条件: 窓内の1押し目が実際にウルトを発動していた(=ゲージ満タンだった)こと。
   // 2押し目以降はゲージ 0 でも数える(1押し目の発動で全消費されるため)。
   // 追加のゲージ消費はなく、既に黒雷帝なら activateKokuraitei 冒頭ガードで何もしない。
+  // 黒帝中の N 3連打(1.5s窓)で黒雷帝化。M側と同じ armed 規約(1押し目が実発動していること)
+  private nPressTimestamps: number[] = [];
+  private nTripleArmed = false;
+
+  private registerNPress(ultFired: boolean): void {
+    const now = this.elapsed;
+    this.nPressTimestamps = this.nPressTimestamps.filter((t) => now - t <= 1.5);
+    if (this.nPressTimestamps.length === 0) this.nTripleArmed = false;
+    this.nPressTimestamps.push(now);
+    if (this.nPressTimestamps.length === 1) this.nTripleArmed = ultFired;
+    if (this.nPressTimestamps.length >= 3) {
+      const armed = this.nTripleArmed;
+      this.nPressTimestamps = [];
+      this.nTripleArmed = false;
+      if (armed) this.activateKokuraitei();
+    }
+  }
+
   private registerMPress(ultFired: boolean): void {
     const now = this.elapsed;
     // 1.5s より古いスタンプを除去。窓が切れていたら armed 状態もリセット
@@ -8974,6 +8997,8 @@ export class Match {
     this.tokoyamiActive = false;
     this.mPressTimestamps = [];
     this.mTripleArmed = false;
+    this.nPressTimestamps = [];
+    this.nTripleArmed = false;
     this.viewModel.setKunaiLightningMode(false);
     this.atmosphere?.dispose(); // 草/フォグ/粒子/遠景/リムライトを解放(scene.traverse前)
     this.atmosphere = null;
