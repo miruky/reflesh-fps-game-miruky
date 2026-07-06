@@ -5258,9 +5258,12 @@ tr.score-ally td {
   gap: 10px;
   background: none; /* 旧1px表ハック撤去 */
   border: none;
-  max-height: min(58vh, 640px);
+  max-height: min(70vh, 900px);
   overflow-y: auto;
   padding: 2px 8px 14px 2px; /* selectedのdrop-shadowブルームが枠で切れない緩衝 */
+  border-bottom: 1px solid var(--rule); /* V34: スクロール裁ち落としを「切れ目」として明示 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
 }
 
 /* LZカード: 独立チャンファープレート。斜辺の縁線は本体background先頭の

@@ -110,19 +110,25 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
   const fogFactor = isDark ? 0.12 : 0.28;
   scene.fog = new THREE.FogExp2(p.fog, (p.fogDensity ?? 0.005) * fogFactor);
 
-  const hemiIntensity = isDark
-    ? Math.max(0.5, (p.ambientIntensity ?? 0.8) * 1.6) * 0.65
-    : (p.ambientIntensity ?? 0.8) * 0.65;
+  const hemiIntensity = isDark ? 0.85 : (p.ambientIntensity ?? 0.8) * 0.65;
   const sunBaseIntensity = p.lightIntensity ?? 1.4;
-  const sunIntensity = isDark ? Math.max(0.9, sunBaseIntensity) : sunBaseIntensity;
+  const sunIntensity = isDark ? Math.max(1.25, sunBaseIntensity) : sunBaseIntensity;
 
-  // 半球ライト(空/床の環境光)
-  const hemi = new THREE.HemisphereLight(p.sky, p.floor, hemiIntensity);
+  // 半球ライト(空/床の環境光)。
+  // V34修正: 暗ムードはパレット色をライト色に使わない(近黒の光×近黒の床=黒のまま)。
+  // 中立的な月光色のスタジオリグで構造を照らし、色味はマテリアル側のパレットで出す。
+  const hemi = isDark
+    ? new THREE.HemisphereLight(0x9fb4d8, 0x4a4e58, hemiIntensity)
+    : new THREE.HemisphereLight(p.sky, p.floor, hemiIntensity);
   scene.add(hemi);
 
-  // 指向性ライト(太陽)
-  const sun = new THREE.DirectionalLight(p.lightColor, sunIntensity);
-  sun.position.copy(sunDir).multiplyScalar(def.size);
+  // 指向性ライト(太陽)。暗ムードは白寄りに持ち上げ+高度を最低28°確保(掠め光の黒潰れ防止)
+  const sunColor = isDark
+    ? new THREE.Color(p.lightColor).lerp(new THREE.Color(0xffffff), 0.55)
+    : new THREE.Color(p.lightColor);
+  const thumbSunDir = isDark && elevation < 28 ? sunDirection(28, azimuth) : sunDir;
+  const sun = new THREE.DirectionalLight(sunColor, sunIntensity);
+  sun.position.copy(thumbSunDir).multiplyScalar(def.size);
   scene.add(sun);
 
   // フィルライト(太陽の逆側・強度控えめ): 影側の完全黒潰れを防ぐ
@@ -132,7 +138,15 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
 
   // 地面プレーン(stage 範囲より 60% 広く取り床が切れて見えないようにする)
   const groundGeo = new THREE.PlaneGeometry(def.size * 1.6, def.size * 1.6);
-  const groundMat = new THREE.MeshStandardMaterial({ color: p.floor, roughness: 0.92 });
+  // V34修正: 暗ムードは近黒アルベドを中間グレー方向へ持ち上げる(反射率4%は照らせない)
+  const liftColor = (hex: string): THREE.Color => {
+    const c = new THREE.Color(hex);
+    if (!isDark) return c;
+    const lum = c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
+    if (lum < 0.22) c.lerp(new THREE.Color(0x6a707c), 0.42 * (1 - lum / 0.22));
+    return c;
+  };
+  const groundMat = new THREE.MeshStandardMaterial({ color: liftColor(p.floor), roughness: 0.92 });
   const groundMesh = new THREE.Mesh(groundGeo, groundMat);
   groundMesh.rotation.x = -Math.PI / 2;
   groundMesh.position.y = 0;
@@ -155,7 +169,7 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
     const colorKey = b.color + (b.emissive ? '_e' : '');
     let mat = matMap.get(colorKey);
     if (mat === undefined) {
-      mat = new THREE.MeshStandardMaterial({ color: b.color, roughness: 0.76, metalness: 0 });
+      mat = new THREE.MeshStandardMaterial({ color: liftColor(b.color), roughness: 0.76, metalness: 0 });
       if (b.emissive) {
         mat.emissive = new THREE.Color(b.color);
         mat.emissiveIntensity = 0.38;
@@ -194,7 +208,7 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
   // ─ レンダ ─────────────────────────────────────────────────────
   // 暗系ステージはサムネ専用 exposure ブースト(実ゲームのbloom0.9則はサムネ非適用)
   const baseExposure = p.exposure ?? 1.0;
-  r.toneMappingExposure = isDark ? Math.min(1.8, baseExposure * 1.5) : baseExposure;
+  r.toneMappingExposure = isDark ? Math.min(2.1, baseExposure * 1.8) : baseExposure;
   r.render(scene, camera);
 
   // ─ dataURL 取得 ────────────────────────────────────────────────
