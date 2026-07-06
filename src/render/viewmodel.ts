@@ -942,6 +942,23 @@ export function buildGunBody(
     blade.position.set(0.02, -0.05, 0);
     blade.rotation.set(-0.12, 0.06, 0);
     gun.add(blade);
+
+    const fistsCamo: CamoId | null =
+      camoId === undefined
+        ? resolveEquippedCamo(def.id)
+        : camoId !== null && isCamoId(camoId)
+          ? camoId
+          : null;
+    if (fistsCamo) {
+      const cm = getCamoMaterial(fistsCamo);
+      blade.traverse((node) => {
+        if (node instanceof THREE.Mesh && node.userData.kunaiBladeCore === true) {
+          node.material = cm;
+          node.onBeforeRender = tickCamoTime; // V33: 時間アニメ系カモ(ダークマター等)を刃でも進める
+        }
+      });
+    }
+
     const muzzleF = new THREE.Object3D();
     muzzleF.position.set(0, -0.03, -0.5);
     gun.add(muzzleF);
@@ -2760,27 +2777,33 @@ export class ViewModel {
     });
     this._lightningArcMeshes = [];
 
-    // 刃に沿って3本の電気アーク(細い発光ライン)を追加
-    const arcColor = 0x88ddff; // 雷帝アイスブルー
-    for (let i = 0; i < 3; i++) {
+    // 刃に沿って5本の電気アーク(細い発光ライン)を追加
+    const arcColor = this._kokuraiteiMode ? 0x8800ff : 0x88ddff;
+    const arcCount = 5;
+    for (let i = 0; i < arcCount; i++) {
       const pts: THREE.Vector3[] = [];
       const segs = 8;
+      const zStart = -0.10 - (i % 3) * 0.18;
+      const zEnd = zStart - 0.22 - Math.random() * 0.15;
+      const xOff = (i < 2 ? -1 : i < 4 ? 1 : 0) * 0.012;
       for (let s = 0; s <= segs; s++) {
         const t = s / segs;
         pts.push(new THREE.Vector3(
-          (Math.random() - 0.5) * 0.012,
-          t * 0.28 - 0.05,
-          (Math.random() - 0.5) * 0.012,
+          xOff + (Math.random() - 0.5) * 0.014,
+          THREE.MathUtils.lerp(-0.05, 0.04, t) + (Math.random() - 0.5) * 0.01,
+          THREE.MathUtils.lerp(zStart, zEnd, t) + (Math.random() - 0.5) * 0.014,
         ));
       }
       const curve = new THREE.CatmullRomCurve3(pts);
-      const geo = new THREE.TubeGeometry(curve, segs, 0.0015, 3, false);
+      const geo = new THREE.TubeGeometry(curve, segs, 0.0012, 3, false);
       const mat = new THREE.MeshBasicMaterial({
         color: arcColor,
         transparent: true,
-        opacity: 0.75,
+        opacity: 0.70 + Math.random() * 0.2,
+        blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
+      mat.userData.shared = false;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.visible = false;
       kunai.add(mesh);

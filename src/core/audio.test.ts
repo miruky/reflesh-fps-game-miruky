@@ -380,3 +380,43 @@ describe('R12 ステージ/ムード別 BGMプロファイル', () => {
     expect(() => kit.setMusicProfile('day')).not.toThrow();
   });
 });
+
+describe('R33 黒雷帝 ambient pack — 音APIの健全性(AudioContext不要)', () => {
+  it('rumbleDistantThunder: pan値 0 / ±0.7 で例外を投げない', () => {
+    const kit = new SoundKit();
+    expect(() => kit.rumbleDistantThunder(0)).not.toThrow();
+    expect(() => kit.rumbleDistantThunder(-0.7)).not.toThrow();
+    expect(() => kit.rumbleDistantThunder(0.7)).not.toThrow();
+  });
+
+  it('kokuraiBlinkTeleport: AudioContext無しで例外を投げない', () => {
+    const kit = new SoundKit();
+    expect(() => kit.kokuraiBlinkTeleport()).not.toThrow();
+  });
+
+  it('kokuraiActivateThunder: AudioContext無しで例外を投げない', () => {
+    const kit = new SoundKit();
+    expect(() => kit.kokuraiActivateThunder()).not.toThrow();
+  });
+
+  it('kokuraiKillLayer: streak 0 / 3 / 5 で例外を投げない', () => {
+    const kit = new SoundKit();
+    expect(() => kit.kokuraiKillLayer(0)).not.toThrow();
+    expect(() => kit.kokuraiKillLayer(3)).not.toThrow();
+    expect(() => kit.kokuraiKillLayer(5)).not.toThrow();
+  });
+
+  it('startKokuraiThunder / stopKokuraiThunder: 冪等かつ例外なし', () => {
+    const kit = new SoundKit();
+    expect(() => kit.startKokuraiThunder()).not.toThrow();
+    expect(() => kit.startKokuraiThunder()).not.toThrow(); // 冪等: 2回目は no-op
+    expect(() => kit.stopKokuraiThunder()).not.toThrow();
+    expect(() => kit.stopKokuraiThunder()).not.toThrow(); // 冪等: 2回目も安全
+  });
+
+  it('pauseKokuraiThunder / resumeKokuraiThunder: 例外なし', () => {
+    const kit = new SoundKit();
+    expect(() => kit.pauseKokuraiThunder()).not.toThrow();
+    expect(() => kit.resumeKokuraiThunder()).not.toThrow();
+  });
+});

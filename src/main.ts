@@ -127,6 +127,7 @@ applyMotion();
 let match: Match | null = null;
 let chromaTimer = 0; // 被弾クロマアベの後始末タイマー(連続被弾で積み重ねない)
 let mode: 'menu' | 'playing' | 'paused' | 'result' | 'finalkillcam' = 'menu';
+let combatLoopsPaused = false; // 戦闘ループ音の一時停止状態(遷移時のみAPIを叩く)
 let lastSelection: MenuSelection | null = null;
 let activeMissionId: string | null = null; // ストーリー進行中のミッションID(なければ通常戦)
 
@@ -275,7 +276,7 @@ window.addEventListener('resize', () => {
 // タブ非表示中はRAFが止まりループ経由のpauseAmbienceが届かないため、ここで直接沈める。
 // 復帰時はループの既存配線(playing中はpauseAmbience(false))が次フレームで戻す
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) sounds.pauseAmbience(true);
+  if (document.hidden) { sounds.pauseAmbience(true); sounds.pauseCombatLoops(true); }
 });
 
 // R12軽量化(適応DPR): フレーム時間のEMAを取り、重い時に実解像度を段階的に下げてfps床を維持。
@@ -371,9 +372,14 @@ const loop = new GameLoop(
         sounds.tickBgm();
         sounds.tickAmbience();
         sounds.pauseAmbience(false);
+        if (combatLoopsPaused) { sounds.pauseCombatLoops(false); combatLoopsPaused = false; }
       } else {
         sounds.stopBgm();
-        if (mode === 'paused') sounds.pauseAmbience(true);
+        if ((mode === 'paused' || mode === 'finalkillcam') && !combatLoopsPaused) {
+          sounds.pauseAmbience(true);
+          sounds.pauseCombatLoops(true);
+          combatLoopsPaused = true;
+        }
       }
       if (mode === 'playing') {
         const snap = match.snapshot();

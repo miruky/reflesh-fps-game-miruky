@@ -729,6 +729,8 @@ export class SoundKit {
   private lastSuppressionS = 0;   // suppressionWhoosh スロットル(0.15s)
   private distantBattleActive = false;
   private distantBattleTimer = 0; // scheduleDistantBoom の setTimeout ハンドル
+  private _kokuraiThunderActive = false; // 黒雷帝遠雷アンビエンスの動作フラグ
+  private _kokuraiThunderTimer = 0;      // scheduleKokuraiThunder の setTimeout ハンドル
   private tinnitusUntilS = 0;
   private duckRecoverTarget = 1; // 低HP時はBGM復帰を抑える
   private lastHealthCutoff = 20000;
@@ -2452,6 +2454,124 @@ export class SoundKit {
     this.tone({ freq: 200, endFreq: 95, durationS: 1.0, type: 'triangle', gain: 0.2, delayS: 0.12 });
   }
 
+  // ── R33 黒雷帝 ambient pack ──────────────────────────────────────────────
+
+  // 黒雷帝ブリンク転移音: バチッ(高域クラック)+変位音+遠雷ゴロ
+  kokuraiBlinkTeleport(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    if (this.liveVoices() > 228) return;
+    // バチッ: 鋭い高域クラック
+    this.noiseBurst({ durationS: 0.018, filterHz: 6800, filterType: 'bandpass', q: 3, gain: 0.55, attackS: 0.001 });
+    // 変位音: ミッドの帯域スウィープ
+    this.noiseBurst({ durationS: 0.12, filterHz: 2200, filterEndHz: 800, filterType: 'bandpass', q: 2, gain: 0.35 });
+    // ゴロ小: 遠雷の低域尾
+    this.tone({ freq: 65, endFreq: 28, durationS: 0.28, type: 'sine', gain: 0.30, drive: 5, curve: 'asym', delayS: 0.04 });
+  }
+
+  // 黒雷帝発動の雷鳴3連: 近→近→遠(三連撃)
+  kokuraiActivateThunder(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    // 1撃目: 即時・近距離クラック
+    this.noiseBurst({ durationS: 0.025, filterHz: 5800, filterType: 'bandpass', q: 2, gain: 0.62, attackS: 0.001 });
+    this.tone({ freq: 48, endFreq: 15, durationS: 0.55, type: 'sine', gain: 0.58, drive: 9, curve: 'asym' });
+    // 2撃目: 0.22s後・近距離
+    this.noiseBurst({ durationS: 0.022, filterHz: 5200, filterType: 'bandpass', q: 2, gain: 0.55, attackS: 0.001, delayS: 0.22 });
+    this.tone({ freq: 52, endFreq: 18, durationS: 0.50, type: 'sine', gain: 0.50, drive: 8, curve: 'asym', delayS: 0.22 });
+    // 3撃目: 0.55s後・遠雷ロール
+    this.noiseBurst({ durationS: 0.8, filterHz: 200, filterType: 'lowpass', gain: 0.38, delayS: 0.55, attackS: 0.06 });
+    this.tone({ freq: 38, endFreq: 14, durationS: 0.9, type: 'sine', gain: 0.32, drive: 5, curve: 'asym', delayS: 0.60 });
+  }
+
+  // 黒雷帝キル音レイヤー: 高域紫電クラック。3キル以上でace chord 雷版
+  kokuraiKillLayer(streak: number): void {
+    if (!this.ctx || !this.sfxBus) return;
+    if (this.liveVoices() > 228) return;
+    // 高域クラック(紫電の細い亀裂音)
+    this.noiseBurst({ durationS: 0.015, filterHz: 7500, filterType: 'bandpass', q: 4, gain: 0.22, attackS: 0.001, bus: this.uiBus ?? undefined });
+    if (streak >= 3) {
+      // マルチキル: 遠雷轟音を重ねる
+      this.noiseBurst({ durationS: 0.025, filterHz: 4800, filterType: 'bandpass', q: 2, gain: 0.45, attackS: 0.001, delayS: 0.04 });
+      this.tone({ freq: 58, endFreq: 22, durationS: 0.45, type: 'sine', gain: 0.42, drive: 7, curve: 'asym', delayS: 0.04 });
+      // 黒雷版上昇アルペジオ(暗い和声で轟く)
+      const freqs = [220, 277, 330, 440];
+      for (let i = 0; i < freqs.length; i += 1) {
+        this.tone({
+          freq: freqs[i]!,
+          endFreq: freqs[i]! * 0.70,
+          durationS: 0.22 - i * 0.02,
+          type: 'sawtooth',
+          gain: 0.12 - i * 0.015,
+          drive: 3,
+          delayS: 0.06 + i * 0.045,
+          bus: this.uiBus ?? undefined,
+        });
+      }
+    }
+  }
+
+  // 黒雷帝常時遠雷: 距離減衰した遠雷ランブル(pan=方位、0=中央)
+  rumbleDistantThunder(pan: number): void {
+    if (!this.ctx || !this.sfxBus) return;
+    if (this.liveVoices() > 225) return;
+    const g = 0.10 + this.rng() * 0.06;
+    // 落雷クラック(遠距離=高域減衰)
+    this.noiseBurst({ durationS: 0.022, filterHz: 2800, filterType: 'bandpass', q: 2, gain: g * 0.50, pan });
+    // 低域ランブル
+    this.noiseBurst({ durationS: 0.8, filterHz: 120, filterType: 'lowpass', gain: g * 0.80, pan, attackS: 0.05, wet: 0.3 });
+    this.tone({ freq: 50, endFreq: 20, durationS: 0.7, type: 'sine', gain: g * 0.70, drive: 6, curve: 'asym', delayS: 0.03 });
+  }
+
+  // 黒雷帝の遠雷アンビエンス開始(3-7s 間欠スケジューラ。trial=true なら即時1発再生)
+  startKokuraiThunder(): void {
+    if (this._kokuraiThunderActive) return;
+    this._kokuraiThunderActive = true;
+    this._scheduleKokuraiThunder();
+  }
+
+  // 黒雷帝の遠雷アンビエンス停止
+  stopKokuraiThunder(): void {
+    this._kokuraiThunderActive = false;
+    if (this._kokuraiThunderTimer) {
+      clearTimeout(this._kokuraiThunderTimer);
+      this._kokuraiThunderTimer = 0;
+    }
+  }
+
+  // ポーズ時タイマー一時停止(フラグはそのまま)
+  pauseKokuraiThunder(): void {
+    if (this._kokuraiThunderTimer) {
+      clearTimeout(this._kokuraiThunderTimer);
+      this._kokuraiThunderTimer = 0;
+    }
+  }
+
+  // ポーズ解除後タイマー再開
+  resumeKokuraiThunder(): void {
+    if (this._kokuraiThunderActive && !this._kokuraiThunderTimer) {
+      this._scheduleKokuraiThunder();
+    }
+  }
+
+  private _scheduleKokuraiThunder(): void {
+    if (!this._kokuraiThunderActive || typeof window === 'undefined') return;
+    const delayMs = (3 + this.rng() * 4) * 1000; // 3-7s
+    this._kokuraiThunderTimer = window.setTimeout(() => {
+      this._kokuraiThunderTimer = 0;
+      this._fireKokuraiThunderTick();
+      this._scheduleKokuraiThunder();
+    }, delayMs);
+  }
+
+  private _fireKokuraiThunderTick(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    if (this.liveVoices() > 225) return;
+    const pan = (this.rng() * 2 - 1) * 0.75;
+    this.noiseBurst({ durationS: 0.6, filterHz: 180, filterType: 'lowpass', gain: 0.06, pan, attackS: 0.08, wet: 0.25 });
+    this.tone({ freq: 52, endFreq: 22, durationS: 0.55, type: 'sine', gain: 0.05, drive: 3, curve: 'asym', delayS: 0.02 });
+  }
+
+  // ── R33 黒雷帝 ambient pack ここまで ──────────────────────────────────────
+
   // 溜め攻撃チック: charge01(0..1)に応じて上昇するパルス
   chargeAttackTick(charge01: number): void {
     if (this.liveVoices() > 225) return;
@@ -2934,6 +3054,31 @@ export class SoundKit {
     this.ambience?.setPaused(paused);
   }
 
+  pauseCombatLoops(paused: boolean): void {
+    if (this._lightningHumGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      this._lightningHumGain.gain.cancelScheduledValues(now);
+      this._lightningHumGain.gain.setValueAtTime(paused ? 0 : 0.04, now);
+    }
+    if (paused) {
+      if (this.distantBattleTimer) {
+        clearTimeout(this.distantBattleTimer);
+        this.distantBattleTimer = 0;
+      }
+      // 黒雷帝遠雷タイマーをポーズ時に一時停止(フラグは維持)
+      if (this._kokuraiThunderTimer) {
+        clearTimeout(this._kokuraiThunderTimer);
+        this._kokuraiThunderTimer = 0;
+      }
+    } else if (this.distantBattleActive && !this.distantBattleTimer) {
+      this.scheduleDistantBoom();
+    }
+    // 黒雷帝遠雷: ポーズ解除後にスケジューラ再開(フラグがまだ立っている場合)
+    if (!paused && this._kokuraiThunderActive && !this._kokuraiThunderTimer) {
+      this._scheduleKokuraiThunder();
+    }
+  }
+
   // ── 遠方戦場アンビエンス(BF5式 distant battle) ─────────────────────────
   // 4-12sのランダム間欠で砲声/爆発を合成: 低域ランブル(40-80Hz)+サブトーン+確率的クラック。
   // 音量控えめ(没入の背景=戦場感の底上げ)。対戦/ゾンビモード中のみ流す想定。
@@ -3049,6 +3194,8 @@ export class SoundKit {
     }
     // 雷帝帯電ハムを確実に停止
     this.setLightningHum(false);
+    // 黒雷帝遠雷スケジューラを確実に停止
+    this.stopKokuraiThunder();
     // 長尺ボイス(耳鳴り/フラッシュリング等)を止め、読み上げも破棄する
     for (const v of this.longVoices) {
       try {

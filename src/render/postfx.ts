@@ -39,6 +39,8 @@ const POSTFX_SHADER = {
     uDarkAura: { value: 0 },
     // R30 制圧ビジュアル: 周辺暗縁/脱色(0=no-op)
     uSuppress: { value: 0 },
+    // R33 黒雷帝ビネット: 発動黒転スパイク(高値→減衰) + 常時紫脈動(低値)。uDarkAuraより明紫・速い
+    uKokurai: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -50,7 +52,7 @@ const POSTFX_SHADER = {
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
     uniform float uTime, uVigInner, uVigOuter, uGrain, uAberration, uDesat, uHitPulse;
-    uniform float uHealth, uKillSurge, uMotion, uGrade, uDarkAura, uSuppress;
+    uniform float uHealth, uKillSurge, uMotion, uGrade, uDarkAura, uSuppress, uKokurai;
     uniform vec2 uHitDir;
     uniform vec3 uHitTint;
     varying vec2 vUv;
@@ -126,6 +128,13 @@ const POSTFX_SHADER = {
         float suppLum = dot(col, vec3(0.2126, 0.7152, 0.0722));
         col = mix(col, vec3(suppLum), suppEdge * uSuppress * 0.35);
       }
+      // R33 黒雷帝ビネット: 発動時は外縁を大きく絞る(黒転)、idle時は微かな紫呼吸
+      // uMotion=0(省モーション)でも黒転スパイク自体は有効(呼吸のみ静止)
+      if (uKokurai > 0.0) {
+        float kEdge = smoothstep(0.12, 1.05, r) * uKokurai;
+        col *= 1.0 - kEdge * 0.55;
+        col = mix(col, col * vec3(0.06, 0.01, 0.20), kEdge * 0.38);
+      }
       // フィルムグレイン(大係数のhashで擬似高周波、uResolution不要)
       col += (hash(vUv * 1873.0 + uTime) - 0.5) * uGrain;
       gl_FragColor = vec4(max(col, 0.0), 1.0);
@@ -183,5 +192,10 @@ export class PostFXPass extends ShaderPass {
   // R30 制圧エンベロープ(0=no-op, 1=max。近弾連続時のみ > 0)
   setSuppress(v: number): void {
     this.uniforms['uSuppress']!.value = v;
+  }
+
+  // R33 黒雷帝ビネット封筒(0=no-op。発動スパイク時は0.85、idle呼吸は0.07-0.10)
+  setKokurai(v: number): void {
+    this.uniforms['uKokurai']!.value = v;
   }
 }

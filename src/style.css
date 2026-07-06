@@ -10255,31 +10255,59 @@ body.killcam-active .hud-death {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 12px;
+  padding: 3px 14px;
   border-radius: 2px;
-  background: rgba(4, 0, 12, 0.88);
-  border: 1px solid rgba(140, 0, 220, 0.6);
-  box-shadow: 0 0 16px rgba(120, 0, 240, 0.45), inset 0 0 8px rgba(30, 0, 60, 0.5);
+  background: rgba(4, 0, 12, 0.92);
+  border: 1px solid rgba(180, 0, 255, 0.75);
+  /* 常時微発光: 外縁パルス + インナーグロー */
+  box-shadow:
+    0 0 10px rgba(160, 0, 255, 0.55),
+    0 0 24px rgba(120, 0, 240, 0.35),
+    inset 0 0 10px rgba(60, 0, 100, 0.7);
+  animation: kokuraitei-container-pulse 1.8s ease-in-out infinite;
   pointer-events: none;
   z-index: 119;
+}
+@keyframes kokuraitei-container-pulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(160,0,255,0.55), 0 0 24px rgba(120,0,240,0.35), inset 0 0 10px rgba(60,0,100,0.7); }
+  50%       { box-shadow: 0 0 18px rgba(200,0,255,0.80), 0 0 36px rgba(160,0,255,0.55), inset 0 0 14px rgba(80,0,140,0.8); }
 }
 .hud-kokuraitei-badge {
   font-family: var(--font-ui, 'Rajdhani', 'Share Tech Mono', monospace);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.14em;
-  color: #bb44ff;
-  text-shadow: 0 0 8px rgba(150, 0, 255, 0.9);
+  color: #cc66ff;
+  text-shadow:
+    0 0 6px rgba(180, 0, 255, 1.0),
+    0 0 14px rgba(140, 0, 255, 0.8),
+    0 0 28px rgba(100, 0, 200, 0.5);
   text-transform: uppercase;
-  animation: kokuraitei-flicker 2.4s infinite;
+  animation: kokuraitei-flicker 2.4s infinite, kokuraitei-arc-shift 0.9s steps(1) infinite;
+}
+/* 電弧: ランダムな方向ずれを steps(1) で瞬間切り替え */
+@keyframes kokuraitei-arc-shift {
+  0%   { letter-spacing: 0.14em; }
+  11%  { letter-spacing: 0.12em; }
+  22%  { letter-spacing: 0.16em; }
+  33%  { letter-spacing: 0.14em; }
+  44%  { letter-spacing: 0.13em; }
+  55%  { letter-spacing: 0.15em; }
+  66%  { letter-spacing: 0.14em; }
+  77%  { letter-spacing: 0.16em; }
+  88%  { letter-spacing: 0.12em; }
+  100% { letter-spacing: 0.14em; }
 }
 @keyframes kokuraitei-flicker {
   0%, 100% { opacity: 1; }
   48% { opacity: 1; }
-  50% { opacity: 0.6; text-shadow: 0 0 14px rgba(150, 0, 255, 1.0); }
+  50% { opacity: 0.5; text-shadow: 0 0 20px rgba(200, 0, 255, 1.0), 0 0 40px rgba(150, 0, 255, 0.9); }
   52% { opacity: 1; }
+  74% { opacity: 1; }
+  75% { opacity: 0.8; }
+  76% { opacity: 1; }
   88% { opacity: 1; }
-  90% { opacity: 0.7; }
+  90% { opacity: 0.6; text-shadow: 0 0 16px rgba(180, 0, 255, 1.0); }
   92% { opacity: 1; }
 }
 

@@ -30,6 +30,7 @@ export class Effects {
   private debris: Timed<THREE.Group>[] = [];                 // 破壊可能プロップの破片群
   private geppaRings: Timed<THREE.Group>[] = [];             // 月花雷轟/雷帝衝撃リング
   private gokuraiColumns: Timed<THREE.Group>[] = [];         // 雷帝落雷柱
+  private kokuraiTrails: Timed<THREE.Group>[] = [];          // 黒雷帝移動トレイル(上限6)
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -872,14 +873,20 @@ export class Effects {
     this.scene.add(group);
     this.geppaRings.push({ obj: group, life, maxLife: life });
 
-    if (reduceMotion) return;
-    const colCount = 5;
+    const colCount = reduceMotion ? 0 : 8; // rm=柱ゼロ(旧契約維持: 光過敏配慮)
     for (let i = 0; i < colCount; i++) {
       const angle = (i / colCount) * Math.PI * 2 + Math.random() * 0.4;
       const dist = radiusM * (0.35 + Math.random() * 0.55);
       this._spawnLightningColumn(
         new THREE.Vector3(center.x + Math.cos(angle) * dist, center.y, center.z + Math.sin(angle) * dist),
         5 + Math.random() * 3, 0.4 + Math.random() * 0.25,
+      );
+    }
+    if (!reduceMotion) {
+      this.buildBranchBolt(
+        new THREE.Vector3(center.x, center.y + radiusM * 1.5, center.z),
+        center.clone(),
+        3, false, 0.2,
       );
     }
   }
@@ -911,14 +918,20 @@ export class Effects {
     this.scene.add(group);
     this.geppaRings.push({ obj: group, life, maxLife: life });
 
-    if (reduceMotion) return;
-    const colCount = 6;
+    const colCount = reduceMotion ? 0 : 10; // rm=柱ゼロ
     for (let i = 0; i < colCount; i++) {
       const angle = (i / colCount) * Math.PI * 2 + Math.random() * 0.3;
       const dist = radiusM * (0.3 + Math.random() * 0.6);
       this._spawnLightningColumn(
         new THREE.Vector3(center.x + Math.cos(angle) * dist, center.y, center.z + Math.sin(angle) * dist),
-        5 + Math.random() * 4, 0.4 + Math.random() * 0.3,
+        5 + Math.random() * 4, 0.4 + Math.random() * 0.3, true,
+      );
+    }
+    if (!reduceMotion) {
+      this.buildBranchBolt(
+        new THREE.Vector3(center.x, center.y + radiusM * 1.5, center.z),
+        center.clone(),
+        3, true, 0.2,
       );
     }
   }
@@ -952,9 +965,7 @@ export class Effects {
       this.geppaRings.push({ obj: group, life: Math.max(0.3, lf), maxLife: Math.max(0.3, lf) });
     }
 
-    if (reduceMotion) return;
-
-    const colCount = 20;
+    const colCount = reduceMotion ? 0 : 28; // rm=柱ゼロ
     for (let i = 0; i < colCount; i++) {
       const angle = (i / colCount) * Math.PI * 2 + Math.random() * 0.35;
       const d = maxRadius * (0.2 + Math.random() * 0.7);
@@ -1011,45 +1022,276 @@ export class Effects {
     this.scene.add(flashGroup);
     this.geppaRings.push({ obj: flashGroup, life: 1.5, maxLife: 1.5 });
 
-    if (reduceMotion) return;
-
-    const colCount = 24;
+    const colCount = reduceMotion ? 0 : 32; // rm=柱ゼロ
     for (let i = 0; i < colCount; i++) {
       const angle = (i / colCount) * Math.PI * 2 + Math.random() * 0.2;
       const d = maxR * (0.15 + Math.random() * 0.8);
       this._spawnLightningColumn(
         new THREE.Vector3(center.x + Math.cos(angle) * d, center.y, center.z + Math.sin(angle) * d),
-        5 + Math.random() * 10, 0.3 + Math.random() * 0.8,
+        5 + Math.random() * 10, 0.3 + Math.random() * 0.8, true,
       );
     }
   }
 
-  private _spawnLightningColumn(pos: THREE.Vector3, height: number, life: number): void {
+  buildBranchBolt(
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    branches: number,
+    isKokurai: boolean,
+    life: number,
+  ): void {
     const group = new THREE.Group();
-    group.position.copy(pos);
+    group.position.copy(from);
+    const dir = to.clone().sub(from);
+    const len = dir.length();
+    const segs = 6 + Math.floor(Math.random() * 4);
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const jitter = len * 0.18 * (t > 0 && t < 1 ? 1 : 0);
+      pts.push(new THREE.Vector3(
+        dir.x * t + (Math.random() - 0.5) * jitter,
+        dir.y * t + (Math.random() - 0.5) * jitter,
+        dir.z * t + (Math.random() - 0.5) * jitter,
+      ));
+    }
 
-    const coreGeo = new THREE.BoxGeometry(0.05, height, 0.05);
-    const coreMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: 0.9,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    });
-    const core = new THREE.Mesh(coreGeo, coreMat);
-    core.position.y = height / 2;
-    core.userData.baseOpacity = 0.9;
-    group.add(core);
+    const addLine = (points: THREE.Vector3[], color: number, opacity: number): void => {
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineBasicMaterial({
+        color, transparent: true, opacity,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const line = new THREE.Line(geo, mat);
+      line.userData.baseOpacity = opacity;
+      group.add(line);
+    };
 
-    const glowGeo = new THREE.BoxGeometry(0.2, height * 0.9, 0.2);
-    const glowMat = new THREE.MeshBasicMaterial({
-      color: 0x55aaff, transparent: true, opacity: 0.45,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    });
-    const glow = new THREE.Mesh(glowGeo, glowMat);
-    glow.position.y = height * 0.45;
-    glow.userData.baseOpacity = 0.45;
-    group.add(glow);
+    const coreColor = isKokurai ? 0x220033 : 0xffffff;
+    const haloColor = isKokurai ? 0x8800ff : 0x88ddff;
+    addLine(pts, coreColor, isKokurai ? 0.70 : 0.95);
+    addLine(pts, haloColor, isKokurai ? 0.55 : 0.60);
+
+    const branchCount = Math.min(branches, 2 + Math.floor(Math.random() * 3));
+    for (let b = 0; b < branchCount; b++) {
+      const startT = 0.2 + Math.random() * 0.5;
+      const startPt = (pts[Math.floor(startT * segs)] ?? pts[0]!).clone();
+      const endPt = startPt.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * len * 0.5,
+        -len * (0.15 + Math.random() * 0.25),
+        (Math.random() - 0.5) * len * 0.5,
+      ));
+      const bOpacity = 0.35 + Math.random() * 0.2;
+      const bGeo = new THREE.BufferGeometry().setFromPoints([startPt, endPt]);
+      const bMat = new THREE.LineBasicMaterial({
+        color: haloColor, transparent: true, opacity: bOpacity,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const bLine = new THREE.Line(bGeo, bMat);
+      bLine.userData.baseOpacity = bOpacity;
+      group.add(bLine);
+    }
 
     this.scene.add(group);
-    this.gokuraiColumns.push({ obj: group, life, maxLife: life });
+    this.pushGokuraiColumn({ obj: group, life, maxLife: life });
+  }
+
+  // 黒雷帝移動トレイル: スプリント/スライド中に足元へ這う小分岐ボルト(上限6本プール)
+  spawnKokuraiTrail(pos: THREE.Vector3, isSliding: boolean): void {
+    const MAX_KOKURAI_TRAILS = 6;
+    const count = isSliding ? 2 : 1;
+    for (let c = 0; c < count; c++) {
+      // 水平方向へランダムな短いブランチボルト(地面に這う電弧)
+      const angle = Math.random() * Math.PI * 2;
+      const len = 1.0 + Math.random() * 0.8;
+      const to = new THREE.Vector3(
+        pos.x + Math.cos(angle) * len,
+        pos.y - 0.08,  // わずかに地面方向へ傾ける
+        pos.z + Math.sin(angle) * len,
+      );
+      const life = 0.3 + Math.random() * 0.2;
+      this.buildBranchBolt(pos, to, 2, true, life);
+      // buildBranchBolt は gokuraiColumns に積む。kokuraiTrails は別管理なので
+      // ここは gokuraiColumns に入った最後のエントリを直接管理する必要はない。
+      // 代わりにスライド時の「焦げ小リング」専用エントリをkokuraiTrailsで管理する
+    }
+    if (isSliding) {
+      // 地面焦げ小リング: impactRingより小さく短命
+      const geo = new THREE.RingGeometry(0.5, 0.62, 24);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x5500aa,
+        transparent: true,
+        opacity: 0.7,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const ring = new THREE.Mesh(geo, mat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.copy(pos);
+      ring.scale.setScalar(0.2);
+      ring.userData.targetScale = 1.2;
+      ring.userData.baseOpacity = 0.7;
+      const group = new THREE.Group();
+      group.add(ring);
+      this.scene.add(group);
+      if (this.kokuraiTrails.length >= MAX_KOKURAI_TRAILS) {
+        const oldest = this.kokuraiTrails.shift();
+        if (oldest) this.disposeObject(oldest.obj);
+      }
+      this.kokuraiTrails.push({ obj: group, life: 0.25, maxLife: 0.25 });
+    }
+  }
+
+  // 黒雷帝ブリンク消失点エフェクト: 上向き小ボルト2本 + 小フラッシュ
+  kokuraiBlinkDepart(pos: THREE.Vector3): void {
+    for (let i = 0; i < 2; i++) {
+      const a = (i / 2) * Math.PI * 2 + Math.random() * 0.6;
+      const top = new THREE.Vector3(
+        pos.x + Math.cos(a) * 0.4,
+        pos.y + 3.0 + Math.random(),
+        pos.z + Math.sin(a) * 0.4,
+      );
+      this.buildBranchBolt(top, pos.clone().add(new THREE.Vector3(Math.cos(a) * 0.1, 0, Math.sin(a) * 0.1)), 1, true, 0.18);
+    }
+    const flash = new THREE.Mesh(
+      this.blastGeometry,
+      new THREE.MeshBasicMaterial({
+        color: 0x9944ff,
+        transparent: true,
+        opacity: 0.50,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    flash.position.copy(pos);
+    flash.scale.setScalar(0.3);
+    flash.userData.targetScale = 1.8;
+    this.scene.add(flash);
+    this.blasts.push({ obj: flash, life: 0.15, maxLife: 0.15 });
+  }
+
+  // 黒雷帝ブリンク出現点エフェクト: 短い落雷柱 + 小衝撃リング
+  kokuraiBlinkArrive(pos: THREE.Vector3): void {
+    this._spawnLightningColumn(pos, 6, 0.18, true);
+    this.impactRing(pos, 0x5500aa);
+  }
+
+  // 黒雷帝ブリンク残光ライン: 消失点から出現点への細い加算ライン(0.1s)
+  kokuraiBlinkResidual(from: THREE.Vector3, to: THREE.Vector3): void {
+    const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+    const mat = new THREE.LineBasicMaterial({
+      color: 0x8822ff,
+      transparent: true,
+      opacity: 0.45,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const line = new THREE.Line(geo, mat);
+    line.userData.baseOpacity = 0.45;
+    const group = new THREE.Group();
+    group.add(line);
+    this.scene.add(group);
+    this.pushGokuraiColumn({ obj: group, life: 0.10, maxLife: 0.10 });
+  }
+
+  // 黒雷帝の遠方落雷公開ラッパー(match.ts から呼べるよう private _spawnLightningColumn を公開)
+  spawnKokuraiDistantColumn(pos: THREE.Vector3, height: number, life: number): void {
+    this._spawnLightningColumn(pos, height, life, true);
+  }
+
+  // 黒雷帝キル演出: 対象位置に黒い雷柱1本+小フラッシュ(_spawnLightningColumnの黒雷公開版)
+  kokuraiteiKillColumn(pos: THREE.Vector3): void {
+    this._spawnLightningColumn(pos, 14, 0.2, true);
+    const flash = new THREE.Mesh(
+      this.blastGeometry,
+      new THREE.MeshBasicMaterial({
+        color: 0xbb88ff,
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    flash.position.copy(pos);
+    flash.scale.setScalar(0.6);
+    flash.userData.targetScale = 2.2;
+    this.scene.add(flash);
+    this.blasts.push({ obj: flash, life: 0.22, maxLife: 0.22 });
+  }
+
+  // 黒雷帝降臨フラッシュ: 自身を中心に紫電リング+周囲へ黒雷ボルト3本(タイムスロー代替の見得)
+  kokuraiteiActivateFlash(center: THREE.Vector3, reduceMotion = false): void {
+    this.shockwaveRing(center, 9, 0x8844ff);
+    const bolts = reduceMotion ? 1 : 3;
+    for (let i = 0; i < bolts; i += 1) {
+      const a = (i / bolts) * Math.PI * 2 + Math.random() * 0.8;
+      const ground = new THREE.Vector3(
+        center.x + Math.cos(a) * (2.5 + Math.random() * 2),
+        center.y,
+        center.z + Math.sin(a) * (2.5 + Math.random() * 2),
+      );
+      this._spawnLightningColumn(ground, 12, 0.22, true);
+    }
+  }
+
+  // V33: 分岐雷の総数上限。最悪時(極雷+月花+トレイル+多段落雷の重なり)のDC/GC暴走を防ぐ。
+  private pushGokuraiColumn(entry: { obj: THREE.Group; life: number; maxLife: number }): void {
+    if (this.gokuraiColumns.length >= 96) {
+      const oldest = this.gokuraiColumns.shift();
+      if (oldest) this.disposeObject(oldest.obj);
+    }
+    this.gokuraiColumns.push(entry);
+  }
+
+  private _spawnLightningColumn(pos: THREE.Vector3, height: number, life: number, isKokurai = false): void {
+    const top = new THREE.Vector3(pos.x, pos.y + height, pos.z);
+    this.buildBranchBolt(top, pos, 3, isKokurai, life);
+
+    if (Math.random() > 0.5) {
+      const off = new THREE.Vector3((Math.random() - 0.5) * 1.2, 0, (Math.random() - 0.5) * 1.2);
+      this.buildBranchBolt(
+        top.clone().add(off),
+        pos.clone().add(new THREE.Vector3(off.x * 0.3, 0, off.z * 0.3)),
+        2, isKokurai, life * 0.7,
+      );
+    }
+
+    this.impactRing(pos, isKokurai ? 0x5500aa : 0x44aaff);
+
+    const flashMat = new THREE.MeshBasicMaterial({
+      color: isKokurai ? 0x8800ff : 0xaaddff,
+      transparent: true, opacity: 0.55,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const flash = new THREE.Mesh(this.blastGeometry, flashMat);
+    flash.position.copy(pos);
+    flash.scale.setScalar(0.25 + Math.random() * 0.15);
+    this.scene.add(flash);
+    this.blasts.push({ obj: flash, life: 0.12, maxLife: 0.12 });
+
+    const sparkGroup = new THREE.Group();
+    const sparkCount = 4 + Math.floor(Math.random() * 4);
+    for (let s = 0; s < sparkCount; s++) {
+      const sm = new THREE.Mesh(this.sparkGeometry, new THREE.MeshBasicMaterial({
+        color: isKokurai ? 0xaa00ff : 0x88ccff,
+        transparent: true, opacity: 0.8,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      sm.position.copy(pos).add(new THREE.Vector3(
+        (Math.random() - 0.5) * 0.4,
+        Math.random() * 0.3,
+        (Math.random() - 0.5) * 0.4,
+      ));
+      sm.userData.vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 3,
+        1 + Math.random() * 2,
+        (Math.random() - 0.5) * 3,
+      );
+      sparkGroup.add(sm);
+    }
+    this.scene.add(sparkGroup);
+    this.sparks.push({ obj: sparkGroup, life: 0.4 + Math.random() * 0.2, maxLife: 0.6 });
   }
 
   // 真月: ステージ全域へ広がる暗黒リング + 一瞬の白閃スラッシュ + 黒煙ブロブ
@@ -1341,6 +1583,16 @@ export class Effects {
           ((mesh.userData.baseOpacity as number) ?? 0.7) * ratio * flicker;
       }
     });
+    // 黒雷帝移動トレイル(焦げ小リング): 拡大しながらフェードアウト
+    this.kokuraiTrails = this.tick(this.kokuraiTrails, dt, (group, ratio) => {
+      for (const child of group.children) {
+        const mesh = child as THREE.Mesh;
+        const target = (mesh.userData.targetScale as number) ?? 1.2;
+        mesh.scale.setScalar(Math.max(mesh.scale.x, target * (1 - ratio * ratio)));
+        (mesh.material as THREE.MeshBasicMaterial).opacity =
+          ((mesh.userData.baseOpacity as number) ?? 0.7) * ratio;
+      }
+    });
     this.flames = this.tick(this.flames, dt, (group, ratio) => {
       const t = performance.now() / 1000;
       for (const child of group.children) {
@@ -1378,7 +1630,7 @@ export class Effects {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
-    for (const list of [this.clouds, this.flames, this.sparks, this.streaks, this.debris, this.geppaRings, this.gokuraiColumns]) {
+    for (const list of [this.clouds, this.flames, this.sparks, this.streaks, this.debris, this.geppaRings, this.gokuraiColumns, this.kokuraiTrails]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
