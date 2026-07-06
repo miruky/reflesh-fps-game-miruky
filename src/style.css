@@ -70,6 +70,9 @@
   --display:
     'Bahnschrift', 'DIN Alternate', 'Avenir Next Condensed', 'Arial Narrow', 'Hiragino Sans',
     sans-serif;
+  /* UIエイリアス: アセットレス準拠。外部フォント名を直接参照する代わりにこれを使う */
+  --font-ui: var(--display);
+  --font-mono: var(--mono);
 
   /* 4pxスケール余白とチャンファー(斜め切り)3段 */
   --sp-1: 4px;
@@ -269,9 +272,8 @@ button {
   margin-bottom: 38px;
   padding: 13px 14px 13px 18px;
   border: 1px solid var(--rule-strong);
-  background: color-mix(in srgb, var(--base-2) 94%, transparent);
+  background: color-mix(in srgb, var(--base-2) 96%, transparent);
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(14px);
 }
 
 .briefing-heading {
@@ -1380,8 +1382,7 @@ tr.score-ally td {
   padding: 11px 13px 12px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-left: 2px solid var(--ember);
-  background: rgba(8, 10, 12, 0.62);
-  backdrop-filter: blur(7px);
+  background: rgba(8, 10, 12, 0.88);
 }
 
 .hud-match-chip {
@@ -1430,7 +1431,7 @@ tr.score-ally td {
 .hud-score small {
   color: rgba(255, 255, 255, 0.52);
   font-family: var(--mono);
-  font-size: 7.5px;
+  font-size: 9px;
   letter-spacing: 0.08em;
 }
 
@@ -1544,9 +1545,8 @@ tr.score-ally td {
   gap: 8px;
   font-size: 12.5px;
   border-right: 2px solid var(--ember);
-  background: rgba(8, 10, 12, 0.68);
+  background: rgba(6, 8, 10, 0.82);
   padding: 5px 10px;
-  backdrop-filter: blur(5px);
   transition: opacity 0.4s;
 }
 
@@ -1740,8 +1740,7 @@ tr.score-ally td {
   padding: 11px 13px 13px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-left: 2px solid var(--signal);
-  background: rgba(8, 10, 12, 0.62);
-  backdrop-filter: blur(7px);
+  background: rgba(8, 10, 12, 0.88);
 }
 
 .hud-vitals-heading {
@@ -1752,13 +1751,13 @@ tr.score-ally td {
   border-bottom: 1px solid rgba(255, 255, 255, 0.13);
   color: rgba(255, 255, 255, 0.62);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 9px;
   letter-spacing: 0.14em;
 }
 
 .hud-vitals-heading small {
   color: rgba(255, 255, 255, 0.4);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .hud-vitals-row {
@@ -1805,9 +1804,8 @@ tr.score-ally td {
   padding: 11px 13px 12px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-right: 2px solid var(--ember);
-  background: rgba(8, 10, 12, 0.62);
+  background: rgba(8, 10, 12, 0.88);
   text-align: right;
-  backdrop-filter: blur(7px);
 }
 
 .hud-weapon-row {
@@ -1822,7 +1820,7 @@ tr.score-ally td {
 .hud-weapon-row > span {
   color: rgba(255, 255, 255, 0.5);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 9px;
   letter-spacing: 0.13em;
 }
 
@@ -1883,9 +1881,9 @@ tr.score-ally td {
 
 .hud-grenade > span:first-child {
   margin-right: auto;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(255, 255, 255, 0.62);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 9px;
   letter-spacing: 0.12em;
 }
 
@@ -2554,7 +2552,7 @@ tr.score-ally td {
 .hud-announce {
   position: absolute;
   left: 50%;
-  top: 24%;
+  top: 26%;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
@@ -2585,7 +2583,6 @@ tr.score-ally td {
   padding: 0 12px 16px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(8, 10, 12, 0.9);
-  backdrop-filter: blur(12px);
 }
 
 .hud-scoreboard header {
@@ -3469,7 +3466,7 @@ tr.score-ally td {
    +XPイベントが上へ積み上がる(column-reverse)。最大4行・2.5sフェードはhud.tsが管理。
    右下弾薬パネル/BO2ストリーク列/メダルバナー(中央上)と重ならない座標 ── */
 .hud-xp-ribbon {
-  position: fixed;
+  position: absolute;
   right: 220px;
   bottom: 190px; /* 弾薬パネル(bottom:22+高さ~160)の上・BO2ストリーク列(right:18)の左 */
   display: flex;
@@ -3512,6 +3509,8 @@ tr.score-ally td {
   color: rgba(220, 225, 232, 0.85);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
 }
+/* F-03: BO2ストリーク非表示時(zombie/GG等)はリボンを右端へ詰める */
+#hud:has(.hud-bo2-ss[hidden]) .hud-xp-ribbon { right: 30px; }
 
 /* ── 追加HUD: キル確定リング(クロスヘア中心) ── */
 .hud-kill-ring {
@@ -3636,7 +3635,7 @@ tr.score-ally td {
 .hud-badge-stack {
   position: absolute;
   left: 50%;
-  top: 28%;
+  top: 33%;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
@@ -4787,8 +4786,6 @@ tr.score-ally td {
   border: none;
   box-shadow: none;
   background: var(--glass-heavy);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   clip-path: var(--frame-cut);
 }
 .deployment-briefing::after {
@@ -6858,17 +6855,10 @@ tr.score-ally td {
 
 /* ── ポーズ画面 ── */
 .menu-pause {
-  background: radial-gradient(120% 90% at 50% 30%, rgba(7, 9, 12, 0.5), rgba(7, 9, 12, 0.86));
-  backdrop-filter: blur(8px) saturate(0.65) brightness(0.8);
-  -webkit-backdrop-filter: blur(8px) saturate(0.65) brightness(0.8);
+  background: rgba(7, 9, 12, 0.93);
   display: grid;
   place-items: start center;
   overflow-y: auto;
-}
-@supports not (backdrop-filter: blur(8px)) {
-  .menu-pause {
-    background: rgba(7, 9, 12, 0.93);
-  }
 }
 .menu-pause::before {
   content: '';
@@ -7062,11 +7052,9 @@ tr.score-ally td {
 /* ══════════════════════════════════════════════════════════════
    8. リザルト+ミッションリザルト: BO2式スコアボードと点火の瞬間
    ══════════════════════════════════════════════════════════════ */
-/* 暗幕: 暖色黒(#080705)→寒色voidへ統一(major #33)。blurは暗幕1枚のみ */
+/* 暗幕: 暖色黒(#080705)→寒色voidへ統一(major #33)。backdrop-filter全廃(白飛び鉄則) */
 .menu-result {
-  background: color-mix(in srgb, var(--void) 78%, transparent);
-  backdrop-filter: blur(7px) saturate(0.8);
-  -webkit-backdrop-filter: blur(7px) saturate(0.8);
+  background: color-mix(in srgb, var(--void) 92%, transparent);
   display: grid;
   place-items: start center;
   /* position:relative を置かない: .menu-screen の position:absolute/inset:0/overflow-y:auto を
@@ -8710,7 +8698,7 @@ tr.score-ally td {
 
 /* ── H10. アナウンス帯: 両端signalティック+グラデ帯(計器情報=signal) ── */
 .hud-announce {
-  top: 22%;
+  top: 26%;
   gap: 6px;
 }
 .hud-announce-row {
@@ -9490,8 +9478,9 @@ tr.score-ally td {
 }
 
 /* ── H24. BO2 スコアストリークパネル (7スロット) ── */
+/* ui-scale補正: absolute で #hud の zoom に乗るため px値はそのまま */
 .hud-bo2-ss {
-  position: fixed;
+  position: absolute;
   right: 18px;
   bottom: 160px; /* 弾薬カウンターの上 */
   display: flex;
@@ -9564,7 +9553,7 @@ tr.score-ally td {
 }
 .hud-bo2-name {
   font-family: var(--mono);
-  font-size: 7px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.05em;
   color: var(--ink-soft);
@@ -10099,9 +10088,10 @@ body.killcam-active .hud-death {
 }
 
 /* ── ガンゲーム HUD ─────────────────────────────────────────────────────── */
+/* ui-scale補正: absolute で #hud zoom に乗る */
 .hud-gg {
-  position: fixed;
-  top: 72px;
+  position: absolute;
+  top: calc(72px / var(--ui-scale, 1));
   right: 16px;
   min-width: 140px;
   background: rgba(0, 0, 0, 0.65);
@@ -10184,12 +10174,24 @@ body.killcam-active .hud-death {
   border-color: rgba(255, 80, 60, 0.75);
 }
 
-/* ── 黒帝バッジ(黒技・シュヴァルツヴァルト) ─────────────────────────── */
-.hud-dark-emperor {
-  position: fixed;
-  top: 72px;
+/* ── 帝王状態バー: 黒帝/雷帝/黒雷帝バッジ + 溜めゲージを top:72px 起点で縦積み ── */
+/* #hud の zoom を受けた absolute で配置: ui-scale=0.75 時も HUD と比例してスケール */
+.hud-state-bar {
+  position: absolute;
+  top: calc(72px / var(--ui-scale, 1));
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 120;
+}
+
+/* ── 黒帝バッジ(黒技・シュヴァルツヴァルト) ─────────────────────────── */
+.hud-dark-emperor {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -10198,11 +10200,9 @@ body.killcam-active .hud-death {
   border: 1px solid rgba(106, 0, 176, 0.65);
   border-radius: 2px;
   box-shadow: 0 0 18px rgba(106, 0, 176, 0.45), inset 0 0 10px rgba(26, 0, 50, 0.6);
-  pointer-events: none;
-  z-index: 120;
 }
 .hud-de-badge {
-  font-family: var(--font-ui, 'Rajdhani', 'Share Tech Mono', monospace);
+  font-family: var(--font-ui);
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -10210,7 +10210,7 @@ body.killcam-active .hud-death {
   text-shadow: 0 0 10px rgba(106, 0, 176, 0.9), 0 0 22px rgba(106, 0, 176, 0.55);
 }
 .hud-de-timer {
-  font-family: var(--font-mono, 'Share Tech Mono', monospace);
+  font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -10222,10 +10222,7 @@ body.killcam-active .hud-death {
 
 /* ── 雷帝/黒雷帝バッジ (常時表示, タイマーなし) ─────────────────────────── */
 .hud-raitei {
-  position: fixed;
-  top: 112px;
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -10234,11 +10231,9 @@ body.killcam-active .hud-death {
   background: rgba(6, 14, 28, 0.82);
   border: 1px solid rgba(100, 200, 255, 0.55);
   box-shadow: 0 0 12px rgba(80, 180, 255, 0.3);
-  pointer-events: none;
-  z-index: 119;
 }
 .hud-raitei-badge {
-  font-family: var(--font-ui, 'Rajdhani', 'Share Tech Mono', monospace);
+  font-family: var(--font-ui);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -10248,10 +10243,7 @@ body.killcam-active .hud-death {
 }
 
 .hud-kokuraitei {
-  position: fixed;
-  top: 112px;
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -10265,15 +10257,13 @@ body.killcam-active .hud-death {
     0 0 24px rgba(120, 0, 240, 0.35),
     inset 0 0 10px rgba(60, 0, 100, 0.7);
   animation: kokuraitei-container-pulse 1.8s ease-in-out infinite;
-  pointer-events: none;
-  z-index: 119;
 }
 @keyframes kokuraitei-container-pulse {
   0%, 100% { box-shadow: 0 0 10px rgba(160,0,255,0.55), 0 0 24px rgba(120,0,240,0.35), inset 0 0 10px rgba(60,0,100,0.7); }
   50%       { box-shadow: 0 0 18px rgba(200,0,255,0.80), 0 0 36px rgba(160,0,255,0.55), inset 0 0 14px rgba(80,0,140,0.8); }
 }
 .hud-kokuraitei-badge {
-  font-family: var(--font-ui, 'Rajdhani', 'Share Tech Mono', monospace);
+  font-family: var(--font-ui);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -10313,10 +10303,7 @@ body.killcam-active .hud-death {
 
 /* ── 溜めゲージ (小・fists 攻撃長押し) ─────────────────────────────────── */
 .hud-charge-gauge {
-  position: fixed;
-  top: 140px;
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
   width: 72px;
   height: 5px;
   background: rgba(255, 255, 255, 0.1);
@@ -10558,8 +10545,9 @@ body.killcam-active .hud-death {
 /* ══════════════════════════════════════════════════════════════════════
    ハードポイント方向インジケータ
    ══════════════════════════════════════════════════════════════════════ */
+/* ui-scale補正: absolute で #hud zoom に乗る */
 .hud-hp-indicator {
-  position: fixed;
+  position: absolute;
   bottom: 200px;
   left: 50%;
   transform: translateX(-50%);
@@ -10642,8 +10630,8 @@ body.killcam-active .hud-death {
    キルコンファーム CONFIRMED / DENIED バナー
    ══════════════════════════════════════════════════════════════════════ */
 .hud-kc-event {
-  position: fixed;
-  top: 38%;
+  position: absolute;
+  top: 39%;
   left: 50%;
   transform: translateX(-50%) scale(0.7);
   font-family: var(--font-ui);

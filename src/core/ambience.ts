@@ -490,9 +490,9 @@ export class AmbienceEngine {
     const heat = clamp(v, 0, 1);
     if (Math.abs(heat - this.lastHeat) < 0.02) return;
     this.lastHeat = heat;
-    // 完全な静寂(heat=0)では1.15へ逆ダックし、世界の実在感を前に出す。
-    // 復帰目標は定数計算値(直前値への乗算にすると呼ばれるたびに複利で増幅が溜まる)
-    const target = heat <= 0 ? 1.15 : 1 - 0.65 * heat;
+    // 完全な静寂(heat=0)では1.05へ逆ダックし、世界の実在感を前に出す。
+    // A4-F04: 1.15→1.05(逆ダック量を抑制しアンビエント突出を防ぐ)
+    const target = heat <= 0 ? 1.05 : 1 - 0.65 * heat;
     duck.gain.setTargetAtTime(target, this.lastNowS, 0.4);
   }
 

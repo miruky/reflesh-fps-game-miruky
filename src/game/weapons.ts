@@ -165,7 +165,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 450,
     recoilPattern: risingPattern(10, 0.34, 0.08),
     recoilRecoveryPerS: 6,
-    range: 220,
+    range: 360, // A2-4: 見えてるのに届かない空白域縮小(falloff不変=遠距離は最低dmgのまま)
     tracerColor: 0xffc46b,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -199,7 +199,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 350,
     recoilPattern: risingPattern(8, 0.26, -0.12),
     recoilRecoveryPerS: 7,
-    range: 160,
+    range: 220, // A2-4: SMG 150-160→220
     tracerColor: 0xff8d6b,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -255,7 +255,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     id: 'hiiragi-sg',
     name: 'ヒイラギSG',
     slot: 'primary',
-    damage: 11,
+    damage: 13, // A2-1: 8ペレット×13=104>100で至近OSK成立(falloff/他SGは不変)
     headshotMultiplier: 1.3,
     rpm: 75,
     magazineSize: 6,
@@ -309,7 +309,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 500,
     recoilPattern: risingPattern(6, 0.5, 0.1),
     recoilRecoveryPerS: 5.5,
-    range: 260,
+    range: 310, // A2-4: BR/MK +50
     tracerColor: 0xb8ffd1,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -343,7 +343,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 700,
     recoilPattern: risingPattern(14, 0.4, -0.14),
     recoilRecoveryPerS: 5,
-    range: 240,
+    range: 360, // A2-4
     tracerColor: 0xffa3e0,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -380,7 +380,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // 高威力・高反動: 初弾から強く跳ねるドカン系AR
     recoilPattern: buildRecoil({ steps: 8, pitchDeg: 0.52, driftDeg: 0.16, decay: 0.4 }),
     recoilRecoveryPerS: 5.5,
-    range: 230,
+    range: 360, // A2-4
     tracerColor: 0xff5a3c,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -416,7 +416,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // 低反動レーザー: decay 0 で全弾ほぼ同じ小さな縦反動
     recoilPattern: buildRecoil({ steps: 10, pitchDeg: 0.22, driftDeg: 0.03, decay: 0 }),
     recoilRecoveryPerS: 6.5,
-    range: 215,
+    range: 360, // A2-4
     tracerColor: 0x5affa0,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -451,7 +451,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 450,
     recoilPattern: risingPattern(9, 0.34, 0.08),
     recoilRecoveryPerS: 6,
-    range: 230,
+    range: 360, // A2-4
     tracerColor: 0x4db8ff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -487,7 +487,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // 重AR: frontLoad で初弾ドカン、貫通力高め
     recoilPattern: buildRecoil({ steps: 8, pitchDeg: 0.46, driftDeg: 0.1, frontLoad: 0.6 }),
     recoilRecoveryPerS: 5.5,
-    range: 240,
+    range: 360, // A2-4
     tracerColor: 0xff9e2c,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -522,7 +522,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 430,
     recoilPattern: risingPattern(8, 0.36, 0.07),
     recoilRecoveryPerS: 6,
-    range: 235,
+    range: 360, // A2-4
     tracerColor: 0xb86bff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -558,7 +558,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // 超速射: ジグザグ反動で左右に暴れる
     recoilPattern: buildRecoil({ steps: 8, pitchDeg: 0.24, driftDeg: 0.05, zigzagDeg: 0.1 }),
     recoilRecoveryPerS: 7,
-    range: 150,
+    range: 220, // A2-4
     tracerColor: 0xff3d7a,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -593,7 +593,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 350,
     recoilPattern: risingPattern(8, 0.22, -0.1),
     recoilRecoveryPerS: 7,
-    range: 160,
+    range: 220, // A2-4
     tracerColor: 0x7d7dff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -629,7 +629,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 300,
     recoilPattern: buildRecoil({ steps: 8, pitchDeg: 0.26, driftDeg: -0.1 }),
     recoilRecoveryPerS: 7.5,
-    range: 150,
+    range: 220, // A2-4
     tracerColor: 0x3dffc0,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -664,7 +664,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 350,
     recoilPattern: risingPattern(8, 0.25, -0.11),
     recoilRecoveryPerS: 7,
-    range: 160,
+    range: 220, // A2-4
     tracerColor: 0xf5c542,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -699,7 +699,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 490,
     recoilPattern: risingPattern(6, 0.48, 0.1),
     recoilRecoveryPerS: 5.5,
-    range: 255,
+    range: 305, // A2-4: BR +50
     tracerColor: 0x9dff4d,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -962,7 +962,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // 重LMG: frontLoad の初弾キック + 最大級の貫通
     recoilPattern: buildRecoil({ steps: 14, pitchDeg: 0.44, driftDeg: 0.14, frontLoad: 0.4 }),
     recoilRecoveryPerS: 5,
-    range: 245,
+    range: 360, // A2-4
     tracerColor: 0xff6bd1,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -998,7 +998,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // ドラム弾幕: 横へ大きく流れる drift 反動
     recoilPattern: buildRecoil({ steps: 16, pitchDeg: 0.36, driftDeg: 0.22 }),
     recoilRecoveryPerS: 5,
-    range: 235,
+    range: 360, // A2-4
     tracerColor: 0xd16bff,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -1033,7 +1033,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 250,
     recoilPattern: risingPattern(4, 0.55, 0.0),
     recoilRecoveryPerS: 7,
-    range: 140,
+    range: 250, // A2-4: ピストル→250
     tracerColor: 0xfff0a8,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -1068,7 +1068,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     switchMs: 250,
     recoilPattern: risingPattern(4, 0.5, 0.0),
     recoilRecoveryPerS: 7,
-    range: 130,
+    range: 250, // A2-4
     tracerColor: 0x6bffe0,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -1105,7 +1105,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // 大口径の初弾キック
     recoilPattern: buildRecoil({ steps: 4, pitchDeg: 0.5, driftDeg: 0.08 }),
     recoilRecoveryPerS: 6,
-    range: 120,
+    range: 250, // A2-4
     tracerColor: 0xf4c430,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -1141,7 +1141,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     // 機関拳銃: 小刻みなジグザグ反動
     recoilPattern: buildRecoil({ steps: 8, pitchDeg: 0.24, driftDeg: 0.06, zigzagDeg: 0.08 }),
     recoilRecoveryPerS: 7,
-    range: 110,
+    range: 250, // A2-4
     tracerColor: 0xff8d3d,
     pellets: 1,
     pelletSpreadDeg: 0,
@@ -1202,7 +1202,8 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     id: 'gouka-rl',
     name: '業火RL',
     slot: 'primary',
-    damage: 120, // 直撃基準。実効ダメージは爆発半径内の距離減衰で処理
+    damage: 220, // A2-2: match.ts ROCKET_SPEC.maxDamage=220と同期。表示バー整合。
+    // ※range(400)は表示専用(実弾は弾体)。ヒットスキャン非使用のため直撃基準damageのみ有効
     headshotMultiplier: 1.0, // 爆発物のため頭部乗算は無意味
     rpm: 48, // ≈1250ms/発。重い発射感
     magazineSize: 5,

@@ -828,6 +828,8 @@ export class Match {
   private kokuraiTrailTimer = 0;    // 移動トレイル生成タイマー
   private kokuraiThunderTimer = 0;  // 遠方落雷(視覚)タイマー
   private kokuraiBlackInTimer = 0;  // 発動黒転ビネットスパイク残り秒(0.6s→0)
+  // A4-F08: 雷帝/黒雷帝中の環境雷鳴ハム(3-6s間隔)
+  private raiteiHumNextS = 0;
 
   // ── 風神・極大手裏剣(B ウルト): 発射中の手裏剣エンティティ ──
   private windShuriken: {
@@ -845,6 +847,7 @@ export class Match {
   private lightningBeastTimer = 0; // 残り演出秒(>0で発動中)
   private lightningBeastDamageTimer = 0; // 波状ダメージ(0.5s周期)
   private lightningBeastArcTimer = 0; // 落雷スポーン(0.1s周期)
+  private lightningKirinFootTimer = 0; // 麒麟足跡焦げリング(0.18s周期)
   private lightningKirinMesh: THREE.Group | null = null;
   private lightningKirinMats: THREE.Material[] = [];
   private lightningKirinGeos: THREE.BufferGeometry[] = [];
@@ -4132,7 +4135,11 @@ export class Match {
     // V32修正: エイムアシスト設定を尊重(マグネティズムと同じトグル規約)
     if (scopedShot && this.settings.aimAssist) {
       const snapCand = this.aimAssistTarget(weapon.def.range);
-      if (snapCand && snapCand.angle <= SNIPER_SNAP_CONE_DEG * DEG) {
+      // A2-3: 200m超では実効コーンを 4m横断相当の角度に上限。遠距離スナップを適切に絞る
+      const effSnapConeRad = snapCand
+        ? Math.min(SNIPER_SNAP_CONE_DEG * DEG, Math.atan(4 / snapCand.dist))
+        : SNIPER_SNAP_CONE_DEG * DEG;
+      if (snapCand && snapCand.angle <= effSnapConeRad) {
         const bp = snapCand.bot.position;
         const chest = new THREE.Vector3(bp.x, bp.y + 0.15, bp.z);
         // V32修正: 胸点が遮蔽されている(頭出しだけの敵)なら可視エイム点へフォールバック
@@ -5849,7 +5856,7 @@ export class Match {
       hitAny = true;
     }
     if (hitAny) {
-      this.sounds.kunaiHit('flesh');
+      this.sounds.punchHit(this.punchStep); // A4-F07: コンボステップ連動の打撃音
       this.haptic(70, 0.4, 0.5);
     }
 
@@ -5915,7 +5922,7 @@ export class Match {
       blinkColor,
     );
     this.sounds.kunaiSlash(2); // 突き音=ブリンクの刺突
-    this.sounds.melee();
+    this.sounds.punchHit(3); // A4-F07: ブリンクは常に最終段の重打音
     // R33 黒雷帝中: 雷転移エフェクト(消失点バースト + 出現点着地ボルト + 移動残光ライン)
     if (this.kokuraiteiMode) {
       const departPos = new THREE.Vector3(start.x, start.y - PLAYER_FEET_OFFSET + 0.05, start.z);
@@ -5927,6 +5934,13 @@ export class Match {
         new THREE.Vector3(end.x, end.y, end.z),
       );
       this.sounds.kokuraiBlinkTeleport();
+    } else if (this.raiteiMode) {
+      // 雷帝中: 氷青版の電撃(消失点小ボルト + 出現点地這い電撃)
+      const departPos = new THREE.Vector3(start.x, start.y - PLAYER_FEET_OFFSET + 0.05, start.z);
+      const arrivePos = new THREE.Vector3(end.x, end.y - PLAYER_FEET_OFFSET + 0.05, end.z);
+      this.effects.raiteiBlinkDepart(departPos);
+      this.effects.raiteiBlinkArrive(arrivePos);
+      this.sounds.raiteiBlinkTeleport();
     }
     this.addShake(0.12);
     this.haptic(90, 0.5, 0.6);
@@ -6010,6 +6024,7 @@ export class Match {
     const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
     this.effects.explosion(ground, SLAM_RADIUS * 0.6);
     this.effects.deathBurst(ground, this.colors.ally);
+    this.effects.overdriveActivateAura(ground);
     const { pan, distance } = this.panAndDistance(center);
     this.sounds.explosion(pan, distance);
     this.sounds.ultActivate();
@@ -6037,6 +6052,7 @@ export class Match {
     this.effects.deathBurst(ground, this.colors.ally);
     // 地を走る拡大リング+放射クラック+刃閃で「大破斬」を上積み(演出層のみ・判定不変)
     this.effects.shockwaveRing(ground, NINJA_ULT_RADIUS, this.colors.ally);
+    if (!this.settings.reduceMotion) this.effects.fissureGlow(ground, NINJA_ULT_RADIUS);
     const { pan, distance } = this.panAndDistance(center);
     this.sounds.explosion(pan, distance);
     this.sounds.groundPound();
@@ -6146,7 +6162,7 @@ export class Match {
     s.mesh.position.copy(s.pos);
     s.mesh.rotation.x += dt * 18; // 高速スピン
 
-    // 風の螺旋トレイル(0.06s周期の短命トレーサー)
+    // 風の螺旋トレイル(0.06s周期の短命トレーサー) + モーションブレード残像
     s.trailTimer += dt;
     if (s.trailTimer > 0.06) {
       s.trailTimer = 0;
@@ -6159,6 +6175,7 @@ export class Match {
         s.pos.clone().sub(off),
         this.activeWeapon.def.tracerColor,
       );
+      this.effects.shurikenMotionBlade(s.pos.clone(), s.dir.clone(), this.activeWeapon.def.tracerColor);
     }
 
     // 経路ヒット(貫通・1体1回)。水平3m筒+高さ±2.5mの寛容判定
@@ -6197,6 +6214,7 @@ export class Match {
     this.lightningBeastTimer = 3.0;
     this.lightningBeastDamageTimer = 0;
     this.lightningBeastArcTimer = 0;
+    this.lightningKirinFootTimer = 0;
 
     // 雷の麒麟: ワイヤーフレーム加算Boxで組む発光四足獣(胴+首頭+双角+4脚+尾)
     const kirin = new THREE.Group();
@@ -6283,8 +6301,9 @@ export class Match {
     const center = this.player.position;
     const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
 
-    // 発動演出: 一瞬の暗転 + 暗黒ノヴァ + 強シェイク(reduceMotionで暗転を減衰)
+    // 発動演出: 一瞬の暗転 + 暗黒ノヴァ + 暗黒逆流 + 強シェイク
     this.effects.darkNova(ground, 14, this.settings.reduceMotion ? 0.5 : 1);
+    this.effects.schwarzwaldAbsorb(ground, this.settings.reduceMotion);
     this.sounds.schwarzwald();
     this.addShake(this.settings.reduceMotion ? 0.35 : 1.1);
     this.haptic(400, 1.0, 1.0);
@@ -6342,9 +6361,9 @@ export class Match {
     this.kokuraiBlackInTimer = 0.6;
     const center = this.player.position;
     const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
-    // ③ 発動演出: 暗黒ノヴァ + 超強シェイク
-    // ※ タイムスロー/黒白反転フラッシュは新エフェクトAPIが必要(別担当へ依頼)
+    // ③ 発動演出: 暗黒ノヴァ + 暗黒逆流 + 超強シェイク
     this.effects.darkNova(ground, 14, this.settings.reduceMotion ? 0.5 : 1);
+    this.effects.schwarzwaldAbsorb(ground, this.settings.reduceMotion);
     this.sounds.schwarzwald();
     this.sounds.kokuraiActivateThunder(); // R33: 雷鳴3連
     this.addShake(this.settings.reduceMotion ? 0.6 : 1.8); // 強化: 0.4/1.2 → 0.6/1.8
@@ -6630,6 +6649,15 @@ export class Match {
 
   // R33 黒雷帝の毎フレーム演出: 移動トレイル + 遠方落雷スケジューラ
   private updateKokuraitei(dt: number): void {
+    // A4-F08: 雷帝/黒雷帝中のハム音(3-6s間隔)。kokuraitei限定ブロックの前で両モードをカバー
+    if ((this.raiteiMode || this.kokuraiteiMode) && this.player.alive) {
+      this.raiteiHumNextS -= dt;
+      if (this.raiteiHumNextS <= 0) {
+        this.raiteiHumNextS = 3 + Math.random() * 3;
+        this.sounds.raiteiHumTick();
+      }
+    }
+
     if (!this.kokuraiteiMode) return;
 
     // ① 移動トレイル: スプリント/スライド中に足元へ這う小電弧
@@ -6795,7 +6823,7 @@ export class Match {
       }
     }
 
-    // 麒麟の疾走+脚の駆動+発光フリッカー+足元への放電
+    // 麒麟の疾走+脚の駆動+発光フリッカー+足元への放電+随伴分岐雷+足跡焦げリング
     const kirin = this.lightningKirinMesh;
     if (kirin) {
       const kirinSpeed = 7; // m/s ≈ 3秒で21m駆け抜ける
@@ -6804,7 +6832,7 @@ export class Match {
       const legPhase = Math.sin(this.elapsed * 12) * 0.12;
       for (let i = 0; i < kirin.children.length; i += 1) {
         const mesh = kirin.children[i] as THREE.Mesh;
-        if (i >= 4 && i <= 7) mesh.position.y = 0.4 + legPhase * (i % 2 === 0 ? 1 : -1); // 4本脚
+        if (i >= 4 && i <= 7) mesh.position.y = 0.4 + legPhase * (i % 2 === 0 ? 1 : -1);
         (mesh.material as THREE.MeshBasicMaterial).opacity = 0.7 + Math.random() * 0.3;
       }
       if (Math.random() < 0.3) {
@@ -6812,6 +6840,40 @@ export class Match {
           this.lightningKirinPos.clone().add(new THREE.Vector3(0, 2, 0)),
           this.lightningKirinPos.clone(),
           0xffffff,
+        );
+      }
+      // 随伴分岐雷(buildBranchBolt 側方 2 本)
+      if (!this.settings.reduceMotion && Math.random() < 0.25) {
+        const sideA = Math.random() * Math.PI * 2;
+        const sideFrom = this.lightningKirinPos.clone().add(new THREE.Vector3(0, 4, 0));
+        const sideTo = this.lightningKirinPos.clone().add(
+          new THREE.Vector3(Math.cos(sideA) * 3, 0, Math.sin(sideA) * 3),
+        );
+        this.effects.buildBranchBolt(sideFrom, sideTo, 2, false, 0.12);
+      }
+      // 足跡焦げリング(0.18s周期)
+      this.lightningKirinFootTimer += dt;
+      if (!this.settings.reduceMotion && this.lightningKirinFootTimer >= 0.18) {
+        this.lightningKirinFootTimer = 0;
+        const footPos = this.lightningKirinPos.clone();
+        footPos.y -= PLAYER_FEET_OFFSET;
+        this.effects.impactRing(footPos, arcColor);
+      }
+    }
+
+    // フィナーレ落雷(最後 0.4s)
+    if (!this.settings.reduceMotion && this.lightningBeastTimer < 0.4 && this.lightningBeastTimer > 0) {
+      if (Math.random() < 0.6) {
+        const fa = Math.random() * Math.PI * 2;
+        const fr = 2 + Math.random() * 5;
+        const finalPos = new THREE.Vector3(
+          center.x + Math.cos(fa) * fr,
+          center.y - PLAYER_FEET_OFFSET + 0.1,
+          center.z + Math.sin(fa) * fr,
+        );
+        this.effects.buildBranchBolt(
+          finalPos.clone().add(new THREE.Vector3(0, 8, 0)),
+          finalPos, 3, false, 0.22,
         );
       }
     }
@@ -6981,12 +7043,15 @@ export class Match {
     const stageRadius = this.config.stage.size / 2 + 8;
     const chestY = center.y + 0.4;
 
-    // ビジュアル: ステージ全域に広がる暗黒リング + スラッシュフラッシュ
+    // ビジュアル: ステージ全域に広がる暗黒リング + スラッシュフラッシュ + 空間切れ残留線
     this.effects.shingetsuWave(
       new THREE.Vector3(center.x, chestY, center.z),
       stageRadius,
       this.settings.reduceMotion,
     );
+    if (!this.settings.reduceMotion) {
+      this.effects.shingetsuSpatialCut(new THREE.Vector3(center.x, chestY, center.z), stageRadius);
+    }
 
     // 画面フラッシュ + 最大シェイク
     if (!this.settings.reduceMotion) {
@@ -7454,6 +7519,8 @@ export class Match {
       const z = THREE.MathUtils.clamp(around.z + Math.sin(ang) * rad, -bound, bound);
       const hit = this.castRay(new THREE.Vector3(x, 8, z), down, 20, null);
       const groundY = hit ? 8 - hitToi(hit) : 0;
+      // A1-F05: キャットウォーク/建物1Fヒットで上層(y>0.6)に湧くのを防ぐ
+      if (groundY > 0.6) continue;
       const p = new THREE.Vector3(x, groundY + 0.05, z);
       if (attempt < 10) {
         // フラスタム内(=プレイヤーの目前)はポップインになるので避ける
@@ -7613,13 +7680,15 @@ export class Match {
         const cursor = this.waveSpawnCursor;
         const baseSpawn = this.botSpawns[cursor % this.botSpawns.length] ?? new THREE.Vector3();
         // スポーン点数を超えたら同座標重なりを避けてリング状にずらす
+        // A1-F04: ステージ外に出ないよう ±(size/2-5) にクランプ
         const wrap = Math.floor(cursor / this.botSpawns.length);
+        const halfSize = (this.config.stage.size ?? 100) / 2 - 5;
         const spawn =
           wrap > 0
             ? new THREE.Vector3(
-                baseSpawn.x + Math.cos(cursor * 1.7) * 2.5 * wrap,
+                THREE.MathUtils.clamp(baseSpawn.x + Math.cos(cursor * 1.7) * 2.5 * wrap, -halfSize, halfSize),
                 baseSpawn.y,
-                baseSpawn.z + Math.sin(cursor * 1.7) * 2.5 * wrap,
+                THREE.MathUtils.clamp(baseSpawn.z + Math.sin(cursor * 1.7) * 2.5 * wrap, -halfSize, halfSize),
               )
             : baseSpawn;
         this.waveSpawnCursor += 1;

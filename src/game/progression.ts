@@ -411,6 +411,16 @@ export function rankNameFor(level: number): RankName {
   return { name: '新兵', tier: 0 };
 }
 
+/**
+ * 前後レベルランクのtier変化を検出するヘルパ(リザルト・昇位演出用)。
+ * tier が上がった場合は新ランクの RankName を返す。変化なしは null。
+ */
+export function levelRankUpgrade(levelBefore: LevelState, levelAfter: LevelState): RankName | null {
+  const before = rankNameFor(levelBefore.level);
+  const after = rankNameFor(levelAfter.level);
+  return after.tier > before.tier ? after : null;
+}
+
 const RATING_WIN = 25;
 const RATING_LOSS = -15;
 

@@ -305,7 +305,7 @@ describe('R12 ステージ/ムード別 BGMプロファイル', () => {
       expect(prof.bpmRange).toBeGreaterThanOrEqual(0);
       expect(prof.leadDrive).toBeGreaterThanOrEqual(0);
       expect(prof.padWet).toBeGreaterThanOrEqual(0);
-      expect(prof.padWet).toBeLessThanOrEqual(0.05); // 残響薄めの規律
+      expect(prof.padWet).toBeLessThanOrEqual(0.09); // A4-BGM: padWet上限を0.05→0.09へ更新
       expect(prof.hatBrightHz).toBeGreaterThan(0);
     }
     // Record網羅: 余計なキーが無い

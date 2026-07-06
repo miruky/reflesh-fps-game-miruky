@@ -78,8 +78,8 @@ export const STAGES: StageDef[] = [
       environmentIntensity: 0.8,
     },
     recipe: {
-      theme: '巨大コンテナ港湾倉庫群+格納庫+倉庫街',
-      buildings: ['warehouse', 'hangar', 'arena', 'warehouse'],
+      theme: '巨大コンテナ港湾倉庫群+格納庫+アリーナ+監視塔',
+      buildings: ['warehouse', 'hangar', 'arena', 'tower'],
     },
   },
   {
@@ -638,8 +638,8 @@ export const STAGES: StageDef[] = [
       bloomThreshold: 0.8,
     },
     recipe: {
-      theme: '廃工場鉄道ヤード+アリーナ型車庫+倉庫街+格納庫',
-      buildings: ['arena', 'warehouse', 'hangar', 'tower'],
+      theme: '廃工場鉄道ヤード+アリーナ型車庫+格納庫+倉庫街',
+      buildings: ['arena', 'hangar', 'warehouse', 'tower'],
     },
   },
   {
@@ -729,7 +729,7 @@ export const STAGES: StageDef[] = [
     subtitle: '西日の誘導路を貫く超長射線',
     seed: 151,
     size: 336,
-    obstacleCount: 60,
+    obstacleCount: 90,
     maxHeight: 8,
     botCount: 32,
     palette: {
@@ -1066,7 +1066,7 @@ export const STAGES: StageDef[] = [
       floor: '#2c2024',
       wall: '#241a1e',
       obstacle: '#382428',
-      accent: '#b52a3a',
+      accent: '#e83040',
       mood: 'night',
       grassKind: 'none',
       particle: 'ash',
@@ -1170,7 +1170,7 @@ export const STAGES: StageDef[] = [
       silhouette: 'none',
       groundFog: 0.5,
       lightColor: '#ffcf88',
-      lightIntensity: 0.5,
+      lightIntensity: 0.6,
       ambientIntensity: 0.38,
       fogDensity: 0.009,
       emissiveAccent: true,

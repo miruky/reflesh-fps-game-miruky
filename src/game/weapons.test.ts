@@ -303,7 +303,7 @@ describe('拡張ロスターの不変条件', () => {
 
   it('スナイパー/ランチャー以外は素ダメージ<100(ヘッドショット無しの胴即死を回避)', () => {
     for (const def of Object.values(WEAPON_DEFS)) {
-      // sniper は胴/頭OSK設計。launcher は爆発物で直撃damage=120だがhitscanを使わない
+      // sniper は胴/頭OSK設計。launcher は爆発物で直撃damage=220だがhitscanを使わない
       if (def.class === 'sniper' || def.class === 'launcher') continue;
       expect(def.damage, def.id).toBeLessThan(100);
     }

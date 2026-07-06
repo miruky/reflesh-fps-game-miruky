@@ -490,7 +490,7 @@ describe('AmbienceEngine(WebAudioモック)', () => {
     expect(internals(engine).liveNodes).toHaveLength(bedNodes);
   });
 
-  it('setHeat: ε差分ガード付きでduckGainへ反映。heat=0は1.15の逆ダック', () => {
+  it('setHeat: ε差分ガード付きでduckGainへ反映。heat=0は1.05の逆ダック', () => {
     const { engine, ctx } = makeEngine();
     engine.start(FULL_PROFILE);
     const duck = ctx.gains[1];
@@ -501,7 +501,7 @@ describe('AmbienceEngine(WebAudioモック)', () => {
     engine.setHeat(0.51); // Δ0.01 < ε0.02 → 積まない
     expect(duck?.gain.calls.length).toBe(callCount);
     engine.setHeat(0);
-    expect(duck?.gain.lastTarget()?.[0]).toBeCloseTo(1.15, 10);
+    expect(duck?.gain.lastTarget()?.[0]).toBeCloseTo(1.05, 10); // A4-F04: 1.15→1.05
   });
 
   it('setPaused: boolean変化時のみbedMixを0.25⇔1.0へ動かす', () => {

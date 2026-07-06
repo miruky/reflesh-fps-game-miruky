@@ -94,24 +94,39 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
 
   // 空色 + 薄フォグ(実ゲームの 0.3 倍程度に抑えサムネが霧で沈まない)
   scene.background = new THREE.Color(p.sky);
-  scene.fog = new THREE.FogExp2(p.fog, (p.fogDensity ?? 0.005) * 0.28);
 
   // 太陽方向(elevation/azimuth → THREE 球面座標)
   const elevation = p.elevation ?? 35;
   const azimuth = p.azimuth ?? 170;
   const sunDir = sunDirection(elevation, azimuth);
 
+  // ── 夜/ゾンビ系ステージの露出補正 ──────────────────────────────────────────
+  // ambientIntensity < 0.6 または elevation <= 16 の暗ムードはサムネ専用補正を施す。
+  // 「その場所が暗い雰囲気なのは伝わるが、構造物がはっきり見える」バランスを目指す。
+  // • fogFactor を絞る(霧で構造物が沈むのを防ぐ)
+  // • hemi/sun 強度に下限を設ける
+  // • toneMappingExposure を一時ブースト(白飛び 0.9 則 = 実ゲームではなくサムネのみ)
+  const isDark = (p.ambientIntensity ?? 0.8) < 0.6 || elevation <= 16;
+  const fogFactor = isDark ? 0.12 : 0.28;
+  scene.fog = new THREE.FogExp2(p.fog, (p.fogDensity ?? 0.005) * fogFactor);
+
+  const hemiIntensity = isDark
+    ? Math.max(0.5, (p.ambientIntensity ?? 0.8) * 1.6) * 0.65
+    : (p.ambientIntensity ?? 0.8) * 0.65;
+  const sunBaseIntensity = p.lightIntensity ?? 1.4;
+  const sunIntensity = isDark ? Math.max(0.9, sunBaseIntensity) : sunBaseIntensity;
+
   // 半球ライト(空/床の環境光)
-  const hemi = new THREE.HemisphereLight(p.sky, p.floor, (p.ambientIntensity ?? 0.8) * 0.65);
+  const hemi = new THREE.HemisphereLight(p.sky, p.floor, hemiIntensity);
   scene.add(hemi);
 
   // 指向性ライト(太陽)
-  const sun = new THREE.DirectionalLight(p.lightColor, p.lightIntensity ?? 1.4);
+  const sun = new THREE.DirectionalLight(p.lightColor, sunIntensity);
   sun.position.copy(sunDir).multiplyScalar(def.size);
   scene.add(sun);
 
   // フィルライト(太陽の逆側・強度控えめ): 影側の完全黒潰れを防ぐ
-  const fill = new THREE.DirectionalLight(p.floor, (p.lightIntensity ?? 1.4) * 0.1);
+  const fill = new THREE.DirectionalLight(p.floor, sunIntensity * 0.1);
   fill.position.copy(sunDir).multiplyScalar(-def.size).setY(def.size * 0.3);
   scene.add(fill);
 
@@ -177,7 +192,9 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
   camera.lookAt(0, def.maxHeight * 0.3, 0);
 
   // ─ レンダ ─────────────────────────────────────────────────────
-  r.toneMappingExposure = p.exposure ?? 1.0;
+  // 暗系ステージはサムネ専用 exposure ブースト(実ゲームのbloom0.9則はサムネ非適用)
+  const baseExposure = p.exposure ?? 1.0;
+  r.toneMappingExposure = isDark ? Math.min(1.8, baseExposure * 1.5) : baseExposure;
   r.render(scene, camera);
 
   // ─ dataURL 取得 ────────────────────────────────────────────────

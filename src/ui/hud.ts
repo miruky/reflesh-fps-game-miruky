@@ -159,18 +159,20 @@ export class Hud {
         </div>
       </div>
       <div class="hud-announce" data-id="announce"></div>
-      <div class="hud-dark-emperor" data-id="darkemperor" hidden>
-        <span class="hud-de-badge">黒帝</span>
-        <span class="hud-de-timer" data-id="detimer">5:00</span>
-      </div>
-      <div class="hud-raitei" data-id="raitei" hidden>
-        <span class="hud-raitei-badge">雷帝</span>
-      </div>
-      <div class="hud-kokuraitei" data-id="kokuraitei" hidden>
-        <span class="hud-kokuraitei-badge">黒雷帝</span>
-      </div>
-      <div class="hud-charge-gauge" data-id="chargegauge" hidden>
-        <div class="hud-charge-fill" data-id="chargefill"></div>
+      <div class="hud-state-bar" aria-hidden="true">
+        <div class="hud-dark-emperor" data-id="darkemperor" hidden>
+          <span class="hud-de-badge">黒帝</span>
+          <span class="hud-de-timer" data-id="detimer">5:00</span>
+        </div>
+        <div class="hud-raitei" data-id="raitei" hidden>
+          <span class="hud-raitei-badge">雷帝</span>
+        </div>
+        <div class="hud-kokuraitei" data-id="kokuraitei" hidden>
+          <span class="hud-kokuraitei-badge">黒雷帝</span>
+        </div>
+        <div class="hud-charge-gauge" data-id="chargegauge" hidden>
+          <div class="hud-charge-fill" data-id="chargefill"></div>
+        </div>
       </div>
       <div class="hud-feed" data-id="feed"></div>
       <div class="hud-crosshair" data-id="crosshair">
@@ -882,7 +884,7 @@ export class Hud {
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="7" y="14" width="10" height="6" rx="1"/><rect x="9" y="10" width="6" height="4"/><line x1="12" y1="10" x2="12" y2="4"/><line x1="12" y1="4" x2="17" y2="7"/></svg>`,
   ];
 
-  private readonly BO2_NAMES = ['RC-XD', 'UAV', 'HUNTER KILLER', 'CARE PKG', 'C-UAV', 'LIGHTNING', 'SENSOR TURRET'];
+  private readonly BO2_NAMES = ['RC-XD', 'UAV', 'HK MISSILE', 'CARE PKG', 'C-UAV', 'LIGHTNING', 'SENTRY'];
   private readonly BO2_COSTS = [325, 425, 525, 550, 600, 750, 800];
   private readonly BO2_SLOT_COUNT = 7;
 
@@ -892,6 +894,9 @@ export class Hud {
     // V31修正: ガンゲームでもストリークパネルを隠す(ストリーク無効モード)
     const ssHidden = snap.zombieRound !== undefined || snap.ggRank !== undefined;
     if (panel) panel.hidden = ssHidden;
+    // F-01: BO3縦3段パネルは BO2 7スロットと排他。どちらのモードでも非表示
+    const ssPanel = this.root.querySelector<HTMLElement>('.hud-ss-panel');
+    if (ssPanel) ssPanel.hidden = true;
     if (ssHidden) return;
 
     // 各スロットのリット状態更新
@@ -1790,10 +1795,18 @@ export class Hud {
           'stamin-up': 'STM',
           'quick-revive': 'REV',
         };
+        const PERK_ARIA: Record<string, string> = {
+          juggernog: 'ジャガーノグ: 最大HP増加',
+          'speed-cola': 'スピードコーラ: リロード速度上昇',
+          'double-tap': 'ダブルタップ: 射速2倍',
+          'stamin-up': 'スタミンアップ: 移動速度上昇',
+          'quick-revive': 'クイックリバイブ: 高速復活',
+        };
         for (const pid of snap.zombiePerks ?? []) {
           const chip = document.createElement('div');
           chip.className = 'zp-icon';
-          chip.title = pid;
+          chip.title = PERK_ARIA[pid] ?? pid;
+          chip.setAttribute('aria-label', PERK_ARIA[pid] ?? pid);
           chip.style.setProperty('--zp-color', PERK_COLORS[pid] ?? '#fff');
           const abbr = document.createElement('span');
           abbr.textContent = PERK_LABELS[pid] ?? pid.slice(0, 3).toUpperCase();
@@ -1811,7 +1824,8 @@ export class Hud {
         if (revCharges > 0) {
           const chip = document.createElement('div');
           chip.className = 'zp-icon';
-          chip.title = 'quick-revive';
+          chip.title = 'クイックリバイブ: 高速復活';
+          chip.setAttribute('aria-label', 'クイックリバイブ: 高速復活');
           chip.style.setProperty('--zp-color', '#3355ff');
           const abbr = document.createElement('span');
           abbr.textContent = 'REV';
@@ -1880,7 +1894,8 @@ export class Hud {
     const el = this.el['darkemperor'];
     if (!el) return;
     const secs = snap.darkEmperorS ?? 0;
-    const active = secs > 0;
+    // 黒雷帝が最上位: 黒雷帝発動中は黒帝バッジを隠す(黒雷帝バッジが単独表示)
+    const active = secs > 0 && !snap.kokuraiteiMode;
     el.hidden = !active;
     if (active) {
       const timerEl = this.el['detimer'];
@@ -1898,8 +1913,9 @@ export class Hud {
   private updateRaiteiHud(snap: MatchSnapshot): void {
     const el = this.el['raitei'];
     if (!el) return;
-    // 雷帝モード: タイマーなし、常時表示。黒雷帝中は黒雷帝バッジが優先なので隠す
-    el.hidden = !(snap.raiteiMode && !snap.kokuraiteiMode);
+    // バッジ優先度: 黒雷帝 > 黒帝 > 雷帝。上位モード発動中は雷帝バッジを隠す
+    const darkActive = (snap.darkEmperorS ?? 0) > 0;
+    el.hidden = !(snap.raiteiMode && !snap.kokuraiteiMode && !darkActive);
   }
 
   private updateKokuraiteiHud(snap: MatchSnapshot): void {

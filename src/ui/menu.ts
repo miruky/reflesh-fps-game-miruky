@@ -46,6 +46,7 @@ import {
   isMissionUnlocked,
   isUnlocked,
   levelFromXp,
+  levelRankUpgrade,
   rankFromRating,
   rankNameFor,
   unlockLevelOf,
@@ -302,23 +303,23 @@ function ensureCamoStyle(): void {
   style.textContent = `
 .armory-camo{margin-top:10px;border-top:1px solid rgba(255,255,255,0.08);padding-top:8px}
 .camo-head{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(220,228,240,.72);margin-bottom:6px}
-.camo-head b{color:#ffab1e;font-size:12px;letter-spacing:.06em}
+.camo-head b{color:var(--warn);font-size:12px;letter-spacing:.06em}
 .camo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:6px}
 .camo-grid--mastery{margin-top:6px;padding-top:6px;border-top:1px dashed rgba(159,208,255,.25)}
 .camo-chip{display:flex;flex-direction:column;align-items:stretch;gap:3px;padding:6px 7px;background:rgba(14,18,25,.85);border:1px solid rgba(255,255,255,.12);border-radius:4px;color:#dce4f0;cursor:pointer;text-align:left;font:inherit;min-width:0}
-.camo-chip:hover:not(:disabled){border-color:rgba(255,171,30,.65)}
-.camo-chip:focus-visible{outline:1px solid #ffab1e;outline-offset:1px}
-.camo-chip.selected{border-color:#ffab1e;background:rgba(255,171,30,.1)}
+.camo-chip:hover:not(:disabled){border-color:color-mix(in srgb,var(--warn) 65%,transparent)}
+.camo-chip:focus-visible{outline:1px solid var(--warn);outline-offset:1px}
+.camo-chip.selected{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 10%,transparent)}
 .camo-chip.locked{opacity:.55;cursor:default}
 .camo-chip.mastery{border-color:rgba(159,208,255,.4)}
-.camo-chip.mastery.selected{border-color:#ffab1e}
+.camo-chip.mastery.selected{border-color:var(--warn)}
 .camo-swatch{display:block;height:14px;border-radius:2px;border:1px solid rgba(0,0,0,.55)}
 .camo-none .camo-swatch{background:linear-gradient(135deg,#2c3340,#181b22)}
 .camo-name{font-size:11px;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .camo-sub{font-size:10px;color:rgba(220,228,240,.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .camo-bar{display:block;height:3px;background:rgba(255,255,255,.12);border-radius:2px;overflow:hidden}
-.camo-bar i{display:block;height:100%;background:#ffab1e;transform-origin:left}
-.camo-prog{color:#ffab1e;opacity:.85}
+.camo-bar i{display:block;height:100%;background:var(--warn);transform-origin:left}
+.camo-prog{color:var(--warn);opacity:.85}
 `;
   document.head.appendChild(style);
 }
@@ -670,7 +671,7 @@ export class Menu {
   private focusables(): HTMLElement[] {
     return Array.from(
       this.root.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), select, input:not([type="hidden"]), [tabindex="0"]',
+        'button:not([disabled]), select, input:not([type="hidden"]), [tabindex]:not([tabindex="-1"])',
       ),
     ).filter((el) => el.offsetParent !== null);
   }
@@ -866,7 +867,7 @@ export class Menu {
             </div>
           </div>
           <footer class="console-status" aria-hidden="true">
-            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span class="status-opr">OPR <b>LV.${this.playerLevel()} ${rankNameFor(this.playerLevel()).name}</b></span><span class="status-fill"></span><span>reFlesh // tactical sim · BUILD R13</span>
+            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span class="status-opr">OPR <b>LV.${this.playerLevel()} ${rankNameFor(this.playerLevel()).name}</b></span><span class="status-fill"></span><span>reFlesh // tactical sim · BUILD R34</span>
           </footer>
         </div>
       </div>
@@ -1368,10 +1369,14 @@ export class Menu {
       .join('');
     const level = progress.levelAfter;
     const xpRatio = level.toNext > 0 ? (level.intoLevel / level.toNext) * 100 : 100;
+    // レベルランク昇位検出(100レベルごとのtier変化を昇位演出として出す)
+    const levelRankUp = levelRankUpgrade(progress.levelBefore, progress.levelAfter);
     const levelUp =
       level.level > progress.levelBefore.level
-        ? `<p class="result-levelup">レベルアップ Lv ${progress.levelBefore.level} から Lv ${level.level} へ</p>`
-        : '';
+        ? `<p class="result-levelup">レベルアップ LV.${progress.levelBefore.level} → LV.${level.level}${levelRankUp ? ` / ${levelRankUp.name} へ昇位` : ''}</p>`
+        : levelRankUp
+          ? `<p class="result-levelup">${levelRankUp.name} へ昇位</p>`
+          : '';
     const unlockRows = progress.newUnlocks
       .map((u) => `<li>${u.kind === 'weapon' ? '武器' : 'アタッチメント'}解放: ${u.name}</li>`)
       .join('');
@@ -1382,16 +1387,17 @@ export class Menu {
     const unlocks =
       unlockRows || camoRows ? `<ul class="result-unlocks">${unlockRows}${camoRows}</ul>` : '';
     const delta = progress.ratingAfter - progress.ratingBefore;
+    // レーティング階級(SR数値)は補足として残す。主表示はレベルランク(result-level行)
     const rankNote =
       progress.rankAfter.name === progress.rankBefore.name
-        ? `階級 ${progress.rankAfter.name}`
+        ? `SR ${progress.ratingAfter}`
         : delta > 0
-          ? `${progress.rankAfter.name} へ昇格`
-          : `${progress.rankAfter.name} へ降格`;
+          ? `SR ${progress.ratingAfter} / ${progress.rankAfter.name} へ昇格`
+          : `SR ${progress.ratingAfter} / ${progress.rankAfter.name} へ降格`;
     const rating =
       delta === 0
-        ? `<p class="result-rating">レート ${progress.ratingAfter} / ${rankNote}</p>`
-        : `<p class="result-rating">レート ${progress.ratingBefore} <span class="${delta > 0 ? 'rating-up' : 'rating-down'}">${delta > 0 ? '+' : ''}${delta}</span> / ${rankNote}</p>`;
+        ? `<p class="result-rating">${rankNote}</p>`
+        : `<p class="result-rating">SR ${progress.ratingBefore} <span class="${delta > 0 ? 'rating-up' : 'rating-down'}">${delta > 0 ? '+' : ''}${delta}</span> → ${rankNote}</p>`;
     const recordsHtml = progress.newRecords.length
       ? `<p class="result-record">自己ベスト更新 ${progress.newRecords.join(' / ')}</p>`
       : '';
@@ -1400,7 +1406,7 @@ export class Menu {
         <ul class="result-xp-list">${xpRows}</ul>
         <p class="result-xp-total">獲得 <span data-id="xptotal">0</span> XP</p>
         <div class="result-levelrow">
-          <span class="result-level">Lv ${level.level} ${rankNameFor(level.level).name}</span>
+          <span class="result-level">LV.${level.level} ${rankNameFor(level.level).name}</span>
           <span class="profile-xpbar"><i style="width:${xpRatio}%"></i></span>
         </div>
         ${levelUp}
@@ -1794,9 +1800,8 @@ export class Menu {
         : '';
     panel.innerHTML = `
       <div class="profile-top">
-        <span class="profile-rank">${rank.name}</span>
-        <span class="profile-rating">レート ${this.profile.rating}</span>
-        <span class="profile-level">Lv ${level.level} ${rankNameFor(level.level).name}</span>
+        <span class="profile-rank">LV.${level.level} ${rankNameFor(level.level).name}</span>
+        <span class="profile-rating">SR ${this.profile.rating} / ${rank.name}</span>
       </div>
       <div class="profile-xpbar"><i style="width:${xpRatio}%"></i></div>
       <div class="profile-stats">${stats.matches}戦 / 勝率 ${winRate}% / K/D ${kd} / 命中 ${accuracy}%</div>

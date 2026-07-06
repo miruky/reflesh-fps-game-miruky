@@ -13,6 +13,7 @@ import {
   isMissionUnlocked,
   isUnlocked,
   levelFromXp,
+  levelRankUpgrade,
   MAX_LEVEL,
   rankFromRating,
   rankNameFor,
@@ -605,5 +606,38 @@ describe('rankNameFor', () => {
     for (const [lvl, name] of samples) {
       expect(rankNameFor(lvl).name).toBe(name);
     }
+  });
+});
+
+describe('levelRankUpgrade', () => {
+  const lv = (level: number) => ({ level, intoLevel: 0, toNext: xpToNext(Math.min(level, 9998)) });
+
+  it('tier上昇(新兵→足軽)で新ランク名を返す', () => {
+    const result = levelRankUpgrade(lv(99), lv(100));
+    expect(result).not.toBeNull();
+    expect(result?.name).toBe('足軽');
+    expect(result?.tier).toBe(1);
+  });
+
+  it('tier上昇(覇王→剣聖)で新ランク名を返す', () => {
+    const result = levelRankUpgrade(lv(999), lv(1000));
+    expect(result?.name).toBe('剣聖');
+    expect(result?.tier).toBe(10);
+  });
+
+  it('同tier内の昇格はnullを返す', () => {
+    expect(levelRankUpgrade(lv(100), lv(150))).toBeNull();
+    expect(levelRankUpgrade(lv(500), lv(599))).toBeNull();
+  });
+
+  it('レベル変動なしはnullを返す', () => {
+    const state = lv(300);
+    expect(levelRankUpgrade(state, state)).toBeNull();
+  });
+
+  it('複数tier一気に上がった場合も到達後tierを返す', () => {
+    const result = levelRankUpgrade(lv(1), lv(500));
+    expect(result?.name).toBe('剣豪');
+    expect(result?.tier).toBe(5);
   });
 });

@@ -274,6 +274,9 @@ function buildArena(cx: number, cz: number, rot: number, p: StagePalette): BoxSp
     // ── キャットウォーク登坂階段(N壁内側沿い, 東端 lx+0→+14, 18段×0.3m蹴上) ──
     // 上面y=5.4m で catwalk 上面 y=5.5m まで autostep 0.1m の1ステップ
     ...buildStair(cx, cz, rot, +0.4, -14, 0.8, 0, 0, 0.8, 2, 18, c),
+    // ── キャットウォーク登坂階段(S壁内側沿い, 西端 lx-0→-14, 18段×0.3m蹴上) ──
+    // N側と左右対称。上面y=5.4m → catwalk 上面 y=5.5m autostep 0.1m で乗れる
+    ...buildStair(cx, cz, rot, -0.4, +14, -0.8, 0, 0, 0.8, 2, 18, c),
   ];
 }
 
@@ -391,8 +394,8 @@ function buildCathedral(cx: number, cz: number, rot: number, p: StagePalette): B
     pb(cx, cz, rot, +4, +7, 0, 2, 12, 2, ac, e),
     pb(cx, cz, rot, +11, -7, 0, 2, 12, 2, ac, e),
     pb(cx, cz, rot, +11, +7, 0, 2, 12, 2, ac, e),
-    // 祭壇台座 + オブジェ
-    pb(cx, cz, rot, +14, 0, 0, 8, 1.5, 6, c),
+    // 祭壇台座 + オブジェ (台座は structural=true: 破壊すると上部オブジェが浮くため)
+    { ...pb(cx, cz, rot, +14, 0, 0, 8, 1.5, 6, c), structural: true },
     pb(cx, cz, rot, +14, 0, 1.5, 2, 3, 2, ac, e),
   ];
 }

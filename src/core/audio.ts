@@ -458,7 +458,8 @@ export interface BgmProfile {
   leadType: OscillatorType;
   leadDrive: number; // 0=リード無効。>0で歪みリード層を高heat時に鳴らす
   hatBrightHz: number; // ハイハットのHPF中心(明るさ)
-  padWet: number; // パッド→リバーブ手動sendの量(0=無し、≤0.05)
+  padWet: number; // パッド→リバーブ手動sendの量(0=無し、≤0.09)
+  halfTimeKickBelowHeat?: number; // この heat 未満で kick を half-time(beatInBar===0のみ)化
   sparse?: boolean; // snow: kick/hat/arpを半減し half-time の冷たい間合いに
   bassMode?: 'root' | 'drive'; // drive=chord[0]の8分連打(低heatからグルーヴを出す)
   lpQ?: number; // パッドLPのレゾナンス(ムード音色識別)
@@ -524,7 +525,7 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     leadType: 'square',
     leadDrive: 0.8,
     hatBrightHz: 7000,
-    padWet: 0.03,
+    padWet: 0.09,
     bassMode: 'drive',
     lpQ: 0.8,
     kickDrive: 2.6,
@@ -546,7 +547,7 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     leadType: 'sawtooth',
     leadDrive: 1.1,
     hatBrightHz: 6400,
-    padWet: 0.045,
+    padWet: 0.09,
     bassMode: 'drive',
     lpQ: 1.0,
     kickDrive: 2.4,
@@ -568,7 +569,7 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     leadType: 'sawtooth',
     leadDrive: 1.4,
     hatBrightHz: 8200,
-    padWet: 0.04,
+    padWet: 0.09,
     bassMode: 'drive',
     lpQ: 1.7,
     kickDrive: 3.2,
@@ -590,7 +591,7 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     leadType: 'sawtooth',
     leadDrive: 0.9,
     hatBrightHz: 5200,
-    padWet: 0.05,
+    padWet: 0.09,
     bassMode: 'drive',
     lpQ: 0.6,
     kickDrive: 2.8,
@@ -613,7 +614,7 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     leadType: 'sawtooth',
     leadDrive: 0.7,
     hatBrightHz: 9000,
-    padWet: 0.05,
+    padWet: 0.09,
     sparse: true,
     bassMode: 'drive',
     lpQ: 0.6,
@@ -636,7 +637,7 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     leadType: 'sawtooth',
     leadDrive: 1.7,
     hatBrightHz: 9500,
-    padWet: 0.035,
+    padWet: 0.09,
     bassMode: 'drive',
     lpQ: 2.1,
     kickDrive: 3.6,
@@ -659,7 +660,7 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     leadType: 'sawtooth',
     leadDrive: 2.4,
     hatBrightHz: 5800,
-    padWet: 0.05,
+    padWet: 0.09,
     bassMode: 'drive',
     lpQ: 1.8,
     kickDrive: 3.8,
@@ -668,6 +669,7 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     leadStartHeat: 0.15, // 早い段階から歪みリードで高揚へ
     riserEnabled: true,
     snareSnap: 0.75,
+    halfTimeKickBelowHeat: 0.2, // A4-F17: heat<0.2は1拍目のみキック(half-time)
   },
 };
 
@@ -1688,7 +1690,9 @@ export class SoundKit {
       // ステレオ幅: hats/arp/lead を拍パリティで ±0.3 に振る。キック/ベース/sub基音はセンター。
       const wide = this.beatIndex % 2 === 0 ? -0.3 : 0.3;
       // 3層パンチキック(全拍・percレイヤー。sparseは1拍目のみでhalf-time化)
-      if (g.perc > 0.01 && (!sparse || beatInBar === 0)) {
+      // A4-F17: ゾンビBGMは heat<halfTimeKickBelowHeat でも 1拍目(beatInBar===0)のみ
+      const halfTimeKick = p.halfTimeKickBelowHeat !== undefined && heat < p.halfTimeKickBelowHeat;
+      if (g.perc > 0.01 && (!sparse || beatInBar === 0) && (!halfTimeKick || beatInBar === 0)) {
         this.bgmKick(delay, g.perc);
       }
       // スネア(通常は2・4拍、sparseは3拍目のみ=half-time)+ snareSnap の超高域トランジェント
@@ -1770,6 +1774,30 @@ export class SoundKit {
     this.tone({ freq: bgmNoteHz(0, 0, p.rootHz), endFreq: bgmNoteHz(0, 1, p.rootHz), durationS: 1.6, type: 'sawtooth', gain: 0.05, attackS: 0.9, drive: 2, curve: 'tanh', bus: this.bgmBus });
     this.tone({ freq: 60, endFreq: 30, durationS: 0.4, type: 'sine', gain: 0.14, delayS: 1.55, drive: 3, curve: 'asym', bus: this.bgmBus });
     this.noiseBurst({ durationS: 0.5, filterHz: 2000, filterType: 'highpass', gain: 0.1, delayS: 1.55, bus: this.bgmBus });
+    // A4-BGM: bgmBus 経路は routeOut が wet を無視するため、padVoice と同パターンで手動 send
+    if (this.reverbInput && p.padWet > 0.001 && this.noiseBuffer) {
+      const ctx = this.ctx;
+      const ri = this.reverbInput;
+      const t0 = now;
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      src.loop = true;
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'bandpass';
+      filt.frequency.setValueAtTime(400, t0);
+      filt.frequency.exponentialRampToValueAtTime(6000, t0 + 1.6);
+      filt.Q.value = 1.2;
+      const env = ctx.createGain();
+      this.applyEnv(env, 0.12 * p.padWet, t0, 1.6, 0.8);
+      src.connect(filt);
+      filt.connect(env);
+      env.connect(ri);
+      src.start(t0, this.rng() * 0.9);
+      src.stop(t0 + 1.65);
+      src.onended = () => {
+        try { src.disconnect(); filt.disconnect(); env.disconnect(); } catch { /* already disconnected */ } finally { src.onended = null; }
+      };
+    }
   }
 
   // パッド: コード3音×デチューン2osc。デチューン -6 を左・+6 を右の独立LPへ分けて
@@ -1894,7 +1922,7 @@ export class SoundKit {
     shaper.oversample = 'none';
     const env = ctx.createGain();
     env.gain.setValueAtTime(0.0001, t0);
-    env.gain.linearRampToValueAtTime(0.05 * subGain, t0 + 0.25);
+    env.gain.linearRampToValueAtTime(0.085 * subGain, t0 + 0.25); // A4-F05: 0.05→0.085
     env.gain.setTargetAtTime(0.0001, t0 + barDurS - 0.12, 0.3);
     // 擬似サイドチェイン(DRY): kick拍(0/2)で沈めてポンプ感=推進力。sparseは平滑
     const pump = ctx.createGain();
@@ -2118,6 +2146,7 @@ export class SoundKit {
 
   // 素手: ダイブスラム着地の衝撃波(強化サブベース+土煙ノイズ+地面クラック)
   groundPound(): void {
+    this.duck(-8, 0.1); // A4-F03
     this.tone({ freq: 58, endFreq: 20, durationS: 0.55, type: 'sine', gain: 0.72, drive: 5, curve: 'asym' });
     this.tone({ freq: 35, endFreq: 15, durationS: 0.4, type: 'sine', gain: 0.5, delayS: 0.04 });
     this.noiseBurst({ durationS: 0.35, filterHz: 280, filterType: 'lowpass', gain: 0.6 });
@@ -2274,6 +2303,7 @@ export class SoundKit {
 
   // B ウルト: 風神・極大手裏剣(風の轟音+高速回転音+低い発射音)
   kunaiWindShuriken(): void {
+    this.duck(-8, 0.1); // A4-F03: ウルト発動時のコンプポンプ抑制
     this.noiseBurst({
       durationS: 0.6,
       filterHz: 1200,
@@ -2291,6 +2321,7 @@ export class SoundKit {
 
   // N ウルト: 雷帝・神獣降臨(雷鳴連打+神獣の咆哮サブベース)
   kunaiLightningBeast(): void {
+    this.duck(-8, 0.1); // A4-F03
     this.tone({ freq: 55, endFreq: 18, durationS: 0.8, type: 'sine', gain: 0.7, drive: 8, curve: 'asym' });
     this.noiseBurst({ durationS: 0.12, filterHz: 4800, filterType: 'bandpass', gain: 0.6, attackS: 0.001 });
     this.noiseBurst({ durationS: 0.5, filterHz: 650, filterType: 'lowpass', gain: 0.55, delayS: 0.05 });
@@ -2319,6 +2350,7 @@ export class SoundKit {
 
   // M ウルト: 黒技・シュヴァルツヴァルト(超低域ブーム+逆再生風スウィープ+暗いコーラス風パッド)
   schwarzwald(): void {
+    this.duck(-8, 0.1); // A4-F03
     // 超低域ブーム(非対称歪みで小型スピーカーにも芯を残す)
     this.tone({ freq: 42, endFreq: 14, durationS: 0.9, type: 'sine', gain: 0.68, drive: 8, curve: 'asym' });
     this.tone({ freq: 28, endFreq: 10, durationS: 0.7, type: 'sine', gain: 0.48, drive: 6, delayS: 0.1 });
@@ -2355,18 +2387,19 @@ export class SoundKit {
 
   // 真月: 解放轟音(シュヴァルツヴァルト超強化版 + 余韻)
   shingetsuRelease(): void {
+    this.duck(-10, 0.15); // A4-F03/F01: コンプポンプ抑制 + ×0.7 gain でポンピング防止
     // 超低域ブーム連打(全方位を断裂させる感覚)
-    this.tone({ freq: 45, endFreq: 12, durationS: 1.1, type: 'sine', gain: 0.72, drive: 10, curve: 'asym' });
-    this.tone({ freq: 30, endFreq: 9,  durationS: 0.9, type: 'sine', gain: 0.52, drive: 8,  curve: 'asym', delayS: 0.05 });
+    this.tone({ freq: 45, endFreq: 12, durationS: 1.1, type: 'sine', gain: 0.50, drive: 10, curve: 'asym' });
+    this.tone({ freq: 30, endFreq: 9,  durationS: 0.9, type: 'sine', gain: 0.36, drive: 8,  curve: 'asym', delayS: 0.05 });
     // 全域スウィープ(下降=収束の轟音)
-    this.noiseBurst({ durationS: 0.7, filterHz: 6000, filterType: 'bandpass', filterEndHz: 120, gain: 0.55 });
-    this.noiseBurst({ durationS: 1.1, filterHz: 380, filterType: 'lowpass', gain: 0.65, delayS: 0.08 });
+    this.noiseBurst({ durationS: 0.7, filterHz: 6000, filterType: 'bandpass', filterEndHz: 120, gain: 0.39 });
+    this.noiseBurst({ durationS: 1.1, filterHz: 380, filterType: 'lowpass', gain: 0.46, delayS: 0.08 });
     // 金属共鳴+暗黒コーラスパッド(余韻 ~1.5s)
-    this.tone({ freq: 55, endFreq: 72, durationS: 1.8, type: 'sawtooth', gain: 0.3, drive: 4, delayS: 0.15 });
-    this.tone({ freq: 88, endFreq: 66, durationS: 1.5, type: 'sawtooth', gain: 0.24, drive: 3, delayS: 0.3 });
-    this.tone({ freq: 220, endFreq: 110, durationS: 0.8, type: 'triangle', gain: 0.2, delayS: 0.1 });
+    this.tone({ freq: 55, endFreq: 72, durationS: 1.8, type: 'sawtooth', gain: 0.21, drive: 4, delayS: 0.15 });
+    this.tone({ freq: 88, endFreq: 66, durationS: 1.5, type: 'sawtooth', gain: 0.17, drive: 3, delayS: 0.3 });
+    this.tone({ freq: 220, endFreq: 110, durationS: 0.8, type: 'triangle', gain: 0.14, delayS: 0.1 });
     // 金属の高域余韻「斬」
-    this.noiseBurst({ durationS: 0.12, filterHz: 5500, filterType: 'bandpass', q: 6, gain: 0.32, attackS: 0.001 });
+    this.noiseBurst({ durationS: 0.12, filterHz: 5500, filterType: 'bandpass', q: 6, gain: 0.22, attackS: 0.001 });
   }
 
   // 雷帝モード: 常時電気ヒム・ティック(フレーム毎に呼ぶ想定ではなく periodic tick 用)
@@ -2417,41 +2450,35 @@ export class SoundKit {
     }
   }
 
-  // N ウルト(雷帝中): 月花雷轟 — 4s マップ全域嵐
+  // N ウルト(雷帝中): 月花雷轟 — 4s マップ全域嵐 天の裁き(リズミカルな5連波)
   geppaRaigou(): void {
-    // 巨大落雷3連(0 / 0.9 / 2.1s)
-    this.noiseBurst({ durationS: 0.025, filterHz: 5800, filterType: 'bandpass', q: 2, gain: 0.7, attackS: 0.001 });
-    this.noiseBurst({ durationS: 0.8,   filterHz: 2400, filterType: 'lowpass',   gain: 0.65 });
-    this.tone({ freq: 45, endFreq: 14, durationS: 0.9, type: 'sine', gain: 0.65, drive: 9, curve: 'asym' });
-    this.noiseBurst({ durationS: 0.025, filterHz: 4800, filterType: 'bandpass', q: 2, gain: 0.55, attackS: 0.001, delayS: 0.9 });
-    this.noiseBurst({ durationS: 0.7,   filterHz: 2000, filterType: 'lowpass',   gain: 0.55, delayS: 0.9 });
-    this.tone({ freq: 55, endFreq: 18, durationS: 0.8, type: 'sine', gain: 0.55, drive: 8, curve: 'asym', delayS: 0.9 });
-    this.noiseBurst({ durationS: 0.025, filterHz: 6200, filterType: 'bandpass', q: 2, gain: 0.65, attackS: 0.001, delayS: 2.1 });
-    this.noiseBurst({ durationS: 0.85,  filterHz: 2800, filterType: 'lowpass',   gain: 0.60, delayS: 2.1 });
-    this.tone({ freq: 50, endFreq: 16, durationS: 1.0, type: 'sine', gain: 0.62, drive: 9, curve: 'asym', delayS: 2.1 });
-    // 嵐のうなり持続(サイン波パッド ~4s)
-    this.tone({ freq: 38, endFreq: 52, durationS: 3.8, type: 'sawtooth', gain: 0.22, drive: 3 });
-    this.tone({ freq: 62, endFreq: 45, durationS: 3.2, type: 'sawtooth', gain: 0.18, drive: 2, delayS: 0.3 });
+    this.duck(-8, 0.1); // A4-F03
+    // 天の裁き: 5連の律動落雷(0 / 0.5 / 1.1 / 1.9 / 3.0s)
+    const strikes = [0, 0.5, 1.1, 1.9, 3.0];
+    for (const d of strikes) {
+      this.noiseBurst({ durationS: 0.022, filterHz: 6000, filterType: 'bandpass', q: 2.5, gain: 0.65, attackS: 0.001, delayS: d });
+      this.noiseBurst({ durationS: 0.7, filterHz: 2600, filterType: 'lowpass', gain: 0.58, delayS: d });
+      this.tone({ freq: 50, endFreq: 16, durationS: 0.8, type: 'sine', gain: 0.60, drive: 9, curve: 'asym', delayS: d });
+    }
+    // 氷青ハーモニックパッド(嵐のうなり)
+    this.tone({ freq: 55, endFreq: 70, durationS: 3.5, type: 'sawtooth', gain: 0.20, drive: 2.5 });
+    this.tone({ freq: 82, endFreq: 65, durationS: 3.0, type: 'sawtooth', gain: 0.16, drive: 2, delayS: 0.2 });
   }
 
-  // M ウルト(黒雷帝中): 極雷絶滅 — 4s 全敵強制撃滅エンディング
+  // M ウルト(黒雷帝中): 極雷絶滅 — 4s 終焉/虚無(沈黙→超低域一撃→長残響)
   gokuraiZetsumetsu(): void {
-    // 暗黒波動ブースト(schwarzwald より強化)
-    this.tone({ freq: 38, endFreq: 11, durationS: 1.2, type: 'sine', gain: 0.75, drive: 10, curve: 'asym' });
-    this.tone({ freq: 25, endFreq: 8,  durationS: 1.0, type: 'sine', gain: 0.55, drive: 8,  curve: 'asym', delayS: 0.08 });
-    // 全域ノイズスウィープ
-    this.noiseBurst({ durationS: 0.6, filterHz: 6500, filterType: 'bandpass', filterEndHz: 90, gain: 0.62 });
-    this.noiseBurst({ durationS: 1.2, filterHz: 350,  filterType: 'lowpass',                  gain: 0.72, delayS: 0.1 });
-    // 連続落雷 + 暗黒コーラスパッド(0 / 0.7 / 1.6 / 2.8s)
-    const bolts = [0, 0.7, 1.6, 2.8];
-    for (const d of bolts) {
-      this.noiseBurst({ durationS: 0.025, filterHz: 5200, filterType: 'bandpass', q: 2, gain: 0.6, attackS: 0.001, delayS: d });
-      this.tone({ freq: 48, endFreq: 15, durationS: 0.7, type: 'sine', gain: 0.5, drive: 8, curve: 'asym', delayS: d });
+    this.duck(-10, 0.15); // A4-F03/F01: コンプポンプ抑制 + ×0.7 gain
+    // 一拍の無音後に暗黒超低域パルス
+    this.tone({ freq: 22, endFreq: 8,  durationS: 2.0, type: 'sine', gain: 0.56, drive: 14, curve: 'asym', delayS: 0.3 });
+    this.tone({ freq: 15, endFreq: 6,  durationS: 1.8, type: 'sine', gain: 0.42, drive: 12, curve: 'asym', delayS: 0.5 });
+    // 5本の巨大落雷柱(重く遅くゆっくり落ちる)
+    const boltTimes = [0.8, 1.4, 2.0, 2.8, 3.5];
+    for (const d of boltTimes) {
+      this.noiseBurst({ durationS: 0.04, filterHz: 3800, filterType: 'bandpass', q: 1.5, gain: 0.39, attackS: 0.002, delayS: d });
+      this.tone({ freq: 35, endFreq: 10, durationS: 1.0, type: 'sine', gain: 0.34, drive: 8, curve: 'asym', delayS: d });
     }
-    // 暗黒コーラス余韻
-    this.tone({ freq: 52, endFreq: 68, durationS: 2.2, type: 'sawtooth', gain: 0.28, drive: 4, delayS: 0.2 });
-    this.tone({ freq: 80, endFreq: 60, durationS: 1.8, type: 'sawtooth', gain: 0.22, drive: 3, delayS: 0.4 });
-    this.tone({ freq: 200, endFreq: 95, durationS: 1.0, type: 'triangle', gain: 0.2, delayS: 0.12 });
+    // 長い残響(~3.8s 以降)
+    this.noiseBurst({ durationS: 1.5, filterHz: 180, filterType: 'lowpass', gain: 0.28, delayS: 3.8, attackS: 0.3 });
   }
 
   // ── R33 黒雷帝 ambient pack ──────────────────────────────────────────────
@@ -2468,9 +2495,22 @@ export class SoundKit {
     this.tone({ freq: 65, endFreq: 28, durationS: 0.28, type: 'sine', gain: 0.30, drive: 5, curve: 'asym', delayS: 0.04 });
   }
 
+  // 雷帝ブリンク転移音: 氷青版の鋭いクラック + 軽スウィープ + 短ゴロ
+  raiteiBlinkTeleport(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    if (this.liveVoices() > 228) return;
+    // 高域クラック(氷青・黒雷帝より明るい音)
+    this.noiseBurst({ durationS: 0.015, filterHz: 7200, filterType: 'bandpass', q: 4, gain: 0.42, attackS: 0.001 });
+    // 変位スウィープ(明るめ)
+    this.noiseBurst({ durationS: 0.10, filterHz: 2800, filterEndHz: 1200, filterType: 'bandpass', q: 2, gain: 0.28 });
+    // 短ゴロ
+    this.tone({ freq: 80, endFreq: 40, durationS: 0.20, type: 'sine', gain: 0.22, drive: 4, curve: 'asym', delayS: 0.03 });
+  }
+
   // 黒雷帝発動の雷鳴3連: 近→近→遠(三連撃)
   kokuraiActivateThunder(): void {
     if (!this.ctx || !this.sfxBus) return;
+    this.duck(-8, 0.1); // A4-F03
     // 1撃目: 即時・近距離クラック
     this.noiseBurst({ durationS: 0.025, filterHz: 5800, filterType: 'bandpass', q: 2, gain: 0.62, attackS: 0.001 });
     this.tone({ freq: 48, endFreq: 15, durationS: 0.55, type: 'sine', gain: 0.58, drive: 9, curve: 'asym' });
@@ -2486,12 +2526,12 @@ export class SoundKit {
   kokuraiKillLayer(streak: number): void {
     if (!this.ctx || !this.sfxBus) return;
     if (this.liveVoices() > 228) return;
-    // 高域クラック(紫電の細い亀裂音)
-    this.noiseBurst({ durationS: 0.015, filterHz: 7500, filterType: 'bandpass', q: 4, gain: 0.22, attackS: 0.001, bus: this.uiBus ?? undefined });
+    // 高域クラック(紫電の細い亀裂音) A4-F09: L1にdelayS:0.03を追加(タイミング整合)
+    this.noiseBurst({ durationS: 0.015, filterHz: 7500, filterType: 'bandpass', q: 4, gain: 0.22, attackS: 0.001, delayS: 0.03, bus: this.uiBus ?? undefined });
     if (streak >= 3) {
-      // マルチキル: 遠雷轟音を重ねる
-      this.noiseBurst({ durationS: 0.025, filterHz: 4800, filterType: 'bandpass', q: 2, gain: 0.45, attackS: 0.001, delayS: 0.04 });
-      this.tone({ freq: 58, endFreq: 22, durationS: 0.45, type: 'sine', gain: 0.42, drive: 7, curve: 'asym', delayS: 0.04 });
+      // マルチキル: 遠雷轟音を重ねる。A4-F10: L2にbusをuiBusへ変更
+      this.noiseBurst({ durationS: 0.025, filterHz: 4800, filterType: 'bandpass', q: 2, gain: 0.45, attackS: 0.001, delayS: 0.04, bus: this.uiBus ?? undefined });
+      this.tone({ freq: 58, endFreq: 22, durationS: 0.45, type: 'sine', gain: 0.42, drive: 7, curve: 'asym', delayS: 0.04, bus: this.uiBus ?? undefined });
       // 黒雷版上昇アルペジオ(暗い和声で轟く)
       const freqs = [220, 277, 330, 440];
       for (let i = 0; i < freqs.length; i += 1) {
@@ -2585,6 +2625,7 @@ export class SoundKit {
 
   // 溜め攻撃解放: 超横斬り放出音(darkSlash の3倍スケール)
   chargeAttackRelease(): void {
+    this.duck(-8, 0.1); // A4-F03
     // 超低域ブーム
     this.tone({ freq: 35, endFreq: 10, durationS: 0.55, type: 'sine', gain: 0.72, drive: 9, curve: 'asym' });
     // 横斬りの巨大な風切り(下降スウィープ)
@@ -2700,11 +2741,12 @@ export class SoundKit {
       this.noiseBurst({ durationS: 0.025, filterHz: 2500, filterType: 'highpass', gain: 0.5 * att, pan, attackS: 0.001 });
     }
     // L4 デブリ散布(近いほど多く、パンを散らす)
+    // A4-F20: airLpHz で遠距離のデブリ高域を減衰(空気吸収モデルに合わせる)
     const debris = distance < 25 ? 6 : 3;
     for (let i = 0; i < debris; i += 1) {
       this.noiseBurst({
         durationS: 0.03 + this.rng() * 0.03,
-        filterHz: this.jit(900 + this.rng() * 1700, 0.1),
+        filterHz: Math.min(this.jit(900 + this.rng() * 1700, 0.1), p.airLpHz),
         filterType: 'bandpass',
         q: 3,
         gain: (0.11 - 0.012 * i) * att,
