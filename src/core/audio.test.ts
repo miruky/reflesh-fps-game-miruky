@@ -5,14 +5,17 @@ import {
   BGM_ROOT_HZ,
   bgmNoteHz,
   type BgmProfileKey,
+  BOW_RELEASE_SPEC,
   COMPRESSOR_PARAMS,
   dbToGain,
   deriveReverbPreset,
   enemyShotParams,
+  FAN_WHOOSH_SPEC,
   healthCutoffHz,
   layerGains,
   makeAsymCurveData,
   makeTanhCurveData,
+  MINIGUN_SPIN_SPEC,
   normalizeTts,
   pickBestVoice,
   planShot,
@@ -418,5 +421,76 @@ describe('R33 黒雷帝 ambient pack — 音APIの健全性(AudioContext不要)'
     const kit = new SoundKit();
     expect(() => kit.pauseKokuraiThunder()).not.toThrow();
     expect(() => kit.resumeKokuraiThunder()).not.toThrow();
+  });
+});
+
+describe('R33 Sランク武器サウンドスペック', () => {
+  // ── BOW_RELEASE_SPEC 定数整合テスト ──────────────────────────────────────
+  it('BOW_RELEASE_SPEC: 弦スラップHz > 風切りEndHz (高→低sweep)', () => {
+    expect(BOW_RELEASE_SPEC.stringSlapHz).toBeGreaterThan(BOW_RELEASE_SPEC.windEndHz);
+  });
+  it('BOW_RELEASE_SPEC: 風切りstartHz > 風切りendHz (sweep down)', () => {
+    expect(BOW_RELEASE_SPEC.windStartHz).toBeGreaterThan(BOW_RELEASE_SPEC.windEndHz);
+  });
+  it('BOW_RELEASE_SPEC: slapDurationS < windDurationS (矢風切りは弦より長い)', () => {
+    expect(BOW_RELEASE_SPEC.slapDurationS).toBeLessThan(BOW_RELEASE_SPEC.windDurationS);
+  });
+  it('BOW_RELEASE_SPEC: gain値が0–1範囲内', () => {
+    expect(BOW_RELEASE_SPEC.slapGain).toBeGreaterThan(0);
+    expect(BOW_RELEASE_SPEC.slapGain).toBeLessThanOrEqual(1);
+    expect(BOW_RELEASE_SPEC.windGain).toBeGreaterThan(0);
+    expect(BOW_RELEASE_SPEC.windGain).toBeLessThanOrEqual(1);
+  });
+
+  // ── FAN_WHOOSH_SPEC 定数整合テスト ──────────────────────────────────────
+  it('FAN_WHOOSH_SPEC: startHz > endHz (sweep down)', () => {
+    expect(FAN_WHOOSH_SPEC.startHz).toBeGreaterThan(FAN_WHOOSH_SPEC.endHz);
+  });
+  it('FAN_WHOOSH_SPEC: filterTypeはbandpass', () => {
+    expect(FAN_WHOOSH_SPEC.filterType).toBe('bandpass');
+  });
+  it('FAN_WHOOSH_SPEC: durationSは正の数', () => {
+    expect(FAN_WHOOSH_SPEC.durationS).toBeGreaterThan(0);
+  });
+
+  // ── MINIGUN_SPIN_SPEC 定数整合テスト ────────────────────────────────────
+  it('MINIGUN_SPIN_SPEC: スピンアップ後Hz > 開始Hz', () => {
+    expect(MINIGUN_SPIN_SPEC.droneEndHz).toBeGreaterThan(MINIGUN_SPIN_SPEC.droneStartHz);
+  });
+  it('MINIGUN_SPIN_SPEC: スピンダウン後Hz < 開始Hz', () => {
+    expect(MINIGUN_SPIN_SPEC.droneDownEndHz).toBeLessThan(MINIGUN_SPIN_SPEC.droneDownStartHz);
+  });
+  it('MINIGUN_SPIN_SPEC: スピンアップ終了HzとスピンダウンHzは対称', () => {
+    expect(MINIGUN_SPIN_SPEC.droneEndHz).toBe(MINIGUN_SPIN_SPEC.droneDownStartHz);
+  });
+  it('MINIGUN_SPIN_SPEC: droneGainは0–1範囲内', () => {
+    expect(MINIGUN_SPIN_SPEC.droneGain).toBeGreaterThan(0);
+    expect(MINIGUN_SPIN_SPEC.droneGain).toBeLessThanOrEqual(1);
+  });
+
+  // ── SoundKit メソッドの無例外テスト(AudioContext不要) ────────────────────
+  it('bowRelease: AudioContext無しで例外を投げない', () => {
+    const kit = new SoundKit();
+    expect(() => kit.bowRelease()).not.toThrow();
+  });
+  it('fanWhoosh: AudioContext無しで例外を投げない', () => {
+    const kit = new SoundKit();
+    expect(() => kit.fanWhoosh()).not.toThrow();
+  });
+  it('minigunSpin(true): スピンアップでAudioContext無しで例外を投げない', () => {
+    const kit = new SoundKit();
+    expect(() => kit.minigunSpin(true)).not.toThrow();
+  });
+  it('minigunSpin(false): スピンダウンでAudioContext無しで例外を投げない', () => {
+    const kit = new SoundKit();
+    expect(() => kit.minigunSpin(false)).not.toThrow();
+  });
+  it('minigunSpin: 連続呼び出し(スピンアップ→ダウン→アップ)で例外なし', () => {
+    const kit = new SoundKit();
+    expect(() => {
+      kit.minigunSpin(true);
+      kit.minigunSpin(false);
+      kit.minigunSpin(true);
+    }).not.toThrow();
   });
 });

@@ -143,12 +143,18 @@ export function emptyProfile(): Profile {
   };
 }
 
+// XP乗数定数。呼び出し側(main.ts)はこれをそのまま applyMatch/applyCampaignMission の xpMul に渡す。
+// 訓練モードは統計汚染防止のため呼び出し側で xpMul 適用をスキップする(ここでは定義しない)。
+export const XP_MUL_NORMAL = 500; // 通常(非ゾンビ)モード — 試合XP全体に掛ける乗数
+export const XP_MUL_ZOMBIE =  25; // ゾンビモード — 試合XP全体に掛ける乗数
+
 // レベルnからn+1へ必要なXP。
-// L1-99:   750 + (n-1)*250 の一次曲線(既存セーブとの後方互換を維持するため不変)。
+// L1-99:    750 + (n-1)*250 の一次曲線(既存セーブとの後方互換を維持するため不変)。
 // L100-499: +100/レベルで緩やかに成長(高原フェーズ1)。
 // L500-999: +50/レベルでさらに緩やかに成長(高原フェーズ2)。
-// L1000-9998: +25/レベルでさらに高原化(L999=90_450 との連続性を維持)。
-// 単調増加・オーバーフロー無し・最大値は xpToNext(9998)=315_425 で Number.MAX_SAFE_INTEGER と十分離れている。
+// L1000-9999: +25/レベルでさらに高原化(L999=90_450 との連続性を維持)。
+// L10000-99998: +10/レベルで究極高原化(L9999=315_450 との連続性を維持)。
+// 単調増加・オーバーフロー無し・最大値は xpToNext(99998)=1_215_440 で Number.MAX_SAFE_INTEGER と十分離れている。
 export function xpToNext(level: number): number {
   if (level < 100) {
     // L1-99 は旧曲線と同一(後方互換)
@@ -162,11 +168,15 @@ export function xpToNext(level: number): number {
     // L500-999: 65_500 → 90_450 (+50/レベル)
     return 65_500 + (level - 500) * 50;
   }
-  // L1000-9998: さらに高原化(+25/レベル)。xpToNext(999)=90_450 との連続性を維持。
-  return 90_450 + (level - 999) * 25;
+  if (level < 10000) {
+    // L1000-9999: さらに高原化(+25/レベル)。xpToNext(999)=90_450 との連続性を維持。
+    return 90_450 + (level - 999) * 25;
+  }
+  // L10000-99998: 究極高原化(+10/レベル)。xpToNext(9999)=315_450 との連続性を維持。
+  return 315_450 + (level - 9999) * 10;
 }
 
-export const MAX_LEVEL = 9999;
+export const MAX_LEVEL = 99999;
 
 export interface LevelState {
   level: number;
@@ -375,33 +385,47 @@ export function rankFromRating(rating: number): RankDef {
 
 // ── レベル帯ランク名(レーティングとは独立した、累積レベルによる階位) ────────────────
 // L1-999: 100刻み10段 / L1000-9999: 1000刻み10段(L9999のみ単独「創世神」)
+// L10000-99999: 10000刻み10段(超越階級・日本神話)
 export interface RankName {
   name: string;
-  tier: number; // 0(新兵) 〜 19(創世神)
+  tier: number; // 0(新兵) 〜 29(森羅万象)
 }
 
 // 降順に並べ、初めて level >= minLevel となるエントリを返す
 const LEVEL_RANK_TABLE: ReadonlyArray<{ minLevel: number; name: string; tier: number }> = [
-  { minLevel: 9999, name: '創世神',   tier: 19 },
-  { minLevel: 9000, name: '神話',     tier: 18 },
-  { minLevel: 8000, name: '神威',     tier: 17 },
-  { minLevel: 7000, name: '破壊神',   tier: 16 },
-  { minLevel: 6000, name: '軍神',     tier: 15 },
-  { minLevel: 5000, name: '天下無双', tier: 14 },
-  { minLevel: 4000, name: '戦神',     tier: 13 },
-  { minLevel: 3000, name: '雷神',     tier: 12 },
-  { minLevel: 2000, name: '武神',     tier: 11 },
-  { minLevel: 1000, name: '剣聖',     tier: 10 },
-  { minLevel:  900, name: '覇王',     tier:  9 },
-  { minLevel:  800, name: '羅刹',     tier:  8 },
-  { minLevel:  700, name: '鬼神',     tier:  7 },
-  { minLevel:  600, name: '修羅',     tier:  6 },
-  { minLevel:  500, name: '剣豪',     tier:  5 },
-  { minLevel:  400, name: '侍大将',   tier:  4 },
-  { minLevel:  300, name: '侍',       tier:  3 },
-  { minLevel:  200, name: '武者',     tier:  2 },
-  { minLevel:  100, name: '足軽',     tier:  1 },
-  { minLevel:    1, name: '新兵',     tier:  0 },
+  // ── 超越階級 L10000-L99999 (tier 20-29) ─────────────────────────────────────
+  { minLevel: 99999, name: '森羅万象', tier: 29 }, // 宇宙万物を超越する究極の境地
+  { minLevel: 90000, name: '天地開闢', tier: 28 }, // 天地の創造そのもの
+  { minLevel: 80000, name: '高御産',   tier: 27 }, // 高御産巣日神 — 天の創造神
+  { minLevel: 70000, name: '豊雲野',   tier: 26 }, // 豊雲野神 — 神世の大気を満たす神
+  { minLevel: 60000, name: '国常立',   tier: 25 }, // 国之常立神 — 大地の永遠の神
+  { minLevel: 50000, name: '御中主',   tier: 24 }, // 天之御中主神 — 天の中心に鎮座する始原神
+  { minLevel: 40000, name: '伊邪那岐', tier: 23 }, // 天地の創造主、黄泉から帰還した神
+  { minLevel: 30000, name: '月読',     tier: 22 }, // 月読命 — 夜の世界を治める月神
+  { minLevel: 20000, name: '須佐之男', tier: 21 }, // 須佐之男命 — 嵐と剣の覇神
+  { minLevel: 10000, name: '天照',     tier: 20 }, // 天照大神 — 高天原を統べる太陽神
+  // ── 神話階級 L1000-L9999 (tier 10-19) ──────────────────────────────────────
+  { minLevel:  9999, name: '創世神',   tier: 19 },
+  { minLevel:  9000, name: '神話',     tier: 18 },
+  { minLevel:  8000, name: '神威',     tier: 17 },
+  { minLevel:  7000, name: '破壊神',   tier: 16 },
+  { minLevel:  6000, name: '軍神',     tier: 15 },
+  { minLevel:  5000, name: '天下無双', tier: 14 },
+  { minLevel:  4000, name: '戦神',     tier: 13 },
+  { minLevel:  3000, name: '雷神',     tier: 12 },
+  { minLevel:  2000, name: '武神',     tier: 11 },
+  { minLevel:  1000, name: '剣聖',     tier: 10 },
+  // ── 武人階級 L1-L999 (tier 0-9) ─────────────────────────────────────────────
+  { minLevel:   900, name: '覇王',     tier:  9 },
+  { minLevel:   800, name: '羅刹',     tier:  8 },
+  { minLevel:   700, name: '鬼神',     tier:  7 },
+  { minLevel:   600, name: '修羅',     tier:  6 },
+  { minLevel:   500, name: '剣豪',     tier:  5 },
+  { minLevel:   400, name: '侍大将',   tier:  4 },
+  { minLevel:   300, name: '侍',       tier:  3 },
+  { minLevel:   200, name: '武者',     tier:  2 },
+  { minLevel:   100, name: '足軽',     tier:  1 },
+  { minLevel:     1, name: '新兵',     tier:  0 },
 ];
 
 export function rankNameFor(level: number): RankName {

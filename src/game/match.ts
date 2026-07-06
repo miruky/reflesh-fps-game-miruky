@@ -353,7 +353,7 @@ const ALERT_SPOT_MUL = 3.5; // 銃声を聞いた(alert)時の発見加速。既
 const PAIN_SPOT_MUL = 5; // 撃たれた(pain)時は基準×この係数で即発見に近づける
 
 // ── R16 ゾンビモード ──
-const ZOMBIE_MOVE_MUL = 0.72; // 基準速度に対するシャンブル倍率(走行個体は updateZombie で×1.6)
+const ZOMBIE_MOVE_MUL = 1.44; // 基準速度に対するシャンブル倍率(走行個体は updateZombie で×1.6)
 const ZOMBIE_MELEE_GLOBAL_GAP = 0.35; // 何体いても近接ダメージはこの間隔以上(同フレーム多段一撃回避)
 const ZOMBIE_IFRAME = 0.5; // 近接被弾後のプレイヤー無敵時間
 const ZOMBIE_ROUND_COOLDOWN = 4.5; // ラウンドクリア後、次ラウンドまでの小休止
@@ -375,11 +375,27 @@ function killcamWeaponFor(killer: Bot): string {
       return '固定砲台';
     case 'zombie':
       return 'ゾンビの爪';
+    case 'master':
+      return '達人・突撃銃';
+    case 'giant':
+      return '巨躯の一撃'; // 巨躯は近接のみ(updateGiantは発砲経路を持たない)
     default: {
       const _exhaustive: never = killer.kind;
       return _exhaustive;
     }
   }
+}
+
+// 超鬼畜の敵チューニング倍率(純粋関数)。HP×3 / ダメージ×2.5 / 速度×1.3。
+// spawnBot が KIND_TUNING 合成の「後」に適用する(合成前だと達人600/巨躯1500の
+// maxHp が KIND_TUNING の後勝ちで倍率を打ち消してしまうため)
+export function applyHellTuning(t: BotTuning): BotTuning {
+  return {
+    ...t,
+    maxHp: Math.round(t.maxHp * 3),
+    damage: Math.round(t.damage * 2.5),
+    moveSpeedMul: t.moveSpeedMul * 1.3,
+  };
 }
 
 // R12軽量化: bloomを半解像で処理する。EffectComposer.addPass/setSize がフル実効サイズで
@@ -406,6 +422,8 @@ export interface MatchConfig {
   secondaryId?: string; // 副武器の上書き
   scoreAttack?: boolean; // スコアアタック(自己ベスト記録)
   zombieStartRound?: number; // R27: ゾンビモードの開始ラウンド(1-50、未指定=1)
+  hellMode?: boolean;
+  allGiantMode?: boolean;
 }
 
 export interface FeedEntry {
@@ -591,6 +609,7 @@ export interface MatchSnapshot {
   };
   // 破壊済み breakable プロップのコライダーハンドルセット(将来のミニマップ連携用)
   destroyedPropHandles: ReadonlySet<number>;
+  hellMode?: boolean;
 }
 
 interface RayHitLike {
@@ -1133,6 +1152,7 @@ export class Match {
     // HUD/スナップショットの maxHp は player.maxHp を参照するため自動追従する。
     // V31修正: ガンゲームはラダー武器強制のためHP300を適用しない(純粋な銃勝負)
     if (config.primaryId === 'fists' && config.mode !== 'gungame') playerOpts.maxHp = 300;
+    if (config.hellMode) playerOpts.regenPerS = 12.5;
     this.player = new Player(this.physics, spawn, playerOpts);
     this.tags.set(this.player.collider.handle, { kind: 'player' });
 
@@ -1187,12 +1207,14 @@ export class Match {
       // 1.2m未満の候補は決定論的なリングオフセットでずらして配置する。
       // tier別パフォーマンスクランプ(low:16/medium:28/high:設定値。config読み込み点でMath.min)
       const rawBotCount = config.stage.botCount;
+      // 超鬼畜: 湧き数+50%(tierパフォーマンス上限の内側で増える=low/mediumは頭打ち維持)
+      const hellBotCount = config.hellMode ? Math.ceil(rawBotCount * 1.5) : rawBotCount;
       const botCount =
         _graphicsTier === 'high'
-          ? rawBotCount
+          ? hellBotCount
           : _graphicsTier === 'medium'
-            ? Math.min(28, rawBotCount)
-            : Math.min(16, rawBotCount);
+            ? Math.min(28, hellBotCount)
+            : Math.min(16, hellBotCount);
       const allyCount = this.modeDef.teamBased ? Math.floor((botCount - 1) / 2) : 0;
       const placed: THREE.Vector3[] = [this.player.position];
       const MIN_GAP = 1.2;
@@ -1227,13 +1249,28 @@ export class Match {
           botSpawn.set(base.x + Math.cos(a) * 2.5 * ring, base.y, base.z + Math.sin(a) * 2.5 * ring);
         }
         placed.push(botSpawn.clone());
+        // hellMode/allGiantMode: kind selection for enemy humanoid slots
+        let botKind: BotKind = 'humanoid';
+        if (!isAlly) {
+          if (config.allGiantMode) {
+            botKind = 'giant';
+          } else {
+            const r = this.rand();
+            if (r < (config.hellMode ? 0.30 : 0.08)) botKind = 'master';
+            else if (r < (config.hellMode ? 0.35 : 0.13)) botKind = 'giant';
+          }
+        }
+        // 超鬼畜倍率は spawnBot 内(KIND_TUNING合成後)で一元適用する(二重掛け防止)
+        // キルフィード/スコアボードで一目で分かるよう、達人/巨躯は種名を表示名にする
+        const displayName = botKind === 'master' ? '達人' : botKind === 'giant' ? '巨躯' : name;
         this.spawnBot(
-          name,
+          displayName,
           botSpawn,
           isAlly ? this.colors.ally : this.colors.enemy,
           team,
           tuningFor('normal', config.difficulty),
           'normal',
+          botKind,
         );
       }
     }
@@ -4264,7 +4301,7 @@ export class Match {
         let part: HitPart = tag.part;
         // 高さによる部位再分類は人型のみ。戦車/ドローン等は車体下部が「脚」扱いで
         // 減衰しないようbody満額を維持する(弱点=headコライダーは別枠で成立)
-        if (part === 'body' && tag.bot.kind === 'humanoid') {
+        if (part === 'body' && (tag.bot.kind === 'humanoid' || tag.bot.kind === 'master' || tag.bot.kind === 'giant')) {
           part = partFromHitHeight(end.y - tag.bot.position.y, HIP_OFFSET_Y);
         }
         const base = damageAtDistance(weapon.def.damage, distance, weapon.def.falloff);
@@ -4416,6 +4453,9 @@ export class Match {
       this.hits.push(scopeKill ? 'snipe' : 'kill');
       this.feed.push({ killer: PLAYER_NAME, victim: bot.name, weapon: weaponName, headshot });
       this.scoreEvents.push({ label: 'キル', xp: 100 });
+      if (bot.kind === 'master') {
+        this.scoreEvents.push({ label: '達人撃破', xp: 500 });
+      }
       // ガンゲーム: ランク進行(スコアストリーク/アナウンサーの前に処理してthis.overを確定させる)
       if (this.config.mode === 'gungame') {
         this.ggOnPlayerKill(bot, weaponName === '近接');
@@ -5049,7 +5089,7 @@ export class Match {
       }
       let targetEye: THREE.Vector3 | null = null;
       if (bot.alive) {
-        if (bot.kind === 'zombie') {
+        if (bot.kind === 'zombie' || bot.kind === 'giant') {
           // 近接群れ: LOSレイを一切撃たず、生存プレイヤーを直接ターゲット(0 rays / spot-time無し)
           targetEye = this.player.alive ? this.player.eyePosition : null;
         } else if (bot.blind <= 0) {
@@ -5309,7 +5349,7 @@ export class Match {
             ? TANK_AIM_PARTS
             : bot.kind === 'turret'
               ? TURRET_AIM_PARTS
-              : AIM_PARTS;
+              : AIM_PARTS; // humanoid, zombie, master, giant -> AIM_PARTS
       const ranked = rankAimPoints(eye, forward, base, parts, maxRange);
       for (const cand of ranked) {
         // rankedはeff(角度-頭バイアス)順なのでangleは単調でない。より近い部位を
@@ -7210,7 +7250,11 @@ export class Match {
       merged.maxHp = Math.max(merged.maxHp, tuning.maxHp);
       if (kind === 'tank' && this.config.difficulty === 'easy') merged.maxHp = 1400;
     }
-    const bot = new Bot(this.physics, name, spawn, color, merged, team, tier, kind);
+    // 超鬼畜: 敵側のみ倍率適用。全spawn経路(対戦/ミッション波/ゾンビ)が
+    // この漏斗を通るため、ここ一箇所で全モードへ効く
+    const finalTuning =
+      this.config.hellMode && team !== PLAYER_TEAM ? applyHellTuning(merged) : merged;
+    const bot = new Bot(this.physics, name, spawn, color, finalTuning, team, tier, kind);
     this.tags.set(bot.bodyCollider.handle, { kind: 'bot', bot, part: 'body' });
     this.tags.set(bot.headCollider.handle, { kind: 'bot', bot, part: 'head' });
     // 追加コライダー(tankの砲塔など)もbody部位として登録する
@@ -7567,7 +7611,8 @@ export class Match {
   // ゾンビ近接: 何体密着していても、グローバル間隔 + プレイヤーi-frameで律速し、
   // 同フレームに5体×22=110で即死させない(BO2の複数被弾でも一撃死しない設計)
   private zombieMelee(bot: Bot): void {
-    if (bot.kind !== 'zombie' || !this.player.alive) return;
+    if (bot.kind !== 'zombie' && bot.kind !== 'giant' && bot.kind !== 'master') return;
+    if (!this.player.alive) return;
     const now = this.elapsed;
     if (now < this.zombieMeleeIframe || now < this.zombieMeleeGlobal) return;
     const dmg = bot.tuning.damage;
@@ -7582,7 +7627,8 @@ export class Match {
     this.zombieMeleeGlobal = now + ZOMBIE_MELEE_GLOBAL_GAP;
     this.zombieMeleeIframe = now + ZOMBIE_IFRAME;
     if (died) {
-      this.feed.push({ killer: bot.name, victim: PLAYER_NAME, weapon: 'ゾンビの爪', headshot: false });
+      const meleeWeapon = bot.kind === 'giant' ? '巨躯の一撃' : bot.kind === 'master' ? '達人の刃' : 'ゾンビの爪';
+      this.feed.push({ killer: bot.name, victim: PLAYER_NAME, weapon: meleeWeapon, headshot: false });
       this.sounds.death();
       this.notePlayerDeath(bot);
     }
@@ -8088,6 +8134,7 @@ export class Match {
       } : undefined,
       // 破壊済み breakable プロップのハンドルセット(HUD ミニマップ将来連携用)
       destroyedPropHandles: this.destroyedPropHandles,
+      hellMode: this.config.hellMode ?? false,
     };
     this.feed = [];
     this.hits = [];

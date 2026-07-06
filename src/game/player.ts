@@ -28,7 +28,7 @@ const GRAVITY = 18;
 // 両方を下回るため、長距離落下しても床スイープがスラブを飛び越さない(トンネリング防止)
 export const MAX_FALL_SPEED = 24;
 const JUMP_VELOCITY = 6.4;
-const THRUST_JUMP_VELOCITY = 9.0; // R31調整: 18は高すぎたため9へ(移動スピードは不変、上昇力のみ抑制)
+const THRUST_JUMP_VELOCITY = 4.5; // R33調整: 9→4.5(上昇力のみ抑制)
 const SLIDE_JUMP_VELOCITY = 6.9; // スライドジャンプはやや高く跳ぶ
 const AIR_JUMPS = 1; // 接地・壁取り付きで戻る空中ジャンプ回数
 export const COYOTE_TIME = 0.15; // 0.1→0.15 強化(Titanfall2式コヨーテ拡張)

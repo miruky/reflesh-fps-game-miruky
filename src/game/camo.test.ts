@@ -88,8 +88,8 @@ describe('カモ段階表', () => {
 });
 
 describe('対象武器とクラス', () => {
-  it('カモ対象はfists除く25本のプライマリ', () => {
-    expect(CAMO_WEAPON_IDS).toHaveLength(25);
+  it('カモ対象はfists除く35本のプライマリ', () => {
+    expect(CAMO_WEAPON_IDS).toHaveLength(35);
     expect(CAMO_WEAPON_IDS).not.toContain('fists');
     for (const id of CAMO_WEAPON_IDS) expect(WEAPON_DEFS[id], id).toBeDefined();
   });

@@ -675,6 +675,42 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
 
 // 音声アセットを一切持たず、Web Audio APIで全効果音を合成する。
 // AudioContextはブラウザの自動再生制限のため最初の操作時に生成する。
+// ── R33 Sランク武器サウンドスペック(純データ・テスト可能) ──────────────────
+// 弓の発射音: 弦の解放ブリオン(hi-pass)+矢の風切り(sweep down)の2層構成。
+export const BOW_RELEASE_SPEC = {
+  stringSlapHz: 2400,      // 弦が前腕を弾く高域成分(hi-pass)
+  slapGain: 0.28,
+  slapDurationS: 0.032,
+  windStartHz: 4800,       // 矢が空気を切り裂く風切り開始Hz
+  windEndHz: 900,          // sweep先の低域(遠ざかり感)
+  windGain: 0.18,
+  windDurationS: 0.14,
+} as const;
+
+// 扇の風切り音: 水平スイング時の広域ホワイトノイズ帯域sweep。
+export const FAN_WHOOSH_SPEC = {
+  startHz: 1200,            // sweep開始(高)
+  endHz: 380,               // sweep先(低)
+  gain: 0.34,
+  durationS: 0.22,
+  filterType: 'bandpass' as BiquadFilterType,
+  q: 0.7,
+} as const;
+
+// ミニガンスピン音: スピンアップ(up=true)とスピンダウン(up=false)の2フェーズ。
+// toneはsawtooth低域ドローン。noiseBurstは機械ブレード風ハイパスノイズ。
+export const MINIGUN_SPIN_SPEC = {
+  droneStartHz: 55,         // スピンアップ開始Hz
+  droneEndHz: 220,          // スピンアップ最高Hz
+  droneDownStartHz: 220,    // スピンダウン開始Hz
+  droneDownEndHz: 30,       // スピンダウン終了Hz
+  droneDurationS: 0.9,
+  bladeHz: 3600,
+  bladeGain: 0.18,
+  bladeDurationS: 0.8,
+  droneGain: 0.38,
+} as const;
+
 export class SoundKit {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -2611,6 +2647,80 @@ export class SoundKit {
   }
 
   // ── R33 黒雷帝 ambient pack ここまで ──────────────────────────────────────
+
+  // ── R33 Sランク武器サウンド ───────────────────────────────────────────────
+  // 月光弓 発射音: 弦解放スラップ(hi-pass噪音) + 矢風切りsweep の2層。
+  // BOW_RELEASE_SPEC の値と一致させること。
+  bowRelease(): void {
+    if (this.liveVoices() > 225) return;
+    // 弦スラップ(hi-pass)
+    this.noiseBurst({
+      durationS: BOW_RELEASE_SPEC.slapDurationS,
+      filterHz: BOW_RELEASE_SPEC.stringSlapHz,
+      filterType: 'highpass',
+      gain: BOW_RELEASE_SPEC.slapGain,
+      attackS: 0.001,
+    });
+    // 矢風切りsweep
+    this.noiseBurst({
+      durationS: BOW_RELEASE_SPEC.windDurationS,
+      filterHz: BOW_RELEASE_SPEC.windStartHz,
+      filterEndHz: BOW_RELEASE_SPEC.windEndHz,
+      filterType: 'bandpass',
+      q: 1.2,
+      gain: BOW_RELEASE_SPEC.windGain,
+      delayS: 0.008,
+    });
+  }
+
+  // 風神扇 スイング音: 広域bandpass+ノイズsweep。FAN_WHOOSH_SPEC の値と一致させること。
+  fanWhoosh(): void {
+    if (this.liveVoices() > 225) return;
+    this.noiseBurst({
+      durationS: FAN_WHOOSH_SPEC.durationS,
+      filterHz: FAN_WHOOSH_SPEC.startHz,
+      filterEndHz: FAN_WHOOSH_SPEC.endHz,
+      filterType: FAN_WHOOSH_SPEC.filterType,
+      q: FAN_WHOOSH_SPEC.q,
+      gain: FAN_WHOOSH_SPEC.gain,
+      attackS: 0.004,
+    });
+    // 低域エア補強
+    this.noiseBurst({
+      durationS: FAN_WHOOSH_SPEC.durationS * 0.7,
+      filterHz: 200,
+      filterType: 'lowpass',
+      gain: 0.12,
+      delayS: 0.02,
+    });
+  }
+
+  // 修羅 ミニガン スピンアップ/ダウン。up=true でスピンアップ、up=false でスピンダウン。
+  // MINIGUN_SPIN_SPEC の値と一致させること。
+  minigunSpin(up: boolean): void {
+    if (this.liveVoices() > 225) return;
+    const startHz = up ? MINIGUN_SPIN_SPEC.droneStartHz : MINIGUN_SPIN_SPEC.droneDownStartHz;
+    const endHz = up ? MINIGUN_SPIN_SPEC.droneEndHz : MINIGUN_SPIN_SPEC.droneDownEndHz;
+    // sawtoothドローン: 回転数を模倣
+    this.tone({
+      freq: startHz,
+      endFreq: endHz,
+      durationS: MINIGUN_SPIN_SPEC.droneDurationS,
+      type: 'sawtooth',
+      gain: MINIGUN_SPIN_SPEC.droneGain,
+      drive: 3,
+      curve: 'asym',
+      attackS: 0.05,
+    });
+    // ブレードノイズ(hi-pass): 金属バレル摩擦感
+    this.noiseBurst({
+      durationS: MINIGUN_SPIN_SPEC.bladeDurationS,
+      filterHz: MINIGUN_SPIN_SPEC.bladeHz,
+      filterType: 'highpass',
+      gain: MINIGUN_SPIN_SPEC.bladeGain,
+      attackS: 0.04,
+    });
+  }
 
   // 溜め攻撃チック: charge01(0..1)に応じて上昇するパルス
   chargeAttackTick(charge01: number): void {

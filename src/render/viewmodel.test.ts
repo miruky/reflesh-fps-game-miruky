@@ -64,6 +64,15 @@ describe('buildGunBody', () => {
     pistol: 1,
     revolver: 1,
     launcher: 1,
+    // R33 新shape 8種
+    'sniper-semi': 1,
+    antimateriel: 1,
+    'shuriken-hand': 1,
+    'bow-japanese': 1,
+    'war-fan': 1,
+    musket: 1,
+    'lightning-staff': 1,
+    minigun: 1,
   } satisfies Record<ViewModelShape, 1>;
 
   const base = Object.values(WEAPON_DEFS)[0];

@@ -19,6 +19,8 @@ import {
   rankNameFor,
   starRate,
   UNLOCKS,
+  XP_MUL_NORMAL,
+  XP_MUL_ZOMBIE,
   xpToNext,
   type MatchSummary,
   type MissionSummary,
@@ -57,10 +59,12 @@ describe('levelFromXp', () => {
   });
 
   it('レベル上限で頭打ちになる', () => {
-    // XP_FOR_L9999 = 1_884_801_550。2Bは確実にL9999超え
-    const state = levelFromXp(2_000_000_000);
+    // XP_FOR_L99999 ≈ 70_774_851_550。80Bは確実にL99999超え
+    const state = levelFromXp(80_000_000_000);
     expect(state.level).toBe(MAX_LEVEL);
     expect(state.toNext).toBe(0);
+    // 更にXPを積んでも99999を超えない
+    expect(levelFromXp(80_000_000_000 + 10_000_000).level).toBe(MAX_LEVEL);
   });
 });
 
@@ -320,28 +324,36 @@ describe('キャンペーン進行', () => {
 });
 
 describe('XP乗数', () => {
-  it('xpMul=50 で1試合のXP合計・各行とも50倍になる(非ゾンビ相当)', () => {
-    const profile = emptyProfile();
-    // won=true, kills=5: 勝利500+キル500+初陣チャレンジ200 = 1200 → ×50 = 60000
-    const progress = applyMatch(profile, summary({ won: true, kills: 5 }), 50);
-    expect(progress.xpTotal).toBe(60000);
-    expect(profile.xp).toBe(60000);
-    // breakdown のキルXPも50倍
-    const killEntry = progress.xpBreakdown.find((e) => e.label.startsWith('キル'));
-    expect(killEntry?.xp).toBe(25000); // 5 * 100 * 50
+  it('XP_MUL_NORMAL の定数値が 500 である', () => {
+    expect(XP_MUL_NORMAL).toBe(500);
   });
 
-  it('xpMul=5 でゾンビモード相当の5倍になる', () => {
+  it('XP_MUL_ZOMBIE の定数値が 25 である', () => {
+    expect(XP_MUL_ZOMBIE).toBe(25);
+  });
+
+  it('XP_MUL_NORMAL(×500)で1試合のXP合計・各行とも500倍になる(非ゾンビ相当)', () => {
+    const profile = emptyProfile();
+    // won=true, kills=5: 勝利500+キル500+初陣チャレンジ200 = 1200 → ×500 = 600_000
+    const progress = applyMatch(profile, summary({ won: true, kills: 5 }), XP_MUL_NORMAL);
+    expect(progress.xpTotal).toBe(600_000);
+    expect(profile.xp).toBe(600_000);
+    // breakdown のキルXPも500倍
+    const killEntry = progress.xpBreakdown.find((e) => e.label.startsWith('キル'));
+    expect(killEntry?.xp).toBe(250_000); // 5 * 100 * 500
+  });
+
+  it('XP_MUL_ZOMBIE(×25)でゾンビモード相当の25倍になる', () => {
     const p1 = emptyProfile();
     const p2 = emptyProfile();
     const s = summary({ won: false, kills: 3 });
     const base = applyMatch(p1, { ...s }); // xpMul=1 の基準
-    const scaled = applyMatch(p2, { ...s }, 5);
-    expect(scaled.xpTotal).toBe(base.xpTotal * 5);
-    expect(p2.xp).toBe(p1.xp * 5);
-    // breakdown のキルXPも5倍
+    const scaled = applyMatch(p2, { ...s }, XP_MUL_ZOMBIE);
+    expect(scaled.xpTotal).toBe(base.xpTotal * XP_MUL_ZOMBIE);
+    expect(p2.xp).toBe(p1.xp * XP_MUL_ZOMBIE);
+    // breakdown のキルXPも25倍
     const killEntry = scaled.xpBreakdown.find((e) => e.label.startsWith('キル'));
-    expect(killEntry?.xp).toBe(3 * 100 * 5); // 3 * 100 * 5 = 1500
+    expect(killEntry?.xp).toBe(3 * 100 * XP_MUL_ZOMBIE); // 3 * 100 * 25 = 7500
   });
 
   it('xpMul=1 は省略時と同一(乗算なし)', () => {
@@ -358,19 +370,20 @@ describe('XP乗数', () => {
     expect(xpToNext(1)).toBe(750);
     expect(xpToNext(100)).toBe(25_500);
     expect(xpToNext(999)).toBe(65_500 + 499 * 50); // = 90_450
+    expect(xpToNext(10000)).toBe(315_460);           // L10000+新曲線
   });
 
-  it('キャンペーンミッションでも xpMul=50 が効く(初制圧ボーナス込み)', () => {
+  it('キャンペーンミッションでも XP_MUL_NORMAL が効く(初制圧ボーナス込み)', () => {
     const ch1 = CAMPAIGN[0]!;
     const m1 = ch1.missions[0]!;
     const p1 = emptyProfile();
     const p2 = emptyProfile();
-    // won=true, kills=0: 勝利500+初制圧ボーナス800 = 1300 → ×50 = 65000
+    // won=true, kills=0: 勝利500+初制圧ボーナス800 = 1300 → ×500 = 650_000
     const ms = missionSummary(m1.id, ch1.id, true, 30);
     const base = applyCampaignMission(p1, { ...ms });
-    const scaled = applyCampaignMission(p2, { ...ms }, 50);
-    expect(scaled.xpTotal).toBe(base.xpTotal * 50);
-    expect(p2.xp).toBe(p1.xp * 50);
+    const scaled = applyCampaignMission(p2, { ...ms }, XP_MUL_NORMAL);
+    expect(scaled.xpTotal).toBe(base.xpTotal * XP_MUL_NORMAL);
+    expect(p2.xp).toBe(p1.xp * XP_MUL_NORMAL);
   });
 });
 
@@ -497,7 +510,7 @@ describe('CHALLENGES定義', () => {
   });
 });
 
-// ── MAX_LEVEL=9999 曲線テスト ─────────────────────────────────────────────────────
+// ── MAX_LEVEL=99999 曲線テスト ────────────────────────────────────────────────────
 // 累積XP定数(テスト内でも同一ロジックで導出できるが、固定値で回帰テストとして保持する)
 // sum(xpToNext(1..99))    = 99*750 + 250*(98*99/2) = 1_287_000
 // sum(xpToNext(100..499)) = 400*25_500 + 100*(399*400/2) = 18_180_000
@@ -506,13 +519,20 @@ describe('CHALLENGES定義', () => {
 // sum(xpToNext(1..999))   = 58_454_500
 // sum(xpToNext(1000..4999)) = 4000*90_450 + 25*(4000*4001/2) = 561_850_000
 // sum(xpToNext(1000..9998)) = 8999*90_450 + 25*(8999*9000/2) = 1_826_347_050
-const XP_FOR_L100  = 1_287_000;
-const XP_FOR_L999  = 1_287_000 + 18_180_000 + 38_897_050; // = 58_364_050
-const XP_FOR_L1000 = 58_454_500;
-const XP_FOR_L5000 = 620_304_500;  // XP_FOR_L1000 + 561_850_000
-const XP_FOR_L9999 = 1_884_801_550; // XP_FOR_L1000 + 1_826_347_050
+// xpToNext(9999) = 90_450 + 9000*25 = 315_450
+// sum(xpToNext(1..9999))  = 1_884_801_550 + 315_450 = 1_885_117_000
+// sum(xpToNext(10000..49999)) = 40000*315_450 + 10*(40000*40001/2) = 20_618_200_000
+// sum(xpToNext(10000..99998)) = 89999*315_450 + 10*(89999*90000/2) = 68_889_734_550
+const XP_FOR_L100   = 1_287_000;
+const XP_FOR_L999   = 1_287_000 + 18_180_000 + 38_897_050; // = 58_364_050
+const XP_FOR_L1000  = 58_454_500;
+const XP_FOR_L5000  = 620_304_500;   // XP_FOR_L1000 + 561_850_000
+const XP_FOR_L9999  = 1_884_801_550; // XP_FOR_L1000 + 1_826_347_050
+const XP_FOR_L10000 = 1_885_117_000; // XP_FOR_L9999 + xpToNext(9999)=315_450
+const XP_FOR_L50000 = 22_503_317_000; // XP_FOR_L10000 + 20_618_200_000
+const XP_FOR_L99999 = 70_774_851_550; // XP_FOR_L10000 + 68_889_734_550
 
-describe('MAX_LEVEL=9999 進行曲線', () => {
+describe('MAX_LEVEL=99999 進行曲線', () => {
   it('L1-99 の xpToNext は旧曲線と同一(後方互換)', () => {
     expect(xpToNext(1)).toBe(750);
     expect(xpToNext(50)).toBe(750 + 49 * 250);  // 13_000
@@ -542,8 +562,9 @@ describe('MAX_LEVEL=9999 進行曲線', () => {
   });
 
   it('xpToNext は L1000 で L999 より 25 多い(高原化継続)', () => {
-    expect(xpToNext(1000)).toBe(90_450 + 25);       // 90_475
+    expect(xpToNext(1000)).toBe(90_450 + 25);        // 90_475
     expect(xpToNext(9998)).toBe(90_450 + 8999 * 25); // 315_425
+    expect(xpToNext(9999)).toBe(315_450);             // L9999 は旧formula の末尾
   });
 
   it('L5000 到達累積XP が正しい', () => {
@@ -552,12 +573,40 @@ describe('MAX_LEVEL=9999 進行曲線', () => {
     expect(state.toNext).toBe(xpToNext(5000));
   });
 
-  it('L9999(上限)で toNext=0 かつ level=MAX_LEVEL', () => {
+  it('XP_FOR_L9999 で旧上限L9999ちょうど — 後方互換(toNext は新曲線値)', () => {
     const state = levelFromXp(XP_FOR_L9999);
-    expect(state.level).toBe(MAX_LEVEL);  // = 9999
+    expect(state.level).toBe(9999);
+    expect(state.toNext).toBe(xpToNext(9999)); // = 315_450(新曲線では L10000 へ続く)
+  });
+
+  it('xpToNext は L9999→L10000 境界でも単調増加する(曲線切り替え)', () => {
+    expect(xpToNext(9999)).toBe(315_450);  // old tier 末尾
+    expect(xpToNext(10000)).toBe(315_460); // new tier 先頭(+10)
+    expect(xpToNext(10000)).toBeGreaterThan(xpToNext(9999));
+  });
+
+  it('L10000 到達累積XP が正しい', () => {
+    const state = levelFromXp(XP_FOR_L10000);
+    expect(state.level).toBe(10000);
+    expect(state.toNext).toBe(xpToNext(10000)); // = 315_460
+  });
+
+  it('L50000 到達累積XP が正しい', () => {
+    const state = levelFromXp(XP_FOR_L50000);
+    expect(state.level).toBe(50000);
+    expect(state.toNext).toBe(xpToNext(50000));
+  });
+
+  it('L99999(新上限)で toNext=0 かつ level=MAX_LEVEL', () => {
+    const state = levelFromXp(XP_FOR_L99999);
+    expect(state.level).toBe(MAX_LEVEL);  // = 99999
     expect(state.toNext).toBe(0);
-    // 更に XP を積んでも 9999 を超えない
-    expect(levelFromXp(XP_FOR_L9999 + 10_000_000).level).toBe(MAX_LEVEL);
+    // 更に XP を積んでも 99999 を超えない
+    expect(levelFromXp(XP_FOR_L99999 + 10_000_000).level).toBe(MAX_LEVEL);
+  });
+
+  it('XP_FOR_L99999 は Number.MAX_SAFE_INTEGER 以内', () => {
+    expect(XP_FOR_L99999).toBeLessThan(Number.MAX_SAFE_INTEGER);
   });
 
   it('xpToNext は L1〜L(MAX_LEVEL-1) の全域で単調増加', () => {
@@ -587,21 +636,47 @@ describe('rankNameFor', () => {
     expect(rankNameFor(1999)).toEqual({ name: '剣聖', tier: 10 });
   });
 
-  it('L9999 ちょうどで創世神(tier 19)', () => {
-    expect(rankNameFor(9999)).toEqual({ name: '創世神', tier: 19 });
-  });
-
   it('L9000-9998 は神話(tier 18)', () => {
     expect(rankNameFor(9000)).toEqual({ name: '神話', tier: 18 });
     expect(rankNameFor(9998)).toEqual({ name: '神話', tier: 18 });
   });
 
-  it('全20段の名称が揃っている', () => {
+  // ── 境界テスト: 旧上限/新10000境界/新上限 ─────────────────────────────────────
+  it('L9999 ちょうどで創世神(tier 19) — 旧上限・変更なし', () => {
+    expect(rankNameFor(9999)).toEqual({ name: '創世神', tier: 19 });
+  });
+
+  it('L10000 ちょうどで天照(tier 20) — 超越階級の開始', () => {
+    expect(rankNameFor(10000)).toEqual({ name: '天照', tier: 20 });
+    expect(rankNameFor(19999)).toEqual({ name: '天照', tier: 20 });
+  });
+
+  it('超越階級の各境界が正しく遷移する', () => {
+    expect(rankNameFor(20000)).toEqual({ name: '須佐之男', tier: 21 });
+    expect(rankNameFor(30000)).toEqual({ name: '月読',     tier: 22 });
+    expect(rankNameFor(40000)).toEqual({ name: '伊邪那岐', tier: 23 });
+    expect(rankNameFor(50000)).toEqual({ name: '御中主',   tier: 24 });
+    expect(rankNameFor(60000)).toEqual({ name: '国常立',   tier: 25 });
+    expect(rankNameFor(70000)).toEqual({ name: '豊雲野',   tier: 26 });
+    expect(rankNameFor(80000)).toEqual({ name: '高御産',   tier: 27 });
+    expect(rankNameFor(90000)).toEqual({ name: '天地開闢', tier: 28 });
+  });
+
+  it('L99999 ちょうどで森羅万象(tier 29) — 新上限', () => {
+    expect(rankNameFor(99999)).toEqual({ name: '森羅万象', tier: 29 });
+  });
+
+  it('全30段の名称が揃っている', () => {
     const samples: Array<[number, string]> = [
+      // 既存20段(変更なし)
       [1, '新兵'], [100, '足軽'], [200, '武者'], [300, '侍'], [400, '侍大将'],
       [500, '剣豪'], [600, '修羅'], [700, '鬼神'], [800, '羅刹'], [900, '覇王'],
       [1000, '剣聖'], [2000, '武神'], [3000, '雷神'], [4000, '戦神'], [5000, '天下無双'],
       [6000, '軍神'], [7000, '破壊神'], [8000, '神威'], [9000, '神話'], [9999, '創世神'],
+      // 超越10段
+      [10000, '天照'], [20000, '須佐之男'], [30000, '月読'], [40000, '伊邪那岐'],
+      [50000, '御中主'], [60000, '国常立'], [70000, '豊雲野'], [80000, '高御産'],
+      [90000, '天地開闢'], [99999, '森羅万象'],
     ];
     for (const [lvl, name] of samples) {
       expect(rankNameFor(lvl).name).toBe(name);
@@ -610,7 +685,7 @@ describe('rankNameFor', () => {
 });
 
 describe('levelRankUpgrade', () => {
-  const lv = (level: number) => ({ level, intoLevel: 0, toNext: xpToNext(Math.min(level, 9998)) });
+  const lv = (level: number) => ({ level, intoLevel: 0, toNext: xpToNext(Math.min(level, 99998)) });
 
   it('tier上昇(新兵→足軽)で新ランク名を返す', () => {
     const result = levelRankUpgrade(lv(99), lv(100));

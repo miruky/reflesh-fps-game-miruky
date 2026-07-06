@@ -64,6 +64,17 @@ const ZOMBIE_BOSS_HEAD_RADIUS = HEAD_RADIUS * 1.8; // 0.396
 const ZOMBIE_BOSS_HEAD_OFFSET = HEAD_OFFSET * 1.8; // 1.584
 const ZOMBIE_BOSS_CENTER_TO_FEET = ZOMBIE_BOSS_BODY_HALF + ZOMBIE_BOSS_BODY_RADIUS; // 1.44
 const ZOMBIE_BOSS_MELEE_RANGE = 4.2; // 通常の約2倍の近接射程
+// 達人 (master) 近接: 極近距離で刃を振る(射撃との複合攻撃)
+const MASTER_MELEE_RANGE = 1.8;
+const MASTER_MELEE_CD = 0.8;
+// 巨躯 (giant) 体格: コライダー×1.8
+const GIANT_BODY_HALF = BODY_HALF * 1.8;
+const GIANT_BODY_RADIUS = BODY_RADIUS * 1.8;
+const GIANT_HEAD_RADIUS = HEAD_RADIUS * 1.8;
+const GIANT_HEAD_OFFSET = HEAD_OFFSET * 1.8;
+const GIANT_CENTER_TO_FEET = GIANT_BODY_HALF + GIANT_BODY_RADIUS;
+const GIANT_MELEE_RANGE = 4.0;
+const GIANT_MELEE_CD = 1.5;
 // ── ゾンビ登坂アシスト(箱/瓦礫/低い壁へゆっくり這い上がる)──
 // autostep(0.75m)を越える障害物に前進を阻まれたら、重力の代わりに上向き速度を
 // 与えて乗り上がる。安全弁: 前方レイで実体を確認し、開始足元Yからの上限高さで
@@ -89,7 +100,7 @@ export type Difficulty = 'easy' | 'normal' | 'hard';
 export type BotTier = 'normal' | 'elite' | 'boss';
 // 敵のアーキタイプ。humanoid=従来の人型、drone=飛行、tank=大型戦車、turret=固定砲台、
 // zombie=BO2式ラウンド制の近接群れ(銃無し・前傾シャンブル)
-export type BotKind = 'humanoid' | 'drone' | 'tank' | 'turret' | 'zombie';
+export type BotKind = 'humanoid' | 'drone' | 'tank' | 'turret' | 'zombie' | 'master' | 'giant';
 
 export interface BotTuning {
   spreadDeg: number;
@@ -113,16 +124,16 @@ export interface BotTuning {
 // viewDistM はエリア×3��大に合わせ humanoid ~1.4倍(easy 55→77 / normal 60→84 / hard 68→95)。
 // ゾンビ(近接)は 120 維持(KIND_TUNING 参照)。
 export const DIFFICULTY: Record<Difficulty, BotTuning> = {
-  easy: { spreadDeg: 5.5, reactionS: 0.6, damage: 8, burstPauseMin: 1.0, burstPauseMax: 1.6, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 77, spotTimeS: 1.8, aimSlewRadS: 2.6 },
-  normal: { spreadDeg: 3.2, reactionS: 0.38, damage: 11, burstPauseMin: 0.7, burstPauseMax: 1.2, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 84, spotTimeS: 1.1, aimSlewRadS: 4.2 },
-  hard: { spreadDeg: 1.9, reactionS: 0.22, damage: 14, burstPauseMin: 0.5, burstPauseMax: 0.9, maxHp: 100, moveSpeedMul: 1, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 95, spotTimeS: 0.6, aimSlewRadS: 6.3 },
+  easy: { spreadDeg: 5.5, reactionS: 0.6, damage: 8, burstPauseMin: 1.0, burstPauseMax: 1.6, maxHp: 100, moveSpeedMul: 2, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 77, spotTimeS: 1.8, aimSlewRadS: 2.6 },
+  normal: { spreadDeg: 3.2, reactionS: 0.38, damage: 11, burstPauseMin: 0.7, burstPauseMax: 1.2, maxHp: 100, moveSpeedMul: 2, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 84, spotTimeS: 1.1, aimSlewRadS: 4.2 },
+  hard: { spreadDeg: 1.9, reactionS: 0.22, damage: 14, burstPauseMin: 0.5, burstPauseMax: 0.9, maxHp: 100, moveSpeedMul: 2, scale: 1, headOffset: HEAD_OFFSET, viewDistM: 95, spotTimeS: 0.6, aimSlewRadS: 6.3 },
 };
 
 // 階層ごとの上書き差分。base(難度)へスプレッドして合成する。
 // scale は hitreg(当たり判定とのズレ)回避のため拡大せず、威圧は色/発光で表現する。
 export const ELITE_TUNING: Partial<BotTuning> = {
   maxHp: 180,
-  moveSpeedMul: 1.15,
+  moveSpeedMul: 2.3,
   reactionS: 0.2,
   spreadDeg: 1.8,
   damage: 15,
@@ -132,7 +143,7 @@ export const ELITE_TUNING: Partial<BotTuning> = {
 };
 export const BOSS_TUNING: Partial<BotTuning> = {
   maxHp: 900,
-  moveSpeedMul: 0.92,
+  moveSpeedMul: 1.84,
   reactionS: 0.16,
   spreadDeg: 1.5,
   damage: 18,
@@ -157,11 +168,11 @@ export function tuningFor(tier: BotTier, difficulty: Difficulty): BotTuning {
 // KIND_TUNING viewDistM: エリア×3拡大対応で humanoid 系 ~1.3-1.4倍。ゾンビは近接のため 120 維持。
 export const KIND_TUNING: Record<BotKind, Partial<BotTuning>> = {
   humanoid: {},
-  drone: { maxHp: 60, moveSpeedMul: 1.4, viewDistM: 95, spotTimeS: 0.4 }, // 70→95(×1.36)
+  drone: { maxHp: 60, moveSpeedMul: 2.8, viewDistM: 95, spotTimeS: 0.4 }, // 70→95(×1.36)
   tank: {
     maxHp: 2200,
     damage: 26,
-    moveSpeedMul: 0.45,
+    moveSpeedMul: 0.9,
     viewDistM: 120, // 90→120(×1.33)
     reactionS: 0.5,
     burstPauseMin: 1.6,
@@ -175,6 +186,8 @@ export const KIND_TUNING: Record<BotKind, Partial<BotTuning>> = {
   // damage=爪の一撃, reactionS/burstPause は発砲経路に入らないので実質未使用。
   // viewDistM: 近接追尾のため 120 維持(エリア拡大の影響なし)。
   zombie: { viewDistM: 120, reactionS: 0, damage: 22, burstPauseMin: 99, burstPauseMax: 99 },
+  master: { maxHp: 600, moveSpeedMul: 2.5, reactionS: 0.10, spreadDeg: 0.8, damage: 22, viewDistM: 130, spotTimeS: 0.15, aimSlewRadS: 16.0, burstPauseMin: 0.3, burstPauseMax: 0.6, scale: 1.15 },
+  giant:  { maxHp: 1500, moveSpeedMul: 1.6, damage: 45, viewDistM: 100, reactionS: 0.5, spotTimeS: 0.4, burstPauseMin: 99, burstPauseMax: 99 },
 };
 
 // アーキタイプごとの体格(コンストラクタ/respawnAtの単一の真実)
@@ -184,6 +197,8 @@ const KIND_FEET_OFFSET: Record<BotKind, number> = {
   tank: TANK_HALF_H,
   turret: TURRET_BODY_HALF + TURRET_BODY_RADIUS,
   zombie: CENTER_TO_FEET, // 人型と同じカプセル体格
+  master: CENTER_TO_FEET,
+  giant:  GIANT_CENTER_TO_FEET,
 };
 // humanoid以外は頭(弱点)コライダーの高さを体格で固定する(tuningと乖離させない)
 const KIND_HEAD_OFFSET: Record<BotKind, number> = {
@@ -192,6 +207,8 @@ const KIND_HEAD_OFFSET: Record<BotKind, number> = {
   tank: TANK_HEAD_Y,
   turret: TURRET_HEAD_OFFSET,
   zombie: HEAD_OFFSET,
+  master: HEAD_OFFSET,
+  giant:  GIANT_HEAD_OFFSET,
 };
 // 死亡演出の長さ(s)。humanoid/zombieは膝崩れ→前傾横倒しの2段演出のため 0.6 に延長
 const KIND_DEATH_S: Record<BotKind, number> = {
@@ -200,6 +217,8 @@ const KIND_DEATH_S: Record<BotKind, number> = {
   tank: 1.4,
   turret: 0.5,
   zombie: 0.6,
+  master: 0.6,
+  giant:  0.7,
 };
 
 export const BOT_NAMES = [
@@ -476,6 +495,10 @@ export class Bot {
   private reactionJitter = 1; // 反応時間の個体差倍率(constructorで名前ハッシュから確定)
   private fireOnset = 0; // 交戦開始時の追加発砲遅延(s)
 
+  private airJumpsLeft = 0;
+  private sinceGrounded = 99;
+  private doubleJumpCooldown = 0;
+
   private readonly controller: RAPIER.KinematicCharacterController;
   private heading = 0;
   private headingTimer = 0;
@@ -554,8 +577,9 @@ export class Bot {
     // ボスゾン��は体格1.8×スケールのコライダー・フィート/頭オフセットを使う
     const isBossZombie = kind === 'zombie' && tier === 'boss';
     // humanoidは難度/階層tuningの頭高、他kindは体格から固定(コライダーと常に一致)
-    this.headOff = kind === 'humanoid' ? tuning.headOffset
+    this.headOff = (kind === 'humanoid' || kind === 'master') ? tuning.headOffset
       : isBossZombie ? ZOMBIE_BOSS_HEAD_OFFSET
+      : kind === 'giant' ? GIANT_HEAD_OFFSET
       : KIND_HEAD_OFFSET[kind];
     this.feetOffset = isBossZombie ? ZOMBIE_BOSS_CENTER_TO_FEET : KIND_FEET_OFFSET[kind];
     this.hoverBaseY = spawn.y + DRONE_HOVER_ALT;
@@ -614,7 +638,17 @@ export class Bot {
         RAPIER.ColliderDesc.ball(ZOMBIE_BOSS_HEAD_RADIUS).setTranslation(0, ZOMBIE_BOSS_HEAD_OFFSET, 0),
         this.body,
       );
+    } else if (kind === 'giant') {
+      this.bodyCollider = world.createCollider(
+        RAPIER.ColliderDesc.capsule(GIANT_BODY_HALF, GIANT_BODY_RADIUS),
+        this.body,
+      );
+      this.headCollider = world.createCollider(
+        RAPIER.ColliderDesc.ball(GIANT_HEAD_RADIUS).setTranslation(0, GIANT_HEAD_OFFSET, 0),
+        this.body,
+      );
     } else {
+      // humanoid, master - standard capsule
       this.bodyCollider = world.createCollider(
         RAPIER.ColliderDesc.capsule(BODY_HALF, BODY_RADIUS),
         this.body,
@@ -628,7 +662,7 @@ export class Bot {
     this.controller = world.createCharacterController(0.05);
     // R18: ゾンビは小さい段差(バリケード/瓦礫/縁石)を乗り越えて詰めてくる。autostep高さを
     // 0.4→0.75へ上げ、最小幅も緩めて群れが地形に引っかからず押し寄せるように
-    if (kind === 'zombie') {
+    if (kind === 'zombie' || kind === 'giant') {
       this.controller.enableAutostep(0.75, 0.2, true);
     } else {
       this.controller.enableAutostep(0.4, 0.3, true);
@@ -639,6 +673,8 @@ export class Bot {
     else if (kind === 'tank') this.buildTankMesh(color, tier);
     else if (kind === 'turret') this.buildTurretMesh(color, tier);
     else if (kind === 'zombie') this.buildZombieMesh(color, tier);
+    else if (kind === 'master') this.buildMasterMesh(color, tier);
+    else if (kind === 'giant') this.buildGiantMesh(color, tier);
     else this.buildMesh(color, tier);
     // 名前ハッシュ由来の決定論的な反応個体差(0.7〜1.4)と初弾オンセット(0〜0.35s)。
     // 分隊の同時発砲を desync し、機械的な一斉射撃を自然に散らす(spot-timeとは別系統)
@@ -936,6 +972,25 @@ export class Bot {
     }
 
     this.group.add(this.rig);
+  }
+
+  private buildMasterMesh(color: number, tier: BotTier): void {
+    void color; // master always uses black+red scheme
+    this.buildMesh(0x0d0d0f, tier);
+    // Override glow visor/stripe emissive to red
+    this.rig.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        const m = child.material as THREE.MeshStandardMaterial;
+        if (m.emissiveIntensity >= 0.85 && m.roughness <= 0.35 && !m.vertexColors) {
+          m.emissive.set(0xcc0a1a);
+        }
+      }
+    });
+  }
+
+  private buildGiantMesh(color: number, tier: BotTier): void {
+    this.buildMesh(color, tier);
+    this.rig.scale.setScalar(1.8);
   }
 
   // 機械ボット共通のメッシュ生成。castShadowを明示し、影を落とさない
@@ -1244,8 +1299,15 @@ export class Bot {
       return;
     }
 
+    if (this.kind === 'giant') {
+      this.anim += dt;
+      this.updateGiant(dt, ctx);
+      this.syncMesh();
+      return;
+    }
+
     // ── kind別ディスパッチ(humanoid以外は専用の移動体系を持つ)──
-    if (this.kind !== 'humanoid') {
+    if (this.kind !== 'humanoid' && this.kind !== 'master') {
       if (this.kind === 'drone') this.updateDrone(dt, ctx);
       else if (this.kind === 'tank') this.updateTank(dt, ctx);
       else this.updateTurret(dt, ctx);
@@ -1321,6 +1383,29 @@ export class Bot {
       wishZ = f.z * this.moveSpeed * 0.7;
     }
 
+    // ── ダブルジャンプ(humanoid/master 専用) ──
+    this.doubleJumpCooldown = Math.max(0, this.doubleJumpCooldown - dt);
+    {
+      const _grnd = this.controller.computedGrounded();
+      if (_grnd && this.velY <= 0) {
+        this.airJumpsLeft = 1;
+        this.sinceGrounded = 0;
+      } else {
+        this.sinceGrounded += dt;
+      }
+    }
+    if (
+      this.airJumpsLeft > 0 &&
+      this.sinceGrounded > 0.3 &&
+      this.velY < 0 &&
+      this.doubleJumpCooldown <= 0 &&
+      ctx.targetEye !== null &&
+      ctx.rand() < (this.kind === 'master' ? 0.012 : 0.004)
+    ) {
+      this.velY = 5.5;
+      this.airJumpsLeft -= 1;
+      this.doubleJumpCooldown = (this.kind === 'master' ? 1.8 : 3.5) + ctx.rand() * 1.5;
+    }
     this.velY = applyGravityStep(this.velY, 1, dt);
     const movement = { x: wishX * dt, y: this.velY * dt, z: wishZ * dt };
     this.controller.computeColliderMovement(this.bodyCollider, movement);
@@ -1376,6 +1461,15 @@ export class Bot {
     this.walkAmp += (targetAmp - this.walkAmp) * Math.min(1, dt * 8);
     this.walkPhase += step * 9;
 
+    // master 近接: 極近距離で刃を振る(射撃との複合攻撃)
+    if (this.kind === 'master' && ctx.targetEye) {
+      this.meleeTimer = Math.max(0, this.meleeTimer - dt);
+      const dist = ctx.targetEye.distanceTo(this.position);
+      if (dist <= MASTER_MELEE_RANGE && this.meleeTimer <= 0 && ctx.onMelee) {
+        ctx.onMelee(this);
+        this.meleeTimer = MASTER_MELEE_CD;
+      }
+    }
     this.updateShooting(dt, ctx, engaged);
     this.syncMesh();
   }
@@ -1726,6 +1820,51 @@ export class Bot {
     return false;
   }
 
+  private updateGiant(dt: number, ctx: BotContext): void {
+    const pos = this.position;
+    let wishX = 0;
+    let wishZ = 0;
+    const target = ctx.targetEye;
+    this.meleeTimer = Math.max(0, this.meleeTimer - dt);
+    if (target) {
+      const to = target.clone().sub(pos);
+      to.y = 0;
+      const dist = to.length();
+      if (dist > 1e-3) to.normalize();
+      this.heading = Math.atan2(-to.x, -to.z);
+      wishX = to.x * this.moveSpeed;
+      wishZ = to.z * this.moveSpeed;
+      if (dist <= GIANT_MELEE_RANGE) {
+        wishX *= 0.15;
+        wishZ *= 0.15;
+        if (this.meleeTimer <= 0 && ctx.onMelee) {
+          ctx.onMelee(this);
+          this.meleeTimer = GIANT_MELEE_CD;
+        }
+      }
+    } else {
+      this.headingTimer -= dt;
+      if (this.headingTimer <= 0) {
+        this.heading = ctx.rand() * Math.PI * 2;
+        this.headingTimer = 1.5 + ctx.rand() * 2;
+      }
+      const f = this.facing();
+      wishX = f.x * this.moveSpeed * 0.4;
+      wishZ = f.z * this.moveSpeed * 0.4;
+    }
+    this.velY = applyGravityStep(this.velY, 1, dt);
+    const movement = { x: wishX * dt, y: this.velY * dt, z: wishZ * dt };
+    this.controller.computeColliderMovement(this.bodyCollider, movement);
+    const moved = this.controller.computedMovement();
+    if (this.controller.computedGrounded() && this.velY < 0) this.velY = -0.5;
+    const t = this.body.translation();
+    this.body.setNextKinematicTranslation({ x: t.x + moved.x, y: t.y + moved.y, z: t.z + moved.z });
+    const step = Math.hypot(moved.x, moved.z);
+    const targetAmp = Math.min(1, step / Math.max(1e-4, this.moveSpeed * dt));
+    this.walkAmp += (targetAmp - this.walkAmp) * Math.min(1, dt * 8);
+    this.walkPhase += step * 8;
+  }
+
   private updateShooting(dt: number, ctx: BotContext, engaged: boolean): void {
     if (!engaged || !ctx.targetEye) {
       // 反応時間 = 難度reactionS × 個体差(0.7〜1.4) + 交戦開始オンセット(0〜0.35s)
@@ -1792,6 +1931,7 @@ export class Bot {
     if (this.kind === 'tank') return 1; // 主砲: 単発、長い装填(burstPauseで表現)
     if (this.kind === 'drone') return 3; // 3連バースト
     if (this.kind === 'turret') return 6 + Math.floor(rand() * 5); // 持続制圧
+    if (this.kind === 'master') return 4 + Math.floor(rand() * 3);
     return 3 + Math.floor(rand() * 3);
   }
 
@@ -1799,6 +1939,7 @@ export class Bot {
   private shotInterval(): number {
     if (this.kind === 'drone') return 0.09;
     if (this.kind === 'turret') return 0.12;
+    if (this.kind === 'master') return 0.10;
     return 0.16;
   }
 

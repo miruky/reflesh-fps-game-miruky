@@ -160,6 +160,9 @@ export class Hud {
       </div>
       <div class="hud-announce" data-id="announce"></div>
       <div class="hud-state-bar" aria-hidden="true">
+        <div class="hud-hell" data-id="hell" hidden>
+          <span class="hud-hell-badge">超鬼畜</span>
+        </div>
         <div class="hud-dark-emperor" data-id="darkemperor" hidden>
           <span class="hud-de-badge">黒帝</span>
           <span class="hud-de-timer" data-id="detimer">5:00</span>
@@ -672,6 +675,8 @@ export class Hud {
     this.updateDarkEmperorHud(snap);
     this.updateRaiteiHud(snap);
     this.updateKokuraiteiHud(snap);
+    const hellEl = this.el['hell'];
+    if (hellEl) hellEl.hidden = !snap.hellMode;
     this.updateChargeGauge(snap);
     this.drawMinimap(snap);
     this.updateGunGameHud(snap);

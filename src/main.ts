@@ -11,7 +11,7 @@ import { loadProfile, saveProfile } from './core/profile';
 import { loadSettings, resolveGraphicsTier } from './core/settings';
 import { missionById } from './game/campaign';
 import { Match, type MatchConfig } from './game/match';
-import { applyCampaignMission, applyMatch, applyScoreRecord } from './game/progression';
+import { applyCampaignMission, applyMatch, applyScoreRecord, XP_MUL_NORMAL, XP_MUL_ZOMBIE } from './game/progression';
 import { stageDefFromId } from './game/biomes';
 import { stageById } from './game/stages';
 import { Hud } from './ui/hud';
@@ -194,6 +194,8 @@ function startMatch(selection: MenuSelection): void {
     scoreAttack: selection.mode === 'score',
     secondaryId: selection.secondaryId,
     zombieStartRound: selection.zombieStartRound,
+    hellMode: selection.hellMode ?? false,
+    allGiantMode: selection.allGiantMode ?? false,
   });
 }
 
@@ -312,17 +314,20 @@ function showResult(): void {
   if (activeMissionId) {
     const ms = match!.missionSummary();
     if (ms) {
-      // ストーリーモードは常に非ゾンビ → ×50
-      const cp = applyCampaignMission(profile, ms, 50);
+      // ストーリーモードは常に非ゾンビ → XP_MUL_NORMAL
+      const cp = applyCampaignMission(profile, ms, XP_MUL_NORMAL);
       saveProfile(profile);
       menu.showMissionResult(result, cp);
     } else {
-      // ストーリー途中離脱のフォールバック(非ゾンビ → ×50)
-      menu.showResult(result, applyMatch(profile, result.summary, 50));
+      // ストーリー途中離脱のフォールバック(非ゾンビ → XP_MUL_NORMAL)
+      menu.showResult(result, applyMatch(profile, result.summary, XP_MUL_NORMAL));
     }
   } else {
     const isZombie = lastSelection?.mode === 'zombie';
-    const xpMul = isZombie ? 5 : 50; // ゾンビ×5, それ以外は×50 爆増
+    // R35: ゾンビ×25 / 通常×500(progression.tsの定数)。超鬼畜モードはさらに×2
+    // (旧spec「通常50→鬼畜100」の比率を新基礎値に対して維持)
+    const isHell = lastSelection?.hellMode === true;
+    const xpMul = (isZombie ? XP_MUL_ZOMBIE : XP_MUL_NORMAL) * (isHell ? 100 : 1);
     const isScore = lastSelection?.mode === 'score';
     const summary = isScore ? { ...result.summary, rated: false } : result.summary;
     const progress = applyMatch(profile, summary, xpMul, lastSelection?.mode);

@@ -93,6 +93,8 @@ export interface MenuSelection {
   secondaryId: string;
   // ゾンビモード専用: 開始ラウンド(1-50)。他モードでは無視される
   zombieStartRound?: number;
+  hellMode?: boolean;
+  allGiantMode?: boolean;
 }
 
 export interface MenuCallbacks {
@@ -287,6 +289,15 @@ const SHAPE_SIL: Record<ViewModelShape, SilSpec> = {
   revolver: { arch: 'revolver' },
   // ロケットランチャー: LMG アーチで太い筒シルエットに近似
   launcher: { arch: 'lmg', barrel: 120, mag: 'tube', optic: 'iron', stock: 'none' },
+  // R33 新shape 8種 — ARMORY SVGシルエット近似(既存archで最も近いものを流用)
+  'sniper-semi': { arch: 'sniper', barrel: 122, mag: 'straight', optic: 'scope', stock: 'full' },
+  antimateriel: { arch: 'sniper', barrel: 126, mag: 'straight', optic: 'long', stock: 'skel' },
+  'shuriken-hand': { arch: 'fists' },
+  'bow-japanese': { arch: 'sniper', barrel: 120, mag: 'none', optic: 'iron', stock: 'none' },
+  'war-fan': { arch: 'fists' },
+  musket: { arch: 'sniper', barrel: 128, mag: 'none', optic: 'iron', stock: 'full' },
+  'lightning-staff': { arch: 'smg', barrel: 122, mag: 'none', optic: 'iron', stock: 'none' },
+  minigun: { arch: 'lmg', barrel: 124, mag: 'drum', optic: 'iron', stock: 'none' },
 };
 
 function tracerHex(color: number): string {
@@ -504,6 +515,8 @@ export class Menu {
     grenade: 'frag',
     difficulty: 'normal',
     secondaryId: 'suzume',
+    hellMode: false,
+    allGiantMode: false,
   };
   private weaponPreview: WeaponPreview | null = null; // ARMORYの3Dプレビュー(遅延生成)
   private readonly attachmentBySlot: Record<AttachmentSlot, string | null> = {
@@ -564,6 +577,8 @@ export class Menu {
       if (typeof saved.zombieStartRound === 'number') {
         this.selection.zombieStartRound = Math.max(1, Math.min(50, Math.round(saved.zombieStartRound)));
       }
+      if (typeof saved.hellMode === 'boolean') this.selection.hellMode = saved.hellMode;
+      if (typeof saved.allGiantMode === 'boolean') this.selection.allGiantMode = saved.allGiantMode;
       for (const id of saved.attachments ?? []) {
         const def = ATTACHMENT_DEFS[id];
         if (def) this.attachmentBySlot[def.slot] = id;
@@ -805,6 +820,11 @@ export class Menu {
                     <h2>脅威レベル</h2>
                     <div class="difficulty-list" data-id="difficulties"></div>
                   </section>
+                  <section class="menu-section">
+                    <h2>特殊オプション</h2>
+                    <label class="menu-toggle"><input type="checkbox" data-id="hellMode"><span>超鬼畜モード</span></label>
+                    <label class="menu-toggle"><input type="checkbox" data-id="allGiantMode"><span>全巨躯モード</span></label>
+                  </section>
                 </div>
               </section>
               <section class="mfd-page" data-page="armory" role="tabpanel" id="mfd-panel-armory" aria-labelledby="mfd-tab-armory" hidden>
@@ -883,6 +903,7 @@ export class Menu {
     this.renderAttachments();
     this.renderGrenades();
     this.renderDifficulties();
+    this.renderSpecialOptions();
     this.renderSettings(this.query('settings'));
     this.renderControls();
     this.renderCampaign();
@@ -2046,6 +2067,19 @@ export class Menu {
     }
     this.stagger(list);
     this.markSelected(list, 'difficulty', this.selection.difficulty);
+  }
+
+  private renderSpecialOptions(): void {
+    const wire = (id: string, key: 'hellMode' | 'allGiantMode'): void => {
+      const el = this.root.querySelector<HTMLInputElement>(`input[data-id="${id}"]`);
+      if (!el) return;
+      el.checked = this.selection[key] ?? false;
+      el.addEventListener('change', () => {
+        this.selection[key] = el.checked;
+      });
+    };
+    wire('hellMode', 'hellMode');
+    wire('allGiantMode', 'allGiantMode');
   }
 
   // ── ゾンビモード専用: 開始ラウンドセレクタ ──────────────────────────
