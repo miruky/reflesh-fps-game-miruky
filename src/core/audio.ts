@@ -721,6 +721,9 @@ export class SoundKit {
   private lastWhizzS = 0;
   private lastImpactS = 0;
   private lastDarkSlashS = 0; // 黒帝斬撃波の連打スロットル(~0.06s)
+  private _lastLightningStrikeS = 0; // 雷帝AoEの連打スロットル(~0.1s)
+  private _lightningHumOsc: OscillatorNode | null = null;
+  private _lightningHumGain: GainNode | null = null;
   private lastEnemyFootstepS = 0; // 敵足音の全体スロットル(~0.03s)
   private lastBulletCrackS = 0;   // bulletCrack スロットル(0.05s)
   private lastSuppressionS = 0;   // suppressionWhoosh スロットル(0.15s)
@@ -2364,6 +2367,115 @@ export class SoundKit {
     this.noiseBurst({ durationS: 0.12, filterHz: 5500, filterType: 'bandpass', q: 6, gain: 0.32, attackS: 0.001 });
   }
 
+  // 雷帝モード: 常時電気ヒム・ティック(フレーム毎に呼ぶ想定ではなく periodic tick 用)
+  raiteiHumTick(): void {
+    if (this.liveVoices() > 220) return;
+    this.noiseBurst({ durationS: 0.06, filterHz: 3200, filterType: 'bandpass', q: 4, gain: 0.08, attackS: 0.002 });
+    this.tone({ freq: 180, endFreq: 260, durationS: 0.05, type: 'sine', gain: 0.06 });
+  }
+
+  // 雷帝/黒雷帝の常時帯電ハム(active=trueで開始・false/切替で停止)
+  setLightningHum(active: boolean): void {
+    if (!this.ctx) return;
+    // 既存ハムを停止
+    try { this._lightningHumOsc?.stop(); } catch { /* already stopped */ }
+    this._lightningHumOsc?.disconnect();
+    this._lightningHumGain?.disconnect();
+    this._lightningHumOsc = null;
+    this._lightningHumGain = null;
+    if (!active || !this.sfxBus) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.value = 58;
+    gain.gain.value = 0.04; // 低音量: SFX の下に沈める
+    osc.connect(gain);
+    gain.connect(this.sfxBus);
+    osc.start();
+    this._lightningHumOsc = osc;
+    this._lightningHumGain = gain;
+  }
+
+  // 雷帝AoE雷撃音: large=trueで溜め最大(22m)版
+  lightningStrikeAoE(large = false): void {
+    const now = this.ctx?.currentTime ?? 0;
+    if (now - this._lastLightningStrikeS < 0.1 || this.liveVoices() > 230) return;
+    this._lastLightningStrikeS = now;
+    const g = large ? 1.0 : 0.65;
+    // 雷撃クラック(超短バンドパスノイズ)
+    this.noiseBurst({ durationS: 0.025, filterHz: 5500, filterType: 'bandpass', q: 2, gain: g * 0.6, attackS: 0.001 });
+    // 空気の裂け目(高域ローパス)
+    this.noiseBurst({ durationS: large ? 0.55 : 0.32, filterHz: large ? 3800 : 2800, filterType: 'lowpass', gain: g * 0.5 });
+    // サブ衝撃(低域 sine)
+    this.tone({ freq: large ? 55 : 75, endFreq: large ? 18 : 28, durationS: large ? 0.55 : 0.35, type: 'sine', gain: g * 0.45, drive: large ? 7 : 5, curve: 'asym' });
+    if (large) {
+      // 遠雷の余韻
+      this.noiseBurst({ durationS: 0.9, filterHz: 420, filterType: 'lowpass', gain: 0.38, delayS: 0.06 });
+      this.tone({ freq: 42, endFreq: 15, durationS: 0.7, type: 'triangle', gain: 0.3, drive: 5, delayS: 0.08 });
+    }
+  }
+
+  // N ウルト(雷帝中): 月花雷轟 — 4s マップ全域嵐
+  geppaRaigou(): void {
+    // 巨大落雷3連(0 / 0.9 / 2.1s)
+    this.noiseBurst({ durationS: 0.025, filterHz: 5800, filterType: 'bandpass', q: 2, gain: 0.7, attackS: 0.001 });
+    this.noiseBurst({ durationS: 0.8,   filterHz: 2400, filterType: 'lowpass',   gain: 0.65 });
+    this.tone({ freq: 45, endFreq: 14, durationS: 0.9, type: 'sine', gain: 0.65, drive: 9, curve: 'asym' });
+    this.noiseBurst({ durationS: 0.025, filterHz: 4800, filterType: 'bandpass', q: 2, gain: 0.55, attackS: 0.001, delayS: 0.9 });
+    this.noiseBurst({ durationS: 0.7,   filterHz: 2000, filterType: 'lowpass',   gain: 0.55, delayS: 0.9 });
+    this.tone({ freq: 55, endFreq: 18, durationS: 0.8, type: 'sine', gain: 0.55, drive: 8, curve: 'asym', delayS: 0.9 });
+    this.noiseBurst({ durationS: 0.025, filterHz: 6200, filterType: 'bandpass', q: 2, gain: 0.65, attackS: 0.001, delayS: 2.1 });
+    this.noiseBurst({ durationS: 0.85,  filterHz: 2800, filterType: 'lowpass',   gain: 0.60, delayS: 2.1 });
+    this.tone({ freq: 50, endFreq: 16, durationS: 1.0, type: 'sine', gain: 0.62, drive: 9, curve: 'asym', delayS: 2.1 });
+    // 嵐のうなり持続(サイン波パッド ~4s)
+    this.tone({ freq: 38, endFreq: 52, durationS: 3.8, type: 'sawtooth', gain: 0.22, drive: 3 });
+    this.tone({ freq: 62, endFreq: 45, durationS: 3.2, type: 'sawtooth', gain: 0.18, drive: 2, delayS: 0.3 });
+  }
+
+  // M ウルト(黒雷帝中): 極雷絶滅 — 4s 全敵強制撃滅エンディング
+  gokuraiZetsumetsu(): void {
+    // 暗黒波動ブースト(schwarzwald より強化)
+    this.tone({ freq: 38, endFreq: 11, durationS: 1.2, type: 'sine', gain: 0.75, drive: 10, curve: 'asym' });
+    this.tone({ freq: 25, endFreq: 8,  durationS: 1.0, type: 'sine', gain: 0.55, drive: 8,  curve: 'asym', delayS: 0.08 });
+    // 全域ノイズスウィープ
+    this.noiseBurst({ durationS: 0.6, filterHz: 6500, filterType: 'bandpass', filterEndHz: 90, gain: 0.62 });
+    this.noiseBurst({ durationS: 1.2, filterHz: 350,  filterType: 'lowpass',                  gain: 0.72, delayS: 0.1 });
+    // 連続落雷 + 暗黒コーラスパッド(0 / 0.7 / 1.6 / 2.8s)
+    const bolts = [0, 0.7, 1.6, 2.8];
+    for (const d of bolts) {
+      this.noiseBurst({ durationS: 0.025, filterHz: 5200, filterType: 'bandpass', q: 2, gain: 0.6, attackS: 0.001, delayS: d });
+      this.tone({ freq: 48, endFreq: 15, durationS: 0.7, type: 'sine', gain: 0.5, drive: 8, curve: 'asym', delayS: d });
+    }
+    // 暗黒コーラス余韻
+    this.tone({ freq: 52, endFreq: 68, durationS: 2.2, type: 'sawtooth', gain: 0.28, drive: 4, delayS: 0.2 });
+    this.tone({ freq: 80, endFreq: 60, durationS: 1.8, type: 'sawtooth', gain: 0.22, drive: 3, delayS: 0.4 });
+    this.tone({ freq: 200, endFreq: 95, durationS: 1.0, type: 'triangle', gain: 0.2, delayS: 0.12 });
+  }
+
+  // 溜め攻撃チック: charge01(0..1)に応じて上昇するパルス
+  chargeAttackTick(charge01: number): void {
+    if (this.liveVoices() > 225) return;
+    const f = 80 + charge01 * 320;
+    const g = 0.08 + charge01 * 0.18;
+    this.tone({ freq: f, endFreq: f * 1.4, durationS: 0.12, type: 'sine', gain: g, drive: 2 + charge01 * 4 });
+    if (charge01 > 0.5) {
+      this.noiseBurst({ durationS: 0.08, filterHz: 1200 + charge01 * 2800, filterType: 'bandpass', q: 3, gain: g * 0.5, attackS: 0.002 });
+    }
+  }
+
+  // 溜め攻撃解放: 超横斬り放出音(darkSlash の3倍スケール)
+  chargeAttackRelease(): void {
+    // 超低域ブーム
+    this.tone({ freq: 35, endFreq: 10, durationS: 0.55, type: 'sine', gain: 0.72, drive: 9, curve: 'asym' });
+    // 横斬りの巨大な風切り(下降スウィープ)
+    this.noiseBurst({ durationS: 0.5, filterHz: 4500, filterType: 'bandpass', filterEndHz: 180, gain: 0.62 });
+    this.noiseBurst({ durationS: 0.7, filterHz: 280,  filterType: 'lowpass',                  gain: 0.55, delayS: 0.06 });
+    // 金属共鳴余韻
+    this.tone({ freq: 160, endFreq: 50, durationS: 0.5, type: 'triangle', gain: 0.28, delayS: 0.05 });
+    // 暗帝気配(低い唸り)
+    this.tone({ freq: 48, endFreq: 28, durationS: 0.8, type: 'sawtooth', gain: 0.2, drive: 3, delayS: 0.1 });
+  }
+
   slide(): void {
     this.noiseBurst({ durationS: 0.35, filterHz: 420, filterType: 'lowpass', gain: 0.25 });
   }
@@ -2935,6 +3047,8 @@ export class SoundKit {
         this.reverbLpf.frequency.setValueAtTime(5200, now);
       }
     }
+    // 雷帝帯電ハムを確実に停止
+    this.setLightningHum(false);
     // 長尺ボイス(耳鳴り/フラッシュリング等)を止め、読み上げも破棄する
     for (const v of this.longVoices) {
       try {

@@ -18,6 +18,11 @@ import {
   goldFor,
   isCamoId,
   isCamoUnlocked,
+  isKunaiCamoId,
+  isKunaiCamoUnlocked,
+  kunaiCamoProgress,
+  KUNAI_CAMO_IDS,
+  TOKOYAMI_CAMO,
   weaponIdByName,
   weaponNameOf,
   type WeaponCamoStats,
@@ -213,6 +218,91 @@ describe('isCamoUnlocked / camoProgress', () => {
     const dm = camoProgress('dark-matter', 'kaede-ar', partial);
     expect(dm.current).toBe(CAMO_CLASSES.length - 1);
     expect(dm.target).toBe(CAMO_CLASSES.length);
+  });
+});
+
+describe('クナイ専用カモ(常闇ラダー)', () => {
+  it('KUNAI_CAMO_IDS は9段+常闇の10種', () => {
+    expect(KUNAI_CAMO_IDS).toHaveLength(10);
+    expect(KUNAI_CAMO_IDS).toContain('tokoyami');
+    expect(KUNAI_CAMO_IDS).not.toContain('diamond');
+    expect(KUNAI_CAMO_IDS).not.toContain('dark-matter');
+  });
+
+  it('isKunaiCamoId は常闇を含むクナイラダーIDのみ真', () => {
+    expect(isKunaiCamoId('dirt')).toBe(true);
+    expect(isKunaiCamoId('gold')).toBe(true);
+    expect(isKunaiCamoId('tokoyami')).toBe(true);
+    expect(isKunaiCamoId('diamond')).toBe(false);
+    expect(isKunaiCamoId('dark-matter')).toBe(false);
+    expect(isKunaiCamoId('rainbow')).toBe(false);
+  });
+
+  it('常闇は近接キル1000で解除', () => {
+    expect(isKunaiCamoUnlocked('tokoyami', { kills: 999, headshots: 0 })).toBe(false);
+    expect(isKunaiCamoUnlocked('tokoyami', { kills: 1000, headshots: 0 })).toBe(true);
+    expect(isKunaiCamoUnlocked('tokoyami', undefined)).toBe(false);
+  });
+
+  it('ゴールドはブリンク斬撃キル100(headshots代用)条件を要求', () => {
+    expect(isKunaiCamoUnlocked('gold', { kills: 500, headshots: 99 })).toBe(false);
+    expect(isKunaiCamoUnlocked('gold', { kills: 500, headshots: 100 })).toBe(true);
+    expect(isKunaiCamoUnlocked('gold', { kills: 499, headshots: 200 })).toBe(false);
+  });
+
+  it('段階カモはキル閾値を下回ると解除しない', () => {
+    expect(isKunaiCamoUnlocked('dirt', { kills: 24, headshots: 0 })).toBe(false);
+    expect(isKunaiCamoUnlocked('dirt', { kills: 25, headshots: 0 })).toBe(true);
+    expect(isKunaiCamoUnlocked('neon', { kills: 399, headshots: 0 })).toBe(false);
+    expect(isKunaiCamoUnlocked('neon', { kills: 400, headshots: 0 })).toBe(true);
+  });
+
+  it('kunaiCamoProgress: 常闇の進捗は近接キル/1000', () => {
+    const p = kunaiCamoProgress('tokoyami', { kills: 320, headshots: 0 });
+    expect(p.current).toBe(320);
+    expect(p.target).toBe(1000);
+    expect(p.label).toContain('1000');
+    const capped = kunaiCamoProgress('tokoyami', { kills: 9999, headshots: 0 });
+    expect(capped.current).toBe(1000);
+  });
+
+  it('kunaiCamoProgress: ゴールドのキル満了後はブリンク斬撃進捗へ', () => {
+    const g = kunaiCamoProgress('gold', { kills: 9999, headshots: 42 });
+    expect(g.current).toBe(42);
+    expect(g.target).toBe(100);
+    expect(g.label).toContain('ブリンク');
+  });
+
+  it('equippedCamoFor: fists は常闇ラダーで解除判定', () => {
+    expect(
+      equippedCamoFor('fists', {
+        selectedCamos: { fists: 'dirt' },
+        weaponStats: { fists: { kills: 25, headshots: 0 } },
+      }),
+    ).toBe('dirt');
+    expect(
+      equippedCamoFor('fists', {
+        selectedCamos: { fists: 'tokoyami' },
+        weaponStats: { fists: { kills: 1000, headshots: 0 } },
+      }),
+    ).toBe('tokoyami');
+    expect(
+      equippedCamoFor('fists', {
+        selectedCamos: { fists: 'tokoyami' },
+        weaponStats: { fists: { kills: 999, headshots: 0 } },
+      }),
+    ).toBeNull();
+    expect(
+      equippedCamoFor('fists', {
+        selectedCamos: { fists: 'diamond' },
+        weaponStats: { fists: { kills: 9999, headshots: 9999 } },
+      }),
+    ).toBeNull();
+  });
+
+  it('camoName は常闇を日本語名で返す', () => {
+    expect(camoName('tokoyami')).toBe('常闇');
+    expect(TOKOYAMI_CAMO.name).toBe('常闇');
   });
 });
 

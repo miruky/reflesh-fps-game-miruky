@@ -1952,6 +1952,14 @@ export class ViewModel {
   // 黒帝モードで追加した黒刀グループ(THREE.Group)またはリムメッシュ。disposal で traverse する
   private _darkOverlayMeshes: THREE.Object3D[] = [];
 
+  // ── 雷帝/黒雷帝モード ──────────────────────────────────────────────────────
+  private _lightningMode = false;
+  private _kokuraiteiMode = false; // dark + lightning combined
+  private _arcFlickerTimer = 0;    // blade arc flicker cycle
+  private _lightningOverlayMeshes: THREE.Object3D[] = [];
+  // TubeGeometry ベースの電気アーク(3本)。雷帝発動中に可視, darkMode 優先で非表示。
+  private _lightningArcMeshes: THREE.Mesh[] = [];
+
   // ── スクラッチ変数(Vector3/Matrix4 alloc を避ける) ──────────────────────
   private readonly _v3scratch = new THREE.Vector3();
   private readonly _m4scratch = new THREE.Matrix4();
@@ -2046,6 +2054,13 @@ export class ViewModel {
       this._removeDarkRimOverlay(); // 古い銃のリムオーバーレイを削除
       if (def.shape === 'fists') {
         this._applyDarkModeVisuals();
+      }
+    }
+    // 雷帝/黒雷帝モード状態保持: 武器切替を跨いで維持。fists再装備でビジュアル再適用。
+    if (this._lightningMode) {
+      this._removeLightningOverlay();
+      if (def.shape === 'fists') {
+        this._applyLightningModeVisuals();
       }
     }
   }
@@ -2222,6 +2237,8 @@ export class ViewModel {
     }
     // ダークリムオーバーレイ解放
     this._removeDarkRimOverlay();
+    // 雷帝/黒雷帝オーバーレイ解放
+    this._removeLightningOverlay();
     disposeShared();
   }
 
@@ -2591,6 +2608,32 @@ export class ViewModel {
         this._darkAuraSpawnTimer = DARK_AURA_SPAWN_INTERVAL;
       }
     }
+    // 電弧フリッカー: 0.05-0.09s ごとにランダム透明度変動
+    if (this._lightningMode || this._kokuraiteiMode) {
+      this._arcFlickerTimer -= dt;
+      if (this._arcFlickerTimer <= 0) {
+        this._arcFlickerTimer = 0.05 + Math.random() * 0.04;
+        if (this.gun) {
+          const lb = this.gun.getObjectByName('vm:lightningBlade');
+          if (lb) {
+            lb.traverse((child) => {
+              if (!(child instanceof THREE.Mesh) || !child.userData['isArcLine']) return;
+              const base = this._kokuraiteiMode ? 0.7 : 0.75;
+              const flicker = base + Math.random() * 0.25;
+              (child.material as THREE.MeshBasicMaterial).opacity = Math.min(1, flicker);
+            });
+          }
+        }
+      }
+    }
+    // 雷帝: 電気アークのランダムフリッカー(毎フレーム)
+    if (this._lightningMode && !this._darkMode && this._lightningArcMeshes.length > 0) {
+      for (const arc of this._lightningArcMeshes) {
+        if (arc.material instanceof THREE.MeshBasicMaterial) {
+          arc.material.opacity = 0.4 + Math.random() * 0.6;
+        }
+      }
+    }
   }
 
   // ── 黒帝モード API ─────────────────────────────────────────────────────────
@@ -2601,11 +2644,199 @@ export class ViewModel {
   setKunaiDarkMode(active: boolean): void {
     if (this._darkMode === active) return;
     this._darkMode = active;
+    // 黒雷帝: dark + lightning 同時発動時はコンバインドビジュアルへ
+    if (active && this._lightningMode) {
+      this._removeLightningOverlay();
+      if (this.gun) {
+        const kunai = this.gun.getObjectByName(FIST_KUNAI);
+        if (kunai && !kunai.getObjectByName('vm:lightningBlade')) {
+          this._buildLightningBladeMeshes(kunai, true);
+        }
+      }
+    }
     if (active) {
       this._applyDarkModeVisuals();
     } else {
       this._removeDarkRimOverlay();
       this._restoreKunaiGlow();
+    }
+  }
+
+  // 雷帝モード API: match.ts 側から呼ぶ(raiteiMode 発動時 active=true)。
+  // kokuraitei=true のとき黒刀 + 紫/青縁の黒雷帝ビジュアル。
+  setKunaiLightningMode(active: boolean, kokuraitei = false): void {
+    if (this._lightningMode === active && this._kokuraiteiMode === kokuraitei) return;
+    this._lightningMode = active;
+    this._kokuraiteiMode = kokuraitei;
+    if (active) {
+      this._applyLightningModeVisuals();
+    } else {
+      this._removeLightningOverlay();
+      this._restoreKunaiGlowLightning();
+    }
+  }
+
+  private _applyLightningModeVisuals(): void {
+    if (!this.gun) return;
+    const kunai = this.gun.getObjectByName(FIST_KUNAI);
+    if (!kunai) return;
+    const isKokuraitei = this._kokuraiteiMode;
+    if (!isKokuraitei && !this._darkMode) {
+      kunai.traverse((node) => {
+        if (!(node instanceof THREE.Mesh) || !node.userData.kunaiGlow) return;
+        if (node.userData.lightningOrigMat) return;
+        const origMat = node.material as THREE.MeshStandardMaterial;
+        const lm = origMat.clone();
+        lm.emissive.setHex(0x55bbff);
+        lm.emissiveIntensity = 0.8;
+        lm.color.setHex(0x002244);
+        lm.userData.shared = false;
+        node.userData.lightningOrigMat = origMat;
+        node.userData.lightningMat = lm;
+        node.material = lm;
+      });
+    }
+    if (!kunai.getObjectByName('vm:lightningBlade')) {
+      this._buildLightningBladeMeshes(kunai, isKokuraitei);
+    }
+    // TubeGeometry アーク: 毎回再構築(武器切替を跨いで正しく再配置するため)
+    this._buildLightningArcMeshes(kunai);
+    // darkMode 中はアーク非表示(黒帝ビジュアル優先)
+    const arcOn = !this._darkMode;
+    this._lightningArcMeshes.forEach(m => { m.visible = arcOn; });
+    if (isKokuraitei) {
+      for (const tr of this._trailPool) {
+        (tr.mesh.material as THREE.MeshBasicMaterial).color.setHex(0x6600bb);
+      }
+    } else {
+      for (const tr of this._trailPool) {
+        (tr.mesh.material as THREE.MeshBasicMaterial).color.setHex(0x55bbff);
+      }
+    }
+  }
+
+  private _buildLightningBladeMeshes(kunai: THREE.Object3D, isKokuraitei: boolean): void {
+    const group = new THREE.Group();
+    group.name = 'vm:lightningBlade';
+    const makeArcLine = (color: number, opacity: number, posY: number, h: number): THREE.Mesh => {
+      const geo = new THREE.BoxGeometry(0.003, h, 0.90);
+      const mat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      mat.userData.shared = false;
+      mat.userData.isArcLine = true;
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(0, posY, -0.63);
+      mesh.renderOrder = 8;
+      return mesh;
+    };
+    if (isKokuraitei) {
+      group.add(makeArcLine(0x7700cc, 0.8, -0.028, 0.003));
+      group.add(makeArcLine(0x5500aa, 0.6, -0.027, 0.004));
+      group.add(makeArcLine(0x88aaff, 0.55, 0.034, 0.003));
+    } else {
+      group.add(makeArcLine(0x88ddff, 0.85, -0.028, 0.003));
+      group.add(makeArcLine(0xaaeeff, 0.65, -0.027, 0.002));
+      group.add(makeArcLine(0x66ccff, 0.55, 0.034, 0.003));
+    }
+    kunai.add(group);
+    this._lightningOverlayMeshes.push(group);
+  }
+
+  // 刃に沿って3本の TubeGeometry 電気アークを追加する。
+  // _applyLightningModeVisuals から呼ばれる(雷帝発動時・武器再装備時)。
+  // 既存アークを解放してから再構築し、kunai の子として追加。
+  private _buildLightningArcMeshes(kunai: THREE.Object3D): void {
+    // 既存アーク解放
+    this._lightningArcMeshes.forEach(m => {
+      kunai.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    });
+    this._lightningArcMeshes = [];
+
+    // 刃に沿って3本の電気アーク(細い発光ライン)を追加
+    const arcColor = 0x88ddff; // 雷帝アイスブルー
+    for (let i = 0; i < 3; i++) {
+      const pts: THREE.Vector3[] = [];
+      const segs = 8;
+      for (let s = 0; s <= segs; s++) {
+        const t = s / segs;
+        pts.push(new THREE.Vector3(
+          (Math.random() - 0.5) * 0.012,
+          t * 0.28 - 0.05,
+          (Math.random() - 0.5) * 0.012,
+        ));
+      }
+      const curve = new THREE.CatmullRomCurve3(pts);
+      const geo = new THREE.TubeGeometry(curve, segs, 0.0015, 3, false);
+      const mat = new THREE.MeshBasicMaterial({
+        color: arcColor,
+        transparent: true,
+        opacity: 0.75,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = false;
+      kunai.add(mesh);
+      this._lightningArcMeshes.push(mesh);
+    }
+  }
+
+  private _removeLightningOverlay(): void {
+    for (const obj of this._lightningOverlayMeshes) {
+      obj.traverse((node) => {
+        if (!(node instanceof THREE.Mesh)) return;
+        node.geometry.dispose();
+        const mat = node.material as THREE.Material;
+        if (mat.userData.shared !== true) mat.dispose();
+      });
+      obj.parent?.remove(obj);
+    }
+    this._lightningOverlayMeshes = [];
+    // TubeGeometry アーク解放
+    this._lightningArcMeshes.forEach(m => {
+      m.parent?.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    });
+    this._lightningArcMeshes = [];
+  }
+
+  // 雷モード刃紋 material を通常へ戻す + トレイルカラー復帰。
+  // R24イディオム(_restoreKunaiGlow と同型): セカンダリを構えたまま雷帝表示を解除すると
+  // キャッシュ内のクナイが雷マテリアルのまま残るため、現在の gun だけでなく
+  // 武器キャッシュ全体を走査して復元する(冪等)。
+  private _restoreKunaiGlowLightning(): void {
+    const targets: THREE.Object3D[] = [];
+    if (this.gun) {
+      const held = this.gun.getObjectByName(FIST_KUNAI);
+      if (held) targets.push(held);
+    }
+    for (const entry of this.cache.values()) {
+      const cached = entry.gun.getObjectByName(FIST_KUNAI);
+      if (cached && !targets.includes(cached)) targets.push(cached);
+    }
+    for (const kunai of targets) {
+      kunai.traverse((node) => {
+        if (!(node instanceof THREE.Mesh) || !node.userData.kunaiGlow) return;
+        if (!node.userData.lightningOrigMat) return;
+        const lm = node.userData.lightningMat as THREE.Material | undefined;
+        if (lm) lm.dispose();
+        node.material = node.userData.lightningOrigMat as THREE.Material;
+        node.userData.lightningOrigMat = undefined;
+        node.userData.lightningMat = undefined;
+      });
+    }
+    for (const tr of this._trailPool) {
+      if (!this._darkMode) {
+        (tr.mesh.material as THREE.MeshBasicMaterial).color.setHex(0x8ab4ff);
+      }
     }
   }
 
@@ -2791,9 +3022,17 @@ export class ViewModel {
         node.userData.darkHidden = undefined;
       });
     }
-    // トレイルカラーを通常色へ
+    // トレイルカラー: 雷帝モードが残っていれば雷帝色へ、そうでなければ通常色へ
+    const trailColor = this._kokuraiteiMode ? 0x6600bb : this._lightningMode ? 0x55bbff : 0x8ab4ff;
     for (const tr of this._trailPool) {
-      (tr.mesh.material as THREE.MeshBasicMaterial).color.setHex(0x8ab4ff);
+      (tr.mesh.material as THREE.MeshBasicMaterial).color.setHex(trailColor);
+    }
+    // 黒帝解除後も雷帝が継続する場合: 雷帝ビジュアルを再適用
+    if (this._lightningMode && this.gun) {
+      const kunai = this.gun.getObjectByName(FIST_KUNAI);
+      if (kunai && !kunai.getObjectByName('vm:lightningBlade')) {
+        this._applyLightningModeVisuals();
+      }
     }
   }
 

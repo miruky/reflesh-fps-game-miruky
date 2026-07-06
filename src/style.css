@@ -10220,6 +10220,100 @@ body.killcam-active .hud-death {
   text-align: right;
 }
 
+/* ── 雷帝/黒雷帝バッジ (常時表示, タイマーなし) ─────────────────────────── */
+.hud-raitei {
+  position: fixed;
+  top: 112px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 12px;
+  border-radius: 2px;
+  background: rgba(6, 14, 28, 0.82);
+  border: 1px solid rgba(100, 200, 255, 0.55);
+  box-shadow: 0 0 12px rgba(80, 180, 255, 0.3);
+  pointer-events: none;
+  z-index: 119;
+}
+.hud-raitei-badge {
+  font-family: var(--font-ui, 'Rajdhani', 'Share Tech Mono', monospace);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #88ddff;
+  text-shadow: 0 0 6px rgba(100, 200, 255, 0.8);
+  text-transform: uppercase;
+}
+
+.hud-kokuraitei {
+  position: fixed;
+  top: 112px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 12px;
+  border-radius: 2px;
+  background: rgba(4, 0, 12, 0.88);
+  border: 1px solid rgba(140, 0, 220, 0.6);
+  box-shadow: 0 0 16px rgba(120, 0, 240, 0.45), inset 0 0 8px rgba(30, 0, 60, 0.5);
+  pointer-events: none;
+  z-index: 119;
+}
+.hud-kokuraitei-badge {
+  font-family: var(--font-ui, 'Rajdhani', 'Share Tech Mono', monospace);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #bb44ff;
+  text-shadow: 0 0 8px rgba(150, 0, 255, 0.9);
+  text-transform: uppercase;
+  animation: kokuraitei-flicker 2.4s infinite;
+}
+@keyframes kokuraitei-flicker {
+  0%, 100% { opacity: 1; }
+  48% { opacity: 1; }
+  50% { opacity: 0.6; text-shadow: 0 0 14px rgba(150, 0, 255, 1.0); }
+  52% { opacity: 1; }
+  88% { opacity: 1; }
+  90% { opacity: 0.7; }
+  92% { opacity: 1; }
+}
+
+/* ── 溜めゲージ (小・fists 攻撃長押し) ─────────────────────────────────── */
+.hud-charge-gauge {
+  position: fixed;
+  top: 140px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 72px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 118;
+}
+.hud-charge-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(to right, #5566ff, #aaddff);
+  transform-origin: left;
+  border-radius: 1px;
+  transition: width 0.05s linear, background 0.15s linear;
+}
+.hud-charge-fill.charge-full {
+  background: linear-gradient(to right, #ff8800, #ffffff);
+  box-shadow: 0 0 6px rgba(255, 200, 100, 0.8);
+}
+.hud-charge-fill.charge-kokuraitei {
+  background: linear-gradient(to right, #440088, #bb44ff);
+}
+
 /* +N ゾンビポイントフロート(緑系)。インラインの left/top は起点固定に使い、
    上昇は transform で行う(インライン top はクラスの top 指定より優先されるため) */
 .hud-zpfloat {

@@ -163,6 +163,15 @@ export class Hud {
         <span class="hud-de-badge">黒帝</span>
         <span class="hud-de-timer" data-id="detimer">5:00</span>
       </div>
+      <div class="hud-raitei" data-id="raitei" hidden>
+        <span class="hud-raitei-badge">雷帝</span>
+      </div>
+      <div class="hud-kokuraitei" data-id="kokuraitei" hidden>
+        <span class="hud-kokuraitei-badge">黒雷帝</span>
+      </div>
+      <div class="hud-charge-gauge" data-id="chargegauge" hidden>
+        <div class="hud-charge-fill" data-id="chargefill"></div>
+      </div>
       <div class="hud-feed" data-id="feed"></div>
       <div class="hud-crosshair" data-id="crosshair">
         <span class="ch-dot"></span>
@@ -539,6 +548,12 @@ export class Hud {
     if (zbuy) { zbuy.hidden = true; zbuy.textContent = ''; }
     const deEl = this.el['darkemperor'];
     if (deEl) deEl.hidden = true;
+    const raiteiEl = this.el['raitei'];
+    if (raiteiEl) raiteiEl.hidden = true;
+    const kokuraiteiEl = this.el['kokuraitei'];
+    if (kokuraiteiEl) kokuraiteiEl.hidden = true;
+    const chargeEl = this.el['chargegauge'];
+    if (chargeEl) chargeEl.hidden = true;
     // R21 マルチキルバナーのリセット(前試合の残表示・タイマーを完全クリア)
     if (this.mkTimerId) { window.clearTimeout(this.mkTimerId); this.mkTimerId = 0; }
     this.mkBannerMs = 0;
@@ -653,6 +668,9 @@ export class Hud {
     this.updateZombieReviveFlash(snap);
     this.updateZombieBossFlash(snap);
     this.updateDarkEmperorHud(snap);
+    this.updateRaiteiHud(snap);
+    this.updateKokuraiteiHud(snap);
+    this.updateChargeGauge(snap);
     this.drawMinimap(snap);
     this.updateGunGameHud(snap);
 
@@ -1865,10 +1883,43 @@ export class Hud {
     const active = secs > 0;
     el.hidden = !active;
     if (active) {
-      const mm = Math.floor(secs / 60);
-      const ss = Math.floor(secs % 60);
-      const timeStr = `${mm}:${String(ss).padStart(2, '0')}`;
-      this.text('detimer', timeStr);
+      const timerEl = this.el['detimer'];
+      if (snap.darkEmperorPermanent) {
+        if (timerEl) timerEl.hidden = true;
+      } else {
+        if (timerEl) timerEl.hidden = false;
+        const mm = Math.floor(secs / 60);
+        const ss = Math.floor(secs % 60);
+        this.text('detimer', `${mm}:${String(ss).padStart(2, '0')}`);
+      }
+    }
+  }
+
+  private updateRaiteiHud(snap: MatchSnapshot): void {
+    const el = this.el['raitei'];
+    if (!el) return;
+    // 雷帝モード: タイマーなし、常時表示。黒雷帝中は黒雷帝バッジが優先なので隠す
+    el.hidden = !(snap.raiteiMode && !snap.kokuraiteiMode);
+  }
+
+  private updateKokuraiteiHud(snap: MatchSnapshot): void {
+    const el = this.el['kokuraitei'];
+    if (!el) return;
+    el.hidden = !snap.kokuraiteiMode;
+  }
+
+  private updateChargeGauge(snap: MatchSnapshot): void {
+    const el = this.el['chargegauge'];
+    if (!el) return;
+    const ratio = snap.chargeRatio ?? 0;
+    el.hidden = ratio <= 0;
+    if (ratio > 0) {
+      const fill = this.el['chargefill'];
+      if (fill) {
+        (fill as HTMLElement).style.width = `${Math.round(ratio * 100)}%`;
+        fill.classList.toggle('charge-full', ratio >= 1);
+        fill.classList.toggle('charge-kokuraitei', !!snap.kokuraiteiMode);
+      }
     }
   }
 

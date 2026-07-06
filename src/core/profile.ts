@@ -1,4 +1,4 @@
-import { isCamoId } from '../game/camo';
+import { isCamoId, isKunaiCamoId } from '../game/camo';
 import { emptyDailyState, emptyProfile, type DailyState, type Profile } from '../game/progression';
 
 const KEY = 'hibana.profile.v1';
@@ -63,7 +63,8 @@ export function parseProfile(raw: string): Profile {
   // ── カモ: 選択中カモ(weaponId→camoId)。既知のカモIDのみ採用 ──
   if (typeof source.selectedCamos === 'object' && source.selectedCamos !== null) {
     for (const [id, val] of Object.entries(source.selectedCamos as Record<string, unknown>)) {
-      if (typeof val === 'string' && isCamoId(val)) base.selectedCamos[id] = val;
+      // 通常カモ + クナイ専用カモ(常闇等)を両方受け入れる
+      if (typeof val === 'string' && (isCamoId(val) || isKunaiCamoId(val))) base.selectedCamos[id] = val;
     }
   }
 

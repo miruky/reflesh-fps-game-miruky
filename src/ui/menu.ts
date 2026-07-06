@@ -61,6 +61,10 @@ import {
   camoName,
   camoProgress,
   isCamoUnlocked,
+  isKunaiCamoUnlocked,
+  kunaiCamoProgress,
+  KUNAI_CAMO_IDS,
+  TOKOYAMI_CAMO,
   type CamoId,
 } from '../game/camo';
 import { STAGES, stagesForMode } from '../game/stages';
@@ -1646,8 +1650,12 @@ export class Menu {
   private renderCamoSection(def: WeaponDef): void {
     const host = this.root.querySelector<HTMLElement>('[data-id="armory-camo"]');
     if (!host) return;
+    if (def.id === 'fists') {
+      this.renderKunaiCamoSection(def, host);
+      return;
+    }
     if (!CAMO_WEAPON_IDS.includes(def.id)) {
-      // 副武器・クナイはカモ対象外(セクションごと畳む)
+      // 副武器はカモ対象外(セクションごと畳む)
       host.hidden = true;
       host.replaceChildren();
       return;
@@ -1672,12 +1680,33 @@ export class Menu {
     masteryGrid.appendChild(this.camoChip(def, 'dark-matter', equipped, true));
   }
 
-  // カモチップ1枚。camoId=null は「なし(標準の質感)」
+  // クナイ(fists)専用カモセクション: 9段+常闇
+  private renderKunaiCamoSection(def: WeaponDef, host: HTMLElement): void {
+    ensureCamoStyle();
+    host.hidden = false;
+    const kunaiStats = this.profile.weaponStats['fists'];
+    const unlockedCount = KUNAI_CAMO_IDS.filter((id) => isKunaiCamoUnlocked(id, kunaiStats)).length;
+    host.innerHTML = `
+      <div class="camo-head"><span>カモフラージュ</span><b>${unlockedCount}/${KUNAI_CAMO_IDS.length}</b></div>
+      <div class="camo-grid" data-id="camo-grid"></div>
+      <div class="camo-grid camo-grid--mastery" data-id="camo-mastery"></div>
+    `;
+    const grid = host.querySelector<HTMLElement>('[data-id="camo-grid"]');
+    const masteryGrid = host.querySelector<HTMLElement>('[data-id="camo-mastery"]');
+    if (!grid || !masteryGrid) return;
+    const equipped = this.profile.selectedCamos[def.id] ?? null;
+    grid.appendChild(this.camoChip(def, null, equipped));
+    for (const tier of CAMO_TIERS) grid.appendChild(this.camoChip(def, tier.id, equipped, false, true));
+    masteryGrid.appendChild(this.camoChip(def, TOKOYAMI_CAMO.id, equipped, true, true));
+  }
+
+  // カモチップ1枚。camoId=null は「なし(標準の質感)」。kunai=true はクナイ専用判定
   private camoChip(
     def: WeaponDef,
     camoId: CamoId | null,
     equipped: string | null,
     mastery = false,
+    kunai = false,
   ): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -1691,7 +1720,9 @@ export class Menu {
       return btn;
     }
     const v = CAMO_VISUALS[camoId];
-    const unlocked = isCamoUnlocked(camoId, def.id, this.profile.weaponStats);
+    const unlocked = kunai
+      ? isKunaiCamoUnlocked(camoId, this.profile.weaponStats['fists'])
+      : isCamoUnlocked(camoId, def.id, this.profile.weaponStats);
     const on = unlocked && equipped === camoId;
     const swatch = `background:linear-gradient(135deg, ${tracerHex(v.colorA)} 0%, ${tracerHex(v.colorB)} 55%, ${tracerHex(v.colorC)} 100%)`;
     btn.className =
@@ -1706,7 +1737,9 @@ export class Menu {
       return btn;
     }
     // 未解除: 条件テキスト + 進捗 n/条件(バー付き)。クリック不可
-    const p = camoProgress(camoId, def.id, this.profile.weaponStats);
+    const p = kunai
+      ? kunaiCamoProgress(camoId, this.profile.weaponStats['fists'])
+      : camoProgress(camoId, def.id, this.profile.weaponStats);
     const ratio = p.target > 0 ? Math.min(1, p.current / p.target) : 0;
     btn.disabled = true;
     btn.title = p.label;

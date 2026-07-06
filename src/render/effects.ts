@@ -28,6 +28,8 @@ export class Effects {
   private darkAuras: Timed<THREE.Mesh>[] = [];               // 黒帝オーラ渦ウィスプ(螺旋上昇)
   private shingetsuRings: Timed<THREE.Group>[] = [];         // 真月拡大リング
   private debris: Timed<THREE.Group>[] = [];                 // 破壊可能プロップの破片群
+  private geppaRings: Timed<THREE.Group>[] = [];             // 月花雷轟/雷帝衝撃リング
+  private gokuraiColumns: Timed<THREE.Group>[] = [];         // 雷帝落雷柱
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -708,7 +710,8 @@ export class Effects {
   // 黒帝通常攻撃: 長く薄い斬線×2(暗芯+深紫縁)。
   // 形状: 長さ~4.2m×厚み~0.35m の細セクタ弧。tilt=0=水平(右薙ぎ/左薙ぎ)、tilt=π/2=垂直(突き)。
   // 飛翔中の回転は廃止し向きを保持。返却した Group は match.ts 側が位置更新・破棄を管理する
-  darkSlashWave(origin: THREE.Vector3, dir: THREE.Vector3, tiltRad: number): THREE.Group {
+  // sizeMul=1 = 通常(4.2m×0.3m). charge最大時 sizeMul=10 で横幅×10
+  darkSlashWave(origin: THREE.Vector3, dir: THREE.Vector3, tiltRad: number, sizeMul = 1): THREE.Group {
     const group = new THREE.Group();
     group.position.copy(origin);
     const angle = Math.atan2(dir.x, dir.z);
@@ -729,7 +732,9 @@ export class Effects {
       geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
       return geo;
     };
-    // 暗芯(NormalBlending=暗く塗る): 長さ4.2m×厚み0.30mの直線刃
+    // 暗芯(NormalBlending=暗く塗る): sizeMul で長さ・厚みを拡大(thick は最大3倍)
+    const coreLen = 4.2 * sizeMul;
+    const coreThick = 0.3 * Math.min(sizeMul, 3);
     const coreMat = new THREE.MeshBasicMaterial({
       color: 0x0a0812,
       transparent: true,
@@ -738,19 +743,19 @@ export class Effects {
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    const coreMesh = new THREE.Mesh(makeLineGeo(4.2, 0.3), coreMat);
+    const coreMesh = new THREE.Mesh(makeLineGeo(coreLen, coreThick), coreMat);
     group.add(coreMesh);
 
     // 深紫縁(AdditiveBlending): ひと回り大きい直線ダイヤでエッジの光を纏わせる
     const edgeMat = new THREE.MeshBasicMaterial({
-      color: 0x7800cc,
+      color: sizeMul >= 5 ? 0xaa00ff : 0x7800cc,
       transparent: true,
-      opacity: 0.60,
+      opacity: sizeMul >= 5 ? 0.75 : 0.60,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    const edgeMesh = new THREE.Mesh(makeLineGeo(4.6, 0.46), edgeMat);
+    const edgeMesh = new THREE.Mesh(makeLineGeo(coreLen * 1.095, coreThick * 1.53), edgeMat);
     edgeMesh.position.z = -0.01; // 暗芯の背面に重ねる
     group.add(edgeMesh);
 
@@ -802,6 +807,249 @@ export class Effects {
     puff.scale.setScalar(0.35 + Math.random() * 0.3);
     this.scene.add(puff);
     this.darkPuffs.push({ obj: puff, life: 0.9, maxLife: 0.9 });
+  }
+
+  // 黒帝斬撃波(可変サイズ版): lenM/thickM を外部指定。match.ts が位置・破棄を管理する
+  darkSlashWaveSized(origin: THREE.Vector3, dir: THREE.Vector3, tiltRad: number, lenM: number, thickM: number): THREE.Group {
+    const group = new THREE.Group();
+    group.position.copy(origin);
+    group.rotation.y = Math.atan2(dir.x, dir.z);
+    group.rotation.z = tiltRad;
+
+    const makeGeo = (len: number, thick: number): THREE.BufferGeometry => {
+      const geo = new THREE.BufferGeometry();
+      const h = len / 2;
+      const t = thick / 2;
+      const verts = new Float32Array([
+        -h, 0, 0,  0, t, 0,  0, -t, 0,
+         h, 0, 0,  0, -t, 0,  0, t, 0,
+      ]);
+      geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+      return geo;
+    };
+
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0x0a0812, transparent: true, opacity: 0.90,
+      blending: THREE.NormalBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    group.add(new THREE.Mesh(makeGeo(lenM, thickM), coreMat));
+
+    const edgeMat = new THREE.MeshBasicMaterial({
+      color: 0x7800cc, transparent: true, opacity: 0.60,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const edgeMesh = new THREE.Mesh(makeGeo(lenM * 1.08, thickM * 1.5), edgeMat);
+    edgeMesh.position.z = -0.01;
+    group.add(edgeMesh);
+
+    this.scene.add(group);
+    return group;
+  }
+
+  // 雷帝通常攻撃AoE: 氷青衝撃リング + 放射落雷柱(radiusMは爆発半径m)
+  lightningStrikeAoE(center: THREE.Vector3, radiusM: number, reduceMotion = false): void {
+    const life = 0.75;
+    const group = new THREE.Group();
+    group.position.copy(center);
+
+    const addRing = (color: number, inner: number, outer: number, opacity: number, targetR: number) => {
+      const geo = new THREE.RingGeometry(inner, outer, 48);
+      const mat = new THREE.MeshBasicMaterial({
+        color, transparent: true,
+        opacity: reduceMotion ? opacity * 0.45 : opacity,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const ring = new THREE.Mesh(geo, mat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.scale.setScalar(0.3);
+      ring.userData.targetScale = targetR;
+      ring.userData.baseOpacity = mat.opacity;
+      group.add(ring);
+    };
+
+    addRing(0x44aaff, 0.82, 1.0,  0.85, radiusM);
+    addRing(0xaaddff, 0.88, 1.06, 0.50, radiusM * 1.06);
+    this.scene.add(group);
+    this.geppaRings.push({ obj: group, life, maxLife: life });
+
+    if (reduceMotion) return;
+    const colCount = 5;
+    for (let i = 0; i < colCount; i++) {
+      const angle = (i / colCount) * Math.PI * 2 + Math.random() * 0.4;
+      const dist = radiusM * (0.35 + Math.random() * 0.55);
+      this._spawnLightningColumn(
+        new THREE.Vector3(center.x + Math.cos(angle) * dist, center.y, center.z + Math.sin(angle) * dist),
+        5 + Math.random() * 3, 0.4 + Math.random() * 0.25,
+      );
+    }
+  }
+
+  // 黒雷帝通常攻撃AoE: 黒帝暗黒リング + 雷青リング + 落雷柱
+  kokuraiteiStrikeAoE(center: THREE.Vector3, radiusM: number, reduceMotion = false): void {
+    const life = 0.85;
+    const group = new THREE.Group();
+    group.position.copy(center);
+
+    const addRing = (color: number, inner: number, outer: number, opacity: number, targetR: number, blend: THREE.Blending) => {
+      const geo = new THREE.RingGeometry(inner, outer, 48);
+      const mat = new THREE.MeshBasicMaterial({
+        color, transparent: true,
+        opacity: reduceMotion ? opacity * 0.5 : opacity,
+        blending: blend, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const ring = new THREE.Mesh(geo, mat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.scale.setScalar(0.3);
+      ring.userData.targetScale = targetR;
+      ring.userData.baseOpacity = mat.opacity;
+      group.add(ring);
+    };
+
+    addRing(0x1a0030, 0.82, 1.0,  0.90, radiusM * 0.95, THREE.NormalBlending);
+    addRing(0x5500aa, 0.88, 1.06, 0.65, radiusM,        THREE.AdditiveBlending);
+    addRing(0x2266cc, 0.82, 1.0,  0.55, radiusM * 1.08, THREE.AdditiveBlending);
+    this.scene.add(group);
+    this.geppaRings.push({ obj: group, life, maxLife: life });
+
+    if (reduceMotion) return;
+    const colCount = 6;
+    for (let i = 0; i < colCount; i++) {
+      const angle = (i / colCount) * Math.PI * 2 + Math.random() * 0.3;
+      const dist = radiusM * (0.3 + Math.random() * 0.6);
+      this._spawnLightningColumn(
+        new THREE.Vector3(center.x + Math.cos(angle) * dist, center.y, center.z + Math.sin(angle) * dist),
+        5 + Math.random() * 4, 0.4 + Math.random() * 0.3,
+      );
+    }
+  }
+
+  // 月花雷轟: 4秒嵐エフェクト(N ult + raiteiMode)。複数波リング + 大量落雷柱
+  geppaRaigouStorm(center: THREE.Vector3, maxRadius: number, durationS: number, reduceMotion = false): void {
+    const waveCount = reduceMotion ? 4 : 9;
+    for (let w = 0; w < waveCount; w++) {
+      const r = maxRadius * (0.3 + (w / waveCount) * 0.65 + Math.random() * 0.1);
+      const lf = durationS * (0.9 - w * 0.06);
+      const group = new THREE.Group();
+      group.position.copy(center);
+      const addR = (color: number, inner: number, outer: number, op: number, tr: number) => {
+        const geo = new THREE.RingGeometry(inner, outer, 52);
+        const mat = new THREE.MeshBasicMaterial({
+          color, transparent: true,
+          opacity: reduceMotion ? op * 0.4 : op,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+        });
+        const ring = new THREE.Mesh(geo, mat);
+        ring.rotation.x = -Math.PI / 2;
+        ring.scale.setScalar(0.1);
+        ring.userData.targetScale = tr;
+        ring.userData.baseOpacity = mat.opacity;
+        group.add(ring);
+      };
+      addR(0x88ccff, 0.82, 1.0,  0.75, Math.min(r, maxRadius));
+      addR(0xffffff, 0.88, 1.02, 0.40, Math.min(r, maxRadius) * 1.04);
+      addR(0x3366dd, 0.76, 1.06, 0.28, Math.min(r, maxRadius) * 1.08);
+      this.scene.add(group);
+      this.geppaRings.push({ obj: group, life: Math.max(0.3, lf), maxLife: Math.max(0.3, lf) });
+    }
+
+    if (reduceMotion) return;
+
+    const colCount = 20;
+    for (let i = 0; i < colCount; i++) {
+      const angle = (i / colCount) * Math.PI * 2 + Math.random() * 0.35;
+      const d = maxRadius * (0.2 + Math.random() * 0.7);
+      this._spawnLightningColumn(
+        new THREE.Vector3(center.x + Math.cos(angle) * d, center.y, center.z + Math.sin(angle) * d),
+        5 + Math.random() * 8, 0.25 + Math.random() * durationS * 0.65,
+      );
+    }
+  }
+
+  // 極雷絶滅: 終幕演出エフェクト(M ult + kokuraiteiMode)。巨大黒雷リング + 大量落雷柱
+  gokuraiZetsumetsuEffect(center: THREE.Vector3, reduceMotion = false): void {
+    const maxR = 32;
+
+    const mainGroup = new THREE.Group();
+    mainGroup.position.copy(center);
+    const addRing = (color: number, inner: number, outer: number, op: number, tr: number, blend: THREE.Blending, lf: number) => {
+      const geo = new THREE.RingGeometry(inner, outer, 64);
+      const mat = new THREE.MeshBasicMaterial({
+        color, transparent: true,
+        opacity: reduceMotion ? op * 0.5 : op,
+        blending: blend, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const ring = new THREE.Mesh(geo, mat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.scale.setScalar(0.1);
+      ring.userData.targetScale = tr;
+      ring.userData.baseOpacity = mat.opacity;
+      ring.userData.life = lf; // 個別寿命は tick 側では使わない; Group 単位で管理
+      mainGroup.add(ring);
+    };
+    addRing(0x000010, 0.75, 1.0,  0.95, maxR * 0.80, THREE.NormalBlending,  4.0);
+    addRing(0x4400aa, 0.82, 1.06, 0.70, maxR,         THREE.AdditiveBlending, 4.0);
+    addRing(0x0044cc, 0.88, 1.10, 0.50, maxR * 1.10, THREE.AdditiveBlending, 4.0);
+    addRing(0xaaddff, 0.92, 1.02, 0.30, maxR * 1.15, THREE.AdditiveBlending, 4.0);
+    this.scene.add(mainGroup);
+    this.geppaRings.push({ obj: mainGroup, life: 4.0, maxLife: 4.0 });
+
+    // 速い白フラッシュリング
+    const flashGroup = new THREE.Group();
+    flashGroup.position.copy(center);
+    const flashGeo = new THREE.RingGeometry(0.82, 1.0, 64);
+    const flashMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true,
+      opacity: reduceMotion ? 0.4 : 0.9,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const flashRing = new THREE.Mesh(flashGeo, flashMat);
+    flashRing.rotation.x = -Math.PI / 2;
+    flashRing.scale.setScalar(0.1);
+    flashRing.userData.targetScale = maxR * 1.25;
+    flashRing.userData.baseOpacity = flashMat.opacity;
+    flashGroup.add(flashRing);
+    this.scene.add(flashGroup);
+    this.geppaRings.push({ obj: flashGroup, life: 1.5, maxLife: 1.5 });
+
+    if (reduceMotion) return;
+
+    const colCount = 24;
+    for (let i = 0; i < colCount; i++) {
+      const angle = (i / colCount) * Math.PI * 2 + Math.random() * 0.2;
+      const d = maxR * (0.15 + Math.random() * 0.8);
+      this._spawnLightningColumn(
+        new THREE.Vector3(center.x + Math.cos(angle) * d, center.y, center.z + Math.sin(angle) * d),
+        5 + Math.random() * 10, 0.3 + Math.random() * 0.8,
+      );
+    }
+  }
+
+  private _spawnLightningColumn(pos: THREE.Vector3, height: number, life: number): void {
+    const group = new THREE.Group();
+    group.position.copy(pos);
+
+    const coreGeo = new THREE.BoxGeometry(0.05, height, 0.05);
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.9,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    core.position.y = height / 2;
+    core.userData.baseOpacity = 0.9;
+    group.add(core);
+
+    const glowGeo = new THREE.BoxGeometry(0.2, height * 0.9, 0.2);
+    const glowMat = new THREE.MeshBasicMaterial({
+      color: 0x55aaff, transparent: true, opacity: 0.45,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const glow = new THREE.Mesh(glowGeo, glowMat);
+    glow.position.y = height * 0.45;
+    glow.userData.baseOpacity = 0.45;
+    group.add(glow);
+
+    this.scene.add(group);
+    this.gokuraiColumns.push({ obj: group, life, maxLife: life });
   }
 
   // 真月: ステージ全域へ広がる暗黒リング + 一瞬の白閃スラッシュ + 黒煙ブロブ
@@ -1074,6 +1322,25 @@ export class Effects {
         (frag.material as THREE.MeshBasicMaterial).opacity = 0.95 * ratio;
       }
     });
+    this.geppaRings = this.tick(this.geppaRings, dt, (group, ratio) => {
+      const grow = 1 - ratio * ratio;
+      for (const child of group.children) {
+        const mesh = child as THREE.Mesh;
+        const target = (mesh.userData.targetScale as number) ?? 1;
+        mesh.scale.setScalar(Math.max(mesh.scale.x, target * grow));
+        (mesh.material as THREE.MeshBasicMaterial).opacity =
+          ((mesh.userData.baseOpacity as number) ?? 0.75) * ratio;
+      }
+    });
+    this.gokuraiColumns = this.tick(this.gokuraiColumns, dt, (group, ratio) => {
+      const t = performance.now() / 1000;
+      const flicker = 0.75 + Math.sin(t * 28 + group.position.x + group.position.z) * 0.25;
+      for (const child of group.children) {
+        const mesh = child as THREE.Mesh;
+        (mesh.material as THREE.MeshBasicMaterial).opacity =
+          ((mesh.userData.baseOpacity as number) ?? 0.7) * ratio * flicker;
+      }
+    });
     this.flames = this.tick(this.flames, dt, (group, ratio) => {
       const t = performance.now() / 1000;
       for (const child of group.children) {
@@ -1111,7 +1378,7 @@ export class Effects {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
-    for (const list of [this.clouds, this.flames, this.sparks, this.streaks, this.debris]) {
+    for (const list of [this.clouds, this.flames, this.sparks, this.streaks, this.debris, this.geppaRings, this.gokuraiColumns]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }

@@ -133,7 +133,8 @@ import {
   type ZombiePerkId,
 } from './zombie-economy';
 import type { MatchSummary } from './progression';
-import { weaponIdByName } from './camo';
+import { weaponIdByName, equippedCamoFor } from './camo';
+import { loadProfile } from '../core/profile';
 import { generateStage, type StageDef, type MoodId } from './stage';
 import { StreakManager, STREAK_DEFS, type StreakIndex } from './scorestreaks';
 import { type SurfaceMaterial } from './materials';
@@ -273,9 +274,15 @@ const DARK_BLINK_RANGE = 10;        // 黒帝中のブリンク射程(通常7→
 const DARK_EMPEROR_COLOR = 0x1a0030;// 黒帝中の三日月/衝撃波の暗色
 const DARK_SLASH_SPEED = 160; // R31: スナイパー級=マップ端まで約3秒
 const DARK_SLASH_RANGE = 800; // R31: エリアどこからどこでも届く(描画距離と同値)
-const DARK_SLASH_RADIUS = 2.5;    // m ヒット円柱半径
+const DARK_SLASH_RADIUS = 5.0;    // m ヒット円柱半径(②倍サイズ化)
 const DARK_SLASH_DAMAGE = 250;    // ダメージ(固定)
 const DARK_SLASH_MAX = 8;         // 同時存在上限
+// ── ⑤ 雷帝/黒雷帝 AoE 攻撃 ──
+const LIGHTNING_AOE_RADIUS = 7;           // 通常攻撃 AoE 半径(m)
+const LIGHTNING_AOE_DAMAGE = 180;         // 通常攻撃 AoE ダメージ
+const LIGHTNING_AOE_RADIUS_CHARGED = 22;  // 溜め最大時 AoE 半径
+const LIGHTNING_AOE_AIM_RANGE = 60;       // 照準先レイキャストの最大距離(m)
+const KOKURAITEI_AOE_DAMAGE = 220;        // 黒雷帝通常攻撃 AoE ダメージ
 const SHINGETSU_DAMAGE = 1500;    // 真月 ステージ全体ダメージ
 const SHINGETSU_CHARGE_S = 0.4;   // 真月 溜め秒数
 const BLINK_RANGE = 7; // ブリンク斬撃の瞬間移動距離(m)。壁の手前で停止
@@ -521,6 +528,10 @@ export interface MatchSnapshot {
   zombiePointFloats?: Array<{ amount: number; world: THREE.Vector3 }>;
   zombieReviveFlash?: number; // 0..1
   darkEmperorS?: number; // 黒帝モードの残り秒(undefined=非発動またはfists以外)
+  darkEmperorPermanent?: boolean; // 常闇カモによる永続黒帝(タイマー非表示)
+  raiteiMode?: boolean;    // 雷帝モード発動中
+  kokuraiteiMode?: boolean; // 黒雷帝モード発動中
+  chargeRatio?: number;    // 溜め攻撃ゲージ 0..1(0=非溜め)
   incoming: number[]; // 被弾方向(カメラ基準の角度rad)
   tookDamage: boolean;
   scoreboard: ScoreRow[];
@@ -626,6 +637,9 @@ interface DarkSlashWave {
   traveled: number;
   hitSet: Set<number>; // 既ヒット bot.uid(多段ヒット防止)
   smokeTimer: number;
+  chargeScale?: number; // 溜め比率(0-1)。未設定=通常斬撃
+  hitRadius: number;    // ヒット円柱の水平半径(m)。通常=DARK_SLASH_RADIUS、溜め=lenM/2(刃の横幅/2)
+  dmgOverride?: number; // ダメージ上書き(設定時 DARK_SLASH_DAMAGE の代わりに使用)
 }
 
 // 訓練場ターゲット(bot非使用の軽量エンティティ)
@@ -773,6 +787,22 @@ export class Match {
   // ── 黒技奥伝・真月 ──
   private shingetsuPhase: 'idle' | 'charge' | 'release' = 'idle';
   private shingetsuTimer = 0;
+  // ── ⑤ 雷帝/黒雷帝モード ──
+  private raiteiMode = false;      // N ウルト発動後に永続
+  private kokuraiteiMode = false;  // M 3連押し(1.5s内)で永続
+  // ── ② 溜め攻撃 ──
+  private chargeTimer = 0;         // 保持秒数(0=非溜め)
+  private chargeTickTimer = 0;     // 溜め中の音周期カウントダウン
+  private isCharging = false;      // 溜め中フラグ
+  // ── ④ 常闇カモ ──
+  private tokoyamiActive = false;  // 常闇カモ装備中(darkEmperorTimer を永続化)
+  // ── 月花雷轟 / 極雷絶滅 ──
+  private geppaRaigouTimer = 0;    // 嵐演出残り秒
+  private geppaRaigouDmgTimer = 0; // 波状ダメージ周期
+  private gokuraiZetsumetsuTimer = 0; // 極雷演出残り秒
+  // ── triple-M 黒雷帝化(即時発動+連打カウント方式。遅延ディスパッチは廃止) ──
+  private mPressTimestamps: number[] = []; // 直近の M キー押し時刻(秒, this.elapsed 基準)
+  private mTripleArmed = false;    // 窓内の1押し目が実際にウルトを発動した(=ゲージ満タンだった)か
 
   // ── 風神・極大手裏剣(B ウルト): 発射中の手裏剣エンティティ ──
   private windShuriken: {
@@ -1207,6 +1237,17 @@ export class Match {
     for (const bot of this.bots) bot.prewarmDissolve(true);
     this.renderer.compile(this.scene, this.camera);
     for (const bot of this.bots) bot.prewarmDissolve(false);
+
+    // 常闇カモ装備中(かつ gungame/training 以外): 試合開始から黒帝モード永続
+    if (this.isNinja && config.mode !== 'gungame' && config.mode !== 'training') {
+      const profile = loadProfile();
+      const fistsCamo = equippedCamoFor('fists', profile);
+      if (fistsCamo === 'tokoyami') {
+        this.tokoyamiActive = true;
+        this.darkEmperorTimer = Infinity;
+        this.viewModel.setKunaiDarkMode(true);
+      }
+    }
   }
 
   // ポストプロセス: medium/high のみ Render→Bloom→SMAA→Output の最小4パス。
@@ -2778,7 +2819,8 @@ export class Match {
         if (weapon.def.id === 'fists') {
           if (weapon.adsProgress > 0.5 && this.blinkCooldownS <= 0) {
             this.doBlinkStrike();
-          } else {
+          } else if (!this.isCharging) {
+            // isCharging=true 中は doPunch をスキップ(updateChargeAttack が管理)
             this.doPunch();
           }
           continue;
@@ -2870,6 +2912,9 @@ export class Match {
     this.updateWindShuriken(dt);
     this.updateLightningBeast(dt);
     this.updateDarkEmperor(dt);
+    this.updateChargeAttack(dt);
+    this.updateGeppaRaigou(dt);
+    this.updateGokuraiZetsumetsu(dt);
     this.updateDarkSlashWaves(dt);
     this.updateShingetsu(dt);
     this.updateBots(dt);
@@ -4233,7 +4278,7 @@ export class Match {
     if (bot.kind === 'zombie') {
       if (died) {
         this.zombieKills += 1;
-        const isMelee = weaponName === '近接';
+        const isMelee = ['近接', 'ブリンク斬撃', 'ダイブスラム', '黒帝斬撃', '雷帝斬撃'].includes(weaponName);
         let gain = isMelee ? POINTS.melee : headshot ? POINTS.hskill : POINTS.kill;
         if (bot.tier === 'boss') gain += 500;
         this.zombiePoints += gain;
@@ -4294,6 +4339,15 @@ export class Match {
         this.playerKillsByWeapon[camoWeaponId] = (this.playerKillsByWeapon[camoWeaponId] ?? 0) + 1;
         if (headshot) {
           this.playerHsByWeapon[camoWeaponId] = (this.playerHsByWeapon[camoWeaponId] ?? 0) + 1;
+        }
+      }
+      // クナイ(fists)カモ: 近接/ダイブスラム/黒帝斬撃/ブリンク斬撃/雷帝斬撃のキルを専用カウンタへ
+      const isMeleeKill = ['近接', 'ダイブスラム', '黒帝斬撃', 'ブリンク斬撃', '雷帝斬撃'].includes(weaponName);
+      if (isMeleeKill) {
+        this.playerKillsByWeapon['fists'] = (this.playerKillsByWeapon['fists'] ?? 0) + 1;
+        // ブリンク斬撃: headshots スロットを blink-slash キルカウンタとして流用
+        if (weaponName === 'ブリンク斬撃') {
+          this.playerHsByWeapon['fists'] = (this.playerHsByWeapon['fists'] ?? 0) + 1;
         }
       }
       this.addKillScore(PLAYER_TEAM);
@@ -5623,6 +5677,13 @@ export class Match {
     // 訓練場: ウルトは常に即満タン(練習用)
     if (this.config.mode === 'training') this.ultCharge = 1;
 
+    // M(ult4)はゲージ状態に関係なく毎フレーム1回だけ読む(wasPressed は消費型のため
+    // 二重読みは不可)。即時動作はゲージ満タン時のみだが、triple-M の連打カウントは
+    // 2押し目以降ゲージ 0 でも継続する必要がある(1押し目の発動で全消費されるため)。
+    // killcam/alive/fists ガードは従来の ult4 経路と同一(alive は本メソッド冒頭で return 済み)。
+    const mPressed = this.isNinja && this.input.wasPressed('ult4') && !this.killcamCamActive;
+    let mUltFired = false;
+
     if (this.ultCharge >= 1 && this.ultActive <= 0 && !this.cooking) {
       if (this.input.wasPressed('ultimate')) {
         this.activateUltimate();
@@ -5630,18 +5691,30 @@ export class Match {
         // B: 風神・極大手裏剣(fists装備時のみ。ゲージ全消費)
         this.activateWindShuriken();
       } else if (this.isNinja && this.input.wasPressed('ult3')) {
-        // N: 雷帝・神獣降臨(fists装備時のみ。ゲージ全消費)
-        this.activateLightningBeast();
-      } else if (this.isNinja && this.input.wasPressed('ult4') && !this.killcamCamActive) {
-        if (this.darkEmperorTimer > 0) {
-          // M: 黒技奥伝・真月(黒帝中 + ゲージ満タン)
+        if (this.raiteiMode) {
+          // N: 雷帝中→月花雷轟(マップ全域嵐)
+          this.activateGeppaRaigou();
+        } else {
+          // N: 雷帝・神獣降臨(初回 → raiteiMode 永続化)
+          this.activateLightningBeast();
+        }
+      } else if (mPressed) {
+        // M: 通常動作を即時発動(入力遅延ゼロ)。黒雷帝化は registerMPress が追加発動する
+        mUltFired = true;
+        if (this.kokuraiteiMode) {
+          // M: 黒雷帝中→極雷絶滅
+          this.activateGokuraiZetsumetsu();
+        } else if (this.darkEmperorTimer > 0) {
+          // M: 黒帝中→真月
           this.activateShingetsu();
         } else {
-          // M: 黒技・シュヴァルツヴァルト(fists装備時のみ。ゲージ全消費)
+          // M: シュヴァルツヴァルト
           this.activateSchwarzwald();
         }
       }
     }
+    // triple-M 黒雷帝化: 1.5s 内の3押し(1押し目がウルト発動済み=armed)で追加発動
+    if (mPressed) this.registerMPress(mUltFired);
 
     if (this.ultActive > 0) {
       this.ultActive = Math.max(0, this.ultActive - dt);
@@ -5721,6 +5794,10 @@ export class Match {
       const slashTilt = motion === 2 ? Math.PI / 2 : 0;
       this.spawnDarkSlashWave(slashTilt);
     }
+    // ⑤ 雷帝/黒雷帝モード: 各スウィングに AoE 雷撃を追加
+    if (this.raiteiMode && this.player.alive) {
+      this.spawnLightningAoE(LIGHTNING_AOE_RADIUS);
+    }
   }
 
   // ── ブリンク斬撃(ADS+左クリック) ──────────────────────────────
@@ -5790,7 +5867,7 @@ export class Match {
       if (dx * dx + dz * dz > BLINK_RADIUS * BLINK_RADIUS) continue;
       if (Math.abs(bp.y - start.y) > 2.0) continue; // 高さ方向は緩く許容
       const point = new THREE.Vector3(bp.x, bp.y + 0.3, bp.z);
-      this.applyBotDamage(bot, blinkDmg, point, false, '近接');
+      this.applyBotDamage(bot, blinkDmg, point, false, 'ブリンク斬撃');
     }
 
     // テレポート(水平のみ)。player.update が設定済みの次kinematic変位を上書きする
@@ -6109,6 +6186,10 @@ export class Match {
     this.haptic(300, 0.9, 1.0);
     this.announcements.push('雷帝・神獣降臨');
     this.alertBots(40);
+    // 雷帝モード永続化
+    this.raiteiMode = true;
+    this.viewModel.setKunaiLightningMode(true);
+    this.sounds.setLightningHum(true);
   }
 
   // ── 黒技・シュヴァルツヴァルト(M ウルト: fists装備時のみ) ──
@@ -6142,10 +6223,271 @@ export class Match {
     this.viewModel.setKunaiDarkMode(true);
   }
 
+  // M ウルト3連押し(1.5s内)の検出: 通常動作(シュヴァルツヴァルト/真月/極雷絶滅)の
+  // 即時発動とは独立に押下時刻を数え、3押し目で黒雷帝モードを「追加」発動する。
+  // armed 条件: 窓内の1押し目が実際にウルトを発動していた(=ゲージ満タンだった)こと。
+  // 2押し目以降はゲージ 0 でも数える(1押し目の発動で全消費されるため)。
+  // 追加のゲージ消費はなく、既に黒雷帝なら activateKokuraitei 冒頭ガードで何もしない。
+  private registerMPress(ultFired: boolean): void {
+    const now = this.elapsed;
+    // 1.5s より古いスタンプを除去。窓が切れていたら armed 状態もリセット
+    this.mPressTimestamps = this.mPressTimestamps.filter((t) => now - t <= 1.5);
+    if (this.mPressTimestamps.length === 0) this.mTripleArmed = false;
+    this.mPressTimestamps.push(now);
+    if (this.mPressTimestamps.length === 1) this.mTripleArmed = ultFired;
+    if (this.mPressTimestamps.length >= 3) {
+      const armed = this.mTripleArmed;
+      this.mPressTimestamps = [];
+      this.mTripleArmed = false;
+      if (armed) this.activateKokuraitei();
+    }
+  }
+
+  // 黒雷帝モード永続化(triple-M からの追加発動専用)。
+  // ゲージは1押し目の通常ウルトで消費済みのため、ここでは追加消費しない。
+  private activateKokuraitei(): void {
+    if (this.kokuraiteiMode) return; // 再入は no-op
+    this.kokuraiteiMode = true;
+    // 黒帝モードも永続化
+    this.darkEmperorTimer = Infinity;
+    this.darkSmokeTimer = 0;
+    this.viewModel.setKunaiDarkMode(true);
+    this.viewModel.setKunaiLightningMode(true, true);
+    this.sounds.setLightningHum(true);
+    const center = this.player.position;
+    const ground = new THREE.Vector3(center.x, center.y - PLAYER_FEET_OFFSET, center.z);
+    this.effects.darkNova(ground, 14, this.settings.reduceMotion ? 0.5 : 1);
+    this.sounds.schwarzwald();
+    this.addShake(this.settings.reduceMotion ? 0.4 : 1.2);
+    this.haptic(500, 1.0, 1.0);
+    this.announcements.push('黒雷帝降臨');
+    this.alertBots(60);
+    // 全域敵に黒帝ダメージ
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+      this.applyBotDamage(bot, SCHWARZWALD_DAMAGE, point, false, '黒技・黒雷帝降臨', false);
+    }
+  }
+
+  // 月花雷轟: N ウルト(雷帝中)。演出中の再入は不可(ゲージも消費しない)
+  private activateGeppaRaigou(): void {
+    if (this.geppaRaigouTimer > 0) return;
+    this.ultCharge = 0;
+    this.ultReadyNotified = false;
+    this.geppaRaigouTimer = 4.0;
+    this.geppaRaigouDmgTimer = 0;
+    const center = this.player.position;
+    const stageR = (this.config.stage.size ?? 100) * 0.7;
+    this.effects.geppaRaigouStorm(center, stageR, 4.0, this.settings.reduceMotion);
+    this.sounds.geppaRaigou();
+    this.addShake(this.settings.reduceMotion ? 0.5 : 1.5);
+    this.haptic(400, 1.0, 1.0);
+    this.announcements.push('月花雷轟');
+    this.alertBots(80);
+    // 全域に波状ダメージ(4sで分散: 即時+2発)
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+      this.applyBotDamage(bot, 400, point, false, '月花雷轟', false);
+    }
+  }
+
+  // 極雷絶滅: M ウルト(黒雷帝中)。演出中の再入は不可(ゲージも消費しない)
+  private activateGokuraiZetsumetsu(): void {
+    if (this.gokuraiZetsumetsuTimer > 0) return;
+    this.ultCharge = 0;
+    this.ultReadyNotified = false;
+    this.gokuraiZetsumetsuTimer = 4.0; // 演出実寿命(effects.gokuraiZetsumetsuEffect の life=4.0)に一致
+    const center = this.player.position;
+    this.effects.gokuraiZetsumetsuEffect(center, this.settings.reduceMotion);
+    this.sounds.gokuraiZetsumetsu();
+    this.addShake(this.settings.reduceMotion ? 0.6 : 2.0);
+    this.haptic(600, 1.0, 1.0);
+    this.announcements.push('極雷絶滅');
+    this.alertBots(80);
+    // 全域全敵を即死(r35+ の巨躯は HP 20万 に達するため、固定 99999 では生き残る。
+    // MAX_SAFE_INTEGER で HP 上限に依らず確実に致死させる)
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+      this.applyBotDamage(bot, Number.MAX_SAFE_INTEGER, point, false, '極雷絶滅', false);
+    }
+  }
+
+  // 溜め攻撃の毎フレーム更新(黒帝/雷帝/黒雷帝モード中 fists 専用)
+  private updateChargeAttack(dt: number): void {
+    if (!this.isNinja || !this.player.alive || this.activeWeapon.def.id !== 'fists') {
+      if (this.isCharging) {
+        this.isCharging = false;
+        this.chargeTimer = 0;
+      }
+      return;
+    }
+    // 黒帝/雷帝/黒雷帝のいずれかで溜め可能(純雷帝のみでも溜め22m雷が撃てる)
+    if (this.darkEmperorTimer <= 0 && !this.raiteiMode && !this.kokuraiteiMode) {
+      if (this.isCharging) {
+        this.isCharging = false;
+        this.chargeTimer = 0;
+      }
+      return;
+    }
+    const adsActive = this.activeWeapon.adsProgress > 0.5;
+    const fireHeld =
+      this.input.fireDown() &&
+      this.player.alive &&
+      !this.player.sprinting &&
+      !this.cooking &&
+      !this.rcxdActive;
+
+    if (!this.isCharging) {
+      // 新規プレス開始
+      if (fireHeld && !adsActive) {
+        this.isCharging = true;
+        this.chargeTimer = 0;
+        this.chargeTickTimer = 0;
+      }
+      return;
+    }
+
+    // 溜め中
+    if (fireHeld && !adsActive) {
+      this.chargeTimer = Math.min(1.2, this.chargeTimer + dt);
+      this.chargeTickTimer -= dt;
+      if (this.chargeTickTimer <= 0) {
+        this.chargeTickTimer = 0.15;
+        this.sounds.chargeAttackTick(this.chargeTimer / 1.2);
+      }
+    } else {
+      // リリース
+      const ratio = this.chargeTimer / 1.2;
+      this.isCharging = false;
+      this.chargeTimer = 0;
+      if (ratio >= 0.3) {
+        // 溜め斬撃解放
+        this.spawnChargeSlashWave(ratio);
+        this.sounds.chargeAttackRelease();
+      }
+      // ratio<0.3(タップ)は何もしない: 押下フレームの fired イベントで doPunch 済みのため、
+      // ここで doPunch を呼ぶと1タップで二重パンチになる
+    }
+  }
+
+  // 溜め斬撃波を生成(ratio=0-1 溜め比率)
+  private spawnChargeSlashWave(ratio: number): void {
+    if (!this.player.alive) return;
+    const dir = this.cameraForward();
+    const origin = this.player.eyePosition.clone();
+    const lenM = 4.2 * 2 * (1 + ratio * 9); // 最大: 4.2*2*10 = 84m
+    const thickM = 0.6 * (1 + ratio * 9); // 最大: 6m
+    // 上限超過時: 最古を排除
+    if (this.darkSlashWaves.length >= DARK_SLASH_MAX) {
+      const oldest = this.darkSlashWaves.shift()!;
+      this.disposeDarkSlashWave(oldest);
+    }
+    const group = this.effects.darkSlashWaveSized(origin, dir, 0, lenM, thickM);
+    const slashDmg = DARK_SLASH_DAMAGE * 3 * ratio; // 最大3×
+    this.darkSlashWaves.push({
+      group,
+      pos: origin.clone(),
+      dir: dir.clone(),
+      traveled: 0,
+      hitSet: new Set(),
+      smokeTimer: 0,
+      chargeScale: ratio,
+      // 横薙ぎの刃の横幅/2 = 刃に沿った当たり。旧実装は長さスケール×半径5m(最大100m)で
+      // アリーナ全域が判定になっていた
+      hitRadius: lenM / 2,
+      dmgOverride: slashDmg,
+    });
+    this.addShake(0.3 + ratio * 0.7);
+    this.alertBots(20);
+    // ⑤ 溜め最大時: 雷帝/黒雷帝モードでは大型 AoE 雷撃を追加
+    if (this.raiteiMode && ratio >= 1.0 - 0.01) {
+      this.spawnLightningAoE(LIGHTNING_AOE_RADIUS_CHARGED);
+    }
+  }
+
+  // 月花雷轟: 4秒嵐の継続タイマー管理 + 0.33s 毎に 100dmg の波状ダメージ(~1200 total)
+  private updateGeppaRaigou(dt: number): void {
+    if (this.geppaRaigouTimer <= 0) return;
+    this.geppaRaigouTimer -= dt;
+    this.geppaRaigouDmgTimer -= dt;
+    if (this.geppaRaigouDmgTimer <= 0) {
+      this.geppaRaigouDmgTimer = 0.33;
+      const center = this.player.position;
+      const stageR = (this.config.stage.size ?? 100) * 0.7;
+      for (const bot of this.bots) {
+        if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+        if (bot.position.distanceTo(center) > stageR + 10) continue;
+        const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+        this.applyBotDamage(bot, 100, point, false, '月花雷轟', false);
+      }
+    }
+    if (this.geppaRaigouTimer <= 0) {
+      this.geppaRaigouTimer = 0;
+      this.geppaRaigouDmgTimer = 0;
+    }
+  }
+
+  // 極雷絶滅: 4秒演出タイマー管理(エフェクトは effects.gokuraiZetsumetsuEffect が自己完結)
+  private updateGokuraiZetsumetsu(dt: number): void {
+    if (this.gokuraiZetsumetsuTimer <= 0) return;
+    this.gokuraiZetsumetsuTimer -= dt;
+    if (this.gokuraiZetsumetsuTimer <= 0) this.gokuraiZetsumetsuTimer = 0;
+  }
+
+  // ⑤ 雷帝/黒雷帝 AoE 雷撃スポーン(doPunch/溜め解放から呼ぶ)。
+  // 落雷中心は自分の足元ではなく「照準先」: カメラ前方へ castRay(最大60m、world+boundary)
+  // した命中点。空振り時は eye+fwd*60 の地面投影(下向きレイの着地点、無ければ bot 高さ相当
+  // =プレイヤー胴体中心の高さ)を中心にする。
+  // L10仕様: 落雷は「上空からの一撃」であるため、中心半径内の敵には遮蔽(壁)越しでも命中する。
+  // これは意図された仕様であり、遮蔽判定は追加しない。
+  private spawnLightningAoE(radius: number): void {
+    if (!this.player.alive) return;
+    const eye = this.player.eyePosition;
+    const fwd = this.cameraForward();
+    const aimHit = this.castRay(
+      eye,
+      fwd,
+      LIGHTNING_AOE_AIM_RANGE,
+      this.player.body,
+      (c) => { const k = this.tags.get(c.handle)?.kind; return k === 'world' || k === 'boundary'; },
+    );
+    const center = eye.clone().addScaledVector(fwd, aimHit ? hitToi(aimHit) : LIGHTNING_AOE_AIM_RANGE);
+    if (!aimHit) {
+      // 空振り: 落下点を地面へ投影。地面が見つからなければプレイヤー胴体中心の高さを採用
+      const downHit = this.castRay(
+        center,
+        new THREE.Vector3(0, -1, 0),
+        120,
+        this.player.body,
+        (c) => this.tags.get(c.handle)?.kind === 'world',
+      );
+      center.y = downHit ? center.y - hitToi(downHit) : this.player.position.y;
+    }
+    const dmg = this.kokuraiteiMode ? KOKURAITEI_AOE_DAMAGE : LIGHTNING_AOE_DAMAGE;
+    if (this.kokuraiteiMode) {
+      this.effects.kokuraiteiStrikeAoE(center, radius, this.settings.reduceMotion);
+    } else {
+      this.effects.lightningStrikeAoE(center, radius, this.settings.reduceMotion);
+    }
+    this.sounds.lightningStrikeAoE(radius >= 20);
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      if (bot.position.distanceTo(center) > radius) continue;
+      const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+      this.applyBotDamage(bot, dmg, point, false, '雷帝斬撃', false);
+    }
+  }
+
   // 黒帝モードの毎フレーム更新: タイマー減算 + 足元黒煙エミッタ
   private updateDarkEmperor(dt: number): void {
     if (this.darkEmperorTimer <= 0) return;
-    this.darkEmperorTimer = Math.max(0, this.darkEmperorTimer - dt);
+    // 常闇カモ(tokoyami)による永続化: tokoyamiActive=true または Infinity のまま減算しない
+    if (!this.tokoyamiActive && isFinite(this.darkEmperorTimer)) {
+      this.darkEmperorTimer = Math.max(0, this.darkEmperorTimer - dt);
+    }
 
     // 足元から漂う黒煙(頻度~3倍: 0.25-0.4s間隔、1回に2-3パフ)+ 周囲の渦ウィスプ
     if (this.player.alive) {
@@ -6282,6 +6624,7 @@ export class Match {
       traveled: 0,
       hitSet: new Set(),
       smokeTimer: 0,
+      hitRadius: DARK_SLASH_RADIUS,
     });
     this.sounds.darkSlash();
   }
@@ -6318,18 +6661,20 @@ export class Match {
         continue;
       }
 
-      // ヒットボックス: 水平半径2.5m + 高さ±2.5m の円柱
+      // ヒットボックス: 水平半径 w.hitRadius + 高さ±2.5m の円柱
+      const hitRadius = w.hitRadius;
+      const slashDmg = w.dmgOverride ?? DARK_SLASH_DAMAGE;
       for (const bot of this.bots) {
         if (!bot.alive || bot.team === PLAYER_TEAM) continue;
         if (w.hitSet.has(bot.uid)) continue;
         const bp = bot.position;
         const dx = bp.x - w.pos.x;
         const dz = bp.z - w.pos.z;
-        if (dx * dx + dz * dz > DARK_SLASH_RADIUS * DARK_SLASH_RADIUS) continue;
+        if (dx * dx + dz * dz > hitRadius * hitRadius) continue;
         if (Math.abs(bp.y - w.pos.y) > 2.5) continue;
         w.hitSet.add(bot.uid);
         const point = new THREE.Vector3(bp.x, bp.y + 0.3, bp.z);
-        this.applyBotDamage(bot, DARK_SLASH_DAMAGE, point, false, '黒帝斬撃', false);
+        this.applyBotDamage(bot, slashDmg, point, false, '黒帝斬撃', false);
         this.effects.hitPuff(point);
       }
 
@@ -6356,6 +6701,8 @@ export class Match {
     for (const w of this.darkSlashWaves) this.disposeDarkSlashWave(w);
     this.darkSlashWaves = [];
   }
+
+
 
   // ── 黒技奥伝・真月 ──────────────────────────────────────────────
   private activateShingetsu(): void {
@@ -7365,7 +7712,11 @@ export class Match {
       zombieBossFlash: this.config.mode === 'zombie' && this.zombieBossFlash > 0 ? this.zombieBossFlash : undefined,
       zombiePointFloats: this.config.mode === 'zombie' ? this.zombiePointFloats : undefined,
       zombieReviveFlash: this.config.mode === 'zombie' && this.zombieReviveFlash > 0 ? this.zombieReviveFlash : undefined,
-      darkEmperorS: this.isNinja && this.darkEmperorTimer > 0 ? Math.ceil(this.darkEmperorTimer) : undefined,
+      darkEmperorS: this.isNinja && this.darkEmperorTimer > 0 && isFinite(this.darkEmperorTimer) ? Math.ceil(this.darkEmperorTimer) : (this.isNinja && this.darkEmperorTimer > 0 ? 1 : undefined),
+      darkEmperorPermanent: this.isNinja && !isFinite(this.darkEmperorTimer) ? true : undefined,
+      raiteiMode: this.isNinja && this.raiteiMode ? true : undefined,
+      kokuraiteiMode: this.isNinja && this.kokuraiteiMode ? true : undefined,
+      chargeRatio: this.isNinja && this.isCharging ? Math.min(1, this.chargeTimer / 1.2) : undefined,
       // ── BO2 スコアストリーク ──
       streakProgress: this.streakManager.state.progress,
       streakBanked: this.streakManager.state.banked,
@@ -8289,6 +8640,18 @@ export class Match {
     this.lightningBeastTimer = 0;
     if (this.darkEmperorTimer > 0) this.endDarkEmperor();
     this.darkEmperorTimer = 0;
+    this.raiteiMode = false;
+    this.kokuraiteiMode = false;
+    this.sounds.setLightningHum(false); // 雷帝ハムのループ音を停止(リスタート時の残留防止)
+    this.isCharging = false;
+    this.chargeTimer = 0;
+    this.geppaRaigouTimer = 0;
+    this.geppaRaigouDmgTimer = 0;
+    this.gokuraiZetsumetsuTimer = 0;
+    this.tokoyamiActive = false;
+    this.mPressTimestamps = [];
+    this.mTripleArmed = false;
+    this.viewModel.setKunaiLightningMode(false);
     this.atmosphere?.dispose(); // 草/フォグ/粒子/遠景/リムライトを解放(scene.traverse前)
     this.atmosphere = null;
     // R30 雨パーティクル解放

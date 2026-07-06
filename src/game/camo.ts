@@ -17,7 +17,8 @@ export type CamoId =
   | 'neon'
   | 'gold'
   | 'diamond'
-  | 'dark-matter';
+  | 'dark-matter'
+  | 'tokoyami';
 
 // 武器ごとのカモ用累計統計。headshots は「ヘッドショットキル」を数える(BO2式)
 export interface WeaponCamoStats {
@@ -67,6 +68,7 @@ export function isCamoId(id: string): id is CamoId {
 export function camoName(id: CamoId): string {
   if (id === 'diamond') return DIAMOND_CAMO.name;
   if (id === 'dark-matter') return DARK_MATTER_CAMO.name;
+  if (id === 'tokoyami') return '常闇';
   return CAMO_TIERS.find((t) => t.id === id)?.name ?? id;
 }
 
@@ -218,6 +220,63 @@ export function camoProgress(
   return { current: Math.min(s.kills, tier.kills), target: tier.kills, label };
 }
 
+// ── クナイ(fists)専用カモラダー ──────────────────────────────────────────
+// 標準9段と同じキル閾値。gold は blink-slash キルを fists.headshots で代用。
+// 常闇は1000近接キルで解除するクナイ固有の最終カモ。
+export const TOKOYAMI_CAMO = { id: 'tokoyami' as const, name: '常闇', xp: 5000 };
+
+// dirt..gold(9段) + tokoyami。diamond/dark-matter はクナイ非対象
+export const KUNAI_CAMO_IDS: readonly CamoId[] = [
+  ...CAMO_TIERS.map((t) => t.id),
+  TOKOYAMI_CAMO.id,
+];
+
+export function isKunaiCamoId(id: string): id is CamoId {
+  return (KUNAI_CAMO_IDS as readonly string[]).includes(id);
+}
+
+export function isKunaiCamoUnlocked(
+  camoId: CamoId,
+  stats: WeaponCamoStats | undefined,
+): boolean {
+  const s = stats ?? EMPTY_STATS;
+  if (camoId === 'tokoyami') return s.kills >= 1000;
+  // dirt..gold: same thresholds as standard. gold adds blink-slash (headshots) condition
+  const tierIdx = CAMO_TIERS.findIndex((t) => t.id === camoId);
+  if (tierIdx < 0) return false;
+  // must have passed every prior tier too
+  for (let i = 0; i <= tierIdx; i++) {
+    const t = CAMO_TIERS[i]!;
+    if (s.kills < t.kills) return false;
+    if (t.headshots > 0 && s.headshots < t.headshots) return false;
+  }
+  return true;
+}
+
+export function kunaiCamoProgress(
+  camoId: CamoId,
+  stats: WeaponCamoStats | undefined,
+): CamoProgress {
+  const s = stats ?? EMPTY_STATS;
+  if (camoId === 'tokoyami') {
+    return { current: Math.min(s.kills, 1000), target: 1000, label: '近接キル1000' };
+  }
+  const tier = CAMO_TIERS.find((t) => t.id === camoId);
+  if (!tier) return { current: 0, target: 1, label: '' };
+  if (tier.headshots > 0 && s.kills >= tier.kills) {
+    return {
+      current: Math.min(s.headshots, tier.headshots),
+      target: tier.headshots,
+      label: `ブリンクスラッシュキル${tier.headshots}(累計${tier.kills}キル達成済)`,
+    };
+  }
+  const label =
+    tier.headshots > 0
+      ? `累計${tier.kills}キル + ブリンクスラッシュ${tier.headshots}`
+      : `累計${tier.kills}キル`;
+  return { current: Math.min(s.kills, tier.kills), target: tier.kills, label };
+}
+
 // 装備中カモの解決。選択が無い/未解除/不正IDなら null(viewmodel が素の質感で描く)
 export function equippedCamoFor(
   weaponId: string,
@@ -227,7 +286,14 @@ export function equippedCamoFor(
   },
 ): CamoId | null {
   const sel = profile.selectedCamos[weaponId];
-  if (!sel || !isCamoId(sel)) return null;
+  if (!sel) return null;
+  // クナイ(fists)は専用ラダーで判定
+  if (weaponId === 'fists') {
+    if (!isKunaiCamoId(sel)) return null;
+    const kunaiStats = profile.weaponStats['fists'];
+    return isKunaiCamoUnlocked(sel as CamoId, kunaiStats) ? (sel as CamoId) : null;
+  }
+  if (!isCamoId(sel)) return null;
   return isCamoUnlocked(sel, weaponId, profile.weaponStats) ? sel : null;
 }
 
@@ -308,5 +374,11 @@ export const CAMO_VISUALS: Record<CamoId, CamoVisual> = {
     id: 'dark-matter', colorA: 0x120520, colorB: 0x5e00a8, colorC: 0xb133ff,
     pattern: 'pulse', scale: 6, metalness: 0.55, roughness: 0.4,
     emissive: 0x7a1fd0, emissiveIntensity: 0.5,
+  },
+  // 常闇 = 絶対暗黒(クナイ専用。fists 1000近接キルで解除)
+  tokoyami: {
+    id: 'tokoyami', colorA: 0x000000, colorB: 0x060006, colorC: 0x1a001a,
+    pattern: 'pulse', scale: 5, metalness: 0.15, roughness: 0.98,
+    emissive: 0x000000, emissiveIntensity: 0,
   },
 };
