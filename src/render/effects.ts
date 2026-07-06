@@ -35,6 +35,12 @@ export class Effects {
   private schwarzAbsorbs: Timed<THREE.Group>[] = [];          // M ult 暗黒吸引粒子
   private shingetsuCuts: Timed<THREE.Group>[] = [];           // 真月 空間切れ残留線
   private overdriveAuras: Timed<THREE.Mesh>[] = [];           // オーバードライブ 金オーラ
+  // ── R33 特殊武器エフェクト ──
+  private bowArrowFX: Timed<THREE.Group>[] = [];   // 月光弓 矢跡/命中
+  private staffBoltFX: Timed<THREE.Group>[] = [];  // 天雷杖 雷球/AoE
+  private beamLines: Timed<THREE.Line>[] = [];      // 蜃気楼ビーム
+  private shurikenFX: Timed<THREE.Group>[] = [];   // 手裏剣 disc/衝撃
+  private fanWindFX: Timed<THREE.Group>[] = [];     // 風神扇 扇形風
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -1676,6 +1682,194 @@ export class Effects {
     }
   }
 
+  // ── R33 特殊武器エフェクト メソッド ─────────────────────────────────────────
+
+  /** 月光弓 発射時の白光軌跡フラッシュ (charge01: 0-1) */
+  bowArrowFire(origin: THREE.Vector3, _dir: THREE.Vector3, charge01: number): void {
+    const group = new THREE.Group();
+    // 発射フラッシュ球
+    const flashMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.7 + 0.25 * charge01,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const flash = new THREE.Mesh(this.flareGeometry, flashMat);
+    flash.scale.setScalar(0.4 + 0.3 * charge01);
+    flash.userData.baseOpacity = 0.7 + 0.25 * charge01;
+    group.add(flash);
+    group.position.copy(origin);
+    this.scene.add(group);
+    this.bowArrowFX.push({ obj: group, life: 0.12, maxLife: 0.12 });
+  }
+
+  /** 月光弓 命中時の白十字バースト */
+  bowImpact(point: THREE.Vector3): void {
+    const group = new THREE.Group();
+    // リング
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xeef8ff, transparent: true, opacity: 0.75,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(this.ringGeometry, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.userData.baseOpacity = 0.75;
+    group.add(ring);
+    // 縦横スジ
+    const hGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-0.55, 0, 0), new THREE.Vector3(0.55, 0, 0),
+    ]);
+    const vGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, -0.55, 0), new THREE.Vector3(0, 0.55, 0),
+    ]);
+    const crossMat = new THREE.LineBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+    });
+    group.add(new THREE.Line(hGeo, crossMat));
+    group.add(new THREE.Line(vGeo, crossMat.clone()));
+    group.position.copy(point);
+    this.scene.add(group);
+    this.bowArrowFX.push({ obj: group, life: 0.22, maxLife: 0.22 });
+  }
+
+  /** 風神扇 扇形風エフェクト (adsProgress 0-1) */
+  fanWind(origin: THREE.Vector3, dir: THREE.Vector3, _adsProgress: number): void {
+    const group = new THREE.Group();
+    const SPAN = 24 * (Math.PI / 180);
+    const steps = 9;
+    const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+    for (let i = 0; i < steps; i += 1) {
+      const t = i / (steps - 1);
+      const yaw = -SPAN + t * SPAN * 2;
+      const slitDir = dir.clone().addScaledVector(right, Math.tan(yaw)).normalize();
+      const pts = [origin.clone(), origin.clone().addScaledVector(slitDir, 4.5)];
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({
+        color: 0xaaffcc, transparent: true, opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+      });
+      const line = new THREE.Line(geo, mat);
+      line.userData.baseOpacity = 0.55;
+      group.add(line);
+    }
+    group.position.set(0, 0, 0);
+    this.scene.add(group);
+    this.fanWindFX.push({ obj: group, life: 0.08, maxLife: 0.08 });
+  }
+
+  /** 天雷杖 AoE 爆発エフェクト */
+  staffAoe(point: THREE.Vector3, radius: number): void {
+    const group = new THREE.Group();
+    // リング
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xaabbff, transparent: true, opacity: 0.72,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(this.ringGeometry, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.scale.setScalar(radius * 0.15);
+    ring.userData.targetScale = radius;
+    ring.userData.baseOpacity = 0.72;
+    group.add(ring);
+    // 爆発球
+    const blastMat = new THREE.MeshBasicMaterial({
+      color: 0x6688ff, transparent: true, opacity: 0.55,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const blast = new THREE.Mesh(this.blastGeometry, blastMat);
+    blast.scale.setScalar(radius * 0.5);
+    blast.userData.baseOpacity = 0.55;
+    group.add(blast);
+    // 分岐雷 3 本
+    for (let b = 0; b < 3; b += 1) {
+      const angle = (b / 3) * Math.PI * 2 + Math.random() * 1.0;
+      const endX = Math.cos(angle) * radius * 0.7;
+      const endZ = Math.sin(angle) * radius * 0.7;
+      const pts = [new THREE.Vector3(0, 0.2, 0), new THREE.Vector3(endX * 0.5, 0.8, endZ * 0.5), new THREE.Vector3(endX, 0, endZ)];
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color: 0xccddff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+      const line = new THREE.Line(geo, mat);
+      line.userData.baseOpacity = 0.8;
+      group.add(line);
+    }
+    group.position.copy(point);
+    this.scene.add(group);
+    this.staffBoltFX.push({ obj: group, life: 0.45, maxLife: 0.45 });
+  }
+
+  /** 天雷杖 スタン中スパーク */
+  staffStunSpark(point: THREE.Vector3): void {
+    const geo = new THREE.BufferGeometry().setFromPoints([
+      point.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.4, Math.random() * 0.4, (Math.random() - 0.5) * 0.4)),
+      point.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.6, Math.random() * 0.8, (Math.random() - 0.5) * 0.6)),
+    ]);
+    const mat = new THREE.LineBasicMaterial({ color: 0x88aaff, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending });
+    const line = new THREE.Line(geo, mat);
+    line.userData.baseOpacity = 0.7;
+    this.scene.add(line);
+    this.tracers.push({ obj: line, life: 0.1, maxLife: 0.1 });
+  }
+
+  /** 蜃気楼 シアンビームライン */
+  beamLine(from: THREE.Vector3, to: THREE.Vector3): void {
+    const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+    const mat = new THREE.LineBasicMaterial({
+      color: 0x00ffee, transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+    });
+    const line = new THREE.Line(geo, mat);
+    line.userData.baseOpacity = 0.85;
+    this.scene.add(line);
+    this.beamLines.push({ obj: line, life: 0.08, maxLife: 0.08 });
+  }
+
+  /** 万刃 手裏剣ディスク飛行グループを作成し scene に追加して返す */
+  shurikenDiscFly(origin: THREE.Vector3, dir: THREE.Vector3): THREE.Group {
+    const group = new THREE.Group();
+    // 4枚羽ディスク
+    const pts: THREE.Vector3[] = [];
+    for (let a = 0; a < 5; a += 1) {
+      const rad = (a / 4) * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(rad) * 0.12, Math.sin(rad) * 0.12, 0));
+    }
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    const mat = new THREE.LineBasicMaterial({ color: 0xddeeff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+    const disc = new THREE.Line(geo, mat);
+    disc.userData.baseOpacity = 0.8;
+    group.add(disc);
+    // 十字スジ
+    for (let a = 0; a < 4; a += 1) {
+      const rad = (a / 4) * Math.PI * 2;
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0), new THREE.Vector3(Math.cos(rad) * 0.15, Math.sin(rad) * 0.15, 0),
+      ]);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
+      const spoke = new THREE.Line(lineGeo, lineMat);
+      spoke.userData.baseOpacity = 0.6;
+      group.add(spoke);
+    }
+    group.position.copy(origin);
+    if (dir.length() > 0.001) {
+      group.lookAt(origin.clone().add(dir));
+    }
+    this.scene.add(group);
+    // F3: match側が0.5s寿命を所有するため二重登録しない
+    return group;
+  }
+
+  /** 万刃 命中スパーク */
+  shurikenImpact(point: THREE.Vector3): void {
+    for (let i = 0; i < 5; i += 1) {
+      const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+      const end = point.clone().addScaledVector(dir, 0.25 + Math.random() * 0.25);
+      const geo = new THREE.BufferGeometry().setFromPoints([point, end]);
+      const mat = new THREE.LineBasicMaterial({ color: 0xddddff, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending });
+      const spark = new THREE.Line(geo, mat);
+      spark.userData.baseOpacity = 0.7;
+      this.scene.add(spark);
+      this.tracers.push({ obj: spark, life: 0.08, maxLife: 0.08 });
+    }
+  }
+
   update(dt: number): void {
     this.tracers = this.tick(this.tracers, dt, (line, ratio) => {
       (line.material as THREE.LineBasicMaterial).opacity =
@@ -1934,6 +2128,52 @@ export class Effects {
       (ring.material as THREE.MeshBasicMaterial).opacity =
         ((ring.userData.baseOpacity as number) ?? 0.82) * ratio;
     });
+    // ── R33 特殊武器エフェクト tick ──
+    this.bowArrowFX = this.tick(this.bowArrowFX, dt, (group, ratio) => {
+      for (const child of group.children) {
+        const m = child as THREE.Mesh | THREE.Line;
+        if ((m as THREE.Mesh).isMesh) {
+          (m.material as THREE.MeshBasicMaterial).opacity = 0.85 * ratio * ratio;
+          (m as THREE.Mesh).scale.multiplyScalar(1 + dt * 3);
+        } else {
+          (m.material as THREE.LineBasicMaterial).opacity = 0.9 * ratio;
+        }
+      }
+    });
+    this.staffBoltFX = this.tick(this.staffBoltFX, dt, (group, ratio) => {
+      const t = performance.now() / 1000;
+      for (const child of group.children) {
+        const mesh = child as THREE.Mesh | THREE.Line;
+        const base = (mesh.userData.baseOpacity as number) ?? 0.85;
+        if ((mesh as THREE.Mesh).isMesh) {
+          (mesh.material as THREE.MeshBasicMaterial).opacity = base * ratio * (0.8 + 0.2 * Math.sin(t * 18));
+          (mesh as THREE.Mesh).scale.multiplyScalar(1 + dt * 2.5);
+        } else {
+          (mesh.material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
+    this.beamLines = this.tick(this.beamLines, dt, (line, ratio) => {
+      (line.material as THREE.LineBasicMaterial).opacity = (line.userData.baseOpacity as number ?? 0.9) * ratio;
+    });
+    this.shurikenFX = this.tick(this.shurikenFX, dt, (group, ratio) => {
+      group.rotation.z += dt * 22;
+      for (const child of group.children) {
+        const m = child as THREE.Mesh | THREE.Line;
+        const base = (m.userData.baseOpacity as number) ?? 0.8;
+        if ((m as THREE.Mesh).isMesh) {
+          (m.material as THREE.MeshBasicMaterial).opacity = base * ratio;
+        } else {
+          (m.material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
+    this.fanWindFX = this.tick(this.fanWindFX, dt, (group, ratio) => {
+      group.scale.multiplyScalar(1 + dt * 5);
+      for (const child of group.children) {
+        if ((child as THREE.Mesh).material) { ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.3 * ratio; }
+      }
+    });
   }
 
   clear(): void {
@@ -1965,6 +2205,22 @@ export class Effects {
     }
     for (const item of this.overdriveAuras) this.disposeObject(item.obj);
     this.overdriveAuras.length = 0;
+    // R33 特殊武器エフェクト clear
+    for (const list of [
+      this.bowArrowFX as unknown as Timed<THREE.Object3D>[],
+      this.staffBoltFX as unknown as Timed<THREE.Object3D>[],
+      this.shurikenFX as unknown as Timed<THREE.Object3D>[],
+      this.fanWindFX as unknown as Timed<THREE.Object3D>[],
+    ]) {
+      for (const item of list) this.disposeObject(item.obj);
+      list.length = 0;
+    }
+    for (const item of this.beamLines) {
+      item.obj.geometry.dispose();
+      (item.obj.material as THREE.LineBasicMaterial).dispose();
+      this.scene.remove(item.obj);
+    }
+    this.beamLines.length = 0;
   }
 
   // 試合破棄時に呼ぶ。プール共有ジオメトリも含めて解放する

@@ -9,6 +9,7 @@ import {
   type SoundProfile,
   type WeaponClass,
 } from './weapons';
+import { bowChargeMultiplier, fanPelletYaw, minigunNextRpm } from './match';
 
 // 不変条件で参照するクラス/音プロファイルの全集合(型定義と同期)
 const WEAPON_CLASSES: WeaponClass[] = [
@@ -436,5 +437,87 @@ describe('スコープ精度', () => {
     weapon.adsProgress = 1;
     const full = weapon.currentSpreadRad(ctx);
     expect(partial).toBeGreaterThan(full); // 85%ではまだ完全ADSより拡散が大きい
+  });
+});
+
+// ── R33 特殊武器 純粋関数テスト ─────────────────────────────────────────────
+
+describe('bowChargeMultiplier', () => {
+  it('チャージ0sで0.5倍', () => {
+    expect(bowChargeMultiplier(0)).toBeCloseTo(0.5, 5);
+  });
+
+  it('チャージ1.2sで1.3倍', () => {
+    expect(bowChargeMultiplier(1.2)).toBeCloseTo(1.3, 5);
+  });
+
+  it('0.6s(中間)で線形補間の中点 0.9倍', () => {
+    expect(bowChargeMultiplier(0.6)).toBeCloseTo(0.9, 5);
+  });
+
+  it('チャージが負値でも0s相当にクランプ', () => {
+    expect(bowChargeMultiplier(-1)).toBeCloseTo(0.5, 5);
+  });
+
+  it('チャージが最大超でも1.3倍にクランプ', () => {
+    expect(bowChargeMultiplier(9)).toBeCloseTo(1.3, 5);
+  });
+});
+
+describe('fanPelletYaw', () => {
+  it('ペレット1個の場合は常に0', () => {
+    expect(fanPelletYaw(0, 1, 0.419)).toBe(0);
+  });
+
+  it('7ペレット: i=0 は -halfSpanRad', () => {
+    const half = 24 * (Math.PI / 180);
+    expect(fanPelletYaw(0, 7, half)).toBeCloseTo(-half, 10);
+  });
+
+  it('7ペレット: i=6(最後)は +halfSpanRad', () => {
+    const half = 24 * (Math.PI / 180);
+    expect(fanPelletYaw(6, 7, half)).toBeCloseTo(half, 10);
+  });
+
+  it('7ペレット: i=3(中央)はほぼ0', () => {
+    const half = 24 * (Math.PI / 180);
+    expect(fanPelletYaw(3, 7, half)).toBeCloseTo(0, 10);
+  });
+
+  it('7ペレット: 各ヨウは等間隔', () => {
+    const half = 24 * (Math.PI / 180);
+    const yaws = Array.from({ length: 7 }, (_, i) => fanPelletYaw(i, 7, half));
+    for (let i = 1; i < yaws.length; i += 1) {
+      expect(yaws[i]! - yaws[i - 1]!).toBeCloseTo(yaws[1]! - yaws[0]!, 10);
+    }
+  });
+});
+
+describe('minigunNextRpm', () => {
+  it('spinning=true: 400 rpm(最低アイドル)から 1.5s で 1800 rpm に達する', () => {
+    let rpm = 400;
+    rpm = minigunNextRpm(rpm, 0.75, true);
+    rpm = minigunNextRpm(rpm, 0.75, true);
+    expect(rpm).toBeCloseTo(1800, 1);
+  });
+
+  it('spinning=true: 1800 rpm を超えない', () => {
+    expect(minigunNextRpm(1800, 0.1, true)).toBeCloseTo(1800, 5);
+  });
+
+  it('spinning=false: 1800 rpm から 0.5s で 0 rpm へ', () => {
+    let rpm = 1800;
+    rpm = minigunNextRpm(rpm, 0.25, false);
+    rpm = minigunNextRpm(rpm, 0.25, false);
+    expect(rpm).toBeCloseTo(0, 1);
+  });
+
+  it('spinning=false: 0 rpm を下回らない', () => {
+    expect(minigunNextRpm(0, 0.1, false)).toBeCloseTo(0, 5);
+  });
+
+  it('中間状態(900 rpm)から spinning=true でさらに上昇', () => {
+    const next = minigunNextRpm(900, 0.1, true);
+    expect(next).toBeGreaterThan(900);
   });
 });

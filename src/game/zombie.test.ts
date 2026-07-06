@@ -110,3 +110,49 @@ describe('zombie boss curves', () => {
     expect(zombieBossDamage(200)).toBe(90);
   });
 });
+
+describe('r=999 クランプ・NaN なし(ラウンド選択1-999対応)', () => {
+  it('zombieTotal(999)=270(上限クランプ)', () => {
+    expect(zombieTotal(999)).toBe(270);
+  });
+
+  it('zombieHp(999)=600(上限クランプ)', () => {
+    expect(zombieHp(999)).toBe(600);
+  });
+
+  it('zombieRunRate(999)=0.9(上限クランプ)', () => {
+    expect(zombieRunRate(999)).toBe(0.9);
+  });
+
+  it('zombieSpawnGap(999)=0.6(下限クランプ)', () => {
+    expect(zombieSpawnGap(999)).toBe(0.6);
+  });
+
+  it('isBossRound(999)=false, isBossRound(995)=true', () => {
+    expect(isBossRound(999)).toBe(false); // 999 % 5 = 4
+    expect(isBossRound(995)).toBe(true);  // 995 % 5 = 0
+  });
+
+  it('ボス曲線がr999以上で上限クランプ(NaN・Infinity 無し)', () => {
+    expect(zombieBossHp(995)).toBe(200000);
+    expect(zombieBossSpeedMul(995)).toBe(2.0);
+    expect(zombieBossDamage(995)).toBe(90);
+    // 全曲線でNaNが出ないことを確認
+    expect(Number.isNaN(zombieTotal(999))).toBe(false);
+    expect(Number.isNaN(zombieHp(999))).toBe(false);
+    expect(Number.isNaN(zombieRunRate(999))).toBe(false);
+    expect(Number.isNaN(zombieSpawnGap(999))).toBe(false);
+    expect(Number.isNaN(zombieBossHp(995))).toBe(false);
+    expect(Number.isNaN(zombieBossSpeedMul(995))).toBe(false);
+    expect(Number.isNaN(zombieBossDamage(995))).toBe(false);
+  });
+
+  it('r=1〜999 全域で各曲線がfinite', () => {
+    for (const r of [1, 50, 100, 200, 500, 750, 999]) {
+      expect(Number.isFinite(zombieTotal(r))).toBe(true);
+      expect(Number.isFinite(zombieHp(r))).toBe(true);
+      expect(Number.isFinite(zombieRunRate(r))).toBe(true);
+      expect(Number.isFinite(zombieSpawnGap(r))).toBe(true);
+    }
+  });
+});

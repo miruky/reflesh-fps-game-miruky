@@ -2389,6 +2389,12 @@ export class ViewModel {
   // TubeGeometry ベースの電気アーク(3本)。雷帝発動中に可視, darkMode 優先で非表示。
   private _lightningArcMeshes: THREE.Mesh[] = [];
 
+  // ── R33 特殊武器 状態フィールド ──────────────────────────────────────────
+  private _bowCharge01 = 0;       // 月光弓チャージ 0-1
+  private _staffCharge01 = 0;     // 天雷杖チャージ 0-1
+  private _minigunBarrelRot = 0;  // 修羅バレル回転角 (rad)
+  private _minigunSpin01 = 0;     // 修羅スピン度合い 0-1 (スムース)
+
   // ── スクラッチ変数(Vector3/Matrix4 alloc を避ける) ──────────────────────
   private readonly _v3scratch = new THREE.Vector3();
   private readonly _m4scratch = new THREE.Matrix4();
@@ -2894,6 +2900,15 @@ export class ViewModel {
     // スイングトレイルと黒帝オーラの毎フレーム更新
     this._updateTrails(dt);
     this._updateDarkAura(dt);
+    // R33 修羅バレル回転
+    if (this._minigunSpin01 > 0.01 && this.gun) {
+      this._minigunBarrelRot += dt * this._minigunSpin01 * 26;
+      this.gun.traverse((child) => {
+        if (child.name === 'vm:barrel') {
+          child.rotation.z = this._minigunBarrelRot;
+        }
+      });
+    }
   }
 
   // ── スイングデルタ: ノード名とfrac(0→1)から fistNodes への追加変形(6要素配列)を返す ──
@@ -3063,6 +3078,37 @@ export class ViewModel {
         }
       }
     }
+  }
+
+  // ── R33 特殊武器 公開セッター ────────────────────────────────────────────────
+  setBowCharge(charge01: number): void {
+    this._bowCharge01 = Math.max(0, Math.min(1, charge01));
+    // 弦の輝度をチャージに比例させる (vm:string ノードがあれば)
+    if (this.gun) {
+      this.gun.traverse((child) => {
+        if (child.name === 'vm:string' && (child as THREE.Mesh).isMesh) {
+          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          if (mat.emissive) mat.emissiveIntensity = 0.0 + this._bowCharge01 * 0.75;
+        }
+      });
+    }
+  }
+
+  setStaffCharge(charge01: number): void {
+    this._staffCharge01 = Math.max(0, Math.min(1, charge01));
+    // 水晶先端 emissive をチャージに比例させる (vm:crystal ノードがあれば)
+    if (this.gun) {
+      this.gun.traverse((child) => {
+        if (child.name === 'vm:crystal' && (child as THREE.Mesh).isMesh) {
+          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          if (mat.emissive) mat.emissiveIntensity = 0.1 + this._staffCharge01 * 0.75;
+        }
+      });
+    }
+  }
+
+  setMinigunSpin(spin01: number): void {
+    this._minigunSpin01 = Math.max(0, Math.min(1, spin01));
   }
 
   // ── 黒帝モード API ─────────────────────────────────────────────────────────

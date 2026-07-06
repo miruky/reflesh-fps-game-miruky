@@ -575,7 +575,7 @@ export class Menu {
       }
       // V27修正: 保存はされるが復元されていなかった(往復の非対称)。クランプして復元
       if (typeof saved.zombieStartRound === 'number') {
-        this.selection.zombieStartRound = Math.max(1, Math.min(50, Math.round(saved.zombieStartRound)));
+        this.selection.zombieStartRound = Math.max(1, Math.min(999, Math.round(saved.zombieStartRound)));
       }
       if (typeof saved.hellMode === 'boolean') this.selection.hellMode = saved.hellMode;
       if (typeof saved.allGiantMode === 'boolean') this.selection.allGiantMode = saved.allGiantMode;
@@ -2095,14 +2095,14 @@ export class Menu {
     const sel = wrap.querySelector<HTMLElement>('[data-id="zombie-round-selector"]');
     if (!sel) return;
 
-    const ZR_PRESETS = [1, 5, 10, 15, 20, 30, 40, 50] as const;
+    const ZR_PRESETS = [1, 10, 25, 50, 100, 200, 300, 500, 999] as const;
     const cur = this.selection.zombieStartRound ?? 1;
 
     sel.innerHTML = `
       <div class="zr-stepper">
         <button class="zr-step" data-id="zr-dec" aria-label="開始ラウンドを下げる"${cur <= 1 ? ' disabled' : ''}>−</button>
-        <span class="zr-val" aria-live="polite" aria-label="開始ラウンド ${cur}"><b>${cur}</b><small>/ 50</small></span>
-        <button class="zr-step" data-id="zr-inc" aria-label="開始ラウンドを上げる"${cur >= 50 ? ' disabled' : ''}>+</button>
+        <span class="zr-val" aria-live="polite" aria-label="開始ラウンド ${cur}"><b>${cur}</b><small>/ 999</small></span>
+        <button class="zr-step" data-id="zr-inc" aria-label="開始ラウンドを上げる"${cur >= 999 ? ' disabled' : ''}>+</button>
       </div>
       <div class="attach-options zr-presets">
         ${ZR_PRESETS.map((r) => `<button class="attach-btn${r === cur ? ' selected' : ''}" data-zr="${r}" aria-pressed="${r === cur}">R${r}</button>`).join('')}
@@ -2110,7 +2110,7 @@ export class Menu {
     `;
 
     const setRound = (v: number, refocus?: string): void => {
-      this.selection.zombieStartRound = Math.max(1, Math.min(50, v));
+      this.selection.zombieStartRound = Math.max(1, Math.min(999, v));
       this.renderZombieRoundSelector();
       this.renderBriefing();
       // V27修正: innerHTML全置換でフォーカスがbodyへ落ち、パッド/キーボードのナビが

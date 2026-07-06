@@ -2722,6 +2722,47 @@ export class SoundKit {
     });
   }
 
+  // ── R33 特殊武器 audio ────────────────────────────────────────────────────
+
+  /** 月光弓 チャージ中の弦テンション音 (charge01: 0→1) */
+  bowStringTension(charge01: number): void {
+    if (this.liveVoices() > 225) return;
+    const freq = 420 + charge01 * 860;
+    this.tone({ freq, endFreq: freq * 0.92, durationS: 0.18, type: 'triangle', gain: 0.06 + charge01 * 0.12 });
+  }
+
+  /** 天雷杖 チャージ中の放電チック音 (charge01: 0→1) */
+  staffChargeTick(charge01: number): void {
+    if (this.liveVoices() > 225) return;
+    const f = 900 + charge01 * 1400;
+    this.noiseBurst({ durationS: 0.05, filterHz: f, filterType: 'bandpass', q: 2, gain: 0.07 + charge01 * 0.1, attackS: 0.002 });
+    this.tone({ freq: 80 + charge01 * 200, endFreq: 40, durationS: 0.1, type: 'sawtooth', gain: 0.06, drive: 4 });
+  }
+
+  /** 天雷杖 着弾/AoE 爆発音 */
+  staffImpact(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-6, 0.12);
+    this.tone({ freq: 55, endFreq: 18, durationS: 0.5, type: 'sine', gain: 0.55, drive: 7, curve: 'asym' });
+    this.noiseBurst({ durationS: 0.35, filterHz: 6000, filterType: 'highpass', gain: 0.38 });
+    this.tone({ freq: 220, endFreq: 60, durationS: 0.38, type: 'sawtooth', gain: 0.25, drive: 5, delayS: 0.04 });
+  }
+
+  /** 蜃気楼 ビーム発射音 (高周波チャージ→放電) */
+  beamFire(): void {
+    if (this.liveVoices() > 225) return;
+    this.tone({ freq: 1800, endFreq: 4200, durationS: 0.06, type: 'sawtooth', gain: 0.18, drive: 3 });
+    this.noiseBurst({ durationS: 0.09, filterHz: 3500, filterType: 'bandpass', q: 4, gain: 0.22 });
+    this.tone({ freq: 900, endFreq: 200, durationS: 0.12, type: 'sine', gain: 0.14, delayS: 0.06 });
+  }
+
+  /** 万刃 命中金属スパーク音 */
+  shurikenHit(): void {
+    if (this.liveVoices() > 225) return;
+    this.noiseBurst({ durationS: 0.06, filterHz: 4800, filterType: 'highpass', gain: 0.22 });
+    this.tone({ freq: 1100, endFreq: 400, durationS: 0.08, type: 'triangle', gain: 0.12 });
+  }
+
   // 溜め攻撃チック: charge01(0..1)に応じて上昇するパルス
   chargeAttackTick(charge01: number): void {
     if (this.liveVoices() > 225) return;
