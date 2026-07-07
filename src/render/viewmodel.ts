@@ -879,6 +879,9 @@ function disposeShared(): void {
 
 // ── ジオメトリ toolkit(頂点カラーを焼く) ───────────────────────────────
 // gun ローカル座標系: -Z が前方、BARREL_Y が銃身中心高さ。
+// billboard 用スクラッチ quaternion（毎フレーム alloc 回避）
+const _bbCamQ = new THREE.Quaternion();
+const _bbParentQ = new THREE.Quaternion();
 const _colCache = new Map<number, THREE.Color>();
 function col(hex: number): THREE.Color {
   let c = _colCache.get(hex);
@@ -1088,61 +1091,86 @@ export function buildGunBody(
     return { gun, muzzle: muzzleF };
   }
 
-  // ── shuriken-hand: 手のひら手裏剣ホルダー ──────────────────────────────
-  // 手首グリップ(cylinder)+円形ホルダーディスク+4枚の十字刃(BoxGeometry)で構成。
-  // 刃はtracerColorで発光するアクセント帯。muzzleは前面中心(z=-0.22)。
+  // ── shuriken-hand: 手甲(小手)+甲上ホルダー+浮遊十字手裏剣3枚 ────────────────
   if (def.shape === 'shuriken-hand') {
     const { metalVC, polishVC } = getShared();
     const accent = getAccent(def.tracerColor);
-    const C_GRIP = 0x1a1e26;
-    const C_DARK = 0x20242c;
-    const C_STEEL = 0x30383e;
-    const grip = new THREE.CylinderGeometry(0.030, 0.028, 0.16, 10);
-    setColor(grip, col(C_GRIP), 'gradY');
-    const gm = new THREE.Mesh(grip, metalVC);
-    gm.position.set(0, -0.04, 0.06);
-    gm.rotation.set(Math.PI / 2, 0, 0);
-    gun.add(gm);
-    const disc = new THREE.CylinderGeometry(0.090, 0.090, 0.014, 16);
-    setColor(disc, col(C_DARK), 'machined');
-    const dm = new THREE.Mesh(disc, metalVC);
-    dm.position.set(0, 0, -0.12);
-    dm.rotation.set(Math.PI / 2, 0, 0);
-    gun.add(dm);
-    const hub = new THREE.CylinderGeometry(0.022, 0.022, 0.022, 12);
-    setColor(hub, col(C_STEEL), 'edgeHi');
-    const hm = new THREE.Mesh(hub, polishVC);
-    hm.position.set(0, 0, -0.12);
-    hm.rotation.set(Math.PI / 2, 0, 0);
-    gun.add(hm);
-    // 十字刃 × 4 (前面スタック)
-    for (let i = 0; i < 4; i += 1) {
-      const angle = (i / 4) * Math.PI;
-      const blade = new THREE.BoxGeometry(0.160, 0.024, 0.010);
-      setColor(blade, col(def.tracerColor), 'flat');
-      const bm = new THREE.Mesh(blade, accent);
-      bm.name = 'vm:shurikenBlade'; // setExoticCharge('banjin-smg') が参照
-      bm.userData.shurikenBaseZ = -0.12;
-      bm.position.set(0, 0, -0.12);
-      bm.rotation.set(0, 0, angle);
-      gun.add(bm);
+    const C_GAUNT = 0x1a1e26;
+    const C_DARK2 = 0x111418;
+    const C_STEEL2 = 0x30383e;
+    // 手甲本体(背板)
+    const gauntlet = chamferBox(0.096, 0.072, 0.168, 0.008);
+    setColor(gauntlet, col(C_GAUNT), 'machined');
+    const gauntletM = new THREE.Mesh(gauntlet, metalVC);
+    gauntletM.position.set(0, -0.02, 0.0);
+    gun.add(gauntletM);
+    // リストガード
+    const wristGuard = new THREE.BoxGeometry(0.098, 0.016, 0.032);
+    setColor(wristGuard, col(C_DARK2), 'flat');
+    const wgm = new THREE.Mesh(wristGuard, metalVC);
+    wgm.position.set(0, -0.02, 0.090);
+    gun.add(wgm);
+    // アクセントライン
+    const accentLine2 = new THREE.BoxGeometry(0.082, 0.003, 0.120);
+    setColor(accentLine2, col(def.tracerColor), 'flat');
+    const alm = new THREE.Mesh(accentLine2, accent);
+    alm.position.set(0, 0.018, 0.01);
+    gun.add(alm);
+    // ホルダーハブ
+    const hub = new THREE.CylinderGeometry(0.026, 0.028, 0.020, 12);
+    setColor(hub, col(C_STEEL2), 'edgeHi');
+    const hubm = new THREE.Mesh(hub, polishVC);
+    hubm.position.set(0, 0.010, -0.10);
+    hubm.rotation.set(Math.PI / 2, 0, 0);
+    gun.add(hubm);
+    // 浮遊手裏剣 3枚
+    for (let si = 0; si < 3; si += 1) {
+      const starZ    = -0.08 - si * 0.028;
+      const baseRot  = si * (Math.PI / 12);
+      const isFront  = si === 0;
+      for (let bi3 = 0; bi3 < 4; bi3 += 1) {
+        const bAngle = (bi3 / 4) * Math.PI + baseRot;
+        const bladeW = isFront ? 0.152 : (si === 1 ? 0.136 : 0.122);
+        const bladeH = isFront ? 0.024 : (si === 1 ? 0.021 : 0.018);
+        const bladeD = isFront ? 0.011 : 0.009;
+        const blade = new THREE.BoxGeometry(bladeW, bladeH, bladeD);
+        if (isFront) {
+          setColor(blade, col(def.tracerColor), 'flat');
+          const bm4 = new THREE.Mesh(blade, accent);
+          bm4.name = 'vm:shurikenBlade';
+          bm4.userData.shurikenBaseZ = starZ;
+          bm4.position.set(0, 0, starZ);
+          bm4.rotation.set(0, 0, bAngle);
+          gun.add(bm4);
+        } else {
+          setColor(blade, col(C_STEEL2), 'flat');
+          const bm4b = new THREE.Mesh(blade, metalVC);
+          bm4b.position.set(0, 0, starZ);
+          bm4b.rotation.set(0, 0, bAngle);
+          gun.add(bm4b);
+        }
+      }
+      // 中心リング
+      const cRing = new THREE.TorusGeometry(0.020, 0.005, 7, 14);
+      setColor(cRing, col(isFront ? def.tracerColor : C_DARK2), 'flat');
+      const crm2 = new THREE.Mesh(cRing, isFront ? accent : metalVC);
+      crm2.position.set(0, 0, starZ);
+      crm2.rotation.set(Math.PI / 2, 0, 0);
+      gun.add(crm2);
     }
-    // 後列スタック (22.5°オフセット)
-    for (let i = 0; i < 4; i += 1) {
-      const angle = (i / 4) * Math.PI + Math.PI / 8;
-      const blade2 = new THREE.BoxGeometry(0.140, 0.020, 0.010);
-      setColor(blade2, col(C_STEEL), 'flat');
-      const bm2 = new THREE.Mesh(blade2, metalVC);
-      bm2.position.set(0, 0, -0.08);
-      bm2.rotation.set(0, 0, angle);
-      gun.add(bm2);
-    }
+    // 手首グリップ
+    const grip2 = new THREE.CylinderGeometry(0.030, 0.028, 0.160, 10);
+    setColor(grip2, col(C_GAUNT), 'gradY');
+    const grm2 = new THREE.Mesh(grip2, metalVC);
+    grm2.position.set(0, -0.05, 0.06);
+    grm2.rotation.set(Math.PI / 2, 0, 0);
+    gun.add(grm2);
     const shurikenCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
       : camoId !== null && isCamoId(camoId) ? camoId : null;
     if (shurikenCamo) {
-      const cm = getCamoMaterial(shurikenCamo);
-      gun.traverse((node) => { if (node instanceof THREE.Mesh && node.material === metalVC) node.material = cm; });
+      const cm4 = getCamoMaterial(shurikenCamo);
+      gun.traverse((node) => { if (node instanceof THREE.Mesh && node.material === metalVC) node.material = cm4; });
     }
     const muzzleSH = new THREE.Object3D();
     muzzleSH.position.set(0, 0, -0.22);
@@ -1150,57 +1178,96 @@ export function buildGunBody(
     return { gun, muzzle: muzzleSH };
   }
 
-  // ── bow-japanese: 縦長和弓+光の弦+矢 ─────────────────────────────────
-  // 弓身2セグメント(上・下)+発光弦+矢シャフト+矢じり。muzzleは矢先(z=-0.47)。
+  // ── bow-japanese: 上長下短の非対称和弓+籐巻き+矢羽根付き矢 ───────────────────
   if (def.shape === 'bow-japanese') {
-    const { polishVC, polyVC } = getShared();
+    const { polishVC, polyVC, metalVC } = getShared();
     const accent = getAccent(def.tracerColor);
-    const C_BOW = 0x3a2a18;
+    const C_BOW    = 0x3a2a18;
     const C_BOW_HI = 0x5a3e24;
-    const C_ARROW = 0x1a1a22;
-    const bowTop = new THREE.BoxGeometry(0.014, 0.36, 0.018);
-    setColor(bowTop, col(C_BOW), 'gradY');
-    const btm = new THREE.Mesh(bowTop, polyVC);
-    btm.name = 'vm:limbT'; // チャージ時に回転するbowアーム(上)
-    btm.position.set(0, 0.14, -0.06);
-    btm.rotation.set(0.22, 0, 0);
-    gun.add(btm);
-    const bowBot = new THREE.BoxGeometry(0.014, 0.36, 0.018);
-    setColor(bowBot, col(C_BOW_HI), 'gradY');
-    const bbm = new THREE.Mesh(bowBot, polyVC);
-    bbm.name = 'vm:limbB'; // チャージ時に回転するbowアーム(下)
-    bbm.position.set(0, -0.14, -0.06);
-    bbm.rotation.set(-0.22, 0, 0);
-    gun.add(bbm);
-    const strTop = new THREE.BoxGeometry(0.006, 0.36, 0.006);
+    const C_ARROW  = 0x1a1a22;
+    const C_TADO   = 0x8a6a38;
+    // 上弭3セグメント(上長=0.40合計)
+    const upperSegs = [
+      { h: 0.16, y: 0.10, rx:  0.10 },
+      { h: 0.14, y: 0.25, rx:  0.20 },
+      { h: 0.10, y: 0.38, rx:  0.30 },
+    ] as const;
+    for (const seg of upperSegs) {
+      const segGeo = new THREE.BoxGeometry(0.015, seg.h, 0.019);
+      setColor(segGeo, col(C_BOW), 'gradY');
+      const sm = new THREE.Mesh(segGeo, polyVC);
+      sm.name = 'vm:limbT';
+      sm.position.set(0, seg.y, -0.06);
+      sm.rotation.set(seg.rx, 0, 0);
+      gun.add(sm);
+    }
+    // 下弭3セグメント(下短=0.30合計)
+    const lowerSegs = [
+      { h: 0.13, y: -0.09, rx: -0.10 },
+      { h: 0.11, y: -0.21, rx: -0.22 },
+      { h: 0.06, y: -0.30, rx: -0.32 },
+    ] as const;
+    for (const seg of lowerSegs) {
+      const segGeo = new THREE.BoxGeometry(0.015, seg.h, 0.019);
+      setColor(segGeo, col(C_BOW_HI), 'gradY');
+      const sm = new THREE.Mesh(segGeo, polyVC);
+      sm.name = 'vm:limbB';
+      sm.position.set(0, seg.y, -0.06);
+      sm.rotation.set(seg.rx, 0, 0);
+      gun.add(sm);
+    }
+    // 弦(上)
+    const strTop = new THREE.BoxGeometry(0.005, 0.38, 0.005);
     setColor(strTop, col(def.tracerColor), 'flat');
-    const stm = new THREE.Mesh(strTop, accent);
-    stm.name = 'vm:strT'; // チャージ時に引き込まれる弦(上)
-    stm.position.set(0, 0.14, -0.18);
-    gun.add(stm);
-    const strBot = new THREE.BoxGeometry(0.006, 0.36, 0.006);
+    const stm5 = new THREE.Mesh(strTop, accent);
+    stm5.name = 'vm:strT';
+    stm5.position.set(0, 0.14, -0.18);
+    gun.add(stm5);
+    // 弦(下)
+    const strBot = new THREE.BoxGeometry(0.005, 0.28, 0.005);
     setColor(strBot, col(def.tracerColor), 'flat');
-    const sbm = new THREE.Mesh(strBot, accent);
-    sbm.name = 'vm:strB'; // チャージ時に引き込まれる弦(下)
-    sbm.position.set(0, -0.14, -0.18);
-    gun.add(sbm);
-    const grip = new THREE.BoxGeometry(0.028, 0.08, 0.025);
-    setColor(grip, col(C_BOW), 'flat');
-    const grm = new THREE.Mesh(grip, polyVC);
-    grm.position.set(0, 0, -0.06);
-    gun.add(grm);
-    const { metalVC } = getShared();
+    const sbm5 = new THREE.Mesh(strBot, accent);
+    sbm5.name = 'vm:strB';
+    sbm5.position.set(0, -0.10, -0.18);
+    gun.add(sbm5);
+    // 握り(グリップ)
+    const grip3 = new THREE.BoxGeometry(0.030, 0.082, 0.026);
+    setColor(grip3, col(C_BOW), 'flat');
+    const grm3 = new THREE.Mesh(grip3, polyVC);
+    grm3.position.set(0, 0, -0.06);
+    gun.add(grm3);
+    // 籐巻き(5帯)
+    for (let ti = 0; ti < 5; ti += 1) {
+      const tY = -0.036 + ti * 0.018;
+      const tado = new THREE.BoxGeometry(0.032, 0.009, 0.028);
+      setColor(tado, col(C_TADO), 'flat');
+      const tdm = new THREE.Mesh(tado, polyVC);
+      tdm.position.set(0, tY, -0.059);
+      gun.add(tdm);
+    }
+    // 矢シャフト
     const shaft = new THREE.CylinderGeometry(0.006, 0.006, 0.44, 8);
     setColor(shaft, col(C_ARROW), 'gradY');
-    const sm = new THREE.Mesh(shaft, metalVC);
-    sm.name = 'vm:arrowShaft'; // チャージ時に引き戻される矢シャフト
-    sm.position.set(0, 0.01, -0.25);
-    sm.rotation.set(Math.PI / 2, 0, 0);
-    gun.add(sm);
-    const tip = new THREE.ConeGeometry(0.008, 0.04, 8);
+    const shm = new THREE.Mesh(shaft, metalVC);
+    shm.name = 'vm:arrowShaft';
+    shm.position.set(0, 0.01, -0.25);
+    shm.rotation.set(Math.PI / 2, 0, 0);
+    gun.add(shm);
+    // 矢羽根 3枚(120°間隔)
+    for (let fi = 0; fi < 3; fi += 1) {
+      const fa = (fi / 3) * Math.PI * 2;
+      const feather = new THREE.BoxGeometry(0.034, 0.002, 0.060);
+      setColor(feather, col(0x882222), 'flat');
+      const fm = new THREE.Mesh(feather, polyVC);
+      fm.position.set(Math.cos(fa) * 0.011, 0.01 + Math.sin(fa) * 0.011, -0.025);
+      fm.rotation.set(Math.PI / 2, 0, fa);
+      gun.add(fm);
+    }
+    // 矢じり
+    const tip = new THREE.ConeGeometry(0.008, 0.042, 8);
     setColor(tip, col(0x888888), 'edgeHi');
     const tm = new THREE.Mesh(tip, metalVC);
-    tm.name = 'vm:arrowTip'; // チャージ時に引き戻される矢じり
+    tm.name = 'vm:arrowTip';
     tm.position.set(0, 0.01, -0.47);
     tm.rotation.set(Math.PI / 2, 0, 0);
     gun.add(tm);
@@ -1208,8 +1275,8 @@ export function buildGunBody(
       camoId === undefined ? resolveEquippedCamo(def.id)
       : camoId !== null && isCamoId(camoId) ? camoId : null;
     if (bowCamo) {
-      const cm = getCamoMaterial(bowCamo);
-      gun.traverse((node) => { if (node instanceof THREE.Mesh && (node.material === polyVC || node.material === metalVC || node.material === polishVC)) node.material = cm; });
+      const cm5 = getCamoMaterial(bowCamo);
+      gun.traverse((node) => { if (node instanceof THREE.Mesh && (node.material === polyVC || node.material === metalVC || node.material === polishVC)) node.material = cm5; });
     }
     const muzzleBow = new THREE.Object3D();
     muzzleBow.position.set(0, 0.01, -0.49);
@@ -1217,53 +1284,112 @@ export function buildGunBody(
     return { gun, muzzle: muzzleBow };
   }
 
-  // ── war-fan: 扇骨9本の鉄扇 ────────────────────────────────────────────
-  // 中心ピボット+9本の細い扇骨(BoxGeometry)が放射状に広がる。muzzleは最前端(z=-0.28)。
+  // ── war-fan: 扇骨9本+扇面パネル+房飾りの鉄扇 ─────────────────────────────
   if (def.shape === 'war-fan') {
-    const { metalVC } = getShared();
+    const { metalVC, polishVC } = getShared();
     const accent = getAccent(def.tracerColor);
     const C_FRAME = 0x1e2430;
     const C_PIVOT = 0x505868;
-    const pivot = new THREE.CylinderGeometry(0.018, 0.018, 0.030, 10);
-    setColor(pivot, col(C_PIVOT), 'edgeHi');
-    const pm = new THREE.Mesh(pivot, metalVC);
-    pm.position.set(0, 0, 0.04);
-    pm.rotation.set(Math.PI / 2, 0, 0);
-    gun.add(pm);
-    const handle = new THREE.BoxGeometry(0.028, 0.12, 0.024);
+    const C_GOLD  = 0xb8822a;
+    // 軸ピン(要)
+    const pivotCore = new THREE.CylinderGeometry(0.013, 0.015, 0.036, 12);
+    setColor(pivotCore, col(C_PIVOT), 'edgeHi');
+    const pcm = new THREE.Mesh(pivotCore, polishVC);
+    pcm.position.set(0, 0, 0.04);
+    pcm.rotation.set(Math.PI / 2, 0, 0);
+    gun.add(pcm);
+    // 要の飾りリング
+    for (const oz of [-0.022, 0.022] as const) {
+      const ring = new THREE.TorusGeometry(0.014, 0.004, 8, 14);
+      setColor(ring, col(C_GOLD), 'edgeHi');
+      const rfm = new THREE.Mesh(ring, polishVC);
+      rfm.position.set(0, 0, 0.04 + oz);
+      gun.add(rfm);
+    }
+    // 柄(把)
+    const handle = new THREE.BoxGeometry(0.022, 0.112, 0.022);
     setColor(handle, col(C_FRAME), 'gradY');
     const hm = new THREE.Mesh(handle, metalVC);
-    hm.position.set(0, -0.06, 0.04);
+    hm.position.set(0, -0.062, 0.04);
     gun.add(hm);
+    // 柄巻き帯
+    for (let bi2 = 0; bi2 < 2; bi2 += 1) {
+      const band = new THREE.CylinderGeometry(0.014, 0.013, 0.014, 10);
+      setColor(band, col(C_GOLD), 'flat');
+      const bm3 = new THREE.Mesh(band, metalVC);
+      bm3.position.set(0, -0.028 - bi2 * 0.040, 0.04);
+      bm3.rotation.set(Math.PI / 2, 0, 0);
+      gun.add(bm3);
+    }
+    // 房飾り: 小球+3本の紐
+    const tasselSphere = new THREE.SphereGeometry(0.012, 10, 8);
+    setColor(tasselSphere, col(C_GOLD), 'edgeHi');
+    const tsm = new THREE.Mesh(tasselSphere, polishVC);
+    tsm.position.set(0, -0.130, 0.04);
+    gun.add(tsm);
+    for (let ci2 = 0; ci2 < 3; ci2 += 1) {
+      const cord = new THREE.CylinderGeometry(0.0016, 0.0010, 0.028, 4);
+      setColor(cord, col(C_GOLD), 'flat');
+      const cm6 = new THREE.Mesh(cord, metalVC);
+      cm6.position.set((ci2 - 1) * 0.009, -0.150, 0.04);
+      gun.add(cm6);
+    }
+    // 骨9本: テーパ CylinderGeometry
     const ribCount = 9;
-    const fanSpan = Math.PI * 2 / 3;
+    const fanSpan = (Math.PI * 2) / 3;
+    const ribLen   = 0.235;
+    const ribHalf  = ribLen / 2;
+    const baseZ    = -0.12;
+    const fanFaceMat = new THREE.MeshBasicMaterial({
+      color: def.tracerColor,
+      transparent: true,
+      opacity: 0.18,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
     for (let i = 0; i < ribCount; i += 1) {
       const angle = -fanSpan / 2 + (i / (ribCount - 1)) * fanSpan;
-      const rib = new THREE.BoxGeometry(0.010, 0.240, 0.008);
       const isEdge = i === 0 || i === ribCount - 1;
-      setColor(rib, col(isEdge ? C_PIVOT : def.tracerColor), 'flat');
-      const rm = new THREE.Mesh(rib, isEdge ? metalVC : accent);
-      rm.name = 'vm:fanRib'; // setExoticCharge('fujin-fan') が参照
-      rm.userData.fanBaseAngle = angle;
-      rm.position.set(Math.sin(angle) * 0.11, Math.cos(angle) * 0.11 - 0.02, -0.12);
-      rm.rotation.set(0, 0, angle);
-      gun.add(rm);
-    }
-    for (let i = 0; i < 4; i += 1) {
-      const angle = -fanSpan / 2 + (i + 0.5) * (fanSpan / 4);
-      const rim = new THREE.BoxGeometry(0.008, 0.065, 0.006);
-      setColor(rim, col(C_PIVOT), 'flat');
-      const rc = new THREE.Mesh(rim, metalVC);
-      rc.position.set(Math.sin(angle) * 0.22, Math.cos(angle) * 0.22 - 0.02, -0.12);
-      rc.rotation.set(0, 0, angle);
-      gun.add(rc);
+      const isMid  = i === 4;
+      const rootR  = isEdge ? 0.006 : 0.0045;
+      const tipR   = isEdge ? 0.003 : 0.002;
+      const rib = new THREE.CylinderGeometry(tipR, rootR, ribLen, 6, 1);
+      const ribColor = isEdge ? C_PIVOT : (isMid ? def.tracerColor : C_FRAME);
+      setColor(rib, col(ribColor), 'gradY');
+      const rm3 = new THREE.Mesh(rib, isEdge ? metalVC : (isMid ? accent : metalVC));
+      rm3.name = 'vm:fanRib';
+      rm3.userData.fanBaseAngle = angle;
+      rm3.position.set(Math.sin(angle) * ribHalf, Math.cos(angle) * ribHalf - 0.02, baseZ);
+      rm3.rotation.set(0, 0, angle);
+      gun.add(rm3);
+      // 骨先端の金飾り
+      if (isEdge || isMid) {
+        const tipBall = new THREE.SphereGeometry(isEdge ? 0.007 : 0.005, 8, 6);
+        setColor(tipBall, col(C_GOLD), 'edgeHi');
+        const tbm = new THREE.Mesh(tipBall, polishVC);
+        tbm.position.set(Math.sin(angle) * ribLen, Math.cos(angle) * ribLen - 0.02, baseZ);
+        gun.add(tbm);
+      }
+      // 扇面パネル(骨間)
+      if (i < ribCount - 1) {
+        const nextAngle = -fanSpan / 2 + ((i + 1) / (ribCount - 1)) * fanSpan;
+        const midAngle  = (angle + nextAngle) / 2;
+        const dA      = nextAngle - angle;
+        const chord   = 2 * ribHalf * Math.sin(dA / 2) * 0.88;
+        const panelGeo = new THREE.BoxGeometry(chord, 0.001, ribLen * 0.78);
+        setColor(panelGeo, col(def.tracerColor), 'flat');
+        const pfm = new THREE.Mesh(panelGeo, fanFaceMat);
+        pfm.position.set(Math.sin(midAngle) * ribHalf * 0.82, Math.cos(midAngle) * ribHalf * 0.82 - 0.02, baseZ);
+        pfm.rotation.set(0, 0, midAngle);
+        gun.add(pfm);
+      }
     }
     const fanCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
       : camoId !== null && isCamoId(camoId) ? camoId : null;
     if (fanCamo) {
-      const cm = getCamoMaterial(fanCamo);
-      gun.traverse((node) => { if (node instanceof THREE.Mesh && node.material === metalVC) node.material = cm; });
+      const cm3 = getCamoMaterial(fanCamo);
+      gun.traverse((node) => { if (node instanceof THREE.Mesh && node.material === metalVC) node.material = cm3; });
     }
     const muzzleFan = new THREE.Object3D();
     muzzleFan.position.set(0, 0, -0.28);
@@ -1271,43 +1397,197 @@ export function buildGunBody(
     return { gun, muzzle: muzzleFan };
   }
 
-  // ── lightning-staff: 細杖+先端発光クリスタル ─────────────────────────
-  // 円柱杖本体+中間リング×2+先端八面体クリスタル(tracerColor発光)。muzzleはクリスタル先端(z=-0.57)。
+  // ── musket: 木製銃床(カルカ溝)+火挟(サーペンタイン)+火皿+帯金3本の火縄銃 ─────
+  // 早期分岐で火縄銃固有ジオメトリを組む。bead sightY=BARREL_Y+0.020*0.6=0.024維持。
+  if (def.shape === 'musket') {
+    const { metalVC, polishVC, polyVC } = getShared();
+    const accent = getAccent(def.tracerColor);
+    const C_WOOD   = 0x5b3d24;
+    const C_WOOD_D = 0x3a2a16;
+    const C_STEEL3 = 0x22262e;
+    const C_BRASS  = 0x8a6a2c;
+    const BARREL_Y_M = BARREL_Y;
+    // 木製前床
+    const forestock = chamferBox(0.038, 0.054, 0.52, 0.006);
+    setColor(forestock, col(C_WOOD), 'gradY');
+    const fsm = new THREE.Mesh(forestock, polyVC);
+    fsm.position.set(0, BARREL_Y_M - 0.012, -0.24);
+    gun.add(fsm);
+    // カルカ溝(右側面の縦溝)
+    const ramrodGroove = new THREE.BoxGeometry(0.003, 0.010, 0.46);
+    setColor(ramrodGroove, col(C_WOOD_D), 'flat');
+    const rggm = new THREE.Mesh(ramrodGroove, polyVC);
+    rggm.position.set(0.022, BARREL_Y_M - 0.022, -0.24);
+    gun.add(rggm);
+    // 木製ストック(後床)
+    const stock = chamferBox(0.048, 0.076, 0.130, 0.007);
+    setColor(stock, col(C_WOOD), 'gradY');
+    const stk = new THREE.Mesh(stock, polyVC);
+    stk.position.set(0, -0.020, 0.100);
+    gun.add(stk);
+    // グリップネック
+    const neck = chamferBox(0.036, 0.056, 0.068, 0.005);
+    setColor(neck, col(C_WOOD), 'gradY');
+    const nm3 = new THREE.Mesh(neck, polyVC);
+    nm3.position.set(0, -0.010, 0.040);
+    gun.add(nm3);
+    // レシーバ(火挟座)
+    const receiver = chamferBox(0.062, 0.072, 0.28, 0.005);
+    setColor(receiver, col(C_STEEL3), 'machined');
+    const rcvm = new THREE.Mesh(receiver, metalVC);
+    rcvm.position.set(0, 0, 0);
+    gun.add(rcvm);
+    // バレル(超長銃身)
+    const barrelGeo = new THREE.CylinderGeometry(0.012, 0.014, 0.52, 10);
+    setColor(barrelGeo, col(C_STEEL3), 'gradY');
+    const bgm = new THREE.Mesh(barrelGeo, metalVC);
+    bgm.position.set(0, BARREL_Y_M, -0.26);
+    bgm.rotation.set(Math.PI / 2, 0, 0);
+    gun.add(bgm);
+    // 銃身帯金 3本
+    for (let bi4 = 0; bi4 < 3; bi4 += 1) {
+      const bz = -0.06 - bi4 * 0.16;
+      const band = new THREE.BoxGeometry(0.050, 0.020, 0.018);
+      setColor(band, col(C_BRASS), 'flat');
+      const bdm = new THREE.Mesh(band, polishVC);
+      bdm.position.set(0, BARREL_Y_M - 0.018, bz);
+      gun.add(bdm);
+    }
+    // 火挟(サーペンタイン): 下部ピン
+    const serpPin = new THREE.CylinderGeometry(0.006, 0.006, 0.024, 8);
+    setColor(serpPin, col(C_STEEL3), 'machined');
+    const spm = new THREE.Mesh(serpPin, polishVC);
+    spm.position.set(0.034, 0.020, 0.050);
+    spm.rotation.set(0, 0, Math.PI / 2);
+    gun.add(spm);
+    // 蛇胴(S字中央)
+    const serpBody = new THREE.BoxGeometry(0.008, 0.042, 0.012);
+    setColor(serpBody, col(C_STEEL3), 'machined');
+    const sbgm = new THREE.Mesh(serpBody, polishVC);
+    sbgm.position.set(0.036, 0.042, 0.050);
+    sbgm.rotation.set(0, 0, 0.3);
+    gun.add(sbgm);
+    // 火縄挟み頭部(上端クランプ)
+    const serpHead = new THREE.BoxGeometry(0.012, 0.018, 0.016);
+    setColor(serpHead, col(C_BRASS), 'edgeHi');
+    const shm3 = new THREE.Mesh(serpHead, polishVC);
+    shm3.position.set(0.030, 0.074, 0.052);
+    gun.add(shm3);
+    // 火皿(フラッシュパン)
+    const pan = chamferBox(0.028, 0.010, 0.022, 0.003);
+    setColor(pan, col(C_BRASS), 'flat');
+    const panm = new THREE.Mesh(pan, polishVC);
+    panm.position.set(0.040, BARREL_Y_M + 0.002, 0.01);
+    gun.add(panm);
+    // 火蓋
+    const panLid = new THREE.BoxGeometry(0.030, 0.004, 0.020);
+    setColor(panLid, col(C_BRASS), 'flat');
+    const plm = new THREE.Mesh(panLid, polishVC);
+    plm.position.set(0.040, BARREL_Y_M + 0.009, 0.01);
+    gun.add(plm);
+    // アクセント帯
+    const accentBand = new THREE.BoxGeometry(0.064, 0.012, 0.060);
+    setColor(accentBand, col(def.tracerColor), 'flat');
+    const acbm = new THREE.Mesh(accentBand, accent);
+    acbm.position.set(0, 0.0, 0.06);
+    gun.add(acbm);
+    // ビード照準: bead Y = BARREL_Y + 0.020*0.6 = 0.024(resolveSightY 契約)
+    const beadY = BARREL_Y_M + 0.020 * 0.6;
+    const beadGeo = new THREE.SphereGeometry(0.006, 10, 8);
+    setColor(beadGeo, col(C_BRASS), 'flat');
+    const beadm = new THREE.Mesh(beadGeo, polishVC);
+    beadm.position.set(0, beadY, -0.16);
+    gun.add(beadm);
+    const amberMusket = getAccent(0xffab1e);
+    const amberM = new THREE.Mesh(new THREE.SphereGeometry(0.0026, 8, 6), amberMusket);
+    amberM.position.set(0, beadY, -0.156);
+    gun.add(amberM);
+    // カモ適用
+    const musketCamo: CamoId | null =
+      camoId === undefined ? resolveEquippedCamo(def.id)
+      : camoId !== null && isCamoId(camoId) ? camoId : null;
+    if (musketCamo) {
+      const ccm7 = getCamoMaterial(musketCamo);
+      gun.traverse((node) => { if (node instanceof THREE.Mesh && (node.material === metalVC || node.material === polyVC)) node.material = ccm7; });
+    }
+    // muzzle z < 0 契約
+    const muzzleMusket = new THREE.Object3D();
+    muzzleMusket.position.set(0, BARREL_Y_M, -0.53);
+    gun.add(muzzleMusket);
+    return { gun, muzzle: muzzleMusket };
+  }
+
+  // ── lightning-staff: 節付き握り革+螺旋銘+爪3本がクリスタルを掴む天雷杖 ────────
   if (def.shape === 'lightning-staff') {
     const { metalVC, polishVC } = getShared();
     const accent = getAccent(def.tracerColor);
     const C_STAFF = 0x1a1e28;
-    const C_RING = 0x404858;
+    const C_RING  = 0x404858;
+    const C_CLAW  = 0x505f72;
+    // シャフト本体
     const staffBody = new THREE.CylinderGeometry(0.016, 0.012, 0.72, 10);
     setColor(staffBody, col(C_STAFF), 'gradY');
-    const stm2 = new THREE.Mesh(staffBody, metalVC);
-    stm2.position.set(0, 0, -0.18);
-    stm2.rotation.set(Math.PI / 2, 0, 0);
-    gun.add(stm2);
-    for (let i = 0; i < 2; i += 1) {
-      const ring = new THREE.TorusGeometry(0.022, 0.006, 8, 16);
-      setColor(ring, col(C_RING), 'edgeHi');
-      const rm = new THREE.Mesh(ring, polishVC);
-      rm.position.set(0, 0, -0.10 - i * 0.18);
-      gun.add(rm);
+    const stm6 = new THREE.Mesh(staffBody, metalVC);
+    stm6.position.set(0, 0, -0.18);
+    stm6.rotation.set(Math.PI / 2, 0, 0);
+    gun.add(stm6);
+    // 握り革の節(竹節): 4個
+    for (let ni = 0; ni < 4; ni += 1) {
+      const nodeZ = 0.06 - ni * 0.048;
+      const node = new THREE.TorusGeometry(0.020, 0.006, 8, 14);
+      setColor(node, col(C_RING), 'edgeHi');
+      const nm2 = new THREE.Mesh(node, polishVC);
+      nm2.position.set(0, 0, nodeZ);
+      gun.add(nm2);
     }
-    const crystal = new THREE.OctahedronGeometry(0.04, 0);
-    setColor(crystal, col(def.tracerColor), 'flat');
-    // Fix-8: ADS透過のため accent をクローンして transparent 対応の専用材へ(共有キャッシュ汚染回避)
-    // userData.shared は false → dispose() の gun traversal で解放。
-    const crystalMat = accent.clone();
-    crystalMat.transparent = true;
-    crystalMat.opacity = 0.9;
-    const crm = new THREE.Mesh(crystal, crystalMat);
-    crm.name = 'vm:crystal'; // setStaffCharge / setExoticCharge がこの名前で参照
-    crm.position.set(0, 0, -0.54);
-    crm.rotation.set(Math.PI / 4, Math.PI / 4, 0);
-    gun.add(crm);
+    // 螺旋の銘: シャフト上に小ボックスを螺旋状に配置
+    const spiralN = 10;
+    for (let si2 = 0; si2 < spiralN; si2 += 1) {
+      const t  = si2 / spiralN;
+      const sa = t * Math.PI * 3.5;
+      const sz = -0.02 - t * 0.44;
+      const groove = new THREE.BoxGeometry(0.003, 0.003, 0.014);
+      setColor(groove, col(C_RING), 'flat');
+      const gm2 = new THREE.Mesh(groove, polishVC);
+      gm2.position.set(Math.cos(sa) * 0.018, Math.sin(sa) * 0.018, sz);
+      gm2.rotation.set(Math.PI / 2, sa + Math.PI / 2, 0);
+      gun.add(gm2);
+    }
+    // クリスタルベースリング
     const crystalBase = new THREE.TorusGeometry(0.028, 0.007, 8, 16);
     setColor(crystalBase, col(C_RING), 'edgeHi');
     const cbm = new THREE.Mesh(crystalBase, polishVC);
     cbm.position.set(0, 0, -0.50);
     gun.add(cbm);
+    // 先端金具爪 3本
+    for (let ci3 = 0; ci3 < 3; ci3 += 1) {
+      const ca = (ci3 / 3) * Math.PI * 2;
+      const claw = new THREE.BoxGeometry(0.007, 0.006, 0.062);
+      setColor(claw, col(C_CLAW), 'machined');
+      const clm = new THREE.Mesh(claw, polishVC);
+      clm.position.set(Math.cos(ca) * 0.034, Math.sin(ca) * 0.034, -0.48);
+      clm.rotation.set(-Math.PI / 7, 0, ca + Math.PI / 2);
+      gun.add(clm);
+    }
+    // 八面体クリスタル(tracerColor発光)
+    const crystal = new THREE.OctahedronGeometry(0.04, 0);
+    setColor(crystal, col(def.tracerColor), 'flat');
+    const crystalMat = accent.clone();
+    crystalMat.transparent = true;
+    crystalMat.opacity = 0.9;
+    const crm3 = new THREE.Mesh(crystal, crystalMat);
+    crm3.name = 'vm:crystal';
+    crm3.position.set(0, 0, -0.54);
+    crm3.rotation.set(Math.PI / 4, Math.PI / 4, 0);
+    gun.add(crm3);
+    // 中間リング × 2
+    for (let ri = 0; ri < 2; ri += 1) {
+      const ring2 = new THREE.TorusGeometry(0.022, 0.006, 8, 16);
+      setColor(ring2, col(C_RING), 'edgeHi');
+      const rm4 = new THREE.Mesh(ring2, polishVC);
+      rm4.position.set(0, 0, -0.10 - ri * 0.18);
+      gun.add(rm4);
+    }
     const staffCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
       : camoId !== null && isCamoId(camoId) ? camoId : null;
@@ -1321,60 +1601,92 @@ export function buildGunBody(
     return { gun, muzzle: muzzleSt };
   }
 
-  // ── minigun: 6バレルガトリング砲 ─────────────────────────────────────
-  // 中央太胴レシーバ+6本バレル(60°ずつ回転配置)+前後リング+アクセントライン+給弾ボックス。
-  // muzzleは銃口面中心(z=-0.60*bs)。
+  // ── minigun: 正六角配置の6バレル+銃口リング+ハンドル+給弾ベルト箱 ──────────────
   if (def.shape === 'minigun') {
     const { metalVC, polishVC, polyVC } = getShared();
     const accent = getAccent(def.tracerColor);
-    const C_BODY = 0x1e2430;
+    const C_BODY   = 0x1e2430;
     const C_BARREL = 0x14171e;
-    const C_RING = 0x404858;
+    const C_RING   = 0x404858;
+    const C_HANDLE = 0x191c22;
     const bs2 = def.bodyScale ?? 1.6;
-    const recBodyMG = new THREE.BoxGeometry(0.16 * bs2, 0.16 * bs2, 0.48 * bs2);
+    // レシーバ本体
+    const recBodyMG = chamferBox(0.16 * bs2, 0.16 * bs2, 0.52 * bs2, 0.012 * bs2);
     setColor(recBodyMG, col(C_BODY), 'machined');
     const rbm = new THREE.Mesh(recBodyMG, metalVC);
-    rbm.position.set(0, 0, -0.04 * bs2);
+    rbm.position.set(0, 0, -0.06 * bs2);
     gun.add(rbm);
-    // バレルクラスターを Group に包む。Z軸回転でガトリングスピンが実現する。
-    // ViewModel.update の _minigunBarrelRot がここの rotation.z を毎フレーム更新する。
+    // アクセントライン
+    const recAccent = new THREE.BoxGeometry(0.162 * bs2, 0.012, 0.40 * bs2);
+    setColor(recAccent, col(def.tracerColor), 'flat');
+    const racm = new THREE.Mesh(recAccent, accent);
+    racm.position.set(0, 0.085 * bs2, -0.06 * bs2);
+    gun.add(racm);
+    // バレルクラスター Group(vm:barrel)
     const barrelGroup = new THREE.Group();
     barrelGroup.name = 'vm:barrel';
+    const rMG = 0.070 * bs2;
     for (let i = 0; i < 6; i += 1) {
       const angle = (i / 6) * Math.PI * 2;
-      const rMG = 0.07 * bs2;
-      const barrelMG = new THREE.CylinderGeometry(0.018 * bs2, 0.018 * bs2, 0.50 * bs2, 8);
+      const bx = Math.cos(angle) * rMG;
+      const by = Math.sin(angle) * rMG;
+      const bz = -(0.28 + 0.09) * bs2;
+      const barrelMG = new THREE.CylinderGeometry(0.018 * bs2, 0.020 * bs2, 0.50 * bs2, 8);
       setColor(barrelMG, col(C_BARREL), 'gradY');
       const bmg = new THREE.Mesh(barrelMG, metalVC);
-      bmg.position.set(Math.cos(angle) * rMG, Math.sin(angle) * rMG, -(0.28 + 0.10) * bs2);
+      bmg.position.set(bx, by, bz);
       bmg.rotation.set(Math.PI / 2, 0, 0);
       barrelGroup.add(bmg);
+      // バレル前端の銃口リング
+      const muzzleRing = new THREE.TorusGeometry(0.019 * bs2, 0.005 * bs2, 6, 12);
+      setColor(muzzleRing, col(C_RING), 'edgeHi');
+      const mrm = new THREE.Mesh(muzzleRing, polishVC);
+      mrm.position.set(bx, by, bz - 0.252 * bs2);
+      barrelGroup.add(mrm);
     }
     gun.add(barrelGroup);
-    const frontRing = new THREE.TorusGeometry(0.095 * bs2, 0.014 * bs2, 8, 18);
+    // 前端リング
+    const frontRing = new THREE.TorusGeometry(0.098 * bs2, 0.015 * bs2, 8, 20);
     setColor(frontRing, col(C_RING), 'edgeHi');
     const frm = new THREE.Mesh(frontRing, polishVC);
-    frm.position.set(0, 0, -0.55 * bs2);
+    frm.position.set(0, 0, -0.57 * bs2);
     gun.add(frm);
-    const rearRing = new THREE.TorusGeometry(0.095 * bs2, 0.014 * bs2, 8, 18);
+    // 後端リング
+    const rearRing = new THREE.TorusGeometry(0.098 * bs2, 0.015 * bs2, 8, 20);
     setColor(rearRing, col(C_RING), 'edgeHi');
     const rrm = new THREE.Mesh(rearRing, polishVC);
-    rrm.position.set(0, 0, 0.20 * bs2);
+    rrm.position.set(0, 0, 0.22 * bs2);
     gun.add(rrm);
-    const accentRingMG = new THREE.TorusGeometry(0.09 * bs2, 0.007 * bs2, 8, 18);
+    // 中間アクセントリング
+    const accentRingMG = new THREE.TorusGeometry(0.092 * bs2, 0.007 * bs2, 8, 20);
     setColor(accentRingMG, col(def.tracerColor), 'flat');
     const armg = new THREE.Mesh(accentRingMG, accent);
-    armg.position.set(0, 0, -0.10 * bs2);
+    armg.position.set(0, 0, -0.12 * bs2);
     gun.add(armg);
-    const ammoBox = new THREE.BoxGeometry(0.08 * bs2, 0.12 * bs2, 0.14 * bs2);
+    // 給弾ベルト箱
+    const ammoBox = chamferBox(0.082 * bs2, 0.124 * bs2, 0.145 * bs2, 0.008 * bs2);
     setColor(ammoBox, col(C_BODY), 'gradY');
     const abm = new THREE.Mesh(ammoBox, polyVC);
-    abm.position.set(0, -0.14 * bs2, 0.0);
+    abm.position.set(0, -0.145 * bs2, -0.01 * bs2);
     gun.add(abm);
-    const mountArm = new THREE.BoxGeometry(0.04 * bs2, 0.04 * bs2, 0.16 * bs2);
+    // ベルトコネクタ
+    const beltConn = new THREE.BoxGeometry(0.030 * bs2, 0.030 * bs2, 0.035 * bs2);
+    setColor(beltConn, col(C_RING), 'flat');
+    const bcm = new THREE.Mesh(beltConn, polishVC);
+    bcm.position.set(0, -0.07 * bs2, -0.015 * bs2);
+    gun.add(bcm);
+    // ハンドル(グリップ)
+    const handleGeo = chamferBox(0.052 * bs2, 0.110 * bs2, 0.056 * bs2, 0.006 * bs2);
+    setColor(handleGeo, col(C_HANDLE), 'gradY');
+    const hgm = new THREE.Mesh(handleGeo, polyVC);
+    hgm.position.set(0, -0.130 * bs2, 0.14 * bs2);
+    hgm.rotation.set(0.30, 0, 0);
+    gun.add(hgm);
+    // マウントアーム
+    const mountArm = new THREE.BoxGeometry(0.042 * bs2, 0.042 * bs2, 0.168 * bs2);
     setColor(mountArm, col(C_BODY), 'gradY');
     const mam = new THREE.Mesh(mountArm, metalVC);
-    mam.position.set(0, 0.05 * bs2, 0.26 * bs2);
+    mam.position.set(0, 0.052 * bs2, 0.26 * bs2);
     gun.add(mam);
     const minigunCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
@@ -1384,7 +1696,7 @@ export function buildGunBody(
       gun.traverse((node) => { if (node instanceof THREE.Mesh && (node.material === metalVC || node.material === polyVC)) node.material = ccm; });
     }
     const muzzleMG = new THREE.Object3D();
-    muzzleMG.position.set(0, 0, -0.60 * bs2);
+    muzzleMG.position.set(0, 0, -0.62 * bs2);
     gun.add(muzzleMG);
     return { gun, muzzle: muzzleMG };
   }
@@ -1744,9 +2056,8 @@ export function buildGunBody(
         const isSgBead = def.shape === 'shotgun-pump' || def.shape === 'shotgun-double'
           || (!def.shape && def.class === 'shotgun');
         const beadY = BARREL_Y + gauge * 0.6 + (isSgBead ? 0.016 : 0);
-        // Fix-6: musket ビードをバレル前端(barFrontZ≈-0.678)→銃口後方(z=-0.16)へ前出し(画面上3倍化)
-        const beadZ = def.shape === 'musket' ? -0.16 : barFrontZ + 0.02;
-        const amberZ = def.shape === 'musket' ? -0.156 : barFrontZ + 0.024;
+        const beadZ = barFrontZ + 0.02;
+        const amberZ = barFrontZ + 0.024;
         const bead = new THREE.SphereGeometry(0.006, 10, 8);
         bakeAt(polishParts, bead, C_BRASS, 0, beadY, beadZ, 0, 0, 0, 'flat');
         amberDot(0, beadY, amberZ, 0.0026);
@@ -2518,6 +2829,17 @@ export class ViewModel {
       const mesh = new THREE.Mesh(isFlame ? flameGeoBase.clone() : sparkGeoBase.clone(), mat);
       mesh.visible = false;
       mesh.renderOrder = 4;
+      // ビルボード: PlaneGeometry が常にカメラ正面を向く
+      mesh.onBeforeRender = (_r, _s, cam): void => {
+        cam.getWorldQuaternion(_bbCamQ);
+        if (mesh.parent) {
+          mesh.parent.getWorldQuaternion(_bbParentQ);
+          _bbParentQ.invert();
+          mesh.quaternion.copy(_bbCamQ).premultiply(_bbParentQ);
+        } else {
+          mesh.quaternion.copy(_bbCamQ);
+        }
+      };
       this._darkAuraGroup.add(mesh);
       this._darkAuraPool.push({
         mesh,
@@ -2549,6 +2871,17 @@ export class ViewModel {
       const mesh = new THREE.Mesh(lsGeoBase.clone(), mat);
       mesh.visible = false;
       mesh.renderOrder = 4;
+      // ビルボード: 雷帝スパーク雨粒子も常にカメラ正面向き
+      mesh.onBeforeRender = (_r, _s, cam): void => {
+        cam.getWorldQuaternion(_bbCamQ);
+        if (mesh.parent) {
+          mesh.parent.getWorldQuaternion(_bbParentQ);
+          _bbParentQ.invert();
+          mesh.quaternion.copy(_bbCamQ).premultiply(_bbParentQ);
+        } else {
+          mesh.quaternion.copy(_bbCamQ);
+        }
+      };
       this._lightningSparkGroup.add(mesh);
       this._lightningSparkPool.push({ mesh, life: 0, maxLife: 0, velY: 0 });
     }
@@ -3241,7 +3574,7 @@ export class ViewModel {
           if (lb) {
             lb.traverse((child) => {
               if (!(child instanceof THREE.Mesh) || !child.userData['isArcLine']) return;
-              const base = this._kokuraiteiMode ? 0.7 : 0.75;
+              const base = this._kokuraiteiMode ? 0.35 : 0.38;
               const flicker = base + Math.random() * 0.25;
               (child.material as THREE.MeshBasicMaterial).opacity = Math.min(1, flicker);
             });
@@ -3513,8 +3846,9 @@ export class ViewModel {
   private _buildLightningBladeMeshes(kunai: THREE.Object3D, isKokuraitei: boolean): void {
     const group = new THREE.Group();
     group.name = 'vm:lightningBlade';
-    const makeArcLine = (color: number, opacity: number, posY: number, h: number): THREE.Mesh => {
-      const geo = new THREE.BoxGeometry(0.003, h, 0.90);
+    const makeArcLine = (color: number, opacity: number, posY: number, _h: number): THREE.Mesh => {
+      // PlaneGeometry + onBeforeRender ビルボードで棒状ノイズを根治する
+      const geo = new THREE.PlaneGeometry(0.90, 0.005);
       const mat = new THREE.MeshBasicMaterial({
         color,
         transparent: true,
@@ -3525,19 +3859,29 @@ export class ViewModel {
       });
       mat.userData.shared = false;
       mat.userData.isArcLine = true;
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(0, posY, -0.63);
-      mesh.renderOrder = 8;
-      return mesh;
+      const arcMesh = new THREE.Mesh(geo, mat);
+      arcMesh.position.set(0, posY, -0.63);
+      arcMesh.renderOrder = 8;
+      arcMesh.onBeforeRender = (_r2, _s2, cam): void => {
+        cam.getWorldQuaternion(_bbCamQ);
+        if (arcMesh.parent) {
+          arcMesh.parent.getWorldQuaternion(_bbParentQ);
+          _bbParentQ.invert();
+          arcMesh.quaternion.copy(_bbCamQ).premultiply(_bbParentQ);
+        } else {
+          arcMesh.quaternion.copy(_bbCamQ);
+        }
+      };
+      return arcMesh;
     };
     if (isKokuraitei) {
-      group.add(makeArcLine(0x7700cc, 0.8, -0.028, 0.003));
-      group.add(makeArcLine(0x5500aa, 0.6, -0.027, 0.004));
-      group.add(makeArcLine(0x88aaff, 0.55, 0.034, 0.003));
+      group.add(makeArcLine(0x7700cc, 0.55, -0.028, 0.003));
+      group.add(makeArcLine(0x5500aa, 0.40, -0.027, 0.004));
+      group.add(makeArcLine(0x88aaff, 0.35, 0.034, 0.003));
     } else {
-      group.add(makeArcLine(0x88ddff, 0.85, -0.028, 0.003));
-      group.add(makeArcLine(0xaaeeff, 0.65, -0.027, 0.002));
-      group.add(makeArcLine(0x66ccff, 0.55, 0.034, 0.003));
+      group.add(makeArcLine(0x88ddff, 0.60, -0.028, 0.003));
+      group.add(makeArcLine(0xaaeeff, 0.45, -0.027, 0.002));
+      group.add(makeArcLine(0x66ccff, 0.35, 0.034, 0.003));
     }
     kunai.add(group);
     this._lightningOverlayMeshes.push(group);
@@ -3573,11 +3917,11 @@ export class ViewModel {
         ));
       }
       const curve = new THREE.CatmullRomCurve3(pts);
-      const geo = new THREE.TubeGeometry(curve, segs, 0.0012, 3, false);
+      const geo = new THREE.TubeGeometry(curve, segs, 0.0006, 3, false);
       const mat = new THREE.MeshBasicMaterial({
         color: arcColor,
         transparent: true,
-        opacity: 0.70 + Math.random() * 0.2,
+        opacity: 0.35 + Math.random() * 0.1,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });

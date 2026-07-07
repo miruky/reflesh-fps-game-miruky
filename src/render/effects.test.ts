@@ -446,6 +446,57 @@ describe('R35 Effects – GE 汎用エフェクト', () => {
   });
 });
 
+describe('棒見え修正 – 黒雷帝エフェクト品質ガード', () => {
+  it('kokuteiSmokeMantle: 羽根棒廃止 — 全子メッシュが isSmoke フラグを持つ', () => {
+    const { fx, scene } = makeEffects();
+    fx.kokuteiSmokeMantle(ORIGIN);
+    let hasWingBox = false;
+    scene.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.geometry instanceof THREE.BoxGeometry) {
+        // streakGeometry由来の 4.2m 棒が残っていないこと(scale.z > 2 なら棒)
+        if (child.scale.z > 2) hasWingBox = true;
+      }
+    });
+    expect(hasWingBox).toBe(false);
+  });
+
+  it('kokuteiSmokeMantle: 煙パフ(isSmoke)が1個以上存在する', () => {
+    const { fx, scene } = makeEffects();
+    fx.kokuteiSmokeMantle(ORIGIN);
+    let smokeCount = 0;
+    scene.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.userData.isSmoke === true) smokeCount++;
+    });
+    expect(smokeCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('soulAbsorbBeam: ビーム opacity が 0.35 以下に抑制されている', () => {
+    const { fx, scene } = makeEffects();
+    fx.soulAbsorbBeam(ORIGIN, new THREE.Vector3(10, 0, 0));
+    let maxOpacity = 0;
+    scene.traverse((child) => {
+      if (child instanceof THREE.Line) {
+        const mat = child.material as THREE.LineBasicMaterial;
+        if (mat.opacity > maxOpacity) maxOpacity = mat.opacity;
+      }
+    });
+    expect(maxOpacity).toBeLessThanOrEqual(0.35);
+  });
+
+  it('kokuteiSlashResidual: 残光 opacity が 0.20 以下に抑制されている', () => {
+    const { fx, scene } = makeEffects();
+    fx.kokuteiSlashResidual(ORIGIN, new THREE.Vector3(5, 0, 0));
+    let maxOpacity = 0;
+    scene.traverse((child) => {
+      if (child instanceof THREE.Line) {
+        const mat = child.material as THREE.LineBasicMaterial;
+        if (mat.opacity > maxOpacity) maxOpacity = mat.opacity;
+      }
+    });
+    expect(maxOpacity).toBeLessThanOrEqual(0.20);
+  });
+});
+
 describe('R35 Effects – ライフサイクル管理', () => {
   it('clear: R35 全プールを clear 後に例外なし', () => {
     const { fx } = makeEffects();

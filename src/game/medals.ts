@@ -537,59 +537,81 @@ export const LONGSHOT: Record<WeaponClass, number> = {
   exotic: 40,
 };
 
-// バッジ表示しない(killfeed のアイコンのみに降格する)メダル。HUDが参照
-// 頻出bronze14件: 毎キルで出るためバッジを出すとHUDが埋まる
+// バッジ表示しない(killfeed のアイコンのみに降格する)メダル。
+// 既存36種は headshot 以外全部バッジ解放を維持(実績互換)。
+// 新180種は「体験が明確に変わるエリート18種」だけバッジ解放し、残り162種を抑止。
+// → 画面にバッジが出うるメダル種は 216種中53種(≒1/4)。
+// 削除ではなく「表示無効化」 — 定義・XP・カウントは維持し将来復活可能
 export const SUPPRESS_BADGE: ReadonlySet<MedalId> = new Set<MedalId>([
+  // ── 既存14種(頻出bronze: バッジを出すとHUDが埋まる) ──
   'headshot',
   'ar-specialist', 'smg-specialist', 'sniper-specialist', 'shotgun-specialist',
   'br-specialist', 'lmg-specialist', 'pistol-specialist', 'marksman-specialist',
   'launcher-specialist', 'exotic-specialist',
   'zombie-kill', 'drone-kill', 'turret-kill',
-]);
-
-// 取得済みでも毎回バッジを出す「レベルの高い実績」
-export const ALWAYS_BADGE: ReadonlySet<MedalId> = new Set<MedalId>([
-  // 既存
-  'bloodthirsty', 'merciless', 'ruthless', 'relentless', 'brutal', 'unstoppable', 'nuclear', 'qhsf',
-  // A: gold/platinum
-  'blink-double', 'blink-triple', 'slide-triple', 'air-triple', 'wall-double', 'wall-triple', 'ronin-chain',
-  // B: gold/platinum
-  'sniper-400m', 'sniper-600m', 'sniper-800m', 'sniper-999m',
-  'qs-400m', 'qs-600m', 'qs-800m', 'qs-999m',
-  // C: gold/platinum
-  'hs-streak-5', 'hs-streak-6', 'hs-streak-7', 'hs-streak-8', 'hs-streak-10',
-  // D: gold/platinum
-  'shotgun-triple', 'pistol-rampage', 'all-class-kills', 'exotic-rampage',
-  // E: gold/platinum
-  'low-hp-kill', 'last-bullet', 'master-kill', 'giant-melee', 'no-damage-5', 'no-damage-10',
-  'tank-kill', 'no-scope-hs', 'qs-hs', 'clutch-kill', 'nemesis-kill', 'giant-kill', 'low-hp-20', 'combat-master',
-  // F: all
-  'penta-feed', 'hexa-feed', 'septa-feed', 'octa-feed', 'rampage-feed', 'hs-feed-3', 'hs-feed-5',
-  // G: all
-  'streak-35', 'streak-40', 'streak-50', 'streak-60', 'streak-75', 'streak-100',
-  // H: gold/platinum
-  'mag-5', 'mag-6', 'mag-7', 'mag-8', 'mag-10', 'mag-all-hs', 'reload-3',
-  // I: all
-  'slide-snipe', 'slide-qs', 'slide-hs', 'air-snipe', 'air-qs', 'air-hs', 'slide-air-kill', 'air-slam-kill',
-  // J: silver+
-  'dark-emperor-5', 'dark-emperor-10', 'dark-emperor-20', 'dark-emperor-50', 'dark-emperor-nodmg',
-  'raitei-5', 'raitei-10', 'raitei-20', 'raitei-50', 'raitei-nodmg',
-  'kokurai-5', 'kokurai-10', 'kokurai-20', 'kokurai-50', 'kokurai-nodmg',
-  'ult-5', 'ult-10',
-  'hell-5', 'hell-10', 'hell-20', 'hell-50', 'hell-nodmg',
+  // ── A: 移動系(ronin-chain のみバッジ保留) ──
+  'crouch-kill', 'sprint-kill', 'blink-kill', 'blink-double', 'blink-triple',
+  'slide-double', 'slide-triple', 'air-double', 'air-triple', 'wall-double', 'wall-triple',
+  // ── B: 距離(sniper-999m / qs-999m のみバッジ保留) ──
+  'close-extreme',
+  'ar-longshot-b', 'smg-longshot-b', 'br-longshot-b', 'lmg-longshot-b',
+  'pistol-longshot-b', 'marksman-longshot-b', 'exotic-longshot-b',
+  'sniper-200m', 'sniper-400m', 'sniper-600m', 'sniper-800m',
+  'qs-200m', 'qs-400m', 'qs-600m', 'qs-800m',
+  // ── C: HS連続(hs-streak-10 のみバッジ保留) ──
+  'hs-streak-2', 'hs-streak-3', 'hs-streak-4', 'hs-streak-5',
+  'hs-streak-6', 'hs-streak-7', 'hs-streak-8',
+  // ── D: 武器クラス(全て抑止) ──
+  'shotgun-double', 'shotgun-triple', 'pistol-rampage', 'pistol-chain', 'exotic-rampage',
+  'all-class-kills',
+  // ── E: 状況(master-kill のみバッジ保留) ──
+  'first-blood', 'reload-kill', 'low-hp-kill', 'last-bullet',
+  'giant-melee', 'no-damage-5', 'no-damage-10', 'speed-opener', 'tank-kill',
+  'no-scope-hs', 'qs-hs', 'clutch-kill', 'nemesis-kill', 'giant-kill', 'low-hp-20', 'combat-master',
+  // ── F: フィード拡張(rampage-feed のみバッジ保留) ──
+  'penta-feed', 'hexa-feed', 'septa-feed', 'octa-feed',
+  'hs-feed-2', 'hs-feed-3', 'hs-feed-5',
+  // ── G: ストリーク延長(streak-100=LEGEND のみバッジ保留) ──
+  'streak-35', 'streak-40', 'streak-50', 'streak-60', 'streak-75',
+  // ── H: マガジン(mag-10 のみバッジ保留) ──
+  'mag-2', 'mag-3', 'mag-4', 'mag-5', 'mag-6', 'mag-7', 'mag-8', 'mag-all-hs', 'reload-3',
+  // ── I: スライド/空中特化(全て抑止) ──
+  'slide-snipe', 'slide-qs', 'slide-hs', 'air-snipe', 'air-qs', 'air-hs',
+  'slide-air-kill', 'air-slam-kill',
+  // ── J: 特殊モード(黒帝/雷帝/黒雷帝/超鬼畜の各10連 + kokurai-50 のみバッジ保留) ──
+  'dark-emperor-kill', 'dark-emperor-5', 'dark-emperor-20', 'dark-emperor-50', 'dark-emperor-nodmg',
+  'raitei-kill', 'raitei-5', 'raitei-20', 'raitei-50', 'raitei-nodmg',
+  'kokurai-kill', 'kokurai-5', 'kokurai-20', 'kokurai-nodmg',
+  'ult-kill', 'ult-5', 'ult-10',
+  'hell-kill', 'hell-5', 'hell-20', 'hell-50', 'hell-nodmg',
   'de-activation-kill', 'raitei-activation-kill', 'kokurai-activation-kill',
-  // K: gold/platinum
-  'perfect-life-5', 'perfect-life-10', 'perfect-life-20', 'perfect-life-30',
+  // ── K: 超難度(perfect-life-10=無傷ライフ / ghost-25 / legend-run のみバッジ保留) ──
+  'perfect-life-5', 'perfect-life-20', 'perfect-life-30',
   'all-hs-life-5', 'all-hs-life-10',
-  'boss-slayer', 'nemesis-revenge',
+  'boss-slayer', 'nemesis-mark', 'nemesis-revenge',
   'immortal-15', 'immortal-25', 'undying-20', 'undying-30',
   'sharpshooter-25', 'executioner-50', 'executioner-100',
-  'one-shot-5', 'backstab-5', 'flawless-combat', 'ghost-25', 'perfect-mag-3', 'multi-style-5',
+  'one-shot-5', 'backstab-5', 'flawless-combat', 'perfect-mag-3', 'multi-style-5',
   'survivor-10', 'survivor-20', 'wave-clean-5', 'zombie-master-100',
-  'no-scope-10', 'qs-master-10', 'stealth-5', 'legend-run',
-  // L: gold/platinum
+  'no-scope-10', 'qs-master-10', 'stealth-5',
+  // ── L: チェーン(chain-50=SINGULARITY / chain-god のみバッジ保留) ──
   'chain-10', 'chain-12', 'chain-15', 'chain-18', 'chain-20', 'chain-25',
-  'chain-30', 'chain-35', 'chain-40', 'chain-45', 'chain-50', 'chain-saver', 'chain-god',
+  'chain-30', 'chain-35', 'chain-40', 'chain-45',
+  'chain-comeback', 'chain-saver',
+]);
+
+// 取得済みでも毎回バッジを出す「本当にすごいやつ」エリート10種
+export const ALWAYS_BADGE: ReadonlySet<MedalId> = new Set<MedalId>([
+  'quad-feed',    // 2秒以内4連フィード
+  'mega-feed',    // 3秒以内5連フィード
+  'qhsf',         // quad headshot feed
+  'nuclear',      // 30ストリーク
+  'sniper-999m',  // 999m狙撃
+  'qs-999m',      // 999mクイックスコープ
+  'streak-100',   // LEGEND
+  'chain-50',     // SINGULARITY
+  'rampage-feed', // 10連フィード
+  'kokurai-50',   // 黒雷帝50連
 ]);
 
 // アナウンサー音声の読み上げ優先度(大きいほど優先)。1キルで複数取得時に最上位を1件だけ読む

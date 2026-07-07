@@ -2640,19 +2640,22 @@ export class Effects {
     this.scene.add(ring);
     this.impactRings.push({ obj: ring, life: 0.32, maxLife: 0.32 });
     if (!reduceMotion) {
-      this.buildBranchBolt(new THREE.Vector3(pos.x, pos.y + 2.5, pos.z), pos, 1, true, 0.18);
+      // 棒見え抑制: ボルト高さ2.5m→1.2m半減(カメラ高さ≈1.7m以下に収める)+枝なし
+      this.buildBranchBolt(new THREE.Vector3(pos.x, pos.y + 1.2, pos.z), pos, 0, true, 0.15);
     }
   }
 
-  /** KE-3: 魂吸引ビーム — 吸引ライン3本+発生地ノヴァリング+吸引パーティクル5 */
+  /** KE-3: 魂吸引ビーム — 吸引ライン3本+発生地ノヴァリング+吸引パーティクル5 — 棒見え抑制: opacity低減・距離82%短縮・寿命短縮 */
   soulAbsorbBeam(fromPos: THREE.Vector3, toPos: THREE.Vector3, reduceMotion = false): void {
-    const OPACITIES = [0.58, 0.38, 0.22] as const;
+    const OPACITIES = [0.32, 0.20, 0.11] as const;
     const COLORS = [0x9900ff, 0x6600bb, 0x440088] as const;
+    // ビームをプレイヤー手前18%で停止させカメラ至近への侵入を回避
+    const beamEnd = fromPos.clone().lerp(toPos, 0.82);
     for (let i = 0; i < 3; i++) {
       const off = new THREE.Vector3(
         (Math.random() - 0.5) * 0.08, (Math.random() - 0.5) * 0.08, (Math.random() - 0.5) * 0.08,
       );
-      const beamGeo = new THREE.BufferGeometry().setFromPoints([fromPos.clone().add(off), toPos.clone().add(off)]);
+      const beamGeo = new THREE.BufferGeometry().setFromPoints([fromPos.clone().add(off), beamEnd.clone().add(off)]);
       const beamMat = new THREE.LineBasicMaterial({
         color: COLORS[i]!, transparent: true, opacity: OPACITIES[i]!,
         blending: THREE.AdditiveBlending, depthWrite: false,
@@ -2660,7 +2663,7 @@ export class Effects {
       const line = new THREE.Line(beamGeo, beamMat);
       line.userData.baseOpacity = OPACITIES[i]!;
       this.scene.add(line);
-      this.tracers.push({ obj: line, life: 0.42, maxLife: 0.42 });
+      this.tracers.push({ obj: line, life: 0.22, maxLife: 0.22 });
     }
     // 発生地ノヴァリング
     const novaGeo = new THREE.RingGeometry(0.5, 0.8, 24);
@@ -2756,53 +2759,45 @@ export class Effects {
     this.scene.add(ring);
     this.impactRings.push({ obj: ring, life: 0.28, maxLife: 0.28 });
     if (!reduceMotion) {
-      this.buildBranchBolt(new THREE.Vector3(pos.x, pos.y + 2.0, pos.z), pos, 1, false, 0.15);
+      // 棒見え抑制: ボルト高さ2.0m→1.0m半減+枝なし
+      this.buildBranchBolt(new THREE.Vector3(pos.x, pos.y + 1.0, pos.z), pos, 0, false, 0.13);
     }
   }
 
-  /** BE-1: 黒帝煙マントル — 羽根形状2+胴体煙ブロブ3 */
+  /** BE-1: 黒帝煙マントル — 足元渦煙パフ(羽根棒廃止: scale3.5×1.5×4.2の棒が至近距離で視界を塞いでいたため) */
   kokuteiSmokeMantle(pos: THREE.Vector3, reduceMotion = false): void {
     const group = new THREE.Group();
     group.position.copy(pos);
-    for (const wingAngle of [1.1, -1.1]) {
-      const wing = new THREE.Mesh(this.streakGeometry, new THREE.MeshBasicMaterial({
-        color: 0x050010, transparent: true, opacity: 0.72,
-        blending: THREE.NormalBlending, depthWrite: false, side: THREE.DoubleSide,
-      }));
-      wing.scale.set(3.5, 1.5, 4.2);
-      wing.rotation.z = wingAngle;
-      wing.rotation.y = Math.PI / 2;
-      wing.position.y = 0.8;
-      wing.userData.baseOpacity = 0.72;
-      group.add(wing);
-    }
-    if (!reduceMotion) {
-      for (let i = 0; i < 3; i++) {
-        const blobMat = new THREE.MeshBasicMaterial({
-          color: 0x07000e, transparent: true, opacity: 0, depthWrite: false,
-        });
-        const blob = new THREE.Mesh(this.cloudGeometry, blobMat);
-        blob.position.set((Math.random() - 0.5) * 0.6, 0.3 + i * 0.5, (Math.random() - 0.5) * 0.4);
-        blob.scale.setScalar(0.35 + Math.random() * 0.2);
-        blob.userData.isSmoke = true;
-        group.add(blob);
-      }
+    // 羽根形状(streakGeometry scale 3.5×1.5×4.2 = 4.2m棒)を廃止し
+    // 足元半径0.2m圏に小さな暗色煙球5個(最大0.32m)を配置する
+    const count = reduceMotion ? 2 : 5;
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      const r = 0.18 + Math.random() * 0.14;
+      const blobMat = new THREE.MeshBasicMaterial({
+        color: 0x070012, transparent: true, opacity: 0, depthWrite: false,
+      });
+      const blob = new THREE.Mesh(this.cloudGeometry, blobMat);
+      blob.position.set(Math.cos(angle) * r, Math.random() * 0.12, Math.sin(angle) * r);
+      blob.scale.setScalar(0.13 + Math.random() * 0.09);
+      blob.userData.isSmoke = true;
+      group.add(blob);
     }
     this.scene.add(group);
     this.kokuteiMantleFX.push({ obj: group, life: 0.65, maxLife: 0.65 });
   }
 
-  /** BE-2: 黒帝斬撃残光ライン — 赤残光1本(0xcc0011 Additive 0.32/0.50s) */
+  /** BE-2: 黒帝斬撃残光ライン — 赤残光1本(0xcc0011 Additive 0.18/0.28s) — 棒見え抑制: opacity・寿命半減 */
   kokuteiSlashResidual(from: THREE.Vector3, to: THREE.Vector3): void {
     const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
     const mat = new THREE.LineBasicMaterial({
-      color: 0xcc0011, transparent: true, opacity: 0.32,
+      color: 0xcc0011, transparent: true, opacity: 0.18,
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
     const line = new THREE.Line(geo, mat);
-    line.userData.baseOpacity = 0.32;
+    line.userData.baseOpacity = 0.18;
     this.scene.add(line);
-    this.tracers.push({ obj: line, life: 0.50, maxLife: 0.50 });
+    this.tracers.push({ obj: line, life: 0.28, maxLife: 0.28 });
   }
 
   /** EX-1: 月光弓月相チャージ — 三日月(c=0)→満月(c=1)リング+満月バースト */

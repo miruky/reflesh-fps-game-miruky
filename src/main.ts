@@ -86,6 +86,19 @@ sounds.setMusicEnabled(settings.musicEnabled);
 
 const hud = new Hud(hudRoot);
 
+// シネマティックキルカム用レターボックス(canvas上・HUD下)
+const letterboxEl = document.createElement('div');
+letterboxEl.id = 'ck-letterbox';
+Object.assign(letterboxEl.style, {
+  position: 'fixed', inset: '0', pointerEvents: 'none',
+  zIndex: '5', opacity: '0', transition: 'opacity 0.1s',
+});
+const lbBarStyle = 'position:absolute;left:0;right:0;background:#000;height:10%;';
+const lbTop = document.createElement('div'); lbTop.setAttribute('style', lbBarStyle + 'top:0');
+const lbBot = document.createElement('div'); lbBot.setAttribute('style', lbBarStyle + 'bottom:0');
+letterboxEl.appendChild(lbTop); letterboxEl.appendChild(lbBot);
+document.body.appendChild(letterboxEl);
+
 // メニュー背景の宇宙(独立レンダラ)。WebGLが使えない環境では生成しない
 const spaceBg = spaceCanvas ? new SpaceBg(spaceCanvas) : null;
 
@@ -365,6 +378,7 @@ const loop = new GameLoop(
         if (match.startFinalKillcam()) {
           mode = 'finalkillcam';
           hud.showFinalKillcam();
+          letterboxEl.style.opacity = '1';
         } else {
           showResult();
         }
@@ -419,6 +433,7 @@ const loop = new GameLoop(
         const scope = match.fkScopeInfo;
         hud.updateFinalKillcam(match.fkFlash, scope.adsRatio, scope.isScope);
         if (done) {
+          letterboxEl.style.opacity = '0';
           hud.hideFinalKillcam();
           showResult();
         }

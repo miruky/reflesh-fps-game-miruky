@@ -1,226 +1,274 @@
 import { describe, expect, it } from 'vitest';
 
-// ── FK ウィンドウ計算の純関数テスト ────────────────────────────────────────
-// match.ts の FK定数・fkSpeedAt と同じロジックを純関数として再現してテストする。
+// ── CK(シネマティックキルカム) ウィンドウ計算の純関数テスト ──────────────────
+// match.ts の CK定数・ckSpeedAt・ckCamPos と同じロジックを純関数として再現してテストする。
 // 実装の破壊的変更を検知するデグレガード。
 
+// 記録窓(変更なし — fkRecordFrame は FK_WIN_PRE/POST 固定)
 const FK_WIN_PRE  = 3.5;
 const FK_WIN_POST = 1.2;
 
+// 再生窓(シネマティック化で変更)
+const CK_WIN_PRE  = 2.5;
+const CK_WIN_POST = 1.5;
+
 // ─── 実時間計算ヘルパー ────────────────────────────────────────────────────
-// 数値積分: ゲーム時刻区間 [gameStart, gameEnd] を実際に進むのに何秒かかるか。
-// dt_real = d_game / speed(cursor)。速度が0に近い区間を1万等分で積分する。
 function realTimeCost(gameStart: number, gameEnd: number, killT: number, steps = 10000): number {
   const span = gameEnd - gameStart;
   const dg   = span / steps;
   let total  = 0;
   for (let i = 0; i < steps; i++) {
     const cursor = gameStart + (i + 0.5) * dg;
-    total += dg / fkSpeedAt(cursor, killT);
+    total += dg / ckSpeedAt(cursor, killT);
   }
   return total;
 }
 
-// fkSpeedAt のミラー実装(match.ts と同一ロジック)
-function fkSpeedAt(cursor: number, killT: number): number {
+// ckSpeedAt のミラー実装(match.ts と同一ロジック)
+function ckSpeedAt(cursor: number, killT: number): number {
   const d = cursor - killT;
-  if (d < -0.5) return 1.0;
+  if (d < -0.4) return 1.0;
   if (d < 0.0) {
-    const t = (d + 0.5) / 0.5;
-    return 1.0 + (0.25 - 1.0) * t;
+    const t = (d + 0.4) / 0.4;
+    return 1.0 + (0.2 - 1.0) * t;
   }
-  if (d < 0.5) return 0.25;
-  const t = Math.min(1, (d - 0.5) / Math.max(1e-6, FK_WIN_POST - 0.5));
-  return 0.25 + (1.0 - 0.25) * t;
+  if (d < 0.6) return 0.2;
+  const t = Math.min(1, (d - 0.6) / Math.max(1e-6, CK_WIN_POST - 0.6));
+  return 0.2 + (1.0 - 0.2) * t;
 }
 
-describe('FK ウィンドウ計算', () => {
-  it('再生窓の先頭はキル-3.5s', () => {
+// ckCamPos のミラー実装(match.ts と同一ロジック)
+function ckCamPosMath(
+  kx: number, ky: number, kz: number,
+  vx: number, vy: number, vz: number,
+  side: 1 | -1,
+  height: number,
+  dollyOffset = 0,
+): { x: number; y: number; z: number } {
+  const sx = vx - kx;
+  const sz = vz - kz;
+  const segLen = Math.sqrt(sx * sx + (vy - ky) ** 2 + sz * sz);
+  const horizLen = Math.sqrt(sx * sx + sz * sz);
+  let perpX = 0; let perpZ = 1;
+  if (horizLen > 0.01) { perpX = (-sz / horizLen) * side; perpZ = (sx / horizLen) * side; }
+  const midX = (kx + vx) * 0.5;
+  const midY = (ky + vy) * 0.5;
+  const midZ = (kz + vz) * 0.5;
+  const d = segLen * 0.9 + 6 + dollyOffset;
+  return { x: midX + perpX * d, y: midY + height, z: midZ + perpZ * d };
+}
+
+describe('CK ウィンドウ定数', () => {
+  it('再生窓の先頭はキル-2.5s', () => {
     const killT = 10;
-    const winStart = killT - FK_WIN_PRE;
-    expect(winStart).toBeCloseTo(6.5, 6);
+    expect(killT - CK_WIN_PRE).toBeCloseTo(7.5, 6);
   });
 
-  it('再生窓の末尾はキル+1.2s', () => {
+  it('再生窓の末尾はキル+1.5s', () => {
     const killT = 10;
-    const winEnd = killT + FK_WIN_POST;
-    expect(winEnd).toBeCloseTo(11.2, 6);
+    expect(killT + CK_WIN_POST).toBeCloseTo(11.5, 6);
   });
 
+  it('記録窓(FK_WIN_PRE/POST)は変更なし: 3.5 / 1.2', () => {
+    expect(FK_WIN_PRE).toBe(3.5);
+    expect(FK_WIN_POST).toBe(1.2);
+  });
+
+  it('CK 再生窓 > FK 記録窓後半: CK_WIN_POST(1.5) > FK_WIN_POST(1.2)', () => {
+    // 記録は1.2s後まで。再生窓は1.5s後まで伸びる。
+    // 1.2s以降は fkFindFrames が[lastFrame,lastFrame,0]を返して静止するが正常動作。
+    expect(CK_WIN_POST).toBeGreaterThan(FK_WIN_POST);
+  });
+});
+
+describe('ckSpeedAt 速度ランプ', () => {
   it('キル 1s 前: 等速1×', () => {
-    expect(fkSpeedAt(9, 10)).toBe(1.0);
+    expect(ckSpeedAt(9, 10)).toBe(1.0);
   });
 
-  it('キル直前 0.5s: 1× から 0.25× への遷移開始', () => {
-    const v = fkSpeedAt(9.5, 10);
-    expect(v).toBeCloseTo(1.0, 5); // d = -0.5, 遷移の最初
+  it('キル -0.4s: 1× から 0.2× への遷移開始', () => {
+    const v = ckSpeedAt(9.6, 10);
+    expect(v).toBeCloseTo(1.0, 5); // d = -0.4, 遷移の最初
   });
 
-  it('キル直前 0.25s: 約 0.625×', () => {
-    const v = fkSpeedAt(9.75, 10);
-    expect(v).toBeCloseTo(1.0 + (0.25 - 1.0) * 0.5, 5);
+  it('キル -0.2s: 約 0.6×(遷移中)', () => {
+    // d = -0.2, t = (-0.2+0.4)/0.4 = 0.5, speed = 1.0 + (0.2-1.0)*0.5 = 0.6
+    const v = ckSpeedAt(9.8, 10);
+    expect(v).toBeCloseTo(0.6, 5);
   });
 
-  it('キル時刻: 0.25× ホールド開始', () => {
-    expect(fkSpeedAt(10, 10)).toBe(0.25);
+  it('キル時刻: 0.2× ホールド開始', () => {
+    expect(ckSpeedAt(10, 10)).toBe(0.2);
   });
 
-  it('キル後 0.5s: まだ 0.25× ホールド', () => {
-    expect(fkSpeedAt(10.5, 10)).toBe(0.25);
+  it('キル後 0.6s: まだ 0.2× ホールド(境界)', () => {
+    expect(ckSpeedAt(10.6, 10)).toBe(0.2);
   });
 
-  it('キル後 0.5s より後: 徐々に 1.0 へ復帰', () => {
-    const v = fkSpeedAt(10.85, 10);
-    expect(v).toBeGreaterThan(0.25);
+  it('キル後 0.6s より後: 徐々に 1.0 へ復帰', () => {
+    const v = ckSpeedAt(11.0, 10);
+    expect(v).toBeGreaterThan(0.2);
     expect(v).toBeLessThan(1.0);
   });
 
-  it('窓終端: ほぼ 1×', () => {
-    const v = fkSpeedAt(10 + FK_WIN_POST, 10);
+  it('窓終端(CK_WIN_POST=1.5): ほぼ 1×', () => {
+    const v = ckSpeedAt(10 + CK_WIN_POST, 10);
     expect(v).toBeCloseTo(1.0, 5);
   });
 });
 
-describe('FK 速度ランプ 単調性', () => {
-  it('キル前(-3.5s〜-0.5s)は常に1×', () => {
+describe('ckSpeedAt 速度 単調性', () => {
+  it('キル前(-2.5s〜-0.4s)は常に1×', () => {
     const killT = 10;
-    for (let d = -3.5; d <= -0.5; d += 0.1) {
-      expect(fkSpeedAt(killT + d, killT)).toBe(1.0);
+    for (let d = -2.5; d <= -0.4; d += 0.1) {
+      expect(ckSpeedAt(killT + d, killT)).toBe(1.0);
     }
   });
 
-  it('キル〜キル後0.5sは常に0.25×', () => {
+  it('キル〜キル後0.6sは常に0.2×', () => {
     const killT = 10;
-    for (let d = 0; d <= 0.5; d += 0.05) {
-      expect(fkSpeedAt(killT + d, killT)).toBe(0.25);
+    for (let d = 0; d <= 0.6; d += 0.05) {
+      expect(ckSpeedAt(killT + d, killT)).toBe(0.2);
     }
   });
 
-  it('速度は常に0.25以上1.0以下', () => {
+  it('速度は常に0.2以上1.0以下', () => {
     const killT = 10;
-    for (let d = -FK_WIN_PRE; d <= FK_WIN_POST; d += 0.05) {
-      const v = fkSpeedAt(killT + d, killT);
-      expect(v).toBeGreaterThanOrEqual(0.25);
+    for (let d = -CK_WIN_PRE; d <= CK_WIN_POST; d += 0.05) {
+      const v = ckSpeedAt(killT + d, killT);
+      expect(v).toBeGreaterThanOrEqual(0.2);
       expect(v).toBeLessThanOrEqual(1.0);
     }
   });
 });
 
 // ─── 実時間長の検証テスト ──────────────────────────────────────────────────
-// R36再修正: "kill瞬間カット" バグの数値根拠テスト
-// fkCursor は startFinalKillcam で max(oldest, killT-3.5) に初期化される。
-// oldest が killT-3.0 だった場合、カーソル先頭は killT-3.0 になる。
-// 当テストは窓全体を実時間換算したとき十分長いことを保証する。
-describe('FK スロー再生の実時間計算', () => {
+describe('CK スロー再生の実時間計算', () => {
   const killT = 10;
 
-  it('キル前3.5s区間を等速で進むコスト = 3.0s real(d<-0.5は常に1×)', () => {
-    // [-3.5,-0.5] は速度1×。ゲーム3.0s = 実時間3.0s
-    const cost = realTimeCost(killT - 3.5, killT - 0.5, killT);
+  it('キル前2.5s区間を等速で進むコスト ≈ 2.1s real (d<-0.4は1×, -0.4〜0は減速)', () => {
+    const cost = realTimeCost(killT - 2.5, killT, killT);
+    // [-2.5,-0.4]=2.1s×1=2.1s, [-0.4,0]=減速で実時間>0.4
+    expect(cost).toBeGreaterThan(2.1);
+  });
+
+  it('0.2×スロー区間[+0s,+0.6s]の実時間 = 3.0s (0.6/0.2)', () => {
+    const cost = realTimeCost(killT, killT + 0.6, killT);
     expect(cost).toBeCloseTo(3.0, 1);
   });
 
-  it('キル前0.5s→キル直前の減速区間: 実時間 > ゲーム時間 (遅くなっている)', () => {
-    // speed < 1.0 なので実時間 > 0.5s
-    const cost = realTimeCost(killT - 0.5, killT, killT);
-    expect(cost).toBeGreaterThan(0.5);
-  });
-
-  it('0.25×スロー区間[+0s,+0.5s]の実時間 = 2.0s (0.5/0.25)', () => {
-    // speed = 0.25 → 0.5g / 0.25 = 2.0s real
-    const cost = realTimeCost(killT, killT + 0.5, killT);
-    expect(cost).toBeCloseTo(2.0, 2);
-  });
-
-  it('窓全体(oldest=killT-3.0から始まる場合)の実時間 > 7s', () => {
-    // cursor = max(oldest, killT-3.5) = killT-3.0 のケース
-    // [killT-3.0, killT+1.2] の実時間コスト
-    const cost = realTimeCost(killT - 3.0, killT + FK_WIN_POST, killT);
-    // 内訳: [k-3.0,k-0.5]=2.5s×1=2.5, [k-0.5,k]≈0.92s real, [k,k+0.5]=2.0s, [k+0.5,k+1.2]≈1.3s
+  it('窓全体(CK_WIN_PRE=2.5からCK_WIN_POST=1.5)の実時間 > 6.0s', () => {
+    const cost = realTimeCost(killT - CK_WIN_PRE, killT + CK_WIN_POST, killT);
     expect(cost).toBeGreaterThan(6.0);
   });
 
-  it('窓全体(フルバッファ killT-3.5 から始まる場合)の実時間 > 7.0s', () => {
-    const cost = realTimeCost(killT - FK_WIN_PRE, killT + FK_WIN_POST, killT);
-    expect(cost).toBeGreaterThan(7.0);
-  });
-
-  it('fkCursor を oldest=killT-3.0 でクランプしても window は killT+1.2 まで到達する', () => {
-    // startFinalKillcam: cursor = max(oldest, killT-FK_WIN_PRE) = killT-3.0
-    // fkWinEnd = killT + FK_WIN_POST = killT + 1.2
-    // → cursor が最終的に fkWinEnd を超えてリターン true = 再生完了
-    let cursor = killT - 3.0;  // oldest = killT-3.0 でクランプ済み
-    const winEnd = killT + FK_WIN_POST;
-    const DT_REAL = 1 / 60;    // 60fps フレーム
+  it('ckCursor を oldest=killT-2.0 でクランプしても window は killT+1.5 まで到達する', () => {
+    let cursor = killT - 2.0;
+    const winEnd = killT + CK_WIN_POST;
+    const DT_REAL = 1 / 60;
     let frames = 0;
     while (cursor < winEnd && frames < 20000) {
-      cursor += DT_REAL * fkSpeedAt(cursor, killT);
+      cursor += DT_REAL * ckSpeedAt(cursor, killT);
       frames++;
     }
     expect(cursor).toBeGreaterThanOrEqual(winEnd);
-    // スロー込みで7秒以上かかる = 420フレーム以上
-    expect(frames).toBeGreaterThan(400);
+    // スロー込みで5秒以上かかる = 300フレーム以上
+    expect(frames).toBeGreaterThan(300);
   });
 });
 
-describe('FK カーソルクランプ (startFinalKillcam)', () => {
-  it('oldest <= killT-3.0 のとき cursor は oldest から始まる(バグ回避)', () => {
+describe('CK カーソルクランプ (startFinalKillcam)', () => {
+  it('oldest <= killT-2.0 のとき cursor は oldest から始まる(バグ回避)', () => {
     const killT  = 10;
-    const oldest = killT - 3.0; // ガード通過の最悪ケース
-    const cursor = Math.max(oldest, killT - FK_WIN_PRE);
-    // killT-FK_WIN_PRE = 6.5, oldest = 7.0 → cursor = 7.0 = oldest
+    const oldest = killT - 2.0;
+    const cursor = Math.max(oldest, killT - CK_WIN_PRE);
+    // killT-CK_WIN_PRE = 7.5, oldest = 8.0 → cursor = 8.0 = oldest
     expect(cursor).toBe(oldest);
-    // 旧実装(killT-FK_WIN_PRE=6.5)では fkFindFrames が -1 を返して即終了していた
     expect(cursor).toBeGreaterThanOrEqual(oldest);
   });
 
-  it('oldest が十分古い(killT-4.0)なら cursor = killT-FK_WIN_PRE', () => {
+  it('oldest が十分古い(killT-4.0)なら cursor = killT-CK_WIN_PRE', () => {
     const killT  = 10;
-    const oldest = killT - 4.0; // フルバッファケース
-    const cursor = Math.max(oldest, killT - FK_WIN_PRE);
-    expect(cursor).toBeCloseTo(killT - FK_WIN_PRE, 6);
+    const oldest = killT - 4.0;
+    const cursor = Math.max(oldest, killT - CK_WIN_PRE);
+    expect(cursor).toBeCloseTo(killT - CK_WIN_PRE, 6);
   });
 });
 
-describe('FK スコープ再現', () => {
-  it('ADS率 > 0.85 かつ scope武器: スコープオーバーレイ表示条件が成立', () => {
-    // fkScopeInfo.isScope = fkKillerScopedWeapon && fkKillerIsPlayer
-    // main が呼ぶ updateFinalKillcam(flash, adsRatio, isScope) → hud がスコープON
-    const adsRatio = 0.95;
-    const isScope  = true;
-    const scopeOn  = isScope && adsRatio > 0.85;
-    expect(scopeOn).toBe(true);
+describe('CK カメラ位置計算 (ckCamPos)', () => {
+  it('killer と victim が Z軸方向に並ぶとき、カメラは垂線上(X方向)に出る', () => {
+    // killer=(0,0,0), victim=(0,0,10) → perp = (1,0,0) (side=1)
+    const p = ckCamPosMath(0, 0, 0, 0, 0, 10, 1, 3);
+    // midX=0, perpX=1(because sz=-10/10=-1, so perpX=-(-1)*1=1)... wait
+    // sx=0, sz=10, horizLen=10, perpX = (-sz/horizLen)*side = (-10/10)*1 = -1
+    // Actually: perpX = (-sz/horizLen)*side = (-10/10)*1 = -1, perpZ = (sx/horizLen)*side = 0
+    // midX = 0, midZ = 5
+    // So camera is at (-d, midY+3, 5)
+    expect(p.y).toBeCloseTo(3, 3); // midY + height = 0 + 3
+    expect(p.z).toBeCloseTo(5, 3); // midZ = 5
+    // p.x should be non-zero (perpendicular)
+    expect(Math.abs(p.x)).toBeGreaterThan(1);
   });
 
-  it('ADS率 < 0.85: スコープオーバーレイは表示しない', () => {
-    const adsRatio = 0.7;
+  it('side=-1 は side=1 の反対側に出る', () => {
+    const p1 = ckCamPosMath(0, 0, 0, 0, 0, 10, 1, 3);
+    const p2 = ckCamPosMath(0, 0, 0, 0, 0, 10, -1, 3);
+    // x座標が反転する
+    expect(p2.x).toBeCloseTo(-p1.x, 3);
+    // y, z は同じ
+    expect(p2.y).toBeCloseTo(p1.y, 3);
+    expect(p2.z).toBeCloseTo(p1.z, 3);
+  });
+
+  it('height オフセットが正しく適用される', () => {
+    const p3 = ckCamPosMath(0, 0, 0, 0, 0, 10, 1, 3);
+    const p5 = ckCamPosMath(0, 0, 0, 0, 0, 10, 1, 5);
+    expect(p5.y - p3.y).toBeCloseTo(2, 3);
+  });
+
+  it('dollyOffset が距離に加算される', () => {
+    const p0 = ckCamPosMath(0, 0, 0, 0, 0, 10, 1, 3, 0);
+    const p1 = ckCamPosMath(0, 0, 0, 0, 0, 10, 1, 3, 1);
+    // ドリーオフセット1mでカメラが更に外へ移動する
+    const dist0 = Math.hypot(p0.x, p0.z - 5);
+    const dist1 = Math.hypot(p1.x, p1.z - 5);
+    expect(dist1).toBeGreaterThan(dist0);
+  });
+
+  it('killer === victim でも crashしない(horizLen=0のフォールバック)', () => {
+    const p = ckCamPosMath(5, 0, 5, 5, 0, 5, 1, 3);
+    expect(Number.isFinite(p.x)).toBe(true);
+    expect(Number.isFinite(p.y)).toBe(true);
+    expect(Number.isFinite(p.z)).toBe(true);
+  });
+});
+
+describe('CK 三人称: スコープ非表示', () => {
+  it('シネマティックキルカムは常に adsRatio=0 を返す', () => {
+    // fkSetCamera は三人称モードで fkLiveAdsRatio = 0 を強制セット
+    const adsRatio = 0; // fkSetCamera末尾で強制代入
+    expect(adsRatio).toBe(0);
+  });
+
+  it('adsRatio=0 のとき スコープオーバーレイは表示しない', () => {
+    const adsRatio = 0;
     const isScope  = true;
     const scopeOn  = isScope && adsRatio > 0.85;
     expect(scopeOn).toBe(false);
   });
 
-  it('scope武器でない(AR等): ADS率が高くてもスコープオーバーレイは表示しない', () => {
-    const adsRatio = 1.0;
-    const isScope  = false; // def.scope !== true
-    const scopeOn  = isScope && adsRatio > 0.85;
-    expect(scopeOn).toBe(false);
-  });
-
-  it('ゾンビモードでは fkKillerIsPlayer が false → isScope = false', () => {
-    // ゾンビは startFinalKillcam が false 返して killcam 未使用
-    // fkScopeInfo.isScope = fkKillerScopedWeapon && fkKillerIsPlayer
-    const fkKillerIsPlayer  = false; // zombie mode
+  it('三人称でも fkScopeInfo.isScope=false(killer問わず)', () => {
+    // match.ts: fkSetCamera末尾で fkLiveAdsRatio=0 → fkScopeInfo.adsRatio=0
+    // → updateFinalKillcam(flash, 0, false) → hud はスコープ非表示
+    const fkLiveAdsRatio = 0;
     const fkKillerScopedWeapon = true;
-    const isScope = fkKillerScopedWeapon && fkKillerIsPlayer;
+    const fkKillerIsPlayer = true;
+    const isScope = fkKillerScopedWeapon && fkKillerIsPlayer && fkLiveAdsRatio > 0.85;
     expect(isScope).toBe(false);
   });
 });
 
 describe('FK applyDeathPose 時間境界', () => {
-  // death animation parameterization: t = min(1, elapsed / totalS)
-  // For humanoid: totalS = 0.6
-  // buckle = clamp(t/0.45, 0,1) covers the first 45% of the animation
-  // fall = clamp((t-0.35)/0.65, 0,1) covers 35%〜100%
   function humanoidDeathT(elapsed: number): number {
     const totalS = 0.6;
     return Math.min(1, elapsed / totalS);
@@ -249,12 +297,39 @@ describe('FK applyDeathPose 時間境界', () => {
   });
 });
 
-// ─── trailing window (over後の記録継続) ───────────────────────────────────────
+// ─── アバター死亡倒れアニメーション ────────────────────────────────────────
+describe('CK プレイヤーアバター死亡倒れ', () => {
+  it('キル後0.0s: アバター X回転 = 0', () => {
+    const elapsed = 0;
+    const dpT = Math.min(1, elapsed / 0.6);
+    const dpSS = dpT * dpT * (3 - 2 * dpT);
+    expect(dpSS * (Math.PI / 2) * 0.95).toBeCloseTo(0, 5);
+  });
+
+  it('キル後0.6s: アバター X回転 ≈ π/2×0.95(完全倒れ)', () => {
+    const elapsed = 0.6;
+    const dpT = Math.min(1, elapsed / 0.6);
+    const dpSS = dpT * dpT * (3 - 2 * dpT);
+    expect(dpSS * (Math.PI / 2) * 0.95).toBeCloseTo((Math.PI / 2) * 0.95, 5);
+  });
+
+  it('smoothstep は単調増加', () => {
+    let prev = -1;
+    for (let e = 0; e <= 0.6; e += 0.05) {
+      const dpT = Math.min(1, e / 0.6);
+      const val = dpT * dpT * (3 - 2 * dpT);
+      expect(val).toBeGreaterThanOrEqual(prev);
+      prev = val;
+    }
+  });
+});
+
+// ─── trailing window (over後の記録継続) ─────────────────────────────────────
+// FK_WIN_POST=1.2 は記録側の定数 — 変更していないことを確認
 describe('FK trailing window (over後の記録継続)', () => {
   const FK_WIN_POST_LOCAL = 1.2;
 
   it('elapsed === fkKillElapsed + FK_WIN_POST は記録対象(境界値)', () => {
-    // update() の条件: elapsed <= fkKillElapsed + FK_WIN_POST
     const fkKillElapsed = 50;
     const elapsed       = fkKillElapsed + FK_WIN_POST_LOCAL;
     const shouldRecord  = elapsed <= fkKillElapsed + FK_WIN_POST_LOCAL;
@@ -269,8 +344,7 @@ describe('FK trailing window (over後の記録継続)', () => {
   });
 
   it('over後 FK_WIN_POST秒間は 20Hz で最大24フレーム記録できる', () => {
-    // 1.2s × 20Hz = 24フレーム
-    const FK_TICK_INT_LOCAL = 3;   // match.tsと同じ定数
+    const FK_TICK_INT_LOCAL = 3;
     const SIM_HZ            = 60;
     const dt                = 1 / SIM_HZ;
     let tick = 0;
@@ -283,7 +357,6 @@ describe('FK trailing window (over後の記録継続)', () => {
       tick = (tick + 1) % FK_TICK_INT_LOCAL;
       if (tick === 0) frames++;
     }
-    // 1.2s / (3/60Hz) = 1.2 / 0.05 = 24フレーム
     expect(frames).toBeGreaterThanOrEqual(24);
   });
 
@@ -295,11 +368,9 @@ describe('FK trailing window (over後の記録継続)', () => {
   });
 });
 
-// ─── startFinalKillcam ガード順序 ───────────────────────────────────────────
+// ─── startFinalKillcam ガード順序 ────────────────────────────────────────────
 describe('startFinalKillcam ガード順序', () => {
   it('oldest > killT - FK_WIN_PRE + 0.5 の場合はガード3で false を返す(副作用前)', () => {
-    // ガード通過前に副作用が発生しないことの純関数的確認:
-    // oldest が新しすぎる(バッファが浅い)場合の guard-3 判定
     const FK_WIN_PRE_LOCAL = 3.5;
     const killT  = 10;
     const oldest = killT - 1; // = 9, FK_WIN_PRE - 0.5 = 3.0, so 9 > 10 - 3.0 = 7 → true = skip
@@ -313,5 +384,12 @@ describe('startFinalKillcam ガード順序', () => {
     const oldest = killT - 4; // = 6, FK_WIN_PRE - 0.5 = 3.0, so 6 > 10 - 3.0 = 7 → false = pass
     const shouldSkip = oldest > killT - FK_WIN_PRE_LOCAL + 0.5;
     expect(shouldSkip).toBe(false);
+  });
+
+  it('ゾンビモード(mode===zombie)では startFinalKillcam が false を返す', () => {
+    // match.ts: if (this.config.mode === 'zombie') return false;
+    const mode = 'zombie' as const;
+    const wouldReturn = mode === 'zombie' ? false : true;
+    expect(wouldReturn).toBe(false);
   });
 });

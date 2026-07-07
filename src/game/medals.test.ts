@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MedalTracker, type KillCtx, type MedalEvent, type MedalId } from './medals';
+import { MedalTracker, SUPPRESS_BADGE, ALWAYS_BADGE, type KillCtx, type MedalEvent, type MedalId } from './medals';
 
 function mk(overrides: Partial<KillCtx> = {}): KillCtx {
   return {
@@ -1087,5 +1087,95 @@ describe('コールバック', () => {
     t.onPlayerDamaged();
     t.onZombieRoundEnd(out);
     expect(ids(out)).not.toContain('wave-clean-5');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════
+// SUPPRESS_BADGE / ALWAYS_BADGE 表示抑制ルール
+// ══════════════════════════════════════════════════════════════════
+
+describe('SUPPRESS_BADGE: 拡張バッジ抑止セット', () => {
+  it('既存頻出14種(headshot/specialists/zombie-kill等)が含まれる', () => {
+    expect(SUPPRESS_BADGE.has('headshot')).toBe(true);
+    expect(SUPPRESS_BADGE.has('ar-specialist')).toBe(true);
+    expect(SUPPRESS_BADGE.has('zombie-kill')).toBe(true);
+    expect(SUPPRESS_BADGE.has('drone-kill')).toBe(true);
+    expect(SUPPRESS_BADGE.has('turret-kill')).toBe(true);
+  });
+
+  it('新追加の低ランク/頻出/重複メダルが抑止される', () => {
+    expect(SUPPRESS_BADGE.has('crouch-kill')).toBe(true);
+    expect(SUPPRESS_BADGE.has('blink-kill')).toBe(true);
+    expect(SUPPRESS_BADGE.has('hs-streak-2')).toBe(true);
+    expect(SUPPRESS_BADGE.has('streak-35')).toBe(true);
+    expect(SUPPRESS_BADGE.has('streak-75')).toBe(true); // LEGEND(100)のみ保留
+    expect(SUPPRESS_BADGE.has('mag-2')).toBe(true);
+    expect(SUPPRESS_BADGE.has('chain-10')).toBe(true);
+    expect(SUPPRESS_BADGE.has('boss-slayer')).toBe(true); // ボス種毎キルで頻出
+    expect(SUPPRESS_BADGE.has('clutch-kill')).toBe(true); // 低HP時に頻出
+    expect(SUPPRESS_BADGE.has('penta-feed')).toBe(true); // rampage-feedのみ保留
+    expect(SUPPRESS_BADGE.has('octa-feed')).toBe(true);
+    expect(SUPPRESS_BADGE.has('mag-all-hs')).toBe(true); // mag-10のみ保留
+    expect(SUPPRESS_BADGE.has('all-class-kills')).toBe(true);
+  });
+
+  it('エリート系メダルはSUPPRESS_BADGEに含まれない', () => {
+    expect(SUPPRESS_BADGE.has('sniper-999m')).toBe(false);
+    expect(SUPPRESS_BADGE.has('qs-999m')).toBe(false);
+    expect(SUPPRESS_BADGE.has('streak-100')).toBe(false);
+    expect(SUPPRESS_BADGE.has('chain-50')).toBe(false);
+    expect(SUPPRESS_BADGE.has('chain-god')).toBe(false);
+    expect(SUPPRESS_BADGE.has('rampage-feed')).toBe(false);
+    expect(SUPPRESS_BADGE.has('kokurai-50')).toBe(false);
+    expect(SUPPRESS_BADGE.has('quad-feed')).toBe(false);
+    expect(SUPPRESS_BADGE.has('nuclear')).toBe(false);
+    expect(SUPPRESS_BADGE.has('qhsf')).toBe(false);
+    // 体験が明確に変わる新メダル(黒帝/雷帝/黒雷帝/超鬼畜10連・達人撃破・無傷ライフ・mag-10)
+    expect(SUPPRESS_BADGE.has('dark-emperor-10')).toBe(false);
+    expect(SUPPRESS_BADGE.has('raitei-10')).toBe(false);
+    expect(SUPPRESS_BADGE.has('kokurai-10')).toBe(false);
+    expect(SUPPRESS_BADGE.has('hell-10')).toBe(false);
+    expect(SUPPRESS_BADGE.has('master-kill')).toBe(false);
+    expect(SUPPRESS_BADGE.has('perfect-life-10')).toBe(false);
+    expect(SUPPRESS_BADGE.has('mag-10')).toBe(false);
+  });
+
+  it('SUPPRESS_BADGEが163種 = バッジ解放は216種中53種(約1/4)', () => {
+    expect(SUPPRESS_BADGE.size).toBe(163);
+  });
+});
+
+describe('ALWAYS_BADGE: 毎回バッジを出すエリート10種', () => {
+  it('12種以下に絞られている', () => {
+    expect(ALWAYS_BADGE.size).toBeLessThanOrEqual(12);
+  });
+
+  it('quad-feed / mega-feed / qhsf / nuclear が含まれる', () => {
+    expect(ALWAYS_BADGE.has('quad-feed')).toBe(true);
+    expect(ALWAYS_BADGE.has('mega-feed')).toBe(true);
+    expect(ALWAYS_BADGE.has('qhsf')).toBe(true);
+    expect(ALWAYS_BADGE.has('nuclear')).toBe(true);
+  });
+
+  it('streak-100 / chain-50 / sniper-999m / qs-999m が含まれる', () => {
+    expect(ALWAYS_BADGE.has('streak-100')).toBe(true);
+    expect(ALWAYS_BADGE.has('chain-50')).toBe(true);
+    expect(ALWAYS_BADGE.has('sniper-999m')).toBe(true);
+    expect(ALWAYS_BADGE.has('qs-999m')).toBe(true);
+  });
+
+  it('ALWAYS_BADGEのメンバーはすべてSUPPRESS_BADGEに含まれない', () => {
+    for (const id of ALWAYS_BADGE) {
+      expect(SUPPRESS_BADGE.has(id as MedalId)).toBe(false);
+    }
+  });
+
+  it('頻出・低ランクメダルはALWAYS_BADGEに含まれない', () => {
+    expect(ALWAYS_BADGE.has('headshot')).toBe(false);
+    expect(ALWAYS_BADGE.has('longshot')).toBe(false);
+    expect(ALWAYS_BADGE.has('bloodthirsty')).toBe(false);
+    expect(ALWAYS_BADGE.has('triple-feed')).toBe(false);
+    expect(ALWAYS_BADGE.has('streak-35')).toBe(false);
+    expect(ALWAYS_BADGE.has('blink-kill')).toBe(false);
   });
 });

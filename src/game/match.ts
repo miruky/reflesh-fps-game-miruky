@@ -368,6 +368,13 @@ const FK_B            = 6;
 const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 224
 // shot slot   : from(3) + to(3) + color(1) + time(1) = 8 floats
 const FK_S            = 8;
+// ── シネマティックキルカム(CK) 再生窓・カメラ定数 ──
+const CK_WIN_PRE   = 2.5;  // 再生窓: キル前(s)
+const CK_WIN_POST  = 1.5;  // 再生窓: キル後(s)
+const CK_FOV       = 50;   // シネマティック三人称 FOV
+const CK_HEIGHT    = 3.0;  // カメラ高さオフセット(m)
+const CK_DOLLY_SPD = 0.5;  // ドリー速度(m/s)
+const CK_EYE_H     = 1.55; // プレイヤー眼高さオフセット(m)
 // キルカム再生中に死亡演出トランスフォームを巻き戻す/再現するための読み替え型。
 // bot.ts は別担当のため公開APIを増やせない。TSのprivateはコンパイル時のみで
 // 実行時にはフィールドが存在するので、この構造型を通して安全に参照する。
@@ -620,6 +627,7 @@ export interface MatchSnapshot {
   deathVeil: number; // 0..1 遷移黒幕(死亡/リスポーンの無条件減衰)
   killcamFinal: boolean; // 終盤(killcamTimer<0.7 && killer生存)の赤ビネット
   killcamCamActive: boolean; // カメラがシネマ姿勢を所有中(HUDシネマ枠の単一の真実)
+  fkCinematicActive: boolean; // ファイナルキルカム再生中(main.tsのレターボックス制御用)
   lowHp01: number; // 0..1 低HP(juiceのDOMフォールバック用)
   postfxActive: boolean; // medium/high=true(PostFXシェーダ所有), low=false
   feed: FeedEntry[];
@@ -797,6 +805,46 @@ interface BreakableProp {
   d: number;
   hp: number;
   maxHp: number;
+}
+
+/**
+ * シネマティックキルカム用: killer→victim線分の垂線上にカメラ位置を計算する(純粋関数)。
+ * side=1 or -1 で左右を切り替え。dollyOffset は slow dolly 積分値(m)。
+ */
+export function ckCamPos(
+  killer: THREE.Vector3,
+  victim: THREE.Vector3,
+  side: 1 | -1,
+  height: number,
+  dollyOffset = 0,
+): THREE.Vector3 {
+  const sx = victim.x - killer.x;
+  const sz = victim.z - killer.z;
+  const segLen = Math.sqrt(sx * sx + (victim.y - killer.y) ** 2 + sz * sz);
+  const horizLen = Math.sqrt(sx * sx + sz * sz);
+  let perpX = 0; let perpZ = 1;
+  if (horizLen > 0.01) { perpX = (-sz / horizLen) * side; perpZ = (sx / horizLen) * side; }
+  const midX = (killer.x + victim.x) * 0.5;
+  const midY = (killer.y + victim.y) * 0.5;
+  const midZ = (killer.z + victim.z) * 0.5;
+  const d = segLen * 0.9 + 6 + dollyOffset;
+  return new THREE.Vector3(midX + perpX * d, midY + height, midZ + perpZ * d);
+}
+
+/**
+ * シネマティックキルカム再生速度ランプ(純粋関数)。
+ * キル -0.4s から急減速 → 0.2× ホールド → キル後 0.6s から復帰。
+ */
+export function ckSpeedAt(cursor: number, killT: number): number {
+  const d = cursor - killT;
+  if (d < -0.4) return 1.0;
+  if (d < 0.0) {
+    const t = (d + 0.4) / 0.4;
+    return 1.0 + (0.2 - 1.0) * t;
+  }
+  if (d < 0.6) return 0.2;
+  const t = Math.min(1, (d - 0.6) / Math.max(1e-6, CK_WIN_POST - 0.6));
+  return 0.2 + (1.0 - 0.2) * t;
 }
 
 export class Match {
@@ -1267,14 +1315,18 @@ export class Match {
   private fkWinKill           = 0;
   private fkWinEnd            = 0;
   private fkPrevCursor        = -Infinity;
-  private readonly _fkEul     = new THREE.Euler(0, 0, 0, 'YXZ');
-  private readonly _fkQ       = new THREE.Quaternion();
   /** キル時に使っていた武器がスコープ持ちか(再生中のスコープオーバーレイ表示用) */
   private fkKillerScopedWeapon = false;
   /** 再生フレームから補間したプレイヤーADS率(0..1) — main.ts が HUD へ転送 */
   fkLiveAdsRatio               = 0;
   /** 再生フレームから補間した実効FOV(deg) — ADS縮小済み */
   fkLiveAdsFov                 = 62;
+  // ── シネマティックキルカム専用フィールド ──
+  private fkAvatarGroup: THREE.Group | null = null;
+  private readonly _ckCamBase  = new THREE.Vector3();
+  private readonly _ckDollyDir = new THREE.Vector3();
+  private _ckDollyDist = 0;
+  private _ckHitSoundPlayed = false;
 
   constructor(
     readonly config: MatchConfig,
@@ -9070,6 +9122,7 @@ export class Match {
       deathVeil: this.deathVeil,
       killcamFinal: this.killcamCamActive && this.killcamTimer < 0.7,
       killcamCamActive: this.killcamCamActive,
+      fkCinematicActive: this.fkPlaying,
       lowHp01: this.player.alive
         ? Math.max(0, Math.min(1, (0.3 - this.player.hp / this.player.maxHp) / 0.3))
         : 0,
@@ -9340,6 +9393,38 @@ export class Match {
 
   // ── ファイナルキルカム: 記録メソッド ──────────────────────────────
 
+  private fkCreatePlayerAvatar(): THREE.Group {
+    const mat = new THREE.MeshStandardMaterial({ color: this.colors.ally, roughness: 0.65, metalness: 0.15 });
+    const g = new THREE.Group();
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.60, 0.24), mat);
+    torso.position.y = 0.95; torso.castShadow = true; g.add(torso);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.28, 0.27), mat);
+    head.position.y = 1.49; head.castShadow = true; g.add(head);
+    const legGeo = new THREE.BoxGeometry(0.18, 0.50, 0.20);
+    for (const sx of [-0.13, 0.13] as const) {
+      const leg = new THREE.Mesh(legGeo, mat);
+      leg.position.set(sx, 0.50, 0); leg.castShadow = true; g.add(leg);
+    }
+    const armGeo = new THREE.BoxGeometry(0.14, 0.50, 0.18);
+    for (const sx of [-0.33, 0.33] as const) {
+      const arm = new THREE.Mesh(armGeo, mat);
+      arm.position.set(sx, 0.95, 0); arm.castShadow = true; g.add(arm);
+    }
+    return g;
+  }
+
+  private fkDisposePlayerAvatar(): void {
+    if (!this.fkAvatarGroup) return;
+    this.scene.remove(this.fkAvatarGroup);
+    this.fkAvatarGroup.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.geometry.dispose();
+        (obj.material as THREE.Material).dispose();
+      }
+    });
+    this.fkAvatarGroup = null;
+  }
+
   private fkRecordFrame(): void {
     const h   = this.fkHead;
     const off = h * FK_FRAME_STRIDE;
@@ -9434,35 +9519,90 @@ export class Match {
     this.whiteout = 0;
     this.shingetsuPhase = 'idle';
     this.fkWinKill    = killT;
-    this.fkWinEnd     = killT + FK_WIN_POST;
+    this.fkWinEnd     = killT + CK_WIN_POST;
     // カーソルはバッファの実際の先頭(oldest)と窓先頭の大きい方から開始する。
-    // oldest > killT-FK_WIN_PRE のとき先頭フレームが存在しないため、
+    // oldest > killT-CK_WIN_PRE のとき先頭フレームが存在しないため、
     // fkFindFrames が iA<0 を返して再生が即終了するバグ(kill瞬間カット)の根治。
-    this.fkCursor     = Math.max(oldest, killT - FK_WIN_PRE);
+    this.fkCursor     = Math.max(oldest, killT - CK_WIN_PRE);
     this.fkPrevCursor = -Infinity;
     this.fkFlash      = 0;
     this.fkLiveAdsRatio = 0;
     this.fkLiveAdsFov   = 62;
+    // ── シネマティックキルカム初期化 ──
+    this._ckDollyDist = 0;
+    this._ckHitSoundPlayed = false;
+    this.fkDisposePlayerAvatar();
+    // キラー/ビクティム位置を初期フレームから取得してカメラ基底を計算する
+    const [iA0, iB0, t0] = this.fkFindFrames(this.fkCursor);
+    if (iA0 >= 0) {
+      const offA0 = iA0 * FK_FRAME_STRIDE; const offB0 = iB0 * FK_FRAME_STRIDE;
+      let kx: number; let ky: number; let kz: number;
+      let vx: number; let vy: number; let vz: number;
+      if (this.fkKillerIsPlayer) {
+        kx = this.fkBuf[offA0]! + (this.fkBuf[offB0]! - this.fkBuf[offA0]!) * t0;
+        ky = this.fkBuf[offA0+1]! + (this.fkBuf[offB0+1]! - this.fkBuf[offA0+1]!) * t0 - CK_EYE_H;
+        kz = this.fkBuf[offA0+2]! + (this.fkBuf[offB0+2]! - this.fkBuf[offA0+2]!) * t0;
+      } else {
+        const ki = this.fkKillerBotIdx;
+        if (ki >= 0 && ki < this.fkBotCnt[iA0]!) {
+          const boA = offA0+FK_P+ki*FK_B; const boB = offB0+FK_P+ki*FK_B;
+          kx = this.fkBuf[boA]!+(this.fkBuf[boB]!-this.fkBuf[boA]!)*t0;
+          ky = this.fkBuf[boA+3]!+(this.fkBuf[boB+3]!-this.fkBuf[boA+3]!)*t0;
+          kz = this.fkBuf[boA+2]!+(this.fkBuf[boB+2]!-this.fkBuf[boA+2]!)*t0;
+        } else { kx = 0; ky = 0; kz = 0; }
+      }
+      if (this.fkVictimBotIdx >= 0) {
+        const vi = this.fkVictimBotIdx;
+        if (vi < this.fkBotCnt[iA0]!) {
+          const boA = offA0+FK_P+vi*FK_B; const boB = offB0+FK_P+vi*FK_B;
+          vx = this.fkBuf[boA]!+(this.fkBuf[boB]!-this.fkBuf[boA]!)*t0;
+          vy = this.fkBuf[boA+3]!+(this.fkBuf[boB+3]!-this.fkBuf[boA+3]!)*t0;
+          vz = this.fkBuf[boA+2]!+(this.fkBuf[boB+2]!-this.fkBuf[boA+2]!)*t0;
+        } else { vx = kx; vy = ky+1.5; vz = kz; }
+      } else {
+        vx = this.fkBuf[offA0]!+(this.fkBuf[offB0]!-this.fkBuf[offA0]!)*t0;
+        vy = this.fkBuf[offA0+1]!+(this.fkBuf[offB0+1]!-this.fkBuf[offA0+1]!)*t0;
+        vz = this.fkBuf[offA0+2]!+(this.fkBuf[offB0+2]!-this.fkBuf[offA0+2]!)*t0;
+      }
+      const kVec = new THREE.Vector3(kx, ky, kz);
+      const vVec = new THREE.Vector3(vx, vy, vz);
+      // 壁チェック: サイド1→サイド-1→高さ+2 のフォールバック
+      let camP = ckCamPos(kVec, vVec, 1, CK_HEIGHT);
+      const rayOrg = new THREE.Vector3(camP.x, camP.y, camP.z);
+      const midP = new THREE.Vector3((kx+vx)*0.5, (ky+vy)*0.5, (kz+vz)*0.5);
+      const toMid = new THREE.Vector3().subVectors(midP, rayOrg).normalize();
+      const hit1 = this.castRay(rayOrg, toMid, camP.distanceTo(midP) * 0.9, null);
+      if (hit1 !== null && this.tags.get(hit1.collider.handle)?.kind !== 'boundary') {
+        const camP2 = ckCamPos(kVec, vVec, -1, CK_HEIGHT);
+        const rayOrg2 = new THREE.Vector3(camP2.x, camP2.y, camP2.z);
+        const toMid2 = new THREE.Vector3().subVectors(midP, rayOrg2).normalize();
+        const hit2 = this.castRay(rayOrg2, toMid2, camP2.distanceTo(midP) * 0.9, null);
+        if (hit2 !== null && this.tags.get(hit2.collider.handle)?.kind !== 'boundary') {
+          // 両サイドとも壁: 高さ+2m
+          camP = ckCamPos(kVec, vVec, 1, CK_HEIGHT + 2);
+        } else {
+          camP = camP2;
+        }
+      }
+      this._ckCamBase.copy(camP);
+      // ドリー方向: kill-line の水平方向(単位ベクトル)
+      const dx = vx - kx; const dz = vz - kz;
+      const horizLen2 = Math.sqrt(dx*dx + dz*dz);
+      if (horizLen2 > 0.01) {
+        this._ckDollyDir.set(dx/horizLen2, 0, dz/horizLen2);
+      } else {
+        this._ckDollyDir.set(0, 0, 1);
+      }
+    } else {
+      this._ckCamBase.set(0, CK_HEIGHT, 10);
+      this._ckDollyDir.set(0, 0, 1);
+    }
+    // プレイヤーアバター(三人称: killerがプレイヤーのとき表示)
+    this.fkAvatarGroup = this.fkCreatePlayerAvatar();
+    this.fkAvatarGroup.visible = false;
+    this.scene.add(this.fkAvatarGroup);
     this.fkPlaying    = true;
     return true;
-  }
-
-  /**
-   * カーソルのゲーム時刻に応じた再生速度を返す(BO2式ランプ速度)。
-   * キル直前で減速し、直後0.5sを最遅でホールド、その後復帰する。
-   */
-  private fkSpeedAt(cursor: number): number {
-    const d = cursor - this.fkWinKill; // キルからの相対時間(負=前・正=後)
-    if (d < -0.5) return 1.0;          // キル 0.5s より前: 等速1×
-    if (d < 0.0) {
-      // キル 0.5s 前〜キル直前: 1.0 → 0.25 へ線形減速(決定打が際立つ急ブレーキ)
-      const t = (d + 0.5) / 0.5;      // 0 → 1
-      return 1.0 + (0.25 - 1.0) * t;
-    }
-    if (d < 0.5) return 0.25;          // キル〜キル後 0.5s: 0.25× ホールド(死亡演出を魅せる)
-    // キル後 0.5s〜窓終端: 0.25 → 1.0 へ線形復帰
-    const t = Math.min(1, (d - 0.5) / Math.max(1e-6, FK_WIN_POST - 0.5));
-    return 0.25 + (1.0 - 0.25) * t;
   }
 
   /**
@@ -9471,12 +9611,15 @@ export class Match {
    */
   advanceFinalKillcam(dt: number): boolean {
     if (!this.fkPlaying) return true;
-    // BO2式ランプ速度: カーソル位置によって速度が変わる
-    const speed  = this.fkSpeedAt(this.fkCursor);
+    // シネマティックランプ速度: ckSpeedAt はモジュールレベル純粋関数
+    const speed  = ckSpeedAt(this.fkCursor, this.fkWinKill);
     this.fkCursor += dt * speed;
+    // ドリー前進(スロー中も同じレートで動かして映画的なヌルっと感を出す)
+    this._ckDollyDist += dt * CK_DOLLY_SPD;
     const cursor = this.fkCursor;
     if (cursor >= this.fkWinEnd) {
       this.fkPlaying = false;
+      this.fkDisposePlayerAvatar();
       return true;
     }
     const [iA, iB, t] = this.fkFindFrames(cursor);
@@ -9486,10 +9629,16 @@ export class Match {
     if (iA < 0) return false;
     this.fkApplyFrame(iA, iB, t);
     this.fkSetCamera(iA, iB, t);
-    // キル瞬間の白フラッシュ(reduceMotion 非依存 — HUD 側で CSS ゲート済み)
+    // キル瞬間: 白フラッシュ小 + ヒット音(1回のみ)
     const afterKill = cursor - this.fkWinKill;
-    if (!this.settings.reduceMotion && afterKill >= 0 && afterKill < 0.05) {
-      this.fkFlash = Math.max(this.fkFlash, 1 - afterKill / 0.05);
+    if (afterKill >= 0) {
+      if (!this._ckHitSoundPlayed) {
+        this._ckHitSoundPlayed = true;
+        this.sounds.hit();
+      }
+      if (!this.settings.reduceMotion && afterKill < 0.05) {
+        this.fkFlash = Math.max(this.fkFlash, (1 - afterKill / 0.05) * 0.4);
+      }
     }
     this.fkFlash = Math.max(0, this.fkFlash - dt * 4);
     // ショット再生(prevCursor..cursor の範囲のみ。重複なし)
@@ -9638,64 +9787,92 @@ export class Match {
   private fkSetCamera(iA: number, iB: number, t: number): void {
     const offA = iA * FK_FRAME_STRIDE;
     const offB = iB * FK_FRAME_STRIDE;
-    let ex: number; let ey: number; let ez: number;
-    let yaw: number; let pitch = 0;
+    const cursor = this.fkCursor;
 
+    // ── キラー位置を補間 ──
+    let killerX: number; let killerY: number; let killerZ: number; let killerYaw = 0;
     if (this.fkKillerIsPlayer) {
-      ex = this.fkBuf[offA    ]! + (this.fkBuf[offB    ]! - this.fkBuf[offA    ]!) * t;
-      ey = this.fkBuf[offA + 1]! + (this.fkBuf[offB + 1]! - this.fkBuf[offA + 1]!) * t;
-      ez = this.fkBuf[offA + 2]! + (this.fkBuf[offB + 2]! - this.fkBuf[offA + 2]!) * t;
-      const ya = this.fkBuf[offA + 3]!; const yb = this.fkBuf[offB + 3]!;
+      killerX = this.fkBuf[offA]! + (this.fkBuf[offB]! - this.fkBuf[offA]!) * t;
+      killerY = this.fkBuf[offA+1]! + (this.fkBuf[offB+1]! - this.fkBuf[offA+1]!) * t - CK_EYE_H;
+      killerZ = this.fkBuf[offA+2]! + (this.fkBuf[offB+2]! - this.fkBuf[offA+2]!) * t;
+      const ya = this.fkBuf[offA+3]!; const yb = this.fkBuf[offB+3]!;
       let yd = yb - ya;
       if (yd >  Math.PI) yd -= Math.PI * 2;
       if (yd < -Math.PI) yd += Math.PI * 2;
-      yaw   = ya + yd * t;
-      pitch = this.fkBuf[offA + 4]! + (this.fkBuf[offB + 4]! - this.fkBuf[offA + 4]!) * t;
-
-      // ADS率とFOVを補間して公開フィールドへ書き込む(HUD のスコープオーバーレイ制御用)。
-      // off+6 = adsRatio, off+7 = adsFov (fkRecordFrame で記録)
-      this.fkLiveAdsRatio = this.fkBuf[offA + 6]! + (this.fkBuf[offB + 6]! - this.fkBuf[offA + 6]!) * t;
-      this.fkLiveAdsFov   = this.fkBuf[offA + 7]! + (this.fkBuf[offB + 7]! - this.fkBuf[offA + 7]!) * t;
+      killerYaw = ya + yd * t;
     } else {
-      // ボット視点ではスコープ非適用
-      this.fkLiveAdsRatio = 0;
-      this.fkLiveAdsFov   = 62;
-      const ki  = this.fkKillerBotIdx;
+      const ki = this.fkKillerBotIdx;
       const nbA = this.fkBotCnt[iA]!;
-      const nbB = this.fkBotCnt[iB]!;
-      if (ki < 0 || ki >= Math.min(nbA, nbB)) return;
-      const boA = offA + FK_P + ki * FK_B;
-      const boB = offB + FK_P + ki * FK_B;
-      ex = this.fkBuf[boA    ]! + (this.fkBuf[boB    ]! - this.fkBuf[boA    ]!) * t; // body X = head X
-      ey = this.fkBuf[boA + 3]! + (this.fkBuf[boB + 3]! - this.fkBuf[boA + 3]!) * t; // headY
-      ez = this.fkBuf[boA + 2]! + (this.fkBuf[boB + 2]! - this.fkBuf[boA + 2]!) * t; // body Z = head Z
-      const ya = this.fkBuf[boA + 4]!; const yb = this.fkBuf[boB + 4]!;
-      let yd = yb - ya;
-      if (yd >  Math.PI) yd -= Math.PI * 2;
-      if (yd < -Math.PI) yd += Math.PI * 2;
-      yaw = ya + yd * t;
+      if (ki >= 0 && ki < nbA) {
+        const boA = offA+FK_P+ki*FK_B; const boB = offB+FK_P+ki*FK_B;
+        killerX = this.fkBuf[boA]! + (this.fkBuf[boB]! - this.fkBuf[boA]!) * t;
+        killerY = this.fkBuf[boA+3]! + (this.fkBuf[boB+3]! - this.fkBuf[boA+3]!) * t;
+        killerZ = this.fkBuf[boA+2]! + (this.fkBuf[boB+2]! - this.fkBuf[boA+2]!) * t;
+        const ya = this.fkBuf[boA+4]!; const yb = this.fkBuf[boB+4]!;
+        let yd = yb - ya;
+        if (yd >  Math.PI) yd -= Math.PI * 2;
+        if (yd < -Math.PI) yd += Math.PI * 2;
+        killerYaw = ya + yd * t;
+      } else {
+        killerX = this._ckCamBase.x; killerY = this._ckCamBase.y; killerZ = this._ckCamBase.z;
+      }
     }
 
-    this.camera.position.set(ex, ey, ez);
-    this._fkEul.set(pitch, yaw, 0);
-    this._fkQ.setFromEuler(this._fkEul);
-    this.camera.quaternion.copy(this._fkQ);
-
-    // FOV: ADS中ならバッファの実効FOV(スコープ縮小済み)を使う。非ADS時は62へ収束。
-    // スコープ時は即セット(フェード待ちなし)、非ADS時は従来のスムーズ収束を維持。
-    const tgtFov = this.fkKillerIsPlayer && this.fkLiveAdsRatio > 0.5
-      ? this.fkLiveAdsFov
-      : 62;
-    if (this.fkKillerIsPlayer && this.fkLiveAdsRatio > 0.5) {
-      // ADS中は記録値をそのまま適用(補間済み)
-      if (Math.abs(this.camera.fov - tgtFov) > 0.01) {
-        this.camera.fov = tgtFov;
-        this.camera.updateProjectionMatrix();
+    // ── ビクティム位置を補間 ──
+    let victimX: number; let victimY: number; let victimZ: number;
+    if (this.fkVictimBotIdx >= 0) {
+      const vi = this.fkVictimBotIdx;
+      if (vi < this.fkBotCnt[iA]!) {
+        const boA = offA+FK_P+vi*FK_B; const boB = offB+FK_P+vi*FK_B;
+        victimX = this.fkBuf[boA]! + (this.fkBuf[boB]! - this.fkBuf[boA]!) * t;
+        victimY = this.fkBuf[boA+3]! + (this.fkBuf[boB+3]! - this.fkBuf[boA+3]!) * t;
+        victimZ = this.fkBuf[boA+2]! + (this.fkBuf[boB+2]! - this.fkBuf[boA+2]!) * t;
+      } else {
+        victimX = this._ckCamBase.x; victimY = this._ckCamBase.y + 1.5; victimZ = this._ckCamBase.z;
       }
-    } else if (Math.abs(this.camera.fov - tgtFov) > 0.1) {
-      this.camera.fov += (tgtFov - this.camera.fov) * Math.min(1, 0.08);
+    } else {
+      victimX = this.fkBuf[offA]! + (this.fkBuf[offB]! - this.fkBuf[offA]!) * t;
+      victimY = this.fkBuf[offA+1]! + (this.fkBuf[offB+1]! - this.fkBuf[offA+1]!) * t;
+      victimZ = this.fkBuf[offA+2]! + (this.fkBuf[offB+2]! - this.fkBuf[offA+2]!) * t;
+    }
+
+    // ── プレイヤーアバター更新(3人称) ──
+    if (this.fkAvatarGroup) {
+      if (this.fkKillerIsPlayer) {
+        // killerがプレイヤー → アバターをkiller位置へ
+        this.fkAvatarGroup.position.set(killerX, killerY, killerZ);
+        this.fkAvatarGroup.rotation.y = killerYaw;
+        this.fkAvatarGroup.rotation.x = 0;
+      } else {
+        // victimがプレイヤー → アバターをvictim位置へ(死亡倒れアニメ付き)
+        const va = this.fkBuf[offA+3]!; const vb = this.fkBuf[offB+3]!;
+        let vyd = vb - va;
+        if (vyd >  Math.PI) vyd -= Math.PI * 2;
+        if (vyd < -Math.PI) vyd += Math.PI * 2;
+        this.fkAvatarGroup.position.set(victimX, victimY - CK_EYE_H, victimZ);
+        this.fkAvatarGroup.rotation.y = va + vyd * t;
+        if (cursor >= this.fkWinKill) {
+          const dpT = Math.min(1, (cursor - this.fkWinKill) / 0.6);
+          const dpSS = dpT * dpT * (3 - 2 * dpT);
+          this.fkAvatarGroup.rotation.x = dpSS * (Math.PI / 2) * 0.95;
+        } else {
+          this.fkAvatarGroup.rotation.x = 0;
+        }
+      }
+      this.fkAvatarGroup.visible = true;
+    }
+
+    // ── シネマティックカメラ ──
+    this._kcLook.set(victimX, victimY, victimZ);
+    this.camera.position.copy(this._ckCamBase).addScaledVector(this._ckDollyDir, this._ckDollyDist);
+    this.camera.lookAt(this._kcLook);
+    if (Math.abs(this.camera.fov - CK_FOV) > 0.01) {
+      this.camera.fov = CK_FOV;
       this.camera.updateProjectionMatrix();
     }
+    // 三人称シネマティックモードではスコープ非表示
+    this.fkLiveAdsRatio = 0;
+    this.fkLiveAdsFov   = 62;
   }
 
   /**
@@ -10204,6 +10381,7 @@ export class Match {
       (hk.mesh.material as THREE.Material).dispose();
     }
     this.hkEntities.length = 0;
+    this.fkDisposePlayerAvatar();
     // RC-XD / ケアパッケージクレートを解放
     this.cleanupRcxd();
     for (let i = this.carePackageCrates.length - 1; i >= 0; i -= 1) this.disposeCarePackageCrate(i);

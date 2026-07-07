@@ -1383,11 +1383,14 @@ export class Hud {
         if (!topBadgeFired) {
           this.renderBadge(m);
           topBadgeFired = true;
-        } else {
+        } else if (this.badgeQueue.length < 2) {
+          // キュー上限2: 溢れた分はテキストフィードへ降格
           this.badgeQueue.push(m);
           if (!this.badgeQueueTimer) {
             this.badgeQueueTimer = window.setInterval(() => { this.flushBadgeQueue(); }, 500);
           }
+        } else {
+          this.pushMedalText(m);
         }
       } else {
         this.pushMedalText(m);
@@ -1512,8 +1515,8 @@ export class Hud {
       card.classList.add('out');
       window.setTimeout(() => card.remove(), 500);
     }, 3200);
-    // cap 3 (2→3)
-    while (stack.childElementCount > 3) stack.firstElementChild?.remove();
+    // cap 2
+    while (stack.childElementCount > 2) stack.firstElementChild?.remove();
   }
 
   private pushMedalText(m: MedalEvent): void {
