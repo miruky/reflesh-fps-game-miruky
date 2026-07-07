@@ -34,6 +34,11 @@ export function parseProfile(raw: string): Profile {
     for (const key of Object.keys(base.records) as Array<keyof Profile['records']>) {
       base.records[key] = num(records[key], 0);
     }
+    // R48「敗北をなかったことに」: 過去の敗北で0に戻された連勝を最高記録から復元する
+    // 一度きりのマイグレーション(以後は敗北でリセットされないため自然に単調増加)
+    if (base.records.currentWinStreak < base.records.bestWinStreak) {
+      base.records.currentWinStreak = base.records.bestWinStreak;
+    }
   }
 
   if (Array.isArray(source.completedChallenges)) {

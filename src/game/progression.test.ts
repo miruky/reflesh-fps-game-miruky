@@ -180,14 +180,14 @@ describe('自己ベスト記録', () => {
     expect(progress.newRecords).toHaveLength(0);
   });
 
-  it('連勝を数え、敗北で途切れても最長は残る', () => {
+  it('連勝を数え、敗北でもリセットされない(R48仕様)', () => {
     const profile = emptyProfile();
     applyMatch(profile, summary({ won: true }));
     applyMatch(profile, summary({ won: true }));
     expect(profile.records.currentWinStreak).toBe(2);
     expect(profile.records.bestWinStreak).toBe(2);
     applyMatch(profile, summary({ won: false }));
-    expect(profile.records.currentWinStreak).toBe(0);
+    expect(profile.records.currentWinStreak).toBe(2); // R48: 敗北でリセットしない
     expect(profile.records.bestWinStreak).toBe(2);
   });
 

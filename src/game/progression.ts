@@ -603,7 +603,8 @@ function accumulateMatch(
         if (records.currentWinStreak >= 2) newRecords.push(`連勝 ${records.currentWinStreak}`);
       }
     } else {
-      records.currentWinStreak = 0;
+      // R48 ユーザー要望「敗北をなかったことに」: 連勝は敗北でリセットしない
+      // (勝利のみが記録を進める。currentWinStreak は事実上「積み上げ連勝」)
     }
   }
 
