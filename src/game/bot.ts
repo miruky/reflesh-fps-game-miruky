@@ -244,6 +244,19 @@ export interface BotContext {
   onMelee?: (bot: Bot) => void;
 }
 
+// ★2 巨躯KCC距離LOD: プレイヤー30m超はuid%2バケットの担当フレームのみ
+// computeColliderMovement(衝突解決)を実行する。60Hzで1フレーム分の並進差は
+// 数cm=30m先では視認不能。30m以内は毎フレーム(近接戦闘の precision 非回帰)
+export const GIANT_KCC_LOD_DIST_M = 30;
+export function giantKccActive(uid: number, frame: number, distToPlayerM: number): boolean {
+  if (distToPlayerM <= GIANT_KCC_LOD_DIST_M) return true;
+  return (frame & 1) === (uid & 1);
+}
+
+// ★5 ホットパス用スクラッチ(updateGiantの毎フレームnew Vector3を根絶)
+const GIANT_POS_SCRATCH = new THREE.Vector3();
+const GIANT_TO_SCRATCH = new THREE.Vector3();
+
 // 角度を上限付きで目標へ寄せる(tank車体/砲塔・turretヘッドのslew制御)
 function stepAngle(current: number, target: number, maxStep: number): number {
   const diff = wrapAngle(target - current);
@@ -473,6 +486,8 @@ export class Bot {
   lastTargetEye: THREE.Vector3 | null = null;
   lastCandidateUid = -1; // 対象切替の検出(FFA/TDMで覚醒を移譲しない)
   lastRawVisible = false; // uid%3バケットの非担当フレームでLOS結果を再利用
+  // ★8 遠距離(>50m)アニメLOD: syncMeshのsway/呼吸sin群をスキップ(matchが毎フレーム設定)
+  animLod = false;
 
   // ── R16 機械的エイム: aimDirを目標へ aimSlewRadS で寄せ、updateShootingはこの方向へ撃つ ──
   readonly aimDir = new THREE.Vector3();
@@ -510,6 +525,9 @@ export class Bot {
   private shotTimer = 0;
   private pauseTimer = 0;
   private dyingTimer = 0;
+  // ★2 巨躯KCC距離LOD: フレームパリティと、非担当フレームで再利用する前回moved
+  private kccFrame = 0;
+  private readonly prevGiantMoved = { x: 0, y: 0, z: 0 };
 
   // 歩行アニメ用。胴体ボブと四肢スイングを駆動する
   private readonly rig = new THREE.Group();
@@ -1247,6 +1265,18 @@ export class Bot {
     return new THREE.Vector3(t.x, t.y, t.z);
   }
 
+  // ★5 割り当てゼロ版position。ホットパス(footstep距離/bearings/minimap/fk記録)は
+  // 毎フレーム bot.position(new Vector3)を呼ばず、こちらへスクラッチを渡して再利用する
+  getPositionInto(out: THREE.Vector3): THREE.Vector3 {
+    const t = this.body.translation();
+    return out.set(t.x, t.y, t.z);
+  }
+
+  /** 足元中心→頭のYオフセット。headPosition()の割り当てを避けたい経路(fk記録)用 */
+  get headOffsetY(): number {
+    return this.headOff;
+  }
+
   headPosition(): THREE.Vector3 {
     const p = this.position;
     p.y += this.headOff;
@@ -1821,15 +1851,18 @@ export class Bot {
   }
 
   private updateGiant(dt: number, ctx: BotContext): void {
-    const pos = this.position;
+    const pos = this.getPositionInto(GIANT_POS_SCRATCH); // ★5 スクラッチ再利用
     let wishX = 0;
     let wishZ = 0;
     const target = ctx.targetEye;
+    // ★2 KCC LOD判定用距離。target無し(プレイヤー死亡中など)は遠距離扱いで間引く
+    let distToPlayer = Infinity;
     this.meleeTimer = Math.max(0, this.meleeTimer - dt);
     if (target) {
-      const to = target.clone().sub(pos);
+      const to = GIANT_TO_SCRATCH.copy(target).sub(pos);
       to.y = 0;
       const dist = to.length();
+      distToPlayer = dist;
       if (dist > 1e-3) to.normalize();
       this.heading = Math.atan2(-to.x, -to.z);
       wishX = to.x * this.moveSpeed;
@@ -1853,13 +1886,31 @@ export class Bot {
       wishZ = f.z * this.moveSpeed * 0.4;
     }
     this.velY = applyGravityStep(this.velY, 1, dt);
-    const movement = { x: wishX * dt, y: this.velY * dt, z: wishZ * dt };
-    this.controller.computeColliderMovement(this.bodyCollider, movement);
-    const moved = this.controller.computedMovement();
-    if (this.controller.computedGrounded() && this.velY < 0) this.velY = -0.5;
+    // ★2 30m超はuid%2で2フレームに1回だけ衝突解決。非担当フレームは前回movedを再利用
+    // (全巨躯54体のcomputeColliderMovementを遠距離で半減。近距離は毎フレーム=非回帰)
+    this.kccFrame += 1;
+    let mvX: number;
+    let mvY: number;
+    let mvZ: number;
+    if (giantKccActive(this.uid, this.kccFrame, distToPlayer)) {
+      const movement = { x: wishX * dt, y: this.velY * dt, z: wishZ * dt };
+      this.controller.computeColliderMovement(this.bodyCollider, movement);
+      const moved = this.controller.computedMovement();
+      if (this.controller.computedGrounded() && this.velY < 0) this.velY = -0.5;
+      mvX = moved.x;
+      mvY = moved.y;
+      mvZ = moved.z;
+      this.prevGiantMoved.x = mvX;
+      this.prevGiantMoved.y = mvY;
+      this.prevGiantMoved.z = mvZ;
+    } else {
+      mvX = this.prevGiantMoved.x;
+      mvY = this.prevGiantMoved.y;
+      mvZ = this.prevGiantMoved.z;
+    }
     const t = this.body.translation();
-    this.body.setNextKinematicTranslation({ x: t.x + moved.x, y: t.y + moved.y, z: t.z + moved.z });
-    const step = Math.hypot(moved.x, moved.z);
+    this.body.setNextKinematicTranslation({ x: t.x + mvX, y: t.y + mvY, z: t.z + mvZ });
+    const step = Math.hypot(mvX, mvZ);
     const targetAmp = Math.min(1, step / Math.max(1e-4, this.moveSpeed * dt));
     this.walkAmp += (targetAmp - this.walkAmp) * Math.min(1, dt * 8);
     this.walkPhase += step * 8;
@@ -2035,6 +2086,8 @@ export class Bot {
       return;
     }
     if (this.kind === 'zombie') {
+      // ★8 遠距離(>50m)はシャンブルsin群をスキップ(位置/向きは上で同期済み=視認不能)
+      if (this.animLod) return;
       // シャンブル歩容: 前傾 + 左右のよろめき + 逆位相の脚スイング + 前へ垂らした腕の揺れ。
       // humanoidの歩行コードへ落とすと armRig をライフル把持ポーズで毎フレーム上書きしてしまう
       const zs = Math.sin(this.walkPhase);
@@ -2052,6 +2105,8 @@ export class Bot {
       }
       return;
     }
+    // ★8 遠距離(>50m)は歩行スイング/呼吸/スウェイのsin群をスキップ(位置/向きのみ同期)
+    if (this.animLod) return;
     // 歩行サイクル: 左右の脚を逆位相でスイングし、接地脚側の膝を曲げ、胴を上下させる
     const s = Math.sin(this.walkPhase);
     const swing = s * this.walkAmp * 0.8;

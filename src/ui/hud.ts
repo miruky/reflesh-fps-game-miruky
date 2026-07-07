@@ -176,6 +176,9 @@ export class Hud {
         <div class="hud-charge-gauge" data-id="chargegauge" hidden>
           <div class="hud-charge-fill" data-id="chargefill"></div>
         </div>
+        <div class="hud-spin-gauge" data-id="spingauge" hidden>
+          <div class="hud-spin-fill" data-id="spinfill"></div>
+        </div>
       </div>
       <div class="hud-feed" data-id="feed"></div>
       <div class="hud-crosshair" data-id="crosshair">
@@ -559,6 +562,8 @@ export class Hud {
     if (kokuraiteiEl) kokuraiteiEl.hidden = true;
     const chargeEl = this.el['chargegauge'];
     if (chargeEl) chargeEl.hidden = true;
+    const spinEl = this.el['spingauge'];
+    if (spinEl) spinEl.hidden = true;
     // R21 マルチキルバナーのリセット(前試合の残表示・タイマーを完全クリア)
     if (this.mkTimerId) { window.clearTimeout(this.mkTimerId); this.mkTimerId = 0; }
     this.mkBannerMs = 0;
@@ -678,6 +683,7 @@ export class Hud {
     const hellEl = this.el['hell'];
     if (hellEl) hellEl.hidden = !snap.hellMode;
     this.updateChargeGauge(snap);
+    this.updateSpinGauge(snap);
     this.drawMinimap(snap);
     this.updateGunGameHud(snap);
 
@@ -1940,6 +1946,23 @@ export class Hud {
         (fill as HTMLElement).style.width = `${Math.round(ratio * 100)}%`;
         fill.classList.toggle('charge-full', ratio >= 1);
         fill.classList.toggle('charge-kokuraitei', !!snap.kokuraiteiMode);
+      }
+    }
+  }
+
+  // 修羅スピンアップRPMゲージ(hud-charge-gauge流儀の小ゲージ)。minigun装備+スピン>0のみ表示。
+  // 発射開始しきい(400rpm≒0.22)まで緑、以降は黄、フルスピン間近(≥0.85)で赤
+  private updateSpinGauge(snap: MatchSnapshot): void {
+    const el = this.el['spingauge'];
+    if (!el) return;
+    const spin = snap.minigunSpin01 ?? 0;
+    el.hidden = spin <= 0;
+    if (spin > 0) {
+      const fill = this.el['spinfill'];
+      if (fill) {
+        (fill as HTMLElement).style.width = `${Math.round(spin * 100)}%`;
+        fill.classList.toggle('spin-mid', spin >= 0.22 && spin < 0.85);
+        fill.classList.toggle('spin-hot', spin >= 0.85);
       }
     }
   }

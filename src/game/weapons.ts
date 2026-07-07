@@ -18,7 +18,8 @@ export type WeaponClass =
   | 'lmg'
   | 'pistol'
   | 'marksman'
-  | 'launcher';
+  | 'launcher'
+  | 'exotic'; // 特殊兵装(弓/扇/杖/火縄銃/ビーム/ミニガン/手裏剣等)
 
 // procedural な銃シルエットの形状キー(viewmodel が SHAPE_SPECS で解決)。
 // 同クラスでも別シルエットに振り分けて見分けを付ける。
@@ -1294,7 +1295,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     damage: 72,
     headshotMultiplier: 1.5,
     rpm: 110,
-    magazineSize: 5,
+    magazineSize: 6, // A2: 5→6(取り回し改善)
     reloadTacticalMs: 2600,
     reloadEmptyMs: 3100,
     spreadHipDeg: 1.4,
@@ -1306,7 +1307,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     falloff: { start: 20, end: 120, minFactor: 0.7 },
     mode: 'semi',
     burstCount: 1,
-    adsFovScale: 0.78,
+    adsFovScale: 0.65, // A2: 0.78→0.65(スラグ狙撃感を増強)
     adsTimeMs: 260,
     switchMs: 510,
     recoilPattern: buildRecoil({ steps: 3, pitchDeg: 1.4, driftDeg: 0.1, frontLoad: 0.3 }),
@@ -1403,7 +1404,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     slot: 'secondary',
     damage: 28,
     headshotMultiplier: 1.6,
-    rpm: 550,
+    rpm: 720, // A2: 550→720
     magazineSize: 18,
     reloadTacticalMs: 1300,
     reloadEmptyMs: 1800,
@@ -1464,7 +1465,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     penetrationM: 0.0,
     suppressed: true,
     soundProfile: 'smg',
-    class: 'smg',
+    class: 'exotic', // 特殊兵装: 手裏剣連射
     adsMoveSuppression: 0.35,
     airSpreadDeg: 1.8,
     shape: 'shuriken-hand',
@@ -1503,7 +1504,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     scope: true,
     aimAssist: true,
     soundProfile: 'dmr',
-    class: 'sniper',
+    class: 'exotic', // 特殊兵装: 和弓
     adsMoveSuppression: 0.9,
     airSpreadDeg: 2.2,
     shape: 'bow-japanese',
@@ -1513,7 +1514,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     id: 'fujin-fan',
     name: '風神扇',
     slot: 'primary',
-    // 水平扇散弾。pellets=7。special:'fan'でmatch側が水平扇形弾道実装予定
+    // 水平扇散弾。pellets=10(A2: 7→10)。special:'fan'でmatch側が水平扇形弾道実装予定
     damage: 22,
     headshotMultiplier: 1.2,
     rpm: 130,
@@ -1536,11 +1537,11 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     recoilRecoveryPerS: 4,
     range: 20,
     tracerColor: 0x66ddff,
-    pellets: 7,
-    pelletSpreadDeg: 8.0,
+    pellets: 10, // A2: 7→10(コード実態に整合)
+    pelletSpreadDeg: 24.0, // A2: 8→24(扇形120°=水平140°相当のリアルな広がり)
     penetrationM: 0.0,
     soundProfile: 'shotgun',
-    class: 'shotgun',
+    class: 'exotic', // 特殊兵装: 鉄扇
     adsMoveSuppression: 0.2,
     airSpreadDeg: 2.0,
     shape: 'war-fan',
@@ -1566,7 +1567,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     falloff: { start: 30, end: 150, minFactor: 0.85 },
     mode: 'semi',
     burstCount: 1,
-    adsFovScale: 0.38,
+    adsFovScale: 0.5, // F9: 0.38→0.5(火縄銃はズームのみ=自然)
     adsTimeMs: 520,
     switchMs: 700,
     recoilPattern: buildRecoil({ steps: 2, pitchDeg: 0.9, driftDeg: 0.0, frontLoad: 1.5 }),
@@ -1576,10 +1577,10 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pellets: 1,
     pelletSpreadDeg: 0,
     penetrationM: 0.5,
-    scope: true,
+    scope: false, // F9: true→false(スコープオーバーレイ無し、ズームのみ)
     aimAssist: true,
     soundProfile: 'dmr',
-    class: 'sniper',
+    class: 'exotic', // 特殊兵装: 火縄銃
     adsMoveSuppression: 0.85,
     airSpreadDeg: 3.0,
     shape: 'musket',
@@ -1615,9 +1616,8 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pellets: 1,
     pelletSpreadDeg: 0,
     penetrationM: 0,
-    soundProfile: 'shotgun',
-    // 'launcher' にすると camo単独クラス(gouka-rl)テスト破損のため marksman に分類
-    class: 'marksman',
+    soundProfile: 'dmr', // F3: 'shotgun'→'dmr'(フォールバック改善。match側staffFire()呼出は別便に引き継ぎ)
+    class: 'exotic', // 特殊兵装: 雷杖
     adsMoveSuppression: 0.3,
     airSpreadDeg: 2.0,
     shape: 'lightning-staff',
@@ -1657,7 +1657,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     scope: true,
     aimAssist: true,
     soundProfile: 'dmr',
-    class: 'sniper',
+    class: 'exotic', // 特殊兵装: ビーム貫通スナイパー
     adsMoveSuppression: 0.95,
     airSpreadDeg: 2.2,
     shape: 'sniper-bolt',
@@ -1672,7 +1672,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     headshotMultiplier: 1.4,
     rpm: 1800,
     magazineSize: 150,
-    reloadTacticalMs: 4500,
+    reloadTacticalMs: 3800, // A2: 4500→3800
     reloadEmptyMs: 5500,
     spreadHipDeg: 3.8,
     spreadAdsDeg: 0.55,
@@ -1694,7 +1694,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     pelletSpreadDeg: 0,
     penetrationM: 0.6,
     soundProfile: 'lmg',
-    class: 'lmg',
+    class: 'exotic', // 特殊兵装: ミニガン
     adsMoveSuppression: 0.2,
     airSpreadDeg: 3.5,
     shape: 'minigun',
@@ -1761,7 +1761,8 @@ export const SECONDARY_IDS: readonly string[] = [
 // 兵装画面の6軸ステータスを WeaponDef から導出する(手書きRecord廃止)。全て 0..10。
 export function computeWeaponBars(def: WeaponDef): WeaponBars {
   const c10 = (v: number): number => Math.max(0, Math.min(10, Math.round(v)));
-  const dps = def.damage * def.pellets;
+  // F7: beam武器は3tick×damage=実威力に合わせてpower表示を補正する。
+  const dps = def.special === 'beam' ? def.damage * 3 : def.damage * def.pellets;
   const climbDeg = def.recoilPattern.reduce((s, st) => s + Math.abs(st.pitch), 0) * (180 / Math.PI);
   return {
     power: c10(1 + (9 * (dps - 14)) / (160 - 14)),

@@ -65,12 +65,13 @@ describe('DIFFICULTY 速度係数 (×2)', () => {
 });
 
 describe('超鬼畜 (hell) チューニング倍率', () => {
-  it('HP×3 / ダメージ×2.5 / 速度×1.3 を適用する', () => {
+  it('HP×3 / ダメージ×2.5 / 速度×1.3(1.75 cap) を適用する', () => {
     const base = tuningFor('normal', 'normal'); // maxHp100 / damage11 / moveSpeedMul2
     const hell = applyHellTuning(base);
     expect(hell.maxHp).toBe(300);
     expect(hell.damage).toBe(Math.round(11 * 2.5));
-    expect(hell.moveSpeedMul).toBeCloseTo(2 * 1.3);
+    // V36: capは基礎速度未満に落とさない(2×1.3=2.6→cap1.75<基礎2 → 基礎2を維持)
+    expect(hell.moveSpeedMul).toBeCloseTo(2);
   });
 
   it('元のチューニングを破壊しない(新オブジェクトを返す)', () => {
@@ -84,7 +85,7 @@ describe('超鬼畜 (hell) チューニング倍率', () => {
     const merged = { ...tuningFor('normal', 'normal'), ...KIND_TUNING.master };
     const hell = applyHellTuning(merged);
     expect(hell.maxHp).toBe(1800);
-    expect(hell.moveSpeedMul).toBeCloseTo(2.5 * 1.3);
+    expect(hell.moveSpeedMul).toBeCloseTo(2.5); // V36: 達人の基礎2.5は落とさない(鈍足化回帰の防止)
   });
 
   it('KIND_TUNING合成後の巨躯へ適用すると 1500→4500 になる', () => {
@@ -92,5 +93,12 @@ describe('超鬼畜 (hell) チューニング倍率', () => {
     const hell = applyHellTuning(merged);
     expect(hell.maxHp).toBe(4500);
     expect(hell.damage).toBe(Math.round(45 * 2.5));
+    expect(hell.moveSpeedMul).toBeCloseTo(1.75); // ★7: 1.6×1.3=2.08 → cap 1.75
+  });
+
+  it('★7 capは低速kindには効かない(1.3倍がcap未満ならそのまま)', () => {
+    const merged = { ...tuningFor('normal', 'normal'), moveSpeedMul: 0.9 };
+    const hell = applyHellTuning(merged);
+    expect(hell.moveSpeedMul).toBeCloseTo(0.9 * 1.3); // 1.17 < 1.75
   });
 });

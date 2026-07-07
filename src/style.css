@@ -5817,6 +5817,69 @@ tr.score-ally td {
   font-size: 10.5px;
 }
 
+/* ── 特殊兵装(exotic)カード差別化 ───────────────────────────────────
+   IGNITION FRAMEの中で「別格」と分かる意匠。
+   規則: canvas上filter禁止/backdrop-filter禁止/bloom閾値0.9超えの発光禁止。
+   グラデーション枠＋暗紫プレビュー背景＋EXOTICバッジで差別化する。
+   ───────────────────────────────────────────────────────────────── */
+.weapon-grid .weapon-card.exotic {
+  border-color: rgba(160, 80, 255, 0.55);
+  background: linear-gradient(160deg, rgba(30, 10, 50, 0.55) 0%, rgba(14, 18, 25, 0.75) 100%);
+}
+.weapon-grid .weapon-card.exotic:not(.locked):hover {
+  border-color: rgba(200, 120, 255, 0.85);
+  background: linear-gradient(160deg, rgba(50, 15, 80, 0.65) 0%, rgba(20, 18, 32, 0.85) 100%);
+}
+.weapon-grid .weapon-card.exotic.selected {
+  border-color: rgba(200, 130, 255, 0.95);
+  background: linear-gradient(160deg, rgba(60, 20, 100, 0.7) 0%, rgba(25, 18, 40, 0.9) 100%);
+}
+.weapon-grid .weapon-card.exotic .weapon-name {
+  color: rgba(220, 175, 255, 0.95);
+}
+.weapon-grid .weapon-card.exotic.selected .weapon-name {
+  color: #e2b8ff;
+}
+.weapon-grid .weapon-card.exotic .weapon-sil {
+  color: rgba(190, 140, 255, 0.75);
+}
+.weapon-grid .weapon-card.exotic.selected .weapon-sil {
+  color: rgba(220, 175, 255, 0.9);
+}
+
+/* EXOTICバッジ: 紫金グラデの小タグ */
+.exotic-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #e8d0ff;
+  background: linear-gradient(90deg, rgba(110, 40, 200, 0.85) 0%, rgba(160, 100, 40, 0.75) 100%);
+  border: 1px solid rgba(180, 100, 255, 0.6);
+  border-radius: 2px;
+  align-self: flex-start;
+  margin-top: 1px;
+}
+
+/* 特殊兵装タブ: 通常の ember 選択色の代わりに紫系を使う */
+.wcls-tab--exotic {
+  border-color: rgba(160, 80, 255, 0.45);
+  color: rgba(200, 150, 255, 0.85);
+}
+.wcls-tab--exotic:hover {
+  border-color: rgba(180, 100, 255, 0.7);
+  color: rgba(220, 175, 255, 0.95);
+  background: rgba(120, 40, 200, 0.12);
+}
+.wcls-tab--exotic.selected {
+  border-color: rgba(180, 100, 255, 0.9);
+  background: rgba(110, 40, 190, 0.75);
+  color: #f0d8ff;
+  font-weight: 800;
+}
+
 /* 主ステータス(横バー維持): 10分割セグメント点火バー。glow(box-shadow外光)は使わない */
 .armory-bars {
   display: flex;
@@ -10330,6 +10393,35 @@ body.killcam-active .hud-death {
 }
 .hud-charge-fill.charge-kokuraitei {
   background: linear-gradient(to right, #440088, #bb44ff);
+}
+
+/* 修羅スピンアップRPMゲージ(hud-charge-gauge流儀の小ゲージ)。
+   緑(スピンアップ中)→黄(発射域400rpm+)→赤(フルスピン間近) */
+.hud-spin-gauge {
+  position: relative;
+  width: 72px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 118;
+}
+.hud-spin-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(to right, #2e9e4f, #56d97f);
+  transform-origin: left;
+  border-radius: 1px;
+  transition: width 0.05s linear, background 0.15s linear;
+}
+.hud-spin-fill.spin-mid {
+  background: linear-gradient(to right, #b8901f, #ffd24d);
+}
+.hud-spin-fill.spin-hot {
+  background: linear-gradient(to right, #c8321f, #ff7a4d);
+  box-shadow: 0 0 6px rgba(255, 110, 70, 0.7);
 }
 
 /* +N ゾンビポイントフロート(緑系)。インラインの left/top は起点固定に使い、

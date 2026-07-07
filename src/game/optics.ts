@@ -69,6 +69,8 @@ export function classDefault(cls: WeaponClass): ViewModelShape {
       return 'dmr';
     case 'launcher':
       return 'launcher';
+    case 'exotic':
+      return 'rifle'; // 個別shape必須。fallbackは汎用ライフル
   }
 }
 
@@ -77,11 +79,14 @@ export function resolveShape(def: WeaponDef): ViewModelShape {
   return def.shape ?? classDefault(def.class);
 }
 
-// 一体型スコープを持つ形状(sil.scope が非nullの3形状に一致)。
+// 一体型スコープを持つ形状(sil.scope が非nullの5形状に一致)。
+// sniper-semi(SVD系セミオート)とantimateriel(Barrett系対物)を追加。
 export const SCOPED_SHAPES: ReadonlySet<ViewModelShape> = new Set<ViewModelShape>([
   'dmr',
   'sniper-bolt',
   'dsr-bp',
+  'sniper-semi',
+  'antimateriel',
 ]);
 
 // 倍率光学を許可しない形状(拳銃系/素手)。
@@ -232,6 +237,28 @@ export const OPTIC_SPECS: Record<string, OpticSpec> = {
     glassKind: 'scope',
     adsFovScale: 0.32,
   },
+  // ── sniper-semi / antimateriel 内蔵スコープ(F1追加) ──
+  // sniper-semi: SVD系セミオートスナイパー。bolt より低倍(0.33)で素早いADS。
+  // sightY=0.086: スコープ管の管軸高さ(sniper-bolt=0.08とdsr-bp=0.092の中間)。
+  'scope-sniper-semi': {
+    id: 'scope-sniper-semi',
+    reticleKind: 'mildot',
+    magnified: true,
+    sightY: 0.086,
+    housing: 'scope',
+    glassKind: 'scope',
+    adsFovScale: 0.33,
+  },
+  // antimateriel: Barrett系対物ライフル。最大倍率(0.30)・最も高い管軸(0.092)。
+  'scope-antimateriel': {
+    id: 'scope-antimateriel',
+    reticleKind: 'mildot',
+    magnified: true,
+    sightY: 0.092,
+    housing: 'scope',
+    glassKind: 'scope',
+    adsFovScale: 0.30,
+  },
 };
 
 // def から光学idを解決(単一シグネチャ)。
@@ -243,6 +270,8 @@ export function resolveOpticId(def: WeaponDef): string {
   if (SCOPED_SHAPES.has(shape)) {
     if (shape === 'dmr') return 'scope-dmr';
     if (shape === 'dsr-bp') return 'scope-dsr';
+    if (shape === 'sniper-semi') return 'scope-sniper-semi';
+    if (shape === 'antimateriel') return 'scope-antimateriel';
     return 'scope-sniper';
   }
   const attachments = def.attachmentIds ?? [];

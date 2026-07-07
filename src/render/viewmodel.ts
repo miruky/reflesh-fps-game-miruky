@@ -1158,23 +1158,27 @@ export function buildGunBody(
     const bowTop = new THREE.BoxGeometry(0.014, 0.36, 0.018);
     setColor(bowTop, col(C_BOW), 'gradY');
     const btm = new THREE.Mesh(bowTop, polyVC);
+    btm.name = 'vm:limbT'; // チャージ時に回転するbowアーム(上)
     btm.position.set(0, 0.14, -0.06);
     btm.rotation.set(0.22, 0, 0);
     gun.add(btm);
     const bowBot = new THREE.BoxGeometry(0.014, 0.36, 0.018);
     setColor(bowBot, col(C_BOW_HI), 'gradY');
     const bbm = new THREE.Mesh(bowBot, polyVC);
+    bbm.name = 'vm:limbB'; // チャージ時に回転するbowアーム(下)
     bbm.position.set(0, -0.14, -0.06);
     bbm.rotation.set(-0.22, 0, 0);
     gun.add(bbm);
     const strTop = new THREE.BoxGeometry(0.006, 0.36, 0.006);
     setColor(strTop, col(def.tracerColor), 'flat');
     const stm = new THREE.Mesh(strTop, accent);
+    stm.name = 'vm:strT'; // チャージ時に引き込まれる弦(上)
     stm.position.set(0, 0.14, -0.18);
     gun.add(stm);
     const strBot = new THREE.BoxGeometry(0.006, 0.36, 0.006);
     setColor(strBot, col(def.tracerColor), 'flat');
     const sbm = new THREE.Mesh(strBot, accent);
+    sbm.name = 'vm:strB'; // チャージ時に引き込まれる弦(下)
     sbm.position.set(0, -0.14, -0.18);
     gun.add(sbm);
     const grip = new THREE.BoxGeometry(0.028, 0.08, 0.025);
@@ -1186,12 +1190,14 @@ export function buildGunBody(
     const shaft = new THREE.CylinderGeometry(0.006, 0.006, 0.44, 8);
     setColor(shaft, col(C_ARROW), 'gradY');
     const sm = new THREE.Mesh(shaft, metalVC);
+    sm.name = 'vm:arrowShaft'; // チャージ時に引き戻される矢シャフト
     sm.position.set(0, 0.01, -0.25);
     sm.rotation.set(Math.PI / 2, 0, 0);
     gun.add(sm);
     const tip = new THREE.ConeGeometry(0.008, 0.04, 8);
     setColor(tip, col(0x888888), 'edgeHi');
     const tm = new THREE.Mesh(tip, metalVC);
+    tm.name = 'vm:arrowTip'; // チャージ時に引き戻される矢じり
     tm.position.set(0, 0.01, -0.47);
     tm.rotation.set(Math.PI / 2, 0, 0);
     gun.add(tm);
@@ -1319,6 +1325,10 @@ export function buildGunBody(
     const rbm = new THREE.Mesh(recBodyMG, metalVC);
     rbm.position.set(0, 0, -0.04 * bs2);
     gun.add(rbm);
+    // バレルクラスターを Group に包む。Z軸回転でガトリングスピンが実現する。
+    // ViewModel.update の _minigunBarrelRot がここの rotation.z を毎フレーム更新する。
+    const barrelGroup = new THREE.Group();
+    barrelGroup.name = 'vm:barrel';
     for (let i = 0; i < 6; i += 1) {
       const angle = (i / 6) * Math.PI * 2;
       const rMG = 0.07 * bs2;
@@ -1327,8 +1337,9 @@ export function buildGunBody(
       const bmg = new THREE.Mesh(barrelMG, metalVC);
       bmg.position.set(Math.cos(angle) * rMG, Math.sin(angle) * rMG, -(0.28 + 0.10) * bs2);
       bmg.rotation.set(Math.PI / 2, 0, 0);
-      gun.add(bmg);
+      barrelGroup.add(bmg);
     }
+    gun.add(barrelGroup);
     const frontRing = new THREE.TorusGeometry(0.095 * bs2, 0.014 * bs2, 8, 18);
     setColor(frontRing, col(C_RING), 'edgeHi');
     const frm = new THREE.Mesh(frontRing, polishVC);
@@ -2227,12 +2238,12 @@ export function resolveSightY(def: WeaponDef): number {
   if (def.shape === 'launcher') return 0.088;
   // R33 特殊形状: 照準線を射線中心(0)に固定してADS時に武器ジオメトリが射線へ寄る。
   if (def.shape === 'shuriken-hand') return 0;
-  // R33 天雷杖: クリスタル先端を射線の少し上に合わせる。
-  if (def.shape === 'lightning-staff') return 0.088;
-  // R33 ミニガン: ランチャーと同じゴーストリング高さで視界確保。
-  if (def.shape === 'minigun') return 0.088;
-  // R33 和弓: bead相当の前端照準 — sil fallbackに任せるが念のため明示。
-  if (def.shape === 'bow-japanese') return 0.062;
+  // R33 天雷杖: クリスタル先端を射線中心(0)に整合(F10)。
+  if (def.shape === 'lightning-staff') return 0;
+  // R33 ミニガン: バレルクラスター中心Y=0に整合(F4)。
+  if (def.shape === 'minigun') return 0;
+  // R33 和弓: 矢じり射線中心(0)に整合(F11)。
+  if (def.shape === 'bow-japanese') return 0;
   // R33 鉄扇: 中心射線基準。
   if (def.shape === 'war-fan') return 0;
   // 光学(内蔵スコープ/着脱reflex/holo/…)は OPTIC_SPECS.sightY を単一真実源に。
@@ -3083,15 +3094,37 @@ export class ViewModel {
   // ── R33 特殊武器 公開セッター ────────────────────────────────────────────────
   setBowCharge(charge01: number): void {
     this._bowCharge01 = Math.max(0, Math.min(1, charge01));
-    // 弦の輝度をチャージに比例させる (vm:string ノードがあれば)
-    if (this.gun) {
-      this.gun.traverse((child) => {
-        if (child.name === 'vm:string' && (child as THREE.Mesh).isMesh) {
+    if (!this.gun) return;
+    const pull = this._bowCharge01;
+    // 弓弦・弓身・矢をcharge01に応じて変形(viewmodel内完結)
+    // vm:strT/vm:strB: 弦を後方(カメラ方向)へ引く
+    // vm:limbT/vm:limbB: 弓アームをチャージ方向へ撓ませる(rotation.x増幅)
+    // vm:arrowShaft/vm:arrowTip: 矢を弦とともに引き戻す
+    this.gun.traverse((child) => {
+      if (child.name === 'vm:strT') {
+        child.position.z = -0.18 - pull * 0.08;
+        if ((child as THREE.Mesh).isMesh) {
           const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
-          if (mat.emissive) mat.emissiveIntensity = 0.0 + this._bowCharge01 * 0.75;
+          if (mat?.emissive) mat.emissiveIntensity = pull * 0.75;
         }
-      });
-    }
+      } else if (child.name === 'vm:strB') {
+        child.position.z = -0.18 - pull * 0.08;
+        if ((child as THREE.Mesh).isMesh) {
+          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          if (mat?.emissive) mat.emissiveIntensity = pull * 0.75;
+        }
+      } else if (child.name === 'vm:limbT') {
+        // 上アームを前方(カメラ寄り)へ撓ませる: rotation.x 0.22→0.34
+        child.rotation.x = 0.22 + pull * 0.12;
+      } else if (child.name === 'vm:limbB') {
+        // 下アームを前方(カメラ寄り)へ撓ませる: rotation.x -0.22→-0.34
+        child.rotation.x = -0.22 - pull * 0.12;
+      } else if (child.name === 'vm:arrowShaft') {
+        child.position.z = -0.25 - pull * 0.08;
+      } else if (child.name === 'vm:arrowTip') {
+        child.position.z = -0.47 - pull * 0.08;
+      }
+    });
   }
 
   setStaffCharge(charge01: number): void {

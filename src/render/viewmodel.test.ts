@@ -201,6 +201,13 @@ describe('resolveSightY', () => {
     expect(resolveSightY(withShape('dsr-bp'))).toBeCloseTo(0.092, 6);
     expect(resolveSightY(withShape('rifle', ['reflex']))).toBeCloseTo(0.08, 6);
     expect(resolveSightY(withShape('rifle', ['telescopic']))).toBeCloseTo(0.08, 6);
+    // F1: sniper-semi/antimateriel 内蔵スコープ
+    expect(resolveSightY(withShape('sniper-semi'))).toBeCloseTo(0.086, 6);
+    expect(resolveSightY(withShape('antimateriel'))).toBeCloseTo(0.092, 6);
+    // F4/F10/F11: 特殊形状は射線中心(0)
+    expect(resolveSightY(withShape('minigun'))).toBe(0);
+    expect(resolveSightY(withShape('lightning-staff'))).toBe(0);
+    expect(resolveSightY(withShape('bow-japanese'))).toBe(0);
   });
 
   it('スコープ管(glass)の実Yと一致する(ドリフト検出)', () => {
@@ -255,6 +262,16 @@ describe('resolveSightY', () => {
       }
     });
     expect(dotY).toBeCloseTo(0.08, 6);
+  });
+
+  it('F1: sniper-semi/antimateriel はscope-sniper-semi/scope-antimaterielへ解決される', () => {
+    const base = Object.values(WEAPON_DEFS)[0]!;
+    const sniperSemi: WeaponDef = { ...base, shape: 'sniper-semi' };
+    const anti: WeaponDef = { ...base, shape: 'antimateriel' };
+    expect(resolveOpticId(sniperSemi)).toBe('scope-sniper-semi');
+    expect(resolveOpticId(anti)).toBe('scope-antimateriel');
+    expect(OPTIC_SPECS['scope-sniper-semi']!.sightY).toBeCloseTo(0.086, 6);
+    expect(OPTIC_SPECS['scope-antimateriel']!.sightY).toBeCloseTo(0.092, 6);
   });
 
   it('内蔵スコープ機(DMR/sniper/DSR)はレンズCircleを持ち、resolveSightYと一致する', () => {

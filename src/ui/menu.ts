@@ -128,6 +128,7 @@ const CLASS_LABELS: Record<WeaponClass, string> = {
   lmg: 'ライトマシンガン',
   pistol: 'ハンドガン',
   launcher: 'ロケットランチャー',
+  exotic: '特殊兵装',
 };
 const CLASS_ORDER: readonly WeaponClass[] = [
   'ar',
@@ -139,6 +140,7 @@ const CLASS_ORDER: readonly WeaponClass[] = [
   'lmg',
   'pistol',
   'launcher',
+  'exotic', // 特殊兵装タブ(最後尾=視覚的に「別格」を表現)
 ];
 
 const GRENADE_DESCS: Record<GrenadeKind, string> = {
@@ -259,6 +261,7 @@ const CLASS_SHAPE: Record<WeaponClass, ViewModelShape> = {
   lmg: 'lmg-belt',
   pistol: 'pistol',
   launcher: 'launcher',
+  exotic: 'rifle', // 特殊兵装は個別shapeを必ず持つ。fallbackは汎用ライフル
 };
 
 interface SilSpec {
@@ -1555,7 +1558,7 @@ export class Menu {
     for (const cls of classes) {
       const tab = document.createElement('button');
       tab.type = 'button';
-      tab.className = 'wcls-tab';
+      tab.className = cls === 'exotic' ? 'wcls-tab wcls-tab--exotic' : 'wcls-tab';
       tab.dataset.cls = cls;
       tab.setAttribute('role', 'tab');
       tab.textContent = CLASS_LABELS[cls];
@@ -1600,9 +1603,11 @@ export class Menu {
     const def = WEAPON_DEFS[id] ?? WEAPON_DEFS['kaede-ar']!;
     const level = this.playerLevel();
     const unlocked = isUnlocked('weapon', id, level);
+    const isExotic = def.class === 'exotic';
     const card = document.createElement('button');
     card.type = 'button';
-    card.className = unlocked ? 'weapon-card' : 'weapon-card locked';
+    const baseClass = unlocked ? 'weapon-card' : 'weapon-card locked';
+    card.className = isExotic ? `${baseClass} exotic` : baseClass;
     const key = slot === 'primary' ? 'weapon' : 'weapon2';
     card.dataset[key] = id;
     card.dataset.cls = def.class; // タブ絞り込み用(副武器グリッドでは未使用=無害)
@@ -1616,10 +1621,13 @@ export class Menu {
       ? ''
       : `<span class="locked-note">Lv ${unlockLevelOf('weapon', id)} で解放</span>`;
     const shape = def.shape ?? CLASS_SHAPE[def.class] ?? 'rifle';
+    const exoticBadge = isExotic
+      ? `<span class="exotic-badge" aria-label="特殊兵装">EXOTIC</span>`
+      : '';
     card.innerHTML =
       `<span class="weapon-sil" aria-hidden="true">${weaponSilSVG(shape, def.tracerColor)}</span>` +
       `<span class="weapon-name">${def.name}</span>` +
-      `<span class="weapon-mode">${mode} / 装弾 ${def.magazineSize}</span>${lockNote}`;
+      `<span class="weapon-mode">${mode} / 装弾 ${def.magazineSize}</span>${exoticBadge}${lockNote}`;
     if (!unlocked) {
       card.disabled = true;
       return card;

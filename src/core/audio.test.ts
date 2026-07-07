@@ -26,6 +26,7 @@ import {
   scoreVoice,
   SHOT_PROFILES,
   SoundKit,
+  STAFF_FIRE_SPEC,
   type VoiceLike,
 } from './audio';
 import { STAGES } from '../game/stages';
@@ -492,5 +493,33 @@ describe('R33 Sランク武器サウンドスペック', () => {
       kit.minigunSpin(false);
       kit.minigunSpin(true);
     }).not.toThrow();
+  });
+
+  // ── STAFF_FIRE_SPEC 定数整合テスト(F3) ─────────────────────────────────
+  it('STAFF_FIRE_SPEC: crackFreqHz > chargeFreqHz (放電クラックはチャージより高い)', () => {
+    expect(STAFF_FIRE_SPEC.crackFreqHz).toBeGreaterThan(STAFF_FIRE_SPEC.chargeFreqHz);
+  });
+  it('STAFF_FIRE_SPEC: chargeFreqHz > chargeSweepHz (チャージは高→低sweep)', () => {
+    expect(STAFF_FIRE_SPEC.chargeFreqHz).toBeGreaterThan(STAFF_FIRE_SPEC.chargeSweepHz);
+  });
+  it('STAFF_FIRE_SPEC: rumbleFreqHz > rumbleEndFreqHz (残響も下降)', () => {
+    expect(STAFF_FIRE_SPEC.rumbleFreqHz).toBeGreaterThan(STAFF_FIRE_SPEC.rumbleEndFreqHz);
+  });
+  it('STAFF_FIRE_SPEC: 全gain値が 0–1 範囲内', () => {
+    expect(STAFF_FIRE_SPEC.chargeGain).toBeGreaterThan(0);
+    expect(STAFF_FIRE_SPEC.chargeGain).toBeLessThanOrEqual(1);
+    expect(STAFF_FIRE_SPEC.crackGain).toBeGreaterThan(0);
+    expect(STAFF_FIRE_SPEC.crackGain).toBeLessThanOrEqual(1);
+    expect(STAFF_FIRE_SPEC.rumbleGain).toBeGreaterThan(0);
+    expect(STAFF_FIRE_SPEC.rumbleGain).toBeLessThanOrEqual(1);
+  });
+  it('STAFF_FIRE_SPEC: 全durationSが正', () => {
+    expect(STAFF_FIRE_SPEC.chargeDurationS).toBeGreaterThan(0);
+    expect(STAFF_FIRE_SPEC.crackDurationS).toBeGreaterThan(0);
+    expect(STAFF_FIRE_SPEC.rumbleDurationS).toBeGreaterThan(0);
+  });
+  it('staffFire: AudioContext無しで例外を投げない', () => {
+    const kit = new SoundKit();
+    expect(() => kit.staffFire()).not.toThrow();
   });
 });

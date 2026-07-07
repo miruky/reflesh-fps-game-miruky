@@ -353,8 +353,8 @@ const FIRE_TICK_S = 0.5;
 const FK_MAX_FRAMES   = 90;  // 4.5 s @ 20 Hz
 const FK_MAX_BOTS     = 36; // V32修正: 増員(最大36体)を全記録(32だとhigh tierで被害者を取りこぼす)
 const FK_TICK_INT     = 3;   // 60 Hz の何 tick おきに記録(→ 20 Hz)
-const FK_WIN_PRE      = 2.2; // キル前の窓 (s)
-const FK_WIN_POST     = 1.0; // キル後の窓 (s)
+const FK_WIN_PRE      = 3.5; // キル前の窓 (s) — 3.5s of pre-kill context
+const FK_WIN_POST     = 1.2; // キル後の窓 (s) — 1.2s for death animation
 const FK_MAX_SHOTS    = 48;
 // player slot : eyeX,eyeY,eyeZ, yaw, pitch, alive = 6 floats
 const FK_P            = 6;
@@ -363,6 +363,33 @@ const FK_B            = 6;
 const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 198
 // shot slot   : from(3) + to(3) + color(1) + time(1) = 8 floats
 const FK_S            = 8;
+// キルカム再生中に死亡演出トランスフォームを巻き戻す/再現するための読み替え型。
+// bot.ts は別担当のため公開APIを増やせない。TSのprivateはコンパイル時のみで
+// 実行時にはフィールドが存在するので、この構造型を通して安全に参照する。
+// (bot.ts の updateDying / respawnAt と同じフィールド・同じ式を使う)
+interface FkBotRig {
+  rig: THREE.Group;
+  legL: THREE.Group;
+  legR: THREE.Group;
+  kneeL: THREE.Group;
+  kneeR: THREE.Group;
+  turretGroup: THREE.Group | null;
+  tankBarrel: THREE.Group | null;
+  turretHead: THREE.Group | null;
+  turretLegs: THREE.Group[];
+  dissolveU: { value: number };
+  deathTilt: number;
+}
+// bot.ts KIND_DEATH_S と同じ死亡演出の全長(s)。キルカムの手続き再現に使う
+const FK_DEATH_S: Record<string, number> = {
+  humanoid: 0.6,
+  drone: 1.1,
+  tank: 1.4,
+  turret: 0.5,
+  zombie: 0.6,
+  master: 0.6,
+  giant: 0.7,
+};
 
 // ── R16 spot-time 知覚FSM(matchが積分する。calcSpotRateはraycast無しで毎フレーム)──
 const BOT_CENTRAL_COS = Math.cos((22 * Math.PI) / 180); // 中心視野(この内側でconeFactor=1)
@@ -417,9 +444,40 @@ export function applyHellTuning(t: BotTuning): BotTuning {
     ...t,
     maxHp: Math.round(t.maxHp * 3),
     damage: Math.round(t.damage * 2.5),
-    moveSpeedMul: t.moveSpeedMul * 1.3,
+    // ★7 1.75でcap(巨躯2.08→1.75)。高速化しすぎたKCCのsubstep増を抑える(監査確証)
+    moveSpeedMul: Math.max(t.moveSpeedMul, Math.min(1.75, t.moveSpeedMul * 1.3)), // V36: capは基礎速度未満に落とさない(精鋭鈍足化の回帰防止。capの主対象=巨躯のKCC)
   };
 }
+
+// ★1 影LODバケット(純関数): 距離二乗の配列から「近い順にcap体だけtrue」のフラグ配列を返す。
+// 同距離は先着(index昇順)で安定。cap以下なら全true
+export function shadowLodFlags(d2: readonly number[], cap: number): boolean[] {
+  if (d2.length <= cap) return d2.map(() => true);
+  const order = d2.map((_, i) => i).sort((a, b) => d2[a]! - d2[b]! || a - b);
+  const flags = new Array<boolean>(d2.length).fill(false);
+  for (let i = 0; i < cap; i += 1) flags[order[i]!] = true;
+  return flags;
+}
+
+// F2 修羅スピンアップ(純関数): 発射しなかったfireイベントの弾をマガジンへ安全に返す
+export function refundRound(rounds: number, capacity: number): number {
+  return Math.min(capacity, rounds + 1);
+}
+
+// F8 手裏剣disc寿命(純関数): hitscan着弾距離で飛行時間をクランプ。未ヒット/不正速度は既定0.5s
+export function shurikenDiscLife(hitDistM: number | null, speedMps: number, maxLifeS = 0.5): number {
+  if (hitDistM === null || !(speedMps > 0) || !(hitDistM >= 0)) return maxLifeS;
+  return Math.min(maxLifeS, hitDistM / speedMps);
+}
+
+// ★1 影LOD: 全モードでプレイヤー最近接この体数のみ castShadow=true(影DCを一定に保つ)
+const SHADOW_CASTER_CAP = 8;
+// ★8 アニメLOD発動距離(この距離を超えたbotはsyncMeshのsin群をスキップ)
+const ANIM_LOD_DIST_M = 50;
+// F8 手裏剣discの飛行速度(m/s)。fireShurikenDiscのvelと寿命クランプの単一の真実
+const SHURIKEN_DISC_SPEED = 60;
+// ★5 ホットパス用スクラッチ(bot.getPositionInto の受け皿。逐次利用のみ=エイリアス無し)
+const BOT_POS_SCRATCH = new THREE.Vector3();
 
 // R12軽量化: bloomを半解像で処理する。EffectComposer.addPass/setSize がフル実効サイズで
 // pass.setSize を強制するため、サブクラスで毎回半分へ丸めて bright/blur を面積1/16(現状1/4)へ。
@@ -585,6 +643,7 @@ export interface MatchSnapshot {
   raiteiMode?: boolean;    // 雷帝モード発動中
   kokuraiteiMode?: boolean; // 黒雷帝モード発動中
   chargeRatio?: number;    // 溜め攻撃ゲージ 0..1(0=非溜め)
+  minigunSpin01?: number;  // 修羅スピンアップRPM 0..1(minigun装備+スピン>0のみ。HUDゲージ用)
   incoming: number[]; // 被弾方向(カメラ基準の角度rad)
   tookDamage: boolean;
   scoreboard: ScoreRow[];
@@ -952,9 +1011,9 @@ export class Match {
   private minigunSpinWasActive = false;
   // スタン追跡(天雷杖AoE)
   private readonly botStunUntil = new WeakMap<import('./bot').Bot, number>();
-  // 手裏剣ディスク visual
+  // 手裏剣ディスク visual(life=F8: hitscan着弾距離でクランプした飛行寿命s)
   private shurikenDiscs: Array<{
-    group: THREE.Group; pos: THREE.Vector3; vel: THREE.Vector3; timer: number;
+    group: THREE.Group; pos: THREE.Vector3; vel: THREE.Vector3; timer: number; life: number;
   }> = [];
 
   private feed: FeedEntry[] = [];
@@ -1046,6 +1105,13 @@ export class Match {
   private stageFogDensity = 0;
   private stageAmbient = 1;
   private botFrameIdx = 0; // uid%8 のLOSバケット(観測者を間引いてO(N^2)castRayを~1/8に。botCount増員対応)
+  // ★4 レーダーbearingsのplayerCanSee(raycast)をuid%4で間引くフレームインデックスと可視キャッシュ
+  private bearingsFrameIdx = 0;
+  private readonly bearingVisCache = new Map<number, boolean>();
+  // ★6 scoreboardのdirtyフラグ+0.2sスロットルキャッシュ(毎フレームの構築+ソートを撃退)
+  private scoreboardDirty = true;
+  private scoreboardNextAt = 0;
+  private scoreboardCache: ScoreRow[] = [];
   // ── R16 ゾンビディレクタ(mode==='zombie'のみ稼働。matchが唯一の状態保持者)──
   private zombieRound = 0;
   private zombieKills = 0;
@@ -1055,7 +1121,7 @@ export class Match {
   private zombieTierCap = ZOMBIE_MAX_ALIVE.medium; // 同時生存上限(tier連動)
   private zombieMeleeGlobal = 0; // 近接ダメージのグローバル次回許可時刻(elapsed基準)
   private zombieMeleeIframe = 0; // プレイヤーi-frameの終了時刻(elapsed基準)
-  private zombieShadowTimer = 0; // 近接影LODの周期トグル
+  private botShadowLodTimer = 0; // ★1 近接影LODの周期トグル(全モード共通。0.25s)
   private zombieSpawnColor = 0x4c5a30; // ゾンビ本体の腐敗色(setupで確定)
   private playerDowns = 0;
   // ── ゾンビ経済(R??) ──
@@ -1148,6 +1214,7 @@ export class Match {
   private fkShotFill = 0;
   private fkKillerIsPlayer = false;
   private fkKillerBotIdx   = -1;
+  private fkVictimBotIdx   = -1; // キルカムの被害者BOT index(-1=プレイヤーが被害者)
   private fkKillElapsed    = -Infinity;
   private fkPlaying        = false;
   fkFlash                  = 0;
@@ -1590,7 +1657,11 @@ export class Match {
     // highは2048²→4096²へ増強してテクセル密度を維持(midは1024²のまま)。
     // R29仕様メモ: follow-box ±70m(140m)+ 4096px = 29px/m = 従来小マップ相当の密度。
     //   VRAM 約64MB(4096×4096×4byte)= high tier のみ許容。medium は1024²(約4MB)のまま。
-    sun.shadow.mapSize.set(tier === 'high' ? 4096 : 1024, tier === 'high' ? 4096 : 1024);
+    // ★3 hell/全巨躯モードは巨躯54体で影パス負荷が最大化するため、highでも2048²へ抑える
+    // (VRAM 64MB→16MB・影フラグメント1/4。±70m追従ボックスで14.6px/m=中距離でも輪郭維持)
+    const heavyHorde = (this.config.hellMode ?? false) || (this.config.allGiantMode ?? false);
+    const shadowRes = tier === 'high' ? (heavyHorde ? 2048 : 4096) : 1024;
+    sun.shadow.mapSize.set(shadowRes, shadowRes);
     sun.shadow.bias = -0.0005; // シャドウアクネ除去
     sun.shadow.normalBias = 0.02; // ピーターパン(浮き影)防止
     sun.shadow.radius = 2; // PCFカーネル拡大(ほぼ0コストで柔らかく)
@@ -1607,7 +1678,7 @@ export class Match {
     this.scene.add(sun);
     this.scene.add(sun.target);
     this.sunLight = sun;
-    this.shadowTexelWorld = (half * 2) / (tier === 'high' ? 4096 : 1024);
+    this.shadowTexelWorld = (half * 2) / shadowRes; // ★3 実解像度と同期(snap誤差防止)
 
     // 逆光フィル(影を落とさない=追加コストほぼ0。シルエットの締まりを出す)
     const fill = new THREE.DirectionalLight(
@@ -2978,7 +3049,7 @@ export class Match {
           this.fireStaffBolt();
           this.viewModel.fire(false);
           this.addShake(0.07);
-          this.sounds.shot(weapon.def.soundProfile);
+          this.sounds.staffFire(); // 配線: 専用の雷放出音へ置換(汎用shot(dmr)を廃止)
           this.alertBots(ALERT_RADIUS);
           continue;
         }
@@ -3002,16 +3073,23 @@ export class Match {
               this.viewModel.fire(false);
               this.addShake(0.015);
               this.sounds.shot(weapon.def.soundProfile);
+            } else {
+              // F2: 確率ゲートで発射しなかったfireイベントの弾を返却(無音消費の根治)
+              weapon.magazine.rounds = refundRound(weapon.magazine.rounds, weapon.magazine.capacity);
             }
             this.alertBots(ALERT_RADIUS);
+          } else {
+            // F2: スピンアップ中(<400rpm)は発砲しないのに弾だけ減っていた。返却する
+            weapon.magazine.rounds = refundRound(weapon.magazine.rounds, weapon.magazine.capacity);
           }
           continue;
         }
         if (weapon.def.special === 'shuriken') {
           this.player.yaw -= event.recoil.yaw;
           this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
-          this.fireShot(event.spreadRad);
-          this.fireShurikenDisc();
+          // F8: hitscanの着弾点までで手裏剣discの飛行を打ち切る(命中後の貫通飛翔を防ぐ)
+          const discHit = this.fireShot(event.spreadRad);
+          this.fireShurikenDisc(discHit);
           this.viewModel.fire(false);
           this.addShake(0.02);
           this.sounds.shotSuppressed();
@@ -3051,6 +3129,10 @@ export class Match {
         this.alertBots(weapon.def.suppressed ? ALERT_RADIUS_SUPPRESSED : ALERT_RADIUS);
       } else if (event.type === 'reload-start') {
         this.sounds.reload(event.durationMs);
+        // F5: リロード開始で弓チャージを確実に解除(チャージ表示/引き絞りの残留を防ぐ)
+        this.bowCharging = false;
+        this.bowChargeTimer = 0;
+        this.viewModel.setBowCharge(0);
       } else if (event.type === 'dryfire') {
         this.sounds.dryfire();
       }
@@ -3201,6 +3283,13 @@ export class Match {
     this.physics.step();
     this.syncCamera();
     this.handleRespawns();
+    // ★1 影LOD(全モード): プレイヤー最近接8体のみcastShadow=true。
+    // mapSize churnを避けるため0.25s周期トグル(旧: ゾンビモード限定運用を一般化)
+    this.botShadowLodTimer -= dt;
+    if (this.botShadowLodTimer <= 0) {
+      this.updateBotShadowLOD();
+      this.botShadowLodTimer = 0.25;
+    }
     if (this.config.mode === 'zombie') this.updateZombieDirector(dt);
     if (this.config.mode === 'training') this.updateTrainingTargets(dt);
     if (this.config.mode === 'zombie') {
@@ -4350,7 +4439,7 @@ export class Match {
     if (this.bowProjectiles.length >= 8) return;
     const fwd = this.cameraForward();
     const origin = this.player.eyePosition.clone().addScaledVector(fwd, 0.4);
-    const vel = fwd.clone().multiplyScalar(80);
+    const vel = fwd.clone().multiplyScalar(100); // 強化: 矢速80→100m/s(偏差撃ちの負担軽減)
     const mesh = new THREE.Mesh(this.bowArrowGeo, this.bowArrowMat.clone());
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), fwd.clone().normalize());
     mesh.position.copy(origin);
@@ -4451,7 +4540,7 @@ export class Match {
       : this.viewModel.muzzleWorldPosition(new THREE.Vector3());
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
     const base = this.cameraForward();
-    const HALF_SPAN_RAD = 24 * DEG;
+    const HALF_SPAN_RAD = weapon.def.pelletSpreadDeg * DEG; // F6: def駆動(鉄扇=24°)へ。ハードコード撤去
     const results = new Map<Bot, { damage: number; headshot: boolean; point: THREE.Vector3 }>();
     for (let i = 0; i < weapon.def.pellets; i += 1) {
       const yawOff = fanPelletYaw(i, weapon.def.pellets, HALF_SPAN_RAD) + (Math.random() - 0.5) * spreadRad * 0.3;
@@ -4478,7 +4567,7 @@ export class Match {
     if (this.staffProjectiles.length >= 5) return;
     const fwd = this.cameraForward();
     const origin = this.player.eyePosition.clone().addScaledVector(fwd, 0.5);
-    const vel = fwd.clone().multiplyScalar(40);
+    const vel = fwd.clone().multiplyScalar(70); // 強化: 雷球40→70m/s(中距離の実用化)
     const mesh = new THREE.Mesh(this.staffBoltGeo, this.staffBoltMat.clone());
     mesh.position.copy(origin);
     this.scene.add(mesh);
@@ -4486,7 +4575,7 @@ export class Match {
     this.scene.add(sparkGroup);
     const weapon = this.activeWeapon;
     const charged = this.staffChargeTimer >= 0.8;
-    const aoeRadius = 3 * (charged ? 1.5 : 1);
+    const aoeRadius = 3 * (charged ? 2.5 : 1); // 強化: 完全チャージ倍率1.5→2.5(=半径7.5m)
     this.staffProjectiles.push({ mesh, sparkGroup, pos: origin.clone(), vel, damage: weapon.def.damage, aoeRadius, timer: 0 });
     this.player.shotsFired += 1;
   }
@@ -4592,27 +4681,28 @@ export class Match {
     }
   }
 
-  private fireShurikenDisc(): void {
+  private fireShurikenDisc(hitPoint: THREE.Vector3 | null = null): void {
     if (this.shurikenDiscs.length >= 12) {
       const old = this.shurikenDiscs.shift();
       if (old) this.scene.remove(old.group);
     }
     const fwd = this.cameraForward();
     const pos = this.player.eyePosition.clone().addScaledVector(fwd, 0.3);
-    const vel = fwd.clone().multiplyScalar(60);
+    const vel = fwd.clone().multiplyScalar(SHURIKEN_DISC_SPEED);
     const group = this.effects.shurikenDiscFly(pos, fwd);
-    this.shurikenDiscs.push({ group, pos: pos.clone(), vel, timer: 0 });
+    // F8: fireShot(hitscan)の着弾点があれば飛行時間=距離/速度でクランプ(無ければ従来0.5s)
+    const life = shurikenDiscLife(hitPoint ? hitPoint.distanceTo(pos) : null, SHURIKEN_DISC_SPEED);
+    this.shurikenDiscs.push({ group, pos: pos.clone(), vel, timer: 0, life });
   }
 
   private updateShurikenDiscs(dt: number): void {
-    const MAX_LIFE = 0.5;
     const kept: typeof this.shurikenDiscs = [];
     for (const d of this.shurikenDiscs) {
       d.timer += dt;
       d.pos.addScaledVector(d.vel, dt);
       d.group.position.copy(d.pos);
       d.group.rotation.z += dt * 28;
-      if (d.timer < MAX_LIFE) {
+      if (d.timer < d.life) {
         kept.push(d);
       } else {
         // F3: geometry/material dispose(disposeObject流儀)
@@ -4637,8 +4727,9 @@ export class Match {
     this.shurikenDiscs = [];
   }
 
-  private fireShot(spreadRad: number): void {
-    if (!this.player.alive) return;
+  // F8: 最至近のbot着弾点を返す(手裏剣discの飛行打ち切りに使う。非ヒットはnull)
+  private fireShot(spreadRad: number): THREE.Vector3 | null {
+    if (!this.player.alive) return null;
     this.player.shotsFired += 1;
     if (this.trainingStats) this.trainingStats.shotsFired += 1;
     this.haptic(55, 0.15, 0.4); // 発砲のリコイル振動(トリガー1引きにつき1回)
@@ -4741,6 +4832,9 @@ export class Match {
     }
 
     let kills = 0;
+    // F8: 最至近のbot着弾点(手裏剣discのスナップ先)
+    let nearestHit: THREE.Vector3 | null = null;
+    let nearestHitD2 = Infinity;
     for (const [bot, result] of results) {
       this.player.shotsHit += 1;
       if (result.headshot) this.player.headshots += 1;
@@ -4758,6 +4852,11 @@ export class Match {
       ) {
         kills += 1;
       }
+      const hd2 = result.point.distanceToSquared(origin);
+      if (hd2 < nearestHitD2) {
+        nearestHitD2 = hd2;
+        nearestHit = result.point;
+      }
       // F7: 手裏剣命中スパーク音+着弾エフェクト
       if (weapon.def.special === 'shuriken') {
         this.sounds.shurikenHit();
@@ -4770,6 +4869,7 @@ export class Match {
       this.tracker.onCollateral(kills, out);
       this.emitMedals(out);
     }
+    return nearestHit;
   }
 
   // 1本の弾道を追う。世界ジオメトリに当たった場合は貫通力の範囲で1枚だけ抜ける
@@ -4939,9 +5039,11 @@ export class Match {
       if (this.config.mode !== 'zombie') {
         this.fkKillerIsPlayer = true;
         this.fkKillerBotIdx   = -1;
+        this.fkVictimBotIdx   = this.bots.indexOf(bot);
         this.fkKillElapsed    = this.elapsed;
       }
       this.killSurgeEnv = 1; // R20 rank4: キル確定サージ(PostFXの彩度/コントラスト+白エッジ)を点火
+      this.scoreboardDirty = true; // ★6 キル確定は即時反映
       this.player.kills += 1;
       this.player.streak += 1;
       if (this.mission && bot.team === ENEMY_TEAM) this.missionKills += 1;
@@ -5594,11 +5696,15 @@ export class Match {
     const playerPos = this.player.position;
     this.botFrameIdx = (this.botFrameIdx + 1) % 8; // 今フレームにLOSを走らせる観測者バケット(36bot増員対応)
     for (const bot of this.bots) {
+      // ★5 プレイヤー距離を1回だけ算出(スクラッチ再利用)。足音判定/敵足音の双方で使う
+      const botDistToPlayer = bot.getPositionInto(BOT_POS_SCRATCH).distanceTo(playerPos);
+      // ★8 遠距離(>50m)アニメLOD: syncMeshのsway/呼吸sin群をスキップ(位置/向きのみ同期)
+      bot.animLod = botDistToPlayer > ANIM_LOD_DIST_M;
       if (
         noisy &&
         bot.alive &&
         bot.team !== PLAYER_TEAM &&
-        bot.position.distanceTo(playerPos) < FOOTSTEP_HEAR_DIST
+        botDistToPlayer < FOOTSTEP_HEAR_DIST
       ) {
         bot.alert = Math.max(bot.alert, 1.5);
         bot.alertPos = playerPos.clone();
@@ -5645,7 +5751,8 @@ export class Match {
 
       // ── 敵足音 ── (生存ボットのみ。遠距離25m超/歩行ゼロはスキップ)
       if (bot.alive && this.player.alive) {
-        const botDist = bot.position.distanceTo(playerPos);
+        // ★5 ループ先頭の距離を再利用(bot.updateは物理stepまで translation を変えない)
+        const botDist = botDistToPlayer;
         if (botDist < 25 && bot.horizSpeedMps > 0.1) {
           const prev = this.botStepPhase.get(bot.uid) ?? 0;
           const next = prev + bot.horizSpeedMps * dt;
@@ -6225,6 +6332,7 @@ export class Match {
   private notePlayerDeath(killer: Bot | null = null): void {
     // 訓練場: プレイヤーは無敵なので呼ばれないはずだが念のためガード
     if (this.config.mode === 'training') return;
+    this.scoreboardDirty = true; // ★6 デス(相手キル)確定は即時反映
     // BO2 スコアストリーク: 死亡でprogress リセット (バンク保持)
     this.streakManager.onDeath();
     // RC-XD操縦中に死亡した場合は強制終了(本体は無防備という仕様)
@@ -6248,6 +6356,7 @@ export class Match {
       if (this.config.mode !== 'zombie') {
         this.fkKillerIsPlayer = false;
         this.fkKillerBotIdx   = this.bots.indexOf(killer);
+        this.fkVictimBotIdx   = -1; // プレイヤーが被害者
         this.fkKillElapsed    = this.elapsed;
       }
       this.killcamElapsedS = 0;
@@ -8028,12 +8137,7 @@ export class Match {
     if (this.zombieBossFlash > 0) {
       this.zombieBossFlash = Math.max(0, this.zombieBossFlash - dt * 3.0);
     }
-    // 近接影LOD: nearest≤8のみ castShadow。mapSize churnを避けるため周期(0.25s)トグル
-    this.zombieShadowTimer -= dt;
-    if (this.zombieShadowTimer <= 0) {
-      this.updateZombieShadowLOD();
-      this.zombieShadowTimer = 0.25;
-    }
+    // (影LODは★1で全モード共通化し update() 側で駆動。ここでの個別運用は廃止)
     if (this.over) return;
 
     if (this.zombieRoundCooldown > 0) {
@@ -8199,17 +8303,20 @@ export class Match {
     }
   }
 
-  // 近接≤8体のみ影を落とす(多数の影パス/mapSize churnを抑える距離LOD)
-  private updateZombieShadowLOD(): void {
-    const zs: Bot[] = [];
-    for (const b of this.bots) if (b.kind === 'zombie' && b.alive) zs.push(b);
-    if (zs.length <= 8) {
-      for (const z of zs) z.setCastShadow(true);
-      return;
-    }
+  // ★1 近接≤8体のみ影を落とす距離LOD(多数の影パス/mapSize churnを抑える)。
+  // ゾンビ専用だった運用を全モード/全kindへ一般化(全巨躯54体で影DC162→24)。
+  // aliveのみ再判定し、死亡演出中の個体は直近フラグを維持する(従来と同じ)
+  private updateBotShadowLOD(): void {
+    const alive: Bot[] = [];
+    const d2: number[] = [];
     const cam = this.camera.position;
-    zs.sort((a, b) => a.position.distanceToSquared(cam) - b.position.distanceToSquared(cam));
-    for (let i = 0; i < zs.length; i += 1) zs[i]!.setCastShadow(i < 8);
+    for (const b of this.bots) {
+      if (!b.alive) continue;
+      alive.push(b);
+      d2.push(b.getPositionInto(BOT_POS_SCRATCH).distanceToSquared(cam)); // ★5 割り当てゼロ
+    }
+    const flags = shadowLodFlags(d2, SHADOW_CASTER_CAP);
+    for (let i = 0; i < alive.length; i += 1) alive[i]!.setCastShadow(flags[i]!);
   }
 
   // ミッション開始時の準備: 濃霧・脱出地点・第1波
@@ -8645,6 +8752,11 @@ export class Match {
       raiteiMode: this.isNinja && this.raiteiMode ? true : undefined,
       kokuraiteiMode: this.isNinja && this.kokuraiteiMode ? true : undefined,
       chargeRatio: this.isNinja && this.isCharging ? Math.min(1, this.chargeTimer / 1.2) : undefined,
+      // 修羅スピンアップRPMゲージ(minigun装備+スピン>0のみ供給。0..1=currentRpm/def.rpm)
+      minigunSpin01:
+        weapon.def.special === 'minigun' && this.minigunCurrentRpm > 0
+          ? Math.min(1, this.minigunCurrentRpm / weapon.def.rpm)
+          : undefined,
       // ── BO2 スコアストリーク ──
       streakProgress: this.streakManager.state.progress,
       streakBanked: this.streakManager.state.banked,
@@ -8728,20 +8840,31 @@ export class Match {
   private computeEnemyBearings(): Array<{ angle: number; dist: number }> {
     const out: Array<{ angle: number; dist: number }> = [];
     if (!this.player.alive) return out;
+    this.bearingsFrameIdx = (this.bearingsFrameIdx + 1) % 4;
     const px = this.player.position.x;
     const pz = this.player.position.z;
     const eye = this.player.eyePosition;
     const forwardAngle = Math.atan2(-Math.sin(this.player.yaw), -Math.cos(this.player.yaw));
     for (const bot of this.bots) {
       if (!bot.alive || bot.team === PLAYER_TEAM) continue;
-      const dx = bot.position.x - px;
-      const dz = bot.position.z - pz;
+      const aim = bot.getPositionInto(BOT_POS_SCRATCH); // ★5 割り当てゼロ(旧: new×2/bot)
+      const dx = aim.x - px;
+      const dz = aim.z - pz;
       const dist = Math.hypot(dx, dz);
       if (dist > RADAR_RANGE_M) continue;
-      const aim = bot.position;
       aim.y += 0.15;
       if (this.smokeBlocks(eye, aim)) continue;
-      if (!this.playerCanSee(eye, aim, bot)) continue;
+      // ★4 playerCanSee(raycast)はuid%4バケットの担当フレームのみ実行し、
+      // 非担当フレームは前回可視値を再利用(レーダー表示は最大4フレーム=67ms遅延で視認不能)
+      let visible: boolean;
+      const cached = this.bearingVisCache.get(bot.uid);
+      if (bot.uid % 4 === this.bearingsFrameIdx || cached === undefined) {
+        visible = this.playerCanSee(eye, aim, bot);
+        this.bearingVisCache.set(bot.uid, visible);
+      } else {
+        visible = cached;
+      }
+      if (!visible) continue;
       out.push({ angle: wrapAngle(forwardAngle - Math.atan2(dx, dz)), dist });
     }
     return out;
@@ -8768,7 +8891,8 @@ export class Match {
     const out: Array<{ relX: number; relZ: number }> = [];
     for (const bot of this.bots) {
       if (!bot.alive || bot.team !== PLAYER_TEAM) continue;
-      out.push({ relX: bot.position.x - px, relZ: bot.position.z - pz });
+      const bp = bot.getPositionInto(BOT_POS_SCRATCH); // ★5 割り当てゼロ
+      out.push({ relX: bp.x - px, relZ: bp.z - pz });
     }
     return out;
   }
@@ -8817,6 +8941,12 @@ export class Match {
   }
 
   scoreboard(): ScoreRow[] {
+    // ★6 dirtyフラグ+0.2sスロットル: 毎フレームの配列構築+sortをキャッシュで撃退。
+    // kill/death funnelがdirtyを立てれば即時再構築、それ以外も0.2sで必ず追随。
+    // 試合終了(over)後は常に最新(リザルト画面の確定値を保証)
+    if (!this.over && !this.scoreboardDirty && this.elapsed < this.scoreboardNextAt) {
+      return this.scoreboardCache;
+    }
     const rows: ScoreRow[] = [
       {
         name: PLAYER_NAME,
@@ -8833,7 +8963,10 @@ export class Match {
         isAlly: bot.team === PLAYER_TEAM,
       })),
     ];
-    return rows.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+    this.scoreboardCache = rows.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+    this.scoreboardDirty = false;
+    this.scoreboardNextAt = this.elapsed + 0.2;
+    return this.scoreboardCache;
   }
 
   // ── ファイナルキルカム: 記録メソッド ──────────────────────────────
@@ -8852,13 +8985,12 @@ export class Match {
     this.fkBotCnt[h] = nb;
     for (let i = 0; i < nb; i++) {
       const bot  = this.bots[i]!;
-      const bpos  = bot.position;
-      const bhead = bot.headPosition();
+      const bpos = bot.getPositionInto(BOT_POS_SCRATCH); // ★5 割り当てゼロ(旧: new×2/bot)
       const bo = off + FK_P + i * FK_B;
       this.fkBuf[bo    ] = bpos.x;
       this.fkBuf[bo + 1] = bpos.y;
       this.fkBuf[bo + 2] = bpos.z;
-      this.fkBuf[bo + 3] = bhead.y;
+      this.fkBuf[bo + 3] = bpos.y + bot.headOffsetY; // = headPosition().y
       this.fkBuf[bo + 4] = Math.atan2(-bot.aimDir.x, -bot.aimDir.z);
       this.fkBuf[bo + 5] = bot.alive ? 1 : 0;
     }
@@ -8942,16 +9074,16 @@ export class Match {
    */
   private fkSpeedAt(cursor: number): number {
     const d = cursor - this.fkWinKill; // キルからの相対時間(負=前・正=後)
-    if (d < -1.5) return 1.0;          // キル 1.5s より前: 等速1×
+    if (d < -0.5) return 1.0;          // キル 0.5s より前: 等速1×
     if (d < 0.0) {
-      // キル 1.5s 前〜キル: 1.0 → 0.3 へ線形減速
-      const t = (d + 1.5) / 1.5;      // 0 → 1
-      return 1.0 + (0.3 - 1.0) * t;
+      // キル 0.5s 前〜キル直前: 1.0 → 0.25 へ線形減速(決定打が際立つ急ブレーキ)
+      const t = (d + 0.5) / 0.5;      // 0 → 1
+      return 1.0 + (0.25 - 1.0) * t;
     }
-    if (d < 0.5) return 0.3;           // キル〜キル後 0.5s: 0.3× ホールド
-    // キル後 0.5s〜窓終端: 0.3 → 1.0 へ線形復帰
+    if (d < 0.5) return 0.25;          // キル〜キル後 0.5s: 0.25× ホールド(死亡演出を魅せる)
+    // キル後 0.5s〜窓終端: 0.25 → 1.0 へ線形復帰
     const t = Math.min(1, (d - 0.5) / Math.max(1e-6, FK_WIN_POST - 0.5));
-    return 0.3 + (1.0 - 0.3) * t;
+    return 0.25 + (1.0 - 0.25) * t;
   }
 
   /**
@@ -9004,32 +9136,120 @@ export class Match {
   }
 
   private fkApplyFrame(iA: number, iB: number, t: number): void {
-    const offA = iA * FK_FRAME_STRIDE;
-    const offB = iB * FK_FRAME_STRIDE;
-    const nbA  = this.fkBotCnt[iA]!;
-    const nbB  = this.fkBotCnt[iB]!;
-    const nb   = Math.min(nbA, nbB, this.bots.length);
+    const offA   = iA * FK_FRAME_STRIDE;
+    const offB   = iB * FK_FRAME_STRIDE;
+    const nbA    = this.fkBotCnt[iA]!;
+    const nbB    = this.fkBotCnt[iB]!;
+    const nb     = Math.min(nbA, nbB, this.bots.length);
+    const cursor = this.fkCursor;
+    const killT  = this.fkWinKill;
+
     for (let i = 0; i < this.bots.length; i++) {
       const bot = this.bots[i]!;
       if (i < nb) {
         const boA = offA + FK_P + i * FK_B;
         const boB = offB + FK_P + i * FK_B;
-        const bx   = this.fkBuf[boA    ]! + (this.fkBuf[boB    ]! - this.fkBuf[boA    ]!) * t;
-        const by   = this.fkBuf[boA + 1]! + (this.fkBuf[boB + 1]! - this.fkBuf[boA + 1]!) * t;
-        const bz   = this.fkBuf[boA + 2]! + (this.fkBuf[boB + 2]! - this.fkBuf[boA + 2]!) * t;
-        const ya   = this.fkBuf[boA + 4]!;
-        const yb   = this.fkBuf[boB + 4]!;
-        let   yd   = yb - ya;
+        const bx  = this.fkBuf[boA    ]! + (this.fkBuf[boB    ]! - this.fkBuf[boA    ]!) * t;
+        const by  = this.fkBuf[boA + 1]! + (this.fkBuf[boB + 1]! - this.fkBuf[boA + 1]!) * t;
+        const bz  = this.fkBuf[boA + 2]! + (this.fkBuf[boB + 2]! - this.fkBuf[boA + 2]!) * t;
+        const ya  = this.fkBuf[boA + 4]!;
+        const yb  = this.fkBuf[boB + 4]!;
+        let   yd  = yb - ya;
         if (yd >  Math.PI) yd -= Math.PI * 2;
         if (yd < -Math.PI) yd += Math.PI * 2;
         const byaw = ya + yd * t;
-        const balive = (this.fkBuf[boA + 5]! > 0.5) || (this.fkBuf[boB + 5]! > 0.5);
-        bot.group.position.set(bx, by, bz);
-        bot.group.rotation.y = byaw;
-        bot.group.visible    = balive;
+
+        if (i === this.fkVictimBotIdx) {
+          // 被害者ボット: キル前はalive姿勢で表示、キル後は死亡アニメを手続き再現
+          bot.group.position.set(bx, by, bz);
+          bot.group.rotation.y = byaw;
+          bot.group.visible    = true;
+          // 死亡演出で変形したトランスフォームを一旦alive姿勢へ巻き戻す
+          this.fkResetAlivePose(bot);
+          if (cursor >= killT) {
+            // キル後: 経過時間から死亡ポーズを手続き的に再現(倒れる瞬間を見せる)
+            this.fkApplyDeathPose(bot, cursor - killT);
+          }
+        } else {
+          // 非被害者ボット: バッファのaliveフラグに従う
+          const balive = (this.fkBuf[boA + 5]! > 0.5) || (this.fkBuf[boB + 5]! > 0.5);
+          bot.group.position.set(bx, by, bz);
+          bot.group.rotation.y = byaw;
+          bot.group.visible    = balive;
+          if (balive) {
+            // alive表示時は死亡演出のトランスフォームをリセットしてalive姿勢に戻す
+            this.fkResetAlivePose(bot);
+          }
+        }
       } else {
         bot.group.visible = false;
       }
+    }
+  }
+
+  /**
+   * ファイナルキルカム用: 死亡演出で変形した全トランスフォームをalive姿勢へ巻き戻す。
+   * bot.ts respawnAt の視覚リセット部分と同一(物理/AI/HPは触らない)。
+   */
+  private fkResetAlivePose(bot: Bot): void {
+    const r = bot as unknown as FkBotRig;
+    bot.group.rotation.x = 0;
+    bot.group.rotation.z = 0;
+    r.rig.position.y = 0;
+    r.rig.rotation.x = 0;
+    r.rig.rotation.z = 0;
+    r.legL.rotation.set(0, 0, 0);
+    r.legR.rotation.set(0, 0, 0);
+    r.kneeL.rotation.set(0, 0, 0);
+    r.kneeR.rotation.set(0, 0, 0);
+    r.dissolveU.value = 0;
+    if (r.turretGroup) {
+      r.turretGroup.position.set(0, 0.95, 0.1);
+      r.turretGroup.rotation.set(0, 0, 0);
+    }
+    if (r.tankBarrel) r.tankBarrel.rotation.set(0, 0, 0);
+    if (r.turretHead) r.turretHead.rotation.set(0, 0, 0);
+    for (const leg of r.turretLegs) leg.rotation.x = 0;
+  }
+
+  /**
+   * ファイナルキルカム用: キル時刻からの経過秒を渡すと死亡演出ポーズを再現する。
+   * bot.ts updateDying と同一の式だがカウントダウンではなく経過時間を入力とする。
+   * (fkResetAlivePose 済みの姿勢に対して適用する前提)
+   */
+  private fkApplyDeathPose(bot: Bot, deathElapsedS: number): void {
+    const r = bot as unknown as FkBotRig;
+    const totalS = FK_DEATH_S[bot.kind] ?? 0.6;
+    const t = Math.min(1, Math.max(0, deathElapsedS / totalS));
+
+    if (bot.kind === 'drone') {
+      // 墜落スピンの簡易再現(物理Y降下は再現せず回転のみ)
+      bot.group.rotation.x = t * (Math.PI / 2) * 0.8;
+      bot.group.rotation.z = t * Math.PI * 1.5;
+    } else if (bot.kind === 'turret') {
+      bot.group.rotation.z = -1.25 * t;
+      if (r.turretHead) r.turretHead.rotation.x = t * 0.9;
+      for (const leg of r.turretLegs) leg.rotation.x = -t * 0.4;
+    } else if (bot.kind === 'tank') {
+      const blow = THREE.MathUtils.clamp(t / 0.3, 0, 1);
+      if (r.turretGroup) {
+        r.turretGroup.position.y = 0.95 + blow * 0.9;
+        r.turretGroup.rotation.z = blow * 0.7 * (r.deathTilt >= 0 ? 1 : -1);
+        r.turretGroup.rotation.x = -blow * 0.5;
+      }
+      if (r.tankBarrel) r.tankBarrel.rotation.x = blow * 0.6;
+    } else {
+      // humanoid / zombie / master / giant: 膝崩れ(前段)→前傾横倒し(後段)
+      const buckle = THREE.MathUtils.clamp(t / 0.45, 0, 1);
+      r.legL.rotation.x = buckle * 0.3;
+      r.legR.rotation.x = buckle * 0.3;
+      r.kneeL.rotation.x = buckle * 1.4;
+      r.kneeR.rotation.x = buckle * 1.4;
+      r.rig.position.y = -buckle * 0.22;
+      const fall = THREE.MathUtils.clamp((t - 0.35) / 0.65, 0, 1);
+      const ease = fall * fall * (3 - 2 * fall); // smoothstep
+      bot.group.rotation.x = ease * (Math.PI / 2) * 0.95;
+      bot.group.rotation.z = ease * r.deathTilt;
     }
   }
 

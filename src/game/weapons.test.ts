@@ -22,6 +22,7 @@ const WEAPON_CLASSES: WeaponClass[] = [
   'pistol',
   'marksman',
   'launcher',
+  'exotic', // R35: 特殊兵装クラス追加
 ];
 const SOUND_PROFILES: SoundProfile[] = [
   'ar',
@@ -173,9 +174,10 @@ describe('武器定義の整合性', () => {
     }
   });
 
-  it('複数ペレットはショットガンクラスだけが持つ', () => {
+  it('複数ペレットはショットガンクラスまたは特殊兵装(扇)だけが持つ', () => {
     for (const def of Object.values(WEAPON_DEFS)) {
-      if (def.class === 'shotgun') {
+      // shotgun と exotic(風神扇=10pellets)のみ複数ペレット許容
+      if (def.class === 'shotgun' || def.class === 'exotic') {
         expect(def.pellets).toBeGreaterThanOrEqual(1);
       } else {
         expect(def.pellets).toBe(1);
@@ -201,17 +203,19 @@ describe('武器定義の整合性', () => {
     }
   });
 
-  it('スコープ/エイムアシストはスナイパークラスだけが許される', () => {
+  it('スコープ/エイムアシストはスナイパーまたは特殊兵装クラスだけが許される', () => {
     // 既存スナイパーは引き続き両方を持つ
     expect(WEAPON_DEFS['yamasemi-dmr']!.scope).toBe(true);
     expect(WEAPON_DEFS['yamasemi-dmr']!.aimAssist).toBe(true);
     for (const def of Object.values(WEAPON_DEFS)) {
-      // scope:true / aimAssist:true は sniper クラスのみ(marksman は false)
-      if (def.scope === true) expect(def.class).toBe('sniper');
-      if (def.aimAssist === true) expect(def.class).toBe('sniper');
-      if (def.class !== 'sniper') {
-        expect(def.scope).not.toBe(true);
-        expect(def.aimAssist).not.toBe(true);
+      // scope:true / aimAssist:true は sniper か exotic クラスのみ
+      // (月光弓/業炎銃/蜃気楼は scope+aimAssist 持ちの特殊兵装)
+      const scopeClasses = ['sniper', 'exotic'];
+      if (def.scope === true) expect(scopeClasses, def.id).toContain(def.class);
+      if (def.aimAssist === true) expect(scopeClasses, def.id).toContain(def.class);
+      if (!scopeClasses.includes(def.class)) {
+        expect(def.scope, def.id).not.toBe(true);
+        expect(def.aimAssist, def.id).not.toBe(true);
       }
     }
   });
@@ -302,18 +306,24 @@ describe('拡張ロスターの不変条件', () => {
     }
   });
 
-  it('スナイパー/ランチャー以外は素ダメージ<100(ヘッドショット無しの胴即死を回避)', () => {
+  it('スナイパー/ランチャー/特殊兵装以外は素ダメージ<100(ヘッドショット無しの胴即死を回避)', () => {
     for (const def of Object.values(WEAPON_DEFS)) {
-      // sniper は胴/頭OSK設計。launcher は爆発物で直撃damage=220だがhitscanを使わない
-      if (def.class === 'sniper' || def.class === 'launcher') continue;
+      // sniper: 胴/頭OSK設計 / launcher: 爆発物で直撃damage≥100 / exotic: 業炎銃(160)等
+      if (def.class === 'sniper' || def.class === 'launcher' || def.class === 'exotic') continue;
       expect(def.damage, def.id).toBeLessThan(100);
     }
   });
 
-  it('スナイパー/ショットガン/ランチャー以外は1射の合計ダメージ<100(胴即死禁止)', () => {
-    // ショットガンは至近の全弾命中で即死=設計どおり。ランチャーは爆発物で直撃damage≥100
+  it('スナイパー/ショットガン/ランチャー/特殊兵装以外は1射の合計ダメージ<100(胴即死禁止)', () => {
+    // ショットガンは至近の全弾命中で即死=設計どおり。ランチャーは爆発物で直撃damage≥100。
+    // exotic: 業炎銃(160×1)/月光弓(120×1)/風神扇(22×10=220)等は特殊兵装設計なので除外
     for (const def of Object.values(WEAPON_DEFS)) {
-      if (def.class === 'sniper' || def.class === 'shotgun' || def.class === 'launcher') continue;
+      if (
+        def.class === 'sniper' ||
+        def.class === 'shotgun' ||
+        def.class === 'launcher' ||
+        def.class === 'exotic'
+      ) continue;
       expect(def.damage * def.pellets, def.id).toBeLessThan(100);
     }
   });

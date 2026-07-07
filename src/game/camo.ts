@@ -97,6 +97,7 @@ export const CAMO_CLASS_LABELS: Record<WeaponClass, string> = {
   lmg: 'ライトマシンガン',
   pistol: 'ハンドガン',
   launcher: 'ロケットランチャー',
+  exotic: '特殊兵装',
 };
 
 // カモ対象武器のクラス(非対象・未知IDは null)

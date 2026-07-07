@@ -137,6 +137,8 @@ export const LONGSHOT: Record<WeaponClass, number> = {
   marksman: 48,
   // ロケットランチャー: 爆発範囲攻撃のためロングショット無効
   launcher: Infinity,
+  // 特殊兵装: 武器によるが中距離以遠で実績成立
+  exotic: 40,
 };
 
 // バッジ表示しない(killfeed のアイコンのみに降格する)メダル。HUDが参照

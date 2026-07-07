@@ -711,6 +711,22 @@ export const MINIGUN_SPIN_SPEC = {
   droneGain: 0.38,
 } as const;
 
+// 天雷杖の発射音: 高周波チャージ(下降sweep)→放電クラック+低い残響。
+// match側の天雷杖発射(special:'staff')から呼ばれる。
+export const STAFF_FIRE_SPEC = {
+  chargeFreqHz: 2800,      // チャージ帯(高域)
+  chargeSweepHz: 600,      // sweep先(チャージ収束=低域)
+  chargeGain: 0.22,
+  chargeDurationS: 0.08,
+  crackFreqHz: 4200,       // 放電クラックの中心Hz(チャージより高い=瞬発感)
+  crackGain: 0.44,
+  crackDurationS: 0.022,
+  rumbleFreqHz: 72,        // 低い余韻サブ
+  rumbleEndFreqHz: 28,
+  rumbleGain: 0.32,
+  rumbleDurationS: 0.38,
+} as const;
+
 export class SoundKit {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -2858,6 +2874,38 @@ export class SoundKit {
     // L3 低域サブ(発射の重さを感じさせる)
     this.tone({ freq: 80, endFreq: 32, durationS: 0.38, type: 'triangle', gain: 0.4, drive: 4 });
     this.duck(-8, 0.06);
+  }
+
+  // 天雷杖の発射音(F3): 高周波チャージ(下降sweep)→放電クラック+低い余韻残響。
+  // match側からの呼び出し実装は別便(staffFire呼出/match.ts)に引き継ぐ。
+  staffFire(): void {
+    // L1 高周波チャージ(2800Hz帯域→放電前の溜め感)
+    this.noiseBurst({
+      durationS: STAFF_FIRE_SPEC.chargeDurationS,
+      filterHz: STAFF_FIRE_SPEC.chargeFreqHz,
+      filterType: 'bandpass',
+      q: 6,
+      gain: STAFF_FIRE_SPEC.chargeGain,
+      attackS: 0.002,
+    });
+    // L2 放電クラック(4200Hz 高域ハイパス = 雷の「バチッ」)
+    this.noiseBurst({
+      durationS: STAFF_FIRE_SPEC.crackDurationS,
+      filterHz: STAFF_FIRE_SPEC.crackFreqHz,
+      filterType: 'highpass',
+      gain: STAFF_FIRE_SPEC.crackGain,
+      attackS: 0.001,
+    });
+    // L3 低い余韻サブ(三角波の下降グラウル=雷が地を這う余韻)
+    this.tone({
+      freq: STAFF_FIRE_SPEC.rumbleFreqHz,
+      endFreq: STAFF_FIRE_SPEC.rumbleEndFreqHz,
+      durationS: STAFF_FIRE_SPEC.rumbleDurationS,
+      type: 'triangle',
+      gain: STAFF_FIRE_SPEC.rumbleGain,
+      drive: 3,
+    });
+    this.duck(-7, 0.05);
   }
 
   bounce(pan: number, distance: number): void {
