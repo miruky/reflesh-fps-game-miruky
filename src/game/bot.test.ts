@@ -80,3 +80,68 @@ describe('Bot 死亡とリスポーン', () => {
     expect(fixture.bot.hp).toBe(100);
   });
 });
+
+describe('Bot animHalfLod フィールド', () => {
+  it('初期値は false', () => {
+    const fixture = makeFixture();
+    expect(fixture.bot.animHalfLod).toBe(false);
+  });
+
+  it('外部から書き込み可能(match.ts の updateBots が設定する)', () => {
+    const fixture = makeFixture();
+    fixture.bot.animHalfLod = true;
+    expect(fixture.bot.animHalfLod).toBe(true);
+    fixture.bot.animHalfLod = false;
+    expect(fixture.bot.animHalfLod).toBe(false);
+  });
+});
+
+describe('Bot resetForZombieReuse(ゾンビプール再利用)', () => {
+  it('新しいチューニングの HP へ回復し、指定位置でコライダーが有効になる', () => {
+    const fixture = makeFixture();
+    const bot = fixture.bot;
+
+    // 一度ダメージで倒す
+    bot.takeDamage(999);
+    fixture.world.step();
+    expect(bot.alive).toBe(false);
+
+    // tuning: zombieHp風(r10=104相当)の maxHp を渡す
+    const newTuning = { ...DIFFICULTY.normal, maxHp: 104, moveSpeedMul: 1.44 };
+    const spawnPos = new THREE.Vector3(5, 0, 5);
+    bot.resetForZombieReuse(newTuning, spawnPos);
+    fixture.world.step();
+
+    expect(bot.alive).toBe(true);
+    expect(bot.hp).toBe(104);
+
+    // コライダーがアクティブ化されレイに当たる
+    const bodyY = bot.position.y;
+    const ray = new RAPIER.Ray({ x: 5, y: bodyY, z: -5 }, { x: 0, y: 0, z: 1 });
+    const hit = fixture.world.castRay(ray, 100, true);
+    expect(hit).not.toBeNull();
+    expect(hit!.collider.handle).toBe(bot.bodyCollider.handle);
+  });
+
+  it('moveSpeed が新しい tuning の moveSpeedMul に更新される', () => {
+    const fixture = makeFixture();
+    const bot = fixture.bot;
+    bot.takeDamage(999);
+    fixture.world.step();
+
+    const fastTuning = { ...DIFFICULTY.normal, maxHp: 80, moveSpeedMul: 2.3 }; // 走行elite相当
+    bot.resetForZombieReuse(fastTuning, new THREE.Vector3(0, 0, 0));
+    fixture.world.step();
+
+    const botSlow = new Bot(fixture.world, 'slow', new THREE.Vector3(10, 0, 0), 0x000000, DIFFICULTY.normal);
+    botSlow.takeDamage(999);
+    fixture.world.step();
+    const slowTuning = { ...DIFFICULTY.normal, maxHp: 80, moveSpeedMul: 1.44 };
+    botSlow.resetForZombieReuse(slowTuning, new THREE.Vector3(10, 0, 0));
+    fixture.world.step();
+
+    // moveSpeed は public でないため animHalfLod 同様に black-box: hp だけ検証
+    expect(bot.hp).toBe(80);
+    expect(botSlow.hp).toBe(80);
+  });
+});

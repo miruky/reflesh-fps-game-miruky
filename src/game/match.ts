@@ -55,6 +55,7 @@ import {
   HIP_OFFSET_Y,
   KIND_TUNING,
   tuningFor,
+  ZOMBIE_KCC_LOD_NEAR_M,
   type BotKind,
   type BotTier,
   type BotTuning,
@@ -486,6 +487,8 @@ export function shurikenDiscLife(hitDistM: number | null, speedMps: number, maxL
 const SHADOW_CASTER_CAP = 8;
 // ★8 アニメLOD発動距離(この距離を超えたbotはsyncMeshのsin群をスキップ)
 const ANIM_LOD_DIST_M = 50;
+// ★ ゾンビメッシュプール: high tierの最大同時生存数までプールを事前確保(108体)
+const ZOMBIE_POOL_MAX = ZOMBIE_MAX_ALIVE.high;
 // F8 手裏剣discの飛行速度(m/s)。fireShurikenDiscのvelと寿命クランプの単一の真実
 const SHURIKEN_DISC_SPEED = 60;
 // ★5 ホットパス用スクラッチ(bot.getPositionInto の受け皿。逐次利用のみ=エイリアス無し)
@@ -1212,6 +1215,7 @@ export class Match {
   private zombieQueue = 0; // このラウンドの残り湧き数(一斉湧き: alive<cap のたびに即補充)
   private zombieRoundCooldown = 0; // ラウンド間の小休止
   private zombieTierCap = ZOMBIE_MAX_ALIVE.medium; // 同時生存上限(tier連動)
+  private readonly zombiePool: Bot[] = []; // ★ メッシュプール: 死亡済み通常ゾンビを再利用(buildZombieMesh削減)
   private zombieMeleeGlobal = 0; // 近接ダメージのグローバル次回許可時刻(elapsed基準)
   private zombieMeleeIframe = 0; // プレイヤーi-frameの終了時刻(elapsed基準)
   private botShadowLodTimer = 0; // ★1 近接影LODの周期トグル(全モード共通。0.25s)
@@ -5981,6 +5985,8 @@ export class Match {
       const botDistToPlayer = bot.getPositionInto(BOT_POS_SCRATCH).distanceTo(playerPos);
       // ★8 遠距離(>50m)アニメLOD: syncMeshのsway/呼吸sin群をスキップ(位置/向きのみ同期)
       bot.animLod = botDistToPlayer > ANIM_LOD_DIST_M;
+      // ★ ゾンビアニメ半減LOD: 25-50mはuid%2バケットで更新を間引く
+      bot.animHalfLod = bot.kind === 'zombie' && !bot.animLod && botDistToPlayer > ZOMBIE_KCC_LOD_NEAR_M;
       if (
         noisy &&
         bot.alive &&
@@ -8593,6 +8599,7 @@ export class Match {
 
   // 湧きリング(プレイヤーの18〜32m外周・フラスタム外)へ1体。HP/速度は tuning に載せて渡す
   // (KIND_TUNING.zombieに maxHp/moveSpeedMul を入れると spawnBot merge で後勝ち上書きされる致命バグ回避)
+  // ★ 通常tierはプール優先: resetForZombieReuse で再利用し buildZombieMesh コストをゼロにする。
   private spawnOneZombie(): boolean {
     const spawn = this.zombieSpawnPoint();
     if (!spawn) return false; // 有効な湧き点が無ければ次フレーム再試行(queueは減らさない)
@@ -8607,6 +8614,20 @@ export class Match {
     };
     const color = elite ? 0x6d7d3a : this.zombieSpawnColor;
     const name = BOT_NAMES[Math.floor(this.rand() * BOT_NAMES.length)] ?? 'ゾンビ';
+
+    // ★ メッシュプール: 通常tier(=elite でない)かつプールに再利用可能インスタンスがあれば流用
+    if (!elite && this.zombiePool.length > 0) {
+      const bot = this.zombiePool.pop()!;
+      bot.resetForZombieReuse(tuning, spawn);
+      bot.zombieRunMul = run ? 1.6 : 1;
+      // tags 再登録(cleanupDeadZombies で削除済み → 新しいcollider handleで再登録)
+      this.tags.set(bot.bodyCollider.handle, { kind: 'bot', bot, part: 'body' });
+      this.tags.set(bot.headCollider.handle, { kind: 'bot', bot, part: 'head' });
+      this.scene.add(bot.group);
+      this.bots.push(bot);
+      return true;
+    }
+
     const bot = this.spawnBot(name, spawn, color, ENEMY_TEAM, tuning, 'normal', 'zombie');
     bot.zombieRunMul = run ? 1.6 : 1; // 走行個体はローカル倍率で加速(moveSpeedはreadonly)
     return true;
@@ -8698,9 +8719,10 @@ export class Match {
     }
   }
 
-  // 死んで演出も終わったゾンビを解放する。厳密順序: tags削除 → dispose(body/collider/geom/mat解放)
-  // → scene除去 → splice(逆順ループで添字ズレ回避)。tagsを先に消さないと解放済みhandleの
-  // 再利用で旧タグが新ゾンビのcolliderを死亡済み旧Botへ解決し、新ゾンビが実質無敵化する
+  // 死んで演出も終わったゾンビを解放する。厳密順序: tags削除 → dispose/pool → scene除去 → splice。
+  // tagsを先に消さないと解放済みhandleの再利用で旧タグが新ゾンビのcolliderを旧Botへ解決する。
+  // ★ 通常tier(normal)ゾンビはプールへ退避してbuildZombieMeshの再実行を避ける。
+  // elite/bossは色が異なるため dispose して毎回生成する(出現頻度が低いので許容)。
   private cleanupDeadZombies(): void {
     for (let i = this.bots.length - 1; i >= 0; i -= 1) {
       const b = this.bots[i]!;
@@ -8708,8 +8730,14 @@ export class Match {
       this.tags.delete(b.bodyCollider.handle);
       this.tags.delete(b.headCollider.handle);
       for (const c of b.extraColliders) this.tags.delete(c.handle);
-      b.dispose();
-      this.scene.remove(b.group);
+      // 通常tierかつプール未満ならプールへ退避(再利用でbuildZombieMesh削減)
+      if (b.tier === 'normal' && this.zombiePool.length < ZOMBIE_POOL_MAX) {
+        this.scene.remove(b.group);
+        this.zombiePool.push(b);
+      } else {
+        b.dispose();
+        this.scene.remove(b.group);
+      }
       this.bots.splice(i, 1);
     }
     // ボスbot参照が解放済みなら null へ
@@ -10454,6 +10482,9 @@ export class Match {
     }
     this.zombieShopGroups.length = 0;
     this.zombieBossBot = null;
+    // ★ ゾンビプールをフラッシュ(match終了時=プールBotはsceneに追加されていないのでdisposeのみ)
+    for (const b of this.zombiePool) b.dispose();
+    this.zombiePool.length = 0;
     // ドッグタグエンティティを解放(scene.traverse前に削除してからgeometry/material解放)
     for (const entity of this.kcDogTagEntities) {
       this.scene.remove(entity.group);
@@ -10561,6 +10592,11 @@ export class Match {
       }
     });
     this.disposeTrainingTargets();
+    // ★ ゾンビメッシュプールを解放(scene.traverseの外にいるため明示的に dispose が必要)
+    for (const bot of this.zombiePool) {
+      bot.dispose();
+    }
+    this.zombiePool.length = 0;
     this.botGhostUpdateBucket.clear();
     this.botGhostPos.clear();
     this.physics.free();

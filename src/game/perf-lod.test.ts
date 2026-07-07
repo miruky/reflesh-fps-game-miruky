@@ -1,9 +1,11 @@
 // R36 性能軽量化の純関数群のテスト:
 // ★1 影LODバケット(shadowLodFlags) / ★2 巨躯KCC距離LOD(giantKccActive)
+// ★Z ゾンビKCC距離LOD(zombieKccActive) / R100 cap検証(zombieTotal/ZOMBIE_MAX_ALIVE)
 // F2 修羅の弾返却(refundRound) / F8 手裏剣disc寿命クランプ(shurikenDiscLife)
 import { describe, expect, it } from 'vitest';
 import { refundRound, shadowLodFlags, shurikenDiscLife } from './match';
-import { giantKccActive } from './bot';
+import { giantKccActive, zombieKccActive } from './bot';
+import { zombieTotal, ZOMBIE_MAX_ALIVE } from './zombie';
 
 describe('shadowLodFlags(★1 影LODバケット)', () => {
   it('cap以下なら全員true', () => {
@@ -54,6 +56,69 @@ describe('giantKccActive(★2 巨躯KCC距離LOD)', () => {
   it('target不明(Infinity)は遠距離扱いで間引く', () => {
     expect(giantKccActive(0, 1, Infinity)).toBe(false);
     expect(giantKccActive(0, 2, Infinity)).toBe(true);
+  });
+});
+
+describe('zombieKccActive(★Z ゾンビKCC距離LOD)', () => {
+  it('25m以内は常時フル解決(every frame)', () => {
+    for (let frame = 0; frame < 4; frame += 1) {
+      expect(zombieKccActive(0, frame, 0)).toBe(true);
+      expect(zombieKccActive(7, frame, 25)).toBe(true);
+    }
+  });
+
+  it('25-60m は uid%2 バケット(2フレームに1回)', () => {
+    // uid偶数: 偶数フレームのみ担当
+    expect(zombieKccActive(4, 0, 40)).toBe(true);
+    expect(zombieKccActive(4, 1, 40)).toBe(false);
+    expect(zombieKccActive(4, 2, 40)).toBe(true);
+    // uid奇数: 奇数フレームのみ担当
+    expect(zombieKccActive(3, 0, 40)).toBe(false);
+    expect(zombieKccActive(3, 1, 40)).toBe(true);
+    expect(zombieKccActive(3, 2, 40)).toBe(false);
+  });
+
+  it('60m超は uid%4 バケット(4フレームに1回)', () => {
+    // uid=0: frame%4===0 のときだけ true
+    expect(zombieKccActive(0, 0, 80)).toBe(true);
+    expect(zombieKccActive(0, 1, 80)).toBe(false);
+    expect(zombieKccActive(0, 2, 80)).toBe(false);
+    expect(zombieKccActive(0, 3, 80)).toBe(false);
+    expect(zombieKccActive(0, 4, 80)).toBe(true);
+    // uid=1: frame%4===1 のときだけ true
+    expect(zombieKccActive(1, 0, 80)).toBe(false);
+    expect(zombieKccActive(1, 1, 80)).toBe(true);
+    expect(zombieKccActive(1, 2, 80)).toBe(false);
+  });
+
+  it('distToPlayer=Infinity は60m超扱いで uid%4 バケット', () => {
+    expect(zombieKccActive(0, 0, Infinity)).toBe(true);
+    expect(zombieKccActive(0, 1, Infinity)).toBe(false);
+    expect(zombieKccActive(0, 4, Infinity)).toBe(true);
+  });
+});
+
+describe('R100 cap検証(zombieTotal / ZOMBIE_MAX_ALIVE)', () => {
+  it('zombieTotal(100) は 270 に収まる(上限クランプ)', () => {
+    expect(zombieTotal(100)).toBe(270);
+  });
+
+  it('zombieTotal は r=1 から単調増加し r≈40 で 270 に到達する', () => {
+    let prev = 0;
+    let cappedAt: number | null = null;
+    for (let r = 1; r <= 100; r += 1) {
+      const v = zombieTotal(r);
+      expect(v).toBeGreaterThanOrEqual(prev);
+      if (cappedAt === null && v === 270) cappedAt = r;
+      prev = v;
+    }
+    // r=40 付近でキャップに達しているはず
+    expect(cappedAt).not.toBeNull();
+    expect(cappedAt!).toBeLessThanOrEqual(50);
+  });
+
+  it('ZOMBIE_MAX_ALIVE.high === 108(alive上限=R100でも変わらない)', () => {
+    expect(ZOMBIE_MAX_ALIVE.high).toBe(108);
   });
 });
 

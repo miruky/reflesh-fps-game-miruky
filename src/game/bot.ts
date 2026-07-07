@@ -253,6 +253,17 @@ export function giantKccActive(uid: number, frame: number, distToPlayerM: number
   return (frame & 1) === (uid & 1);
 }
 
+// ★ ゾンビKCC距離LOD: updateZombieのcomputeColliderMovementを距離バケット化。
+// ≤25m=毎フレーム、25-60m=uid%2(2フレームに1回)、60m超=uid%4(4フレームに1回)。
+// 登坂中(climbing)またはmelee射程内は呼び出し側で常時フルを保証する。
+export const ZOMBIE_KCC_LOD_NEAR_M = 25;
+export const ZOMBIE_KCC_LOD_MID_M = 60;
+export function zombieKccActive(uid: number, frame: number, distToPlayerM: number): boolean {
+  if (distToPlayerM <= ZOMBIE_KCC_LOD_NEAR_M) return true;
+  if (distToPlayerM <= ZOMBIE_KCC_LOD_MID_M) return (frame & 1) === (uid & 1);
+  return (frame & 3) === (uid & 3);
+}
+
 // ★5 ホットパス用スクラッチ(updateGiantの毎フレームnew Vector3を根絶)
 const GIANT_POS_SCRATCH = new THREE.Vector3();
 const GIANT_TO_SCRATCH = new THREE.Vector3();
@@ -457,7 +468,7 @@ export class Bot {
   // 追加の当たり判定(tankの砲塔など)。matchがbody部位としてtags登録する
   readonly extraColliders: RAPIER.Collider[] = [];
   readonly group = new THREE.Group();
-  readonly maxHp: number;
+  maxHp: number;
   readonly tuning: BotTuning;
   readonly tier: BotTier;
 
@@ -488,6 +499,8 @@ export class Bot {
   lastRawVisible = false; // uid%3バケットの非担当フレームでLOS結果を再利用
   // ★8 遠距離(>50m)アニメLOD: syncMeshのsway/呼吸sin群をスキップ(matchが毎フレーム設定)
   animLod = false;
+  // ★ ゾンビアニメ半減LOD: 25-50mで更新を2フレームに1回へ間引く(matchが毎フレーム設定)
+  animHalfLod = false;
 
   // ── R16 機械的エイム: aimDirを目標へ aimSlewRadS で寄せ、updateShootingはこの方向へ撃つ ──
   readonly aimDir = new THREE.Vector3();
@@ -528,6 +541,8 @@ export class Bot {
   // ★2 巨躯KCC距離LOD: フレームパリティと、非担当フレームで再利用する前回moved
   private kccFrame = 0;
   private readonly prevGiantMoved = { x: 0, y: 0, z: 0 };
+  private readonly prevZombieMoved = { x: 0, y: 0, z: 0 };
+  private prevZombieGrounded = false;
 
   // 歩行アニメ用。胴体ボブと四肢スイングを駆動する
   private readonly rig = new THREE.Group();
@@ -541,7 +556,7 @@ export class Bot {
   private flinch = 0; // 被弾時に一瞬のけぞる残り時間
   private armorMat: THREE.MeshStandardMaterial | null = null;
   private tierGlowBase = 0; // 階層由来の常時発光量(被弾発光の戻り先)
-  private readonly moveSpeed: number;
+  private moveSpeed: number;
   private readonly headOff: number;
 
   // ── kind別ステート ──
@@ -1715,22 +1730,28 @@ export class Bot {
 
   // ゾンビ: 目標(=近接群れなのでプレイヤー位置を直接供給)へ前傾シャンブルで詰め、
   // 射程内で個体クールダウンが明けたら match へ近接ヒットを通知する。発砲経路には入らない。
+  // ★ KCC距離LOD: 25m超の computeColliderMovement をバケット化(50%〜75%削減)。
+  // 登坂中 or melee射程内は常時フル解決で品質を維持する。
   private updateZombie(dt: number, ctx: BotContext): void {
     const pos = this.position;
     let wishX = 0;
     let wishZ = 0;
     const target = ctx.targetEye;
     this.meleeTimer = Math.max(0, this.meleeTimer - dt);
+    const meleeRange = this.tier === 'boss' ? ZOMBIE_BOSS_MELEE_RANGE : ZOMBIE_MELEE_RANGE;
+
+    // KCC LOD 用: プレイヤーまでの距離(target=プレイヤー目線)
+    let distToPlayer = Infinity;
     if (target) {
       const to = target.clone().sub(pos);
       to.y = 0;
       const dist = to.length();
+      distToPlayer = dist;
       if (dist > 1e-3) to.normalize();
       this.heading = Math.atan2(-to.x, -to.z);
       const spd = this.moveSpeed * this.zombieRunMul;
       wishX = to.x * spd;
       wishZ = to.z * spd;
-      const meleeRange = this.tier === 'boss' ? ZOMBIE_BOSS_MELEE_RANGE : ZOMBIE_MELEE_RANGE;
       if (dist <= meleeRange) {
         wishX *= 0.15; // 密着で押し込みすぎない(重なり回避)
         wishZ *= 0.15;
@@ -1766,18 +1787,50 @@ export class Bot {
       this.velY = applyGravityStep(this.velY, 1, dt);
       vertV = this.velY;
     }
+
+    // ── KCC距離LOD: 毎フレームの衝突解決をバケット化して高体数時の負荷を削減 ──
+    // 登坂中 or melee射程内は常時フル解決(登坂品質・近接判定の精度を維持)
+    this.kccFrame += 1;
+    const kccFull =
+      this.climbing ||
+      distToPlayer <= meleeRange ||
+      zombieKccActive(this.uid, this.kccFrame, distToPlayer);
+
     const movement = { x: wishX * dt, y: vertV * dt, z: wishZ * dt };
-    this.controller.computeColliderMovement(this.bodyCollider, movement);
-    const moved = this.controller.computedMovement();
-    const grounded = this.controller.computedGrounded();
-    if (grounded && this.velY < 0) this.velY = -0.5;
+    let mvX: number;
+    let mvY: number;
+    let mvZ: number;
+    let grounded: boolean;
+    let blocked = false; // LODフレームではblocked評価をスキップ(遠距離の登坂点火を抑制)
+
+    if (kccFull) {
+      this.controller.computeColliderMovement(this.bodyCollider, movement);
+      const moved = this.controller.computedMovement();
+      grounded = this.controller.computedGrounded();
+      if (grounded && this.velY < 0) this.velY = -0.5;
+      mvX = moved.x;
+      mvY = moved.y;
+      mvZ = moved.z;
+      this.prevZombieMoved.x = mvX;
+      this.prevZombieMoved.y = mvY;
+      this.prevZombieMoved.z = mvZ;
+      this.prevZombieGrounded = grounded;
+      // blocked: 前進を阻まれているか(登坂状態機械の入力)
+      const wishLen = Math.hypot(movement.x, movement.z);
+      const movedLen = Math.hypot(moved.x, moved.z);
+      blocked = wishLen > 0.001 && movedLen < wishLen * ZOMBIE_CLIMB_BLOCK;
+    } else {
+      // LODフレーム: 前回movedを再利用(1〜3フレーム分の数cm誤差=25m超では視認不能)
+      mvX = this.prevZombieMoved.x;
+      mvY = this.prevZombieMoved.y;
+      mvZ = this.prevZombieMoved.z;
+      grounded = this.prevZombieGrounded;
+      if (grounded && this.velY < 0) this.velY = -0.5;
+    }
+
     // 接地して登坂していない間だけ登坂の基準足元Yを追従(上限高さ判定の起点=青天井防止)
     if (grounded && !canRise) this.climbBaseY = pos.y;
     // ── 登坂状態機械(R21フェーズ化で縁チャタリングを根治)──
-    // 前進を阻まれたか(moved が wish よりかなり小さい)を評価する
-    const wishLen = Math.hypot(movement.x, movement.z);
-    const movedLen = Math.hypot(moved.x, moved.z);
-    const blocked = wishLen > 0.001 && movedLen < wishLen * ZOMBIE_CLIMB_BLOCK;
     const underCap = pos.y - this.climbBaseY < ZOMBIE_CLIMB_MAX_H;
     this.climbCooldownS = Math.max(0, this.climbCooldownS - dt);
     this.climbMinS = Math.max(0, this.climbMinS - dt);
@@ -1801,6 +1854,7 @@ export class Bot {
     } else {
       this.climbElapsedS = 0;
       // 点火条件: クールダウン明け + 前進ブロック + 目標あり + 上限未満 + 前方に実体あり
+      // LODフレームはblocked=falseなので遠距離での誤点火なし
       if (this.climbCooldownS <= 0 && blocked && target && underCap && this.obstacleAhead(pos)) {
         this.climbing = true;
         this.climbMinS = ZOMBIE_CLIMB_MIN_S; // 最小継続時間を設定(縁チャタリング防止)
@@ -1810,8 +1864,8 @@ export class Bot {
       }
     }
     const t = this.body.translation();
-    this.body.setNextKinematicTranslation({ x: t.x + moved.x, y: t.y + moved.y, z: t.z + moved.z });
-    const step = Math.hypot(moved.x, moved.z);
+    this.body.setNextKinematicTranslation({ x: t.x + mvX, y: t.y + mvY, z: t.z + mvZ });
+    const step = Math.hypot(mvX, mvZ);
     const targetAmp = Math.min(1, step / Math.max(1e-4, this.moveSpeed * dt));
     this.walkAmp += (targetAmp - this.walkAmp) * Math.min(1, dt * 8);
     this.walkPhase += step * 8;
@@ -2088,6 +2142,8 @@ export class Bot {
     if (this.kind === 'zombie') {
       // ★8 遠距離(>50m)はシャンブルsin群をスキップ(位置/向きは上で同期済み=視認不能)
       if (this.animLod) return;
+      // ★ 半減LOD(25-50m): uid%2バケットの非担当フレームはスキップ(視認差ほぼゼロ)
+      if (this.animHalfLod && (this.kccFrame & 1) !== (this.uid & 1)) return;
       // シャンブル歩容: 前傾 + 左右のよろめき + 逆位相の脚スイング + 前へ垂らした腕の揺れ。
       // humanoidの歩行コードへ落とすと armRig をライフル把持ポーズで毎フレーム上書きしてしまう
       const zs = Math.sin(this.walkPhase);
@@ -2261,6 +2317,20 @@ export class Bot {
     for (const c of this.extraColliders) c.setEnabled(true);
     this.body.setTranslation({ x: spawn.x, y: spawn.y + this.feetOffset, z: spawn.z }, true);
     this.syncMesh();
+  }
+
+  // ★ ゾンビメッシュプール: 死んだゾンビのBotインスタンスをプールへ戻す前に新調ゾンビとして再利用。
+  // buildZombieMesh()のGPUリソース生成コストをラウンド2以降で完全にゼロにする。
+  // eliteやbossは色が異なるため通常ゾンビ専用(match側でtierをチェックして振り分け)。
+  resetForZombieReuse(newTuning: BotTuning, spawn: THREE.Vector3): void {
+    this.maxHp = newTuning.maxHp;
+    this.moveSpeed = MOVE_SPEED * newTuning.moveSpeedMul;
+    this.tuning.maxHp = newTuning.maxHp;
+    this.tuning.moveSpeedMul = newTuning.moveSpeedMul;
+    this.tuning.damage = newTuning.damage;
+    this.animLod = false;
+    this.animHalfLod = false;
+    this.respawnAt(spawn);
   }
 
   // 死んで死亡演出も終わった(=解放してよい)か。ゾンビの死体回収(cleanupDeadZombies)の判定。
