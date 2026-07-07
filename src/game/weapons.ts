@@ -1438,7 +1438,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     name: '万刃',
     slot: 'secondary',
     // 手裏剣連射。special:'shuriken'でmatch側が弾体差し替え予定(現在はhitscan暫定)
-    damage: 20,
+    damage: 45,
     headshotMultiplier: 1.3,
     rpm: 720,
     magazineSize: 30,
@@ -1476,7 +1476,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     name: '月光弓',
     slot: 'primary',
     // 弓矢。special:'bow'でmatch側がprojectile弾体実装予定(現在はhitscan暫定)
-    damage: 120,
+    damage: 200,
     headshotMultiplier: 1.9,
     rpm: 50,
     magazineSize: 20,
@@ -1515,7 +1515,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     name: '風神扇',
     slot: 'primary',
     // 水平扇散弾。pellets=10(A2: 7→10)。special:'fan'でmatch側が水平扇形弾道実装予定
-    damage: 22,
+    damage: 35,
     headshotMultiplier: 1.2,
     rpm: 130,
     magazineSize: 999,
@@ -1552,7 +1552,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     name: '業炎銃',
     slot: 'primary',
     // 高威力単発火縄銃。scope:true でフルスクリーンスコープ覗き
-    damage: 160,
+    damage: 260,
     headshotMultiplier: 1.9,
     rpm: 24,
     magazineSize: 1,
@@ -1591,7 +1591,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     name: '天雷杖',
     slot: 'primary',
     // 雷球launcher。special:'staff'でmatch側が雷球弾体実装予定(現在はhitscan暫定)
-    damage: 90,
+    damage: 160,
     headshotMultiplier: 1.0,
     rpm: 60,
     magazineSize: 12,
@@ -1629,7 +1629,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     name: '蜃気楼',
     slot: 'primary',
     // ビーム貫通スナイパー。special:'beam'でmatch側が3tick×50dmgビーム実装予定
-    damage: 50,
+    damage: 90,
     headshotMultiplier: 1.9,
     rpm: 40,
     magazineSize: 8,
@@ -1668,7 +1668,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     name: '修羅',
     slot: 'primary',
     // ミニガン。special:'minigun'でmatch側がスピンアップ実装予定
-    damage: 16,
+    damage: 28,
     headshotMultiplier: 1.4,
     rpm: 1800,
     magazineSize: 150,

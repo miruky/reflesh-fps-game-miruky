@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { buildGunBody, CamoStandardMaterial, resolveSightY } from './viewmodel';
+import { buildGunBody, CamoStandardMaterial, resolveSightY, ViewModel } from './viewmodel';
 import { WEAPON_DEFS, type ViewModelShape, type WeaponDef } from '../game/weapons';
 import { OPTIC_SPECS, resolveOpticId } from '../game/optics';
 import { CAMO_IDS, CAMO_VISUALS } from '../game/camo';
@@ -325,5 +325,99 @@ describe('resolveSightY', () => {
       if (v.y > maxY) maxY = v.y;
     }
     expect((minY + maxY) / 2).toBeCloseTo(resolveSightY(def), 3);
+  });
+});
+
+// ── R34 setExoticCharge API テスト ────────────────────────────────────────
+describe('setExoticCharge', () => {
+  const EXOTIC_IDS = [
+    'banjin-smg',
+    'gekkou-bow',
+    'fujin-fan',
+    'gouen-musket',
+    'tenrai-staff',
+    'shinkirou-sniper',
+    'shura-lmg',
+  ] as const;
+
+  it('setExoticCharge: 7武器すべてで例外なし (charge01=0)', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    for (const id of EXOTIC_IDS) {
+      const def = WEAPON_DEFS[id];
+      if (!def) continue;
+      vm.setWeapon(def);
+      expect(() => vm.setExoticCharge(id, 0)).not.toThrow();
+    }
+  });
+
+  it('setExoticCharge: 7武器すべてで例外なし (charge01=1)', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    for (const id of EXOTIC_IDS) {
+      const def = WEAPON_DEFS[id];
+      if (!def) continue;
+      vm.setWeapon(def);
+      expect(() => vm.setExoticCharge(id, 1)).not.toThrow();
+    }
+  });
+
+  it('setExoticCharge: charge01 がクランプされる (範囲外値で例外なし)', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['gekkou-bow'];
+    if (def) {
+      vm.setWeapon(def);
+      expect(() => vm.setExoticCharge('gekkou-bow', -1)).not.toThrow();
+      expect(() => vm.setExoticCharge('gekkou-bow', 2)).not.toThrow();
+    }
+  });
+
+  it('setExoticCharge: 未知 weaponId で例外なし', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    expect(() => vm.setExoticCharge('unknown-weapon', 0.5)).not.toThrow();
+  });
+
+  it('setExoticCharge: gun が null の状態(武器未設定)でも例外なし', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    expect(() => vm.setExoticCharge('gouen-musket', 0.5)).not.toThrow();
+  });
+
+  it('fujin-fan: vm:fanRib ノードに fanBaseAngle が設定されている', () => {
+    const def = WEAPON_DEFS['fujin-fan'];
+    if (!def) return;
+    const { gun } = buildGunBody(def);
+    const ribs: THREE.Object3D[] = [];
+    gun.traverse((child) => {
+      if (child.name === 'vm:fanRib') ribs.push(child);
+    });
+    expect(ribs.length).toBeGreaterThan(0);
+    for (const rib of ribs) {
+      expect(typeof rib.userData.fanBaseAngle).toBe('number');
+    }
+  });
+
+  it('banjin-smg: vm:shurikenBlade ノードが存在する', () => {
+    const def = WEAPON_DEFS['banjin-smg'];
+    if (!def) return;
+    const { gun } = buildGunBody(def);
+    const blades: THREE.Object3D[] = [];
+    gun.traverse((child) => {
+      if (child.name === 'vm:shurikenBlade') blades.push(child);
+    });
+    expect(blades.length).toBeGreaterThan(0);
+  });
+
+  it('tenrai-staff: vm:crystal ノードが存在する', () => {
+    const def = WEAPON_DEFS['tenrai-staff'];
+    if (!def) return;
+    const { gun } = buildGunBody(def);
+    const crystals: THREE.Object3D[] = [];
+    gun.traverse((child) => {
+      if (child.name === 'vm:crystal') crystals.push(child);
+    });
+    expect(crystals.length).toBeGreaterThan(0);
   });
 });

@@ -41,6 +41,20 @@ export class Effects {
   private beamLines: Timed<THREE.Line>[] = [];      // 蜃気楼ビーム
   private shurikenFX: Timed<THREE.Group>[] = [];   // 手裏剣 disc/衝撃
   private fanWindFX: Timed<THREE.Group>[] = [];     // 風神扇 扇形風
+  // ── R34 特殊武器溜め/ウルトエフェクト ──
+  private banjinBladesFX: Timed<THREE.Group>[] = [];    // 千刃嵐 銀十字ブレードストリーム
+  private gekkouArrowFX: Timed<THREE.Group>[] = [];     // 満月の矢 大矢+月光柱+ノヴァ
+  private fujinWallFX: Timed<THREE.Group>[] = [];       // 大颶風 風の壁
+  private gouenBlastFX: Timed<THREE.Group>[] = [];      // 大業火弾 火柱+爆発+煙
+  private tenraiBoltFX: Timed<THREE.Group>[] = [];      // 天罰 落雷スケジューラ
+  private shinkirouSweepFX: Timed<THREE.Group>[] = [];  // 千里眼閃 掃引ビーム+残像
+  private shuraRampageFX: Timed<THREE.Group>[] = [];    // 阿修羅連撃 弾嵐オーラ
+  private banjinCloneFX: Timed<THREE.Group>[] = [];     // 影分身万刃繚乱 クローン+手裏剣嵐
+  private gekkouMoonFX: Timed<THREE.Group>[] = [];      // 月落とし 月球+ノヴァ+柱
+  private fujinVortexFX: Timed<THREE.Group>[] = [];     // 神風竜巻
+  private gouenCorridorFX: Timed<THREE.Group>[] = [];   // 業火滅世 火柱回廊+地割れ
+  private shinkirouMirageFX: Timed<THREE.Group>[] = []; // 虚像世界 歪曲リング+熱揺らぎ
+  private shuraKourinFX: Timed<THREE.Group>[] = [];     // 阿修羅降臨 3頭6腕
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -1856,6 +1870,677 @@ export class Effects {
     return group;
   }
 
+  // ─── R34 特殊武器溜め攻撃エフェクト ───────────────────────────────────────
+
+  /** 千刃嵐: 溜め放出 — 銀十字ブレード30枚が扇状ストリーム(0.8s) */
+  banjinStorm(origin: THREE.Vector3, dir: THREE.Vector3): void {
+    const group = new THREE.Group();
+    const COUNT = 30;
+    const FAN = Math.PI * 0.65;
+    const D = dir.clone().normalize();
+    const right = new THREE.Vector3().crossVectors(D, new THREE.Vector3(0, 1, 0)).normalize();
+    for (let i = 0; i < COUNT; i++) {
+      const t = i / (COUNT - 1);
+      const yaw = (-FAN / 2) + t * FAN;
+      const dist = 1 + (i / COUNT) * 12 + Math.random() * 3;
+      const bladeDir = D.clone().addScaledVector(right, Math.tan(yaw)).normalize();
+      const pos = origin.clone().addScaledVector(bladeDir, dist);
+      const hLen = 0.16 + Math.random() * 0.10;
+      const hGeo = new THREE.BufferGeometry().setFromPoints([
+        pos.clone().addScaledVector(right, -hLen),
+        pos.clone().addScaledVector(right, hLen),
+      ]);
+      const hLine = new THREE.Line(hGeo, new THREE.LineBasicMaterial({
+        color: 0xddeeff, transparent: true, opacity: 0.82,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      hLine.userData.baseOpacity = 0.82;
+      group.add(hLine);
+      const vGeo = new THREE.BufferGeometry().setFromPoints([
+        pos.clone().add(new THREE.Vector3(0, -hLen, 0)),
+        pos.clone().add(new THREE.Vector3(0, hLen, 0)),
+      ]);
+      const vLine = new THREE.Line(vGeo, new THREE.LineBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.72,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      vLine.userData.baseOpacity = 0.72;
+      group.add(vLine);
+    }
+    this.scene.add(group);
+    this.banjinBladesFX.push({ obj: group, life: 0.8, maxLife: 0.8 });
+  }
+
+  /** 満月の矢: 巨大白矢 + 月光柱トレイル + 月ノヴァ(2.0s) */
+  gekkouFullMoon(origin: THREE.Vector3, dir: THREE.Vector3): void {
+    const group = new THREE.Group();
+    const D = dir.clone().normalize();
+    const REACH = 40;
+    const right = new THREE.Vector3().crossVectors(D, new THREE.Vector3(0, 1, 0)).normalize();
+    const impact = origin.clone().addScaledVector(D, REACH);
+    const shaftGeo = new THREE.BufferGeometry().setFromPoints([origin, impact]);
+    const shaft = new THREE.Line(shaftGeo, new THREE.LineBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.88,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    shaft.userData.baseOpacity = 0.88;
+    group.add(shaft);
+    const tail = origin.clone().addScaledVector(D, -1.2);
+    for (const side of [right.clone(), right.clone().negate()]) {
+      const finGeo = new THREE.BufferGeometry().setFromPoints([
+        tail.clone().addScaledVector(side, 0.7),
+        origin.clone(),
+        tail.clone().addScaledVector(side, -0.4),
+      ]);
+      const fin = new THREE.Line(finGeo, new THREE.LineBasicMaterial({
+        color: 0xaaccff, transparent: true, opacity: 0.62,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      fin.userData.baseOpacity = 0.62;
+      group.add(fin);
+    }
+    for (let i = 0; i < 3; i++) {
+      const pp = origin.clone().addScaledVector(D, REACH * (0.25 + i * 0.25));
+      const pGeo = new THREE.BufferGeometry().setFromPoints([
+        pp.clone().add(new THREE.Vector3(0, -4, 0)),
+        pp.clone().add(new THREE.Vector3(0, 4, 0)),
+      ]);
+      const pl = new THREE.Line(pGeo, new THREE.LineBasicMaterial({
+        color: 0x88aaee, transparent: true, opacity: 0.36,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      pl.userData.baseOpacity = 0.36;
+      group.add(pl);
+    }
+    const novaRing = new THREE.Mesh(this.ringGeometry, new THREE.MeshBasicMaterial({
+      color: 0xddeeff, transparent: true, opacity: 0.72,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    novaRing.position.copy(impact);
+    novaRing.rotation.x = -Math.PI / 2;
+    novaRing.scale.setScalar(1.2);
+    novaRing.userData.targetScale = 14;
+    novaRing.userData.baseOpacity = 0.72;
+    group.add(novaRing);
+    const novaBall = new THREE.Mesh(this.blastGeometry, new THREE.MeshBasicMaterial({
+      color: 0xeeeeff, transparent: true, opacity: 0.50,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    novaBall.position.copy(impact);
+    novaBall.scale.setScalar(3.0);
+    novaBall.userData.baseOpacity = 0.50;
+    novaBall.userData.targetScale = 10;
+    group.add(novaBall);
+    this.scene.add(group);
+    this.gekkouArrowFX.push({ obj: group, life: 2.0, maxLife: 2.0 });
+  }
+
+  /** 大颶風: 20m幅の風の壁が前進(シアン渦+砂塵)(1.5s) */
+  fujinTyphoon(origin: THREE.Vector3, dir: THREE.Vector3): void {
+    const group = new THREE.Group();
+    const D = dir.clone().normalize();
+    const right = new THREE.Vector3().crossVectors(D, new THREE.Vector3(0, 1, 0)).normalize();
+    for (let c = 0; c <= 8; c++) {
+      const x = -10 + (c / 8) * 20;
+      const pts = [
+        origin.clone().addScaledVector(right, x),
+        origin.clone().addScaledVector(right, x).add(new THREE.Vector3(0, 4, 0)),
+      ];
+      const wl = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineBasicMaterial({ color: 0x44ffdd, transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      wl.userData.baseOpacity = 0.32;
+      group.add(wl);
+    }
+    for (let r = 0; r < 5; r++) {
+      const yOff = 0.4 + r * 0.7;
+      const cx = (Math.random() - 0.5) * 8;
+      const rpts: THREE.Vector3[] = [];
+      for (let a = 0; a <= 22; a++) {
+        const ang = (a / 22) * Math.PI * 2;
+        rpts.push(origin.clone()
+          .addScaledVector(right, cx + Math.cos(ang) * (1.2 + Math.random() * 0.5))
+          .add(new THREE.Vector3(0, yOff + Math.sin(ang) * 0.6, 0)));
+      }
+      const rl = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(rpts),
+        new THREE.LineBasicMaterial({ color: 0x66ffee, transparent: true, opacity: 0.36, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      rl.userData.baseOpacity = 0.36;
+      group.add(rl);
+    }
+    for (let p = 0; p < 18; p++) {
+      const puff = new THREE.Mesh(this.puffGeometry, new THREE.MeshBasicMaterial({
+        color: 0x88ffdd, transparent: true, opacity: 0.24,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      puff.position.copy(origin)
+        .addScaledVector(right, (Math.random() - 0.5) * 16)
+        .add(new THREE.Vector3(0, Math.random() * 3.5, 0));
+      puff.userData.baseOpacity = 0.24;
+      puff.userData.vel = D.clone().multiplyScalar(6 + Math.random() * 6);
+      group.add(puff);
+    }
+    group.userData.windDir = D.clone();
+    this.scene.add(group);
+    this.fujinWallFX.push({ obj: group, life: 1.5, maxLife: 1.5 });
+  }
+
+  /** 大業火弾: 25m火球 + 4火柱 + 白煙 + 焦げ地(3.5s、reduceMotion=柱ゼロ) */
+  gouenBlast(center: THREE.Vector3, reduceMotion = false): void {
+    const group = new THREE.Group();
+    const core = new THREE.Mesh(this.blastGeometry, new THREE.MeshBasicMaterial({
+      color: 0xff7700, transparent: true, opacity: 0.88,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    core.position.copy(center);
+    core.scale.setScalar(3);
+    core.userData.baseOpacity = 0.88;
+    core.userData.targetScale = 12;
+    group.add(core);
+    const halo = new THREE.Mesh(this.blastGeometry, new THREE.MeshBasicMaterial({
+      color: 0xffaa00, transparent: true, opacity: 0.50,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    halo.position.copy(center);
+    halo.scale.setScalar(6);
+    halo.userData.baseOpacity = 0.50;
+    halo.userData.targetScale = 22;
+    group.add(halo);
+    const groundRing = new THREE.Mesh(this.ringGeometry, new THREE.MeshBasicMaterial({
+      color: 0xff5500, transparent: true, opacity: 0.68,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    groundRing.rotation.x = -Math.PI / 2;
+    groundRing.position.copy(center);
+    groundRing.scale.setScalar(1);
+    groundRing.userData.targetScale = 25;
+    groundRing.userData.baseOpacity = 0.68;
+    group.add(groundRing);
+    if (!reduceMotion) {
+      for (let i = 0; i < 4; i++) {
+        const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        const px = center.x + Math.cos(angle) * 8;
+        const pz = center.z + Math.sin(angle) * 8;
+        for (let seg = 0; seg < 3; seg++) {
+          const y0 = center.y + seg * 3;
+          const y1 = y0 + 3 + Math.random() * 1.5;
+          const pl = new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints([
+              new THREE.Vector3(px + (Math.random() - 0.5) * 0.3, y0, pz + (Math.random() - 0.5) * 0.3),
+              new THREE.Vector3(px + (Math.random() - 0.5) * 0.5, y1, pz + (Math.random() - 0.5) * 0.5),
+            ]),
+            new THREE.LineBasicMaterial({
+              color: seg === 0 ? 0xff6600 : 0xffaa00,
+              transparent: true, opacity: 0.72,
+              blending: THREE.AdditiveBlending, depthWrite: false,
+            }),
+          );
+          pl.userData.baseOpacity = 0.72;
+          group.add(pl);
+        }
+      }
+    }
+    const smoke = new THREE.Mesh(this.cloudGeometry, new THREE.MeshBasicMaterial({
+      color: 0xddd8cc, transparent: true, opacity: 0.36,
+      blending: THREE.NormalBlending, depthWrite: false,
+    }));
+    smoke.position.copy(center).add(new THREE.Vector3(0, 6, 0));
+    smoke.scale.setScalar(4.5);
+    smoke.userData.baseOpacity = 0.36;
+    smoke.userData.velY = 1.8;
+    group.add(smoke);
+    const scorch = new THREE.Mesh(this.ringGeometry, new THREE.MeshBasicMaterial({
+      color: 0x2a0800, transparent: true, opacity: 0.60, side: THREE.DoubleSide,
+    }));
+    scorch.rotation.x = -Math.PI / 2;
+    scorch.position.copy(center).add(new THREE.Vector3(0, 0.03, 0));
+    scorch.scale.setScalar(12);
+    scorch.userData.targetScale = 12;
+    scorch.userData.baseOpacity = 0.60;
+    group.add(scorch);
+    this.scene.add(group);
+    this.gouenBlastFX.push({ obj: group, life: 3.5, maxLife: 3.5 });
+  }
+
+  /** 天罰: 40m半径に20本の落雷を1.5sに分散(gokuraiColumns経由、reduceMotion=ゼロ) */
+  tenraiTenbatsu(center: THREE.Vector3, radius: number, reduceMotion = false): void {
+    if (reduceMotion) return;
+    const COUNT = 20;
+    const bolts: Array<{ t: number; pos: THREE.Vector3; fired: boolean }> = [];
+    for (let i = 0; i < COUNT; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const r = 4 + Math.random() * Math.max(1, radius - 4);
+      bolts.push({
+        t: (i / COUNT) * 1.5,
+        pos: new THREE.Vector3(
+          center.x + Math.cos(angle) * r,
+          center.y,
+          center.z + Math.sin(angle) * r,
+        ),
+        fired: false,
+      });
+    }
+    const group = new THREE.Group();
+    group.userData.age = 0;
+    group.userData.pendingBolts = bolts;
+    this.scene.add(group);
+    this.tenraiBoltFX.push({ obj: group, life: 1.8, maxLife: 1.8 });
+  }
+
+  /** 千里眼閃: シアン太ビームが90°掃引(0.7s) + 残像 */
+  shinkirouSweep(origin: THREE.Vector3, yawFrom: number, yawTo: number): void {
+    const REACH = 50;
+    const group = new THREE.Group();
+    group.userData.yawFrom = yawFrom;
+    group.userData.yawTo = yawTo;
+    group.userData.age = 0;
+    group.userData.sweepS = 0.6;
+    group.userData.origin = origin.clone();
+    group.userData.reach = REACH;
+    const bPts = [origin, origin.clone().add(new THREE.Vector3(Math.cos(yawFrom) * REACH, 0, Math.sin(yawFrom) * REACH))];
+    const beam = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(bPts),
+      new THREE.LineBasicMaterial({ color: 0x00ffee, transparent: true, opacity: 0.88, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    beam.userData.baseOpacity = 0.88;
+    beam.name = 'sweepBeam';
+    group.add(beam);
+    for (let i = 1; i <= 3; i++) {
+      const prevYaw = yawFrom - (yawTo - yawFrom) * i * 0.06;
+      const aPts = [
+        origin,
+        origin.clone().add(new THREE.Vector3(Math.cos(prevYaw) * REACH, 0, Math.sin(prevYaw) * REACH)),
+      ];
+      const aft = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(aPts),
+        new THREE.LineBasicMaterial({
+          color: 0x00ccdd, transparent: true, opacity: 0.42 - i * 0.10,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        }),
+      );
+      aft.userData.baseOpacity = 0.42 - i * 0.10;
+      aft.name = `aftBeam${i}`;
+      group.add(aft);
+    }
+    this.scene.add(group);
+    this.shinkirouSweepFX.push({ obj: group, life: 0.7, maxLife: 0.7 });
+  }
+
+  /** 阿修羅連撃: オレンジ弾嵐オーラ + 薬莢落下(1.2s) */
+  shuraRampage(origin: THREE.Vector3): void {
+    const group = new THREE.Group();
+    for (let i = 0; i < 24; i++) {
+      const yaw = (i / 24) * Math.PI * 2;
+      const pitch = (Math.random() - 0.3) * 0.4;
+      const len = 3 + Math.random() * 5;
+      const d = new THREE.Vector3(Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch), Math.sin(yaw) * Math.cos(pitch));
+      const start = origin.clone().add(new THREE.Vector3(Math.cos(yaw) * 0.3, 0.5, Math.sin(yaw) * 0.3));
+      const end = start.clone().addScaledVector(d, len);
+      const bl = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([start, end]),
+        new THREE.LineBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.76, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      bl.userData.baseOpacity = 0.76;
+      group.add(bl);
+    }
+    for (let c = 0; c < 12; c++) {
+      const casing = new THREE.Mesh(this.sparkGeometry, new THREE.MeshBasicMaterial({
+        color: 0xffbb44, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      casing.position.copy(origin).add(new THREE.Vector3((Math.random() - 0.5) * 0.5, 0.8, (Math.random() - 0.5) * 0.5));
+      casing.userData.baseOpacity = 0.85;
+      casing.userData.vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 3, 2 + Math.random() * 2, (Math.random() - 0.5) * 3,
+      );
+      group.add(casing);
+    }
+    this.scene.add(group);
+    this.shuraRampageFX.push({ obj: group, life: 1.2, maxLife: 1.2 });
+  }
+
+  // ─── R34 Mウルトエフェクト ────────────────────────────────────────────────
+
+  /** 影分身・万刃繚乱: 8体影クローン+手裏剣嵐(3.5s, reduceMotion=クローンスキップ) */
+  banjinKagemai(center: THREE.Vector3, reduceMotion = false): void {
+    const group = new THREE.Group();
+    const CLONE_COUNT = 8;
+    const RING_R = 8;
+    if (!reduceMotion) {
+      for (let i = 0; i < CLONE_COUNT; i++) {
+        const angle = (i / CLONE_COUNT) * Math.PI * 2;
+        const px = center.x + Math.cos(angle) * RING_R;
+        const pz = center.z + Math.sin(angle) * RING_R;
+        const clone = new THREE.Group();
+        const head = new THREE.Mesh(this.puffGeometry, new THREE.MeshBasicMaterial({
+          color: 0x220033, transparent: true, opacity: 0.68, blending: THREE.NormalBlending, depthWrite: false,
+        }));
+        head.position.set(px, center.y + 1.7, pz);
+        head.scale.setScalar(2.5);
+        head.userData.baseOpacity = 0.68;
+        clone.add(head);
+        const bodyGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(px, center.y + 0.3, pz),
+          new THREE.Vector3(px, center.y + 1.4, pz),
+        ]);
+        const body = new THREE.Line(bodyGeo, new THREE.LineBasicMaterial({
+          color: 0x440066, transparent: true, opacity: 0.62, blending: THREE.NormalBlending,
+        }));
+        body.userData.baseOpacity = 0.62;
+        clone.add(body);
+        for (const side of [-1, 1]) {
+          const armGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(px, center.y + 1.2, pz),
+            new THREE.Vector3(px + side * Math.cos(angle) * 0.6, center.y + 0.8, pz + side * Math.sin(angle) * 0.6),
+          ]);
+          const arm = new THREE.Line(armGeo, new THREE.LineBasicMaterial({
+            color: 0x440066, transparent: true, opacity: 0.52, blending: THREE.NormalBlending,
+          }));
+          arm.userData.baseOpacity = 0.52;
+          clone.add(arm);
+        }
+        group.add(clone);
+      }
+    }
+    const SHURIKEN_COUNT = reduceMotion ? 16 : CLONE_COUNT * 4;
+    for (let s = 0; s < SHURIKEN_COUNT; s++) {
+      const yaw = (s / SHURIKEN_COUNT) * Math.PI * 2;
+      const speed = 8 + Math.random() * 10;
+      const d = new THREE.Vector3(Math.cos(yaw), (Math.random() - 0.3) * 0.3, Math.sin(yaw));
+      const startPt = center.clone().add(new THREE.Vector3(Math.cos(yaw) * 0.1, 1, Math.sin(yaw) * 0.1));
+      const disc = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([startPt, startPt.clone().addScaledVector(d, 0.2)]),
+        new THREE.LineBasicMaterial({ color: 0xddeeff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      disc.userData.baseOpacity = 0.8;
+      disc.userData.vel = d.clone().multiplyScalar(speed);
+      group.add(disc);
+    }
+    this.scene.add(group);
+    this.banjinCloneFX.push({ obj: group, life: 3.5, maxLife: 3.5 });
+  }
+
+  /** 月落とし: 月球が高空から落下→30mノヴァ+柱+クレーターリング(4.0s) */
+  gekkouTsukiotoshi(center: THREE.Vector3, reduceMotion = false): void {
+    const group = new THREE.Group();
+    const moon = new THREE.Mesh(this.blastGeometry, new THREE.MeshBasicMaterial({
+      color: 0xeeeeff, transparent: true, opacity: 0.82,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    moon.position.copy(center).add(new THREE.Vector3(0, 30, 0));
+    moon.scale.setScalar(4);
+    moon.userData.baseOpacity = 0.82;
+    moon.userData.isMoon = true;
+    moon.userData.fallSpeed = 22;
+    group.add(moon);
+    if (!reduceMotion) {
+      for (let i = 0; i < 6; i++) {
+        const angle = (i / 6) * Math.PI * 2;
+        const px = center.x + Math.cos(angle) * 10;
+        const pz = center.z + Math.sin(angle) * 10;
+        const pillar = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(px, center.y, pz),
+            new THREE.Vector3(px, center.y + 14, pz),
+          ]),
+          new THREE.LineBasicMaterial({ color: 0xaabedd, transparent: true, opacity: 0.48, blending: THREE.AdditiveBlending, depthWrite: false }),
+        );
+        pillar.userData.baseOpacity = 0.48;
+        pillar.visible = false;
+        pillar.userData.delayShow = true;
+        group.add(pillar);
+      }
+    }
+    const novaRing = new THREE.Mesh(this.ringGeometry, new THREE.MeshBasicMaterial({
+      color: 0xddeeff, transparent: true, opacity: 0.0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    novaRing.rotation.x = -Math.PI / 2;
+    novaRing.position.copy(center);
+    novaRing.scale.setScalar(0.5);
+    novaRing.userData.targetScale = 30;
+    novaRing.userData.baseOpacity = 0.78;
+    novaRing.userData.isNova = true;
+    group.add(novaRing);
+    const craterRing = new THREE.Mesh(this.ringGeometry, new THREE.MeshBasicMaterial({
+      color: 0x334466, transparent: true, opacity: 0.0, side: THREE.DoubleSide,
+    }));
+    craterRing.rotation.x = -Math.PI / 2;
+    craterRing.position.copy(center).add(new THREE.Vector3(0, 0.04, 0));
+    craterRing.scale.setScalar(8);
+    craterRing.userData.baseOpacity = 0.55;
+    craterRing.userData.isCrater = true;
+    group.add(craterRing);
+    group.userData.floorY = center.y;
+    group.userData.impactDone = false;
+    this.scene.add(group);
+    this.gekkouMoonFX.push({ obj: group, life: 4.0, maxLife: 4.0 });
+  }
+
+  /** 個別竜巻スポーン — fujinKamikaze および match.ts から直接呼ぶ */
+  fujinTornadoAt(pos: THREE.Vector3): void {
+    const group = new THREE.Group();
+    const SEGS = 12;
+    const HEIGHT = 14;
+    for (let ring = 0; ring < SEGS; ring++) {
+      const y = (ring / SEGS) * HEIGHT;
+      const r = 0.8 + (1 - ring / SEGS) * 2.5;
+      const pts: THREE.Vector3[] = [];
+      for (let a = 0; a <= 16; a++) {
+        const ang = (a / 16) * Math.PI * 2 + ring * 0.5;
+        pts.push(new THREE.Vector3(pos.x + Math.cos(ang) * r, pos.y + y, pos.z + Math.sin(ang) * r));
+      }
+      const tornadoLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineBasicMaterial({ color: 0x55ffee, transparent: true, opacity: 0.26, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      tornadoLine.userData.baseOpacity = 0.26;
+      group.add(tornadoLine);
+    }
+    for (let p = 0; p < 8; p++) {
+      const ang = (p / 8) * Math.PI * 2;
+      const puff = new THREE.Mesh(this.puffGeometry, new THREE.MeshBasicMaterial({
+        color: 0x99eedd, transparent: true, opacity: 0.20,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      puff.position.set(pos.x + Math.cos(ang) * 1.5, pos.y + 0.5, pos.z + Math.sin(ang) * 1.5);
+      puff.userData.baseOpacity = 0.20;
+      group.add(puff);
+    }
+    group.userData.spinRate = 1.8 + Math.random() * 1.2;
+    this.scene.add(group);
+    this.fujinVortexFX.push({ obj: group, life: 3.5, maxLife: 3.5 });
+  }
+
+  /** 神風・天空舞: マップ全域に竜巻群スポーン(reduceMotion=3本に削減) */
+  fujinKamikaze(center: THREE.Vector3, maxR: number, reduceMotion = false): void {
+    const count = reduceMotion ? 3 : 8;
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.5;
+      const r = maxR * 0.3 + Math.random() * maxR * 0.7;
+      this.fujinTornadoAt(new THREE.Vector3(
+        center.x + Math.cos(angle) * r,
+        center.y,
+        center.z + Math.sin(angle) * r,
+      ));
+    }
+  }
+
+  /** 業火滅世: 60m回廊に交互L/R火壁+地割れ赤光(4.0s, reduceMotion=柱ゼロ) */
+  gouenMesse(origin: THREE.Vector3, dir: THREE.Vector3, reduceMotion = false): void {
+    const group = new THREE.Group();
+    const D = dir.clone().normalize();
+    const right = new THREE.Vector3().crossVectors(D, new THREE.Vector3(0, 1, 0)).normalize();
+    const CORRIDOR = 60;
+    const WALL_OFFSET = 5;
+    const WALL_COUNT = reduceMotion ? 0 : 10;
+    for (let i = 0; i < WALL_COUNT; i++) {
+      const t = (i + 0.5) / WALL_COUNT;
+      const dist = t * CORRIDOR;
+      const side = i % 2 === 0 ? 1 : -1;
+      const wb = origin.clone().addScaledVector(D, dist).addScaledVector(right, side * WALL_OFFSET);
+      const HEIGHT = 8 + Math.random() * 4;
+      for (let seg = 0; seg < 4; seg++) {
+        const y0 = seg * (HEIGHT / 4);
+        const y1 = y0 + (HEIGHT / 4) + Math.random() * 0.8;
+        const wl = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(wb.x + (Math.random() - 0.5) * 0.4, wb.y + y0, wb.z + (Math.random() - 0.5) * 0.4),
+            new THREE.Vector3(wb.x + (Math.random() - 0.5) * 0.6, wb.y + y1, wb.z + (Math.random() - 0.5) * 0.6),
+          ]),
+          new THREE.LineBasicMaterial({
+            color: seg < 2 ? 0xff5500 : 0xffaa00,
+            transparent: true, opacity: 0.72,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+          }),
+        );
+        wl.userData.baseOpacity = 0.72;
+        group.add(wl);
+      }
+    }
+    for (let i = 0; i < 20; i++) {
+      const t0 = (i / 20) * CORRIDOR;
+      const t1 = ((i + 1) / 20) * CORRIDOR;
+      const cs = origin.clone().addScaledVector(D, t0).add(new THREE.Vector3((Math.random() - 0.5) * 0.6, 0.05, (Math.random() - 0.5) * 0.6));
+      const ce = origin.clone().addScaledVector(D, t1).add(new THREE.Vector3((Math.random() - 0.5) * 0.6, 0.05, (Math.random() - 0.5) * 0.6));
+      const cl = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([cs, ce]),
+        new THREE.LineBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.66, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      cl.userData.baseOpacity = 0.66;
+      cl.userData.fissure = true;
+      group.add(cl);
+    }
+    this.scene.add(group);
+    this.gouenCorridorFX.push({ obj: group, life: 4.0, maxLife: 4.0 });
+  }
+
+  /** 神鳴八雷: 最大8方向の巨大落雷を同時打ち(gokuraiColumns経由、reduceMotion=ゼロ) */
+  tenraiHachirai(positions: THREE.Vector3[], reduceMotion = false): void {
+    if (reduceMotion) return;
+    const MAX = Math.min(8, positions.length);
+    for (let i = 0; i < MAX; i++) {
+      const pos = positions[i]!;
+      const top = pos.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * 3,
+        35 + Math.random() * 5,
+        (Math.random() - 0.5) * 3,
+      ));
+      this.buildBranchBolt(top, pos, 4, false, 0.5 + Math.random() * 0.2);
+      this.impactRing(pos, 0x44aaff);
+    }
+  }
+
+  /** 虚像世界: 空間歪曲リング+熱揺らぎ粒子(durationS上限4s、NOTpostfx) */
+  shinkirouKyozou(durationS: number, reduceMotion = false): void {
+    const life = Math.min(4.0, durationS + 0.5);
+    const group = new THREE.Group();
+    const center = new THREE.Vector3(0, 1.5, -5);
+    for (let i = 0; i < 4; i++) {
+      const rScale = 2 + i * 3;
+      const ring = new THREE.Mesh(this.ringGeometry, new THREE.MeshBasicMaterial({
+        color: 0x00ddff, transparent: true, opacity: 0.32 - i * 0.05,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      }));
+      ring.position.copy(center);
+      ring.rotation.x = -Math.PI / 2;
+      ring.scale.setScalar(rScale);
+      ring.userData.baseOpacity = 0.32 - i * 0.05;
+      ring.userData.pulsePhi = i * Math.PI * 0.5;
+      ring.userData.isDistortRing = true;
+      group.add(ring);
+    }
+    if (!reduceMotion) {
+      for (let p = 0; p < 24; p++) {
+        const angle = Math.random() * Math.PI * 2;
+        const rad = 1 + Math.random() * 8;
+        const puff = new THREE.Mesh(this.puffGeometry, new THREE.MeshBasicMaterial({
+          color: 0x44eeff, transparent: true, opacity: 0.18,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+        puff.position.copy(center).add(new THREE.Vector3(Math.cos(angle) * rad, (Math.random() - 0.5) * 3, Math.sin(angle) * rad));
+        puff.userData.baseOpacity = 0.18;
+        puff.userData.swirlAngle = angle;
+        puff.userData.swirlR = rad;
+        puff.userData.swirlCx = center.x;
+        puff.userData.swirlCz = center.z;
+        puff.userData.swirlOmega = (Math.random() > 0.5 ? 1 : -1) * (0.4 + Math.random() * 0.6);
+        puff.userData.swirlVelY = (Math.random() - 0.5) * 0.5;
+        puff.userData.isHeatPuff = true;
+        group.add(puff);
+      }
+    }
+    this.scene.add(group);
+    this.shinkirouMirageFX.push({ obj: group, life, maxLife: life });
+  }
+
+  /** 阿修羅降臨: 3頭6腕阿修羅シルエット+気合オーラ(3.5s, reduceMotion=腕省略) */
+  shuraKourin(center: THREE.Vector3, reduceMotion = false): void {
+    const group = new THREE.Group();
+    const BASE = center.clone().add(new THREE.Vector3(-2, 0, -3));
+    const HEAD_POSITIONS = [
+      new THREE.Vector3(0, 6.5, 0),
+      new THREE.Vector3(-1.2, 5.2, 0),
+      new THREE.Vector3(1.2, 5.2, 0),
+    ];
+    for (const hp of HEAD_POSITIONS) {
+      const head = new THREE.Mesh(this.puffGeometry, new THREE.MeshBasicMaterial({
+        color: 0xff4400, transparent: true, opacity: 0.68,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      head.position.copy(BASE).add(hp);
+      head.scale.setScalar(3.5);
+      head.userData.baseOpacity = 0.68;
+      group.add(head);
+    }
+    const body = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        BASE.clone().add(new THREE.Vector3(0, 1, 0)),
+        BASE.clone().add(new THREE.Vector3(0, 5, 0)),
+      ]),
+      new THREE.LineBasicMaterial({ color: 0x220000, transparent: true, opacity: 0.62, blending: THREE.NormalBlending }),
+    );
+    body.userData.baseOpacity = 0.62;
+    group.add(body);
+    if (!reduceMotion) {
+      const ARM_ANGLES = [Math.PI * 0.2, Math.PI * 0.5, Math.PI * 0.8];
+      const ARM_HEIGHTS = [4.8, 3.6, 2.4];
+      for (let pair = 0; pair < 3; pair++) {
+        const hy = ARM_HEIGHTS[pair]!;
+        const baseAng = ARM_ANGLES[pair]!;
+        for (const side of [-1, 1]) {
+          const ang = side > 0 ? baseAng : Math.PI - baseAng;
+          const armEnd = BASE.clone().add(new THREE.Vector3(Math.cos(ang) * 3.5, hy, Math.sin(ang) * 0.3));
+          const arm = new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints([BASE.clone().add(new THREE.Vector3(0, hy, 0)), armEnd]),
+            new THREE.LineBasicMaterial({ color: 0xcc2200, transparent: true, opacity: 0.58, blending: THREE.AdditiveBlending, depthWrite: false }),
+          );
+          arm.userData.baseOpacity = 0.58;
+          group.add(arm);
+          const handFlare = new THREE.Mesh(this.flareGeometry, new THREE.MeshBasicMaterial({
+            color: 0xff5500, transparent: true, opacity: 0.52, blending: THREE.AdditiveBlending, depthWrite: false,
+          }));
+          handFlare.position.copy(armEnd);
+          handFlare.userData.baseOpacity = 0.52;
+          group.add(handFlare);
+        }
+      }
+    }
+    for (let w = 0; w < 8; w++) {
+      const ang = (w / 8) * Math.PI * 2;
+      const wisp = new THREE.Mesh(this.puffGeometry, new THREE.MeshBasicMaterial({
+        color: 0x110000, transparent: true, opacity: 0.48, blending: THREE.NormalBlending, depthWrite: false,
+      }));
+      wisp.position.copy(BASE).add(new THREE.Vector3(Math.cos(ang) * 1.5, 0.5, Math.sin(ang) * 1.5));
+      wisp.userData.baseOpacity = 0.48;
+      wisp.userData.vel = new THREE.Vector3(Math.cos(ang) * 0.3, 1.5 + Math.random(), Math.sin(ang) * 0.3);
+      group.add(wisp);
+    }
+    this.scene.add(group);
+    this.shuraKourinFX.push({ obj: group, life: 3.5, maxLife: 3.5 });
+  }
+
   /** 万刃 命中スパーク */
   shurikenImpact(point: THREE.Vector3): void {
     for (let i = 0; i < 5; i += 1) {
@@ -2174,6 +2859,240 @@ export class Effects {
         if ((child as THREE.Mesh).material) { ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.3 * ratio; }
       }
     });
+    // ── R34 特殊武器溜め/ウルト tick ──
+    this.banjinBladesFX = this.tick(this.banjinBladesFX, dt, (group, ratio) => {
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.72;
+        ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+      }
+    });
+    this.gekkouArrowFX = this.tick(this.gekkouArrowFX, dt, (group, ratio) => {
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.7;
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          const target = mesh.userData.targetScale as number | undefined;
+          if (target !== undefined) {
+            const grown = target * (1 - ratio * ratio);
+            mesh.scale.setScalar(Math.max(mesh.scale.x, grown));
+          }
+          (mesh.material as THREE.MeshBasicMaterial).opacity = base * ratio;
+        } else {
+          ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
+    this.fujinWallFX = this.tick(this.fujinWallFX, dt, (group, ratio) => {
+      const windDir = group.userData.windDir as THREE.Vector3 | undefined;
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.30;
+        if ((child as THREE.Mesh).isMesh) {
+          const vel = child.userData.vel as THREE.Vector3 | undefined;
+          if (vel) (child as THREE.Mesh).position.addScaledVector(vel, dt);
+          ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = base * ratio;
+        } else {
+          ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+      if (windDir) group.position.addScaledVector(windDir, dt * 14);
+    });
+    this.gouenBlastFX = this.tick(this.gouenBlastFX, dt, (group, ratio) => {
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.5;
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          const target = mesh.userData.targetScale as number | undefined;
+          if (target !== undefined) {
+            const grown = target * (1 - ratio * ratio);
+            mesh.scale.setScalar(Math.max(mesh.scale.x, grown));
+          }
+          const velY = mesh.userData.velY as number | undefined;
+          if (velY !== undefined) {
+            mesh.position.y += velY * dt;
+            const age = 1 - ratio;
+            (mesh.material as THREE.MeshBasicMaterial).opacity = base * Math.min(1, age * 5) * ratio;
+          } else {
+            (mesh.material as THREE.MeshBasicMaterial).opacity = base * ratio;
+          }
+        } else if ((child as THREE.Line).isLine !== undefined) {
+          ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
+    this.tenraiBoltFX = this.tick(this.tenraiBoltFX, dt, (group, _ratio) => {
+      const age = ((group.userData.age as number) ?? 0) + dt;
+      group.userData.age = age;
+      const pending = group.userData.pendingBolts as Array<{ t: number; pos: THREE.Vector3; fired?: boolean }> | undefined;
+      if (pending) {
+        for (const bolt of pending) {
+          if (!bolt.fired && age >= bolt.t) {
+            bolt.fired = true;
+            const top = bolt.pos.clone().add(new THREE.Vector3(
+              (Math.random() - 0.5) * 4, 28 + Math.random() * 4, (Math.random() - 0.5) * 4,
+            ));
+            this.buildBranchBolt(top, bolt.pos, 3, false, 0.4);
+            this.impactRing(bolt.pos, 0x44aaff);
+          }
+        }
+      }
+    });
+    this.shinkirouSweepFX = this.tick(this.shinkirouSweepFX, dt, (group, ratio) => {
+      const age = ((group.userData.age as number) ?? 0) + dt;
+      group.userData.age = age;
+      const originPt = group.userData.origin as THREE.Vector3 | undefined;
+      const yawFrom = group.userData.yawFrom as number ?? 0;
+      const yawTo = group.userData.yawTo as number ?? 0;
+      const sweepS = group.userData.sweepS as number ?? 0.6;
+      const reach = group.userData.reach as number ?? 50;
+      const t = Math.min(1, age / sweepS);
+      const curYaw = yawFrom + (yawTo - yawFrom) * t;
+      const beamObj = group.getObjectByName('sweepBeam') as THREE.Line | undefined;
+      if (beamObj && originPt) {
+        const bPts = [originPt, originPt.clone().add(new THREE.Vector3(Math.cos(curYaw) * reach, 0, Math.sin(curYaw) * reach))];
+        beamObj.geometry.setFromPoints(bPts);
+        (beamObj.material as THREE.LineBasicMaterial).opacity = 0.88 * ratio;
+      }
+      for (let i = 1; i <= 3; i++) {
+        const aftObj = group.getObjectByName(`aftBeam${i}`) as THREE.Line | undefined;
+        if (aftObj && originPt) {
+          const aftBase = (aftObj.userData.baseOpacity as number) ?? 0.22;
+          (aftObj.material as THREE.LineBasicMaterial).opacity = aftBase * ratio;
+          const aftYaw = curYaw - (yawTo - yawFrom) * i * 0.1;
+          const aPts = [originPt, originPt.clone().add(new THREE.Vector3(Math.cos(aftYaw) * reach, 0, Math.sin(aftYaw) * reach))];
+          aftObj.geometry.setFromPoints(aPts);
+        }
+      }
+    });
+    this.shuraRampageFX = this.tick(this.shuraRampageFX, dt, (group, ratio) => {
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.7;
+        if ((child as THREE.Mesh).isMesh) {
+          const vel = child.userData.vel as THREE.Vector3 | undefined;
+          if (vel) {
+            vel.y -= 14 * dt;
+            (child as THREE.Mesh).position.addScaledVector(vel, dt);
+          }
+          ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = base * ratio;
+        } else {
+          ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
+    this.banjinCloneFX = this.tick(this.banjinCloneFX, dt, (group, ratio) => {
+      for (const child of group.children) {
+        if (child instanceof THREE.Group) {
+          const fadeIn = Math.min(1, (1 - ratio) * 4);
+          for (const cc of child.children) {
+            const base = (cc.userData.baseOpacity as number) ?? 0.6;
+            if ((cc as THREE.Mesh).isMesh) {
+              ((cc as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = base * fadeIn * ratio;
+            } else {
+              ((cc as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * fadeIn * ratio;
+            }
+          }
+        } else {
+          const vel = child.userData.vel as THREE.Vector3 | undefined;
+          if (vel) child.position.addScaledVector(vel, dt);
+          const base = (child.userData.baseOpacity as number) ?? 0.8;
+          ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
+    this.gekkouMoonFX = this.tick(this.gekkouMoonFX, dt, (group, ratio) => {
+      const floorY = group.userData.floorY as number ?? 0;
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.7;
+        if (child.userData.isMoon === true) {
+          const moon = child as THREE.Mesh;
+          if (!(group.userData.impactDone as boolean)) {
+            moon.position.y -= (moon.userData.fallSpeed as number ?? 22) * dt;
+            if (moon.position.y <= floorY + 0.5) {
+              moon.position.y = floorY;
+              group.userData.impactDone = true;
+              for (const sib of group.children) {
+                if (sib.userData.isNova === true || sib.userData.isCrater === true || sib.userData.delayShow === true) {
+                  sib.visible = true;
+                  if ((sib as THREE.Mesh).isMesh) {
+                    ((sib as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = sib.userData.baseOpacity as number ?? 0.5;
+                  }
+                }
+              }
+            }
+          }
+          (moon.material as THREE.MeshBasicMaterial).opacity = base * Math.min(1, ratio * 5);
+        } else if (child.userData.isNova === true) {
+          const mesh = child as THREE.Mesh;
+          const target = mesh.userData.targetScale as number ?? 30;
+          mesh.scale.setScalar(Math.max(mesh.scale.x, target * (1 - ratio * ratio)));
+          (mesh.material as THREE.MeshBasicMaterial).opacity = base * ratio;
+        } else if (child.userData.isCrater === true) {
+          ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = base * ratio;
+        } else if ((child as THREE.Line).isLine !== undefined) {
+          ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
+    this.fujinVortexFX = this.tick(this.fujinVortexFX, dt, (group, ratio) => {
+      const spinRate = group.userData.spinRate as number ?? 1.8;
+      group.rotation.y += spinRate * dt;
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.26;
+        if ((child as THREE.Mesh).isMesh) {
+          ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = base * ratio;
+        } else {
+          ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
+    this.gouenCorridorFX = this.tick(this.gouenCorridorFX, dt, (group, ratio) => {
+      const t = performance.now() / 1000;
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.65;
+        if (child.userData.fissure === true) {
+          const flicker = 0.5 + Math.sin(t * 18 + child.position.x) * 0.5;
+          ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio * Math.max(0.15, flicker);
+        } else {
+          ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
+    this.shinkirouMirageFX = this.tick(this.shinkirouMirageFX, dt, (group, ratio) => {
+      const t = performance.now() / 1000;
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.22;
+        if (child.userData.isDistortRing === true) {
+          const phi = child.userData.pulsePhi as number ?? 0;
+          const pulse = 0.6 + 0.4 * Math.sin(t * 3.5 + phi);
+          ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = base * ratio * pulse;
+          child.rotation.z += dt * 0.6;
+        } else if (child.userData.isHeatPuff === true) {
+          const ang = ((child.userData.swirlAngle as number) ?? 0) + ((child.userData.swirlOmega as number) ?? 0.5) * dt;
+          child.userData.swirlAngle = ang;
+          const r = child.userData.swirlR as number ?? 3;
+          const cx = child.userData.swirlCx as number ?? 0;
+          const cz = child.userData.swirlCz as number ?? 0;
+          child.position.x = cx + Math.cos(ang) * r;
+          child.position.z = cz + Math.sin(ang) * r;
+          child.position.y += ((child.userData.swirlVelY as number) ?? 0) * dt;
+          ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
+    this.shuraKourinFX = this.tick(this.shuraKourinFX, dt, (group, ratio) => {
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.6;
+        if ((child as THREE.Mesh).isMesh) {
+          const vel = child.userData.vel as THREE.Vector3 | undefined;
+          if (vel) {
+            vel.y -= 9.8 * dt;
+            (child as THREE.Mesh).position.addScaledVector(vel, dt);
+          }
+          ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = base * ratio;
+        } else {
+          ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+        }
+      }
+    });
   }
 
   clear(): void {
@@ -2221,6 +3140,25 @@ export class Effects {
       this.scene.remove(item.obj);
     }
     this.beamLines.length = 0;
+    // R34 特殊武器溜め/ウルト clear
+    for (const list of [
+      this.banjinBladesFX as unknown as Timed<THREE.Object3D>[],
+      this.gekkouArrowFX as unknown as Timed<THREE.Object3D>[],
+      this.fujinWallFX as unknown as Timed<THREE.Object3D>[],
+      this.gouenBlastFX as unknown as Timed<THREE.Object3D>[],
+      this.tenraiBoltFX as unknown as Timed<THREE.Object3D>[],
+      this.shinkirouSweepFX as unknown as Timed<THREE.Object3D>[],
+      this.shuraRampageFX as unknown as Timed<THREE.Object3D>[],
+      this.banjinCloneFX as unknown as Timed<THREE.Object3D>[],
+      this.gekkouMoonFX as unknown as Timed<THREE.Object3D>[],
+      this.fujinVortexFX as unknown as Timed<THREE.Object3D>[],
+      this.gouenCorridorFX as unknown as Timed<THREE.Object3D>[],
+      this.shinkirouMirageFX as unknown as Timed<THREE.Object3D>[],
+      this.shuraKourinFX as unknown as Timed<THREE.Object3D>[],
+    ]) {
+      for (const item of list) this.disposeObject(item.obj);
+      list.length = 0;
+    }
   }
 
   // 試合破棄時に呼ぶ。プール共有ジオメトリも含めて解放する

@@ -247,6 +247,7 @@ const MACRO_NOISE_GLSL = /* glsl */ `
 `;
 
 const DEG = Math.PI / 180;
+const EXOTIC_HOLD_FIRE_IDS = new Set(['banjin-smg', 'fujin-fan', 'gouen-musket', 'shinkirou-sniper']);
 const LOOK_BASE = 0.0022;
 // ゲームパッドのヒップファイア時アシストゲート(マウスはADS時のみ、パッドは常時BO3準拠)
 const HIP_GATE = 0.4;
@@ -931,6 +932,24 @@ export class Match {
   private kokuraiBlackInTimer = 0;  // 発動黒転ビネットスパイク残り秒(0.6s→0)
   // A4-F08: 雷帝/黒雷帝中の環境雷鳴ハム(3-6s間隔)
   private raiteiHumNextS = 0;
+
+  // ── 特殊兵装 溜め攻撃 / Mウルト ──
+  private exoticHoldFireTimer = 0;
+  private exoticHoldFireCharging = false;
+  private exoticHoldFireActive = false;
+  private shuraChargeTimer = 0;
+  private shuraChargeTickTimer = 0;
+  private shuraRampageTimer = 0;
+  private shuraRampageFireTimer = 0;
+  private tenraiMaxChargeFired = false;
+  private banjinKagemaiTimer = 0;
+  private banjinKagemaiDmgTimer = 0;
+  private gekkouMoonTimer = 0;
+  private gekkouMoonPos: THREE.Vector3 | null = null;
+  private shinkirouKyozouTimer = 0;
+  private shuraKourinTimer = 0;
+  private shuraKourinDmgTimer = 0;
+  private exoticDamageBoost = 1;
 
   // ── 風神・極大手裏剣(B ウルト): 発射中の手裏剣エンティティ ──
   private windShuriken: {
@@ -3001,7 +3020,7 @@ export class Match {
     const events = weapon.update(
       dt * 1000,
       {
-        trigger: this.input.fireDown() && this.player.alive && !sprintBlocksFire && !this.cooking && !this.rcxdActive,
+        trigger: this.input.fireDown() && this.player.alive && !sprintBlocksFire && !this.cooking && !this.rcxdActive && !this.exoticHoldFireCharging, // V37: 溜め中の空撃ち弾薬消費を止める
         ads: wantAds && this.player.alive && !this.cooking && !this.rcxdActive,
         reloadPressed: !this.rcxdActive && this.input.wasPressed('reload'),
       },
@@ -3040,6 +3059,7 @@ export class Match {
         }
         // ── R33 特殊武器分岐 ──
         if (weapon.def.special === 'fan') {
+          if (this.exoticHoldFireCharging) { continue; }
           this.player.yaw -= event.recoil.yaw;
           this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
           this.fireFanShot(event.spreadRad);
@@ -3060,6 +3080,7 @@ export class Match {
           continue;
         }
         if (weapon.def.special === 'beam') {
+          if (this.exoticHoldFireCharging) { continue; }
           this.player.yaw -= event.recoil.yaw;
           this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
           this.fireBeam(event.spreadRad);
@@ -3070,6 +3091,7 @@ export class Match {
           continue;
         }
         if (weapon.def.special === 'minigun') {
+          if (this.shuraRampageTimer > 0) { continue; }
           if (this.minigunCurrentRpm >= 400) {
             const prob = this.minigunCurrentRpm / weapon.def.rpm;
             if (Math.random() < prob) {
@@ -3091,6 +3113,7 @@ export class Match {
           continue;
         }
         if (weapon.def.special === 'shuriken') {
+          if (this.exoticHoldFireCharging) { continue; }
           this.player.yaw -= event.recoil.yaw;
           this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
           // F8: hitscanの着弾点までで手裏剣discの飛行を打ち切る(命中後の貫通飛翔を防ぐ)
@@ -3120,6 +3143,7 @@ export class Match {
           }
           continue;
         }
+        if (weapon.def.id === 'gouen-musket' && this.exoticHoldFireCharging) { continue; }
         // RecoilStepの規約はyaw正=右。rotation.yは正で左回りなので符号を反転する
         this.player.yaw -= event.recoil.yaw;
         this.player.pitch = Math.min(PITCH_LIMIT, this.player.pitch + event.recoil.pitch);
@@ -3167,11 +3191,8 @@ export class Match {
         this.bowChargeTimer = 0;
         this.viewModel.setBowCharge(0);
       } else if (this.bowChargeTimer >= 1.2) {
-        // 最大チャージ到達: 自動発射
-        this.fireBowArrow(1.2);
-        this.viewModel.fire(weapon.def.scope === true);
-        this.sounds.bowRelease();
-        this.alertBots(ALERT_RADIUS_SUPPRESSED);
+        // 最大チャージ到達: 満月の矢(charge special)
+        this.fireGekkouFullMoon();
         this.bowCharging = false;
         this.bowChargeTimer = 0;
         this.viewModel.setBowCharge(0);
@@ -3184,6 +3205,7 @@ export class Match {
         ? Math.min(0.8, this.staffChargeTimer + dt)
         : Math.max(0, this.staffChargeTimer - dt * 2);
       this.viewModel.setStaffCharge(this.staffChargeTimer / 0.8);
+      this.viewModel.setExoticCharge('tenrai-staff', this.staffChargeTimer / 0.8);
       // F7: チャージ中に0.15s周期でstaffChargeTick音
       if (adsHeld && this.staffChargeTimer > 0) {
         this.staffChargeTickTimer -= dt;
@@ -3191,8 +3213,14 @@ export class Match {
           this.staffChargeTickTimer = 0.15;
           this.sounds.staffChargeTick(this.staffChargeTimer / 0.8);
         }
+        // 最大チャージ(0.8s)到達: 天罰(charge special)
+        if (this.staffChargeTimer >= 0.8 && !this.tenraiMaxChargeFired) {
+          this.tenraiMaxChargeFired = true;
+          this.fireTenraiTenbatsu();
+        }
       } else {
         this.staffChargeTickTimer = 0;
+        this.tenraiMaxChargeFired = false;
       }
     } else {
       this.staffChargeTimer = 0;
@@ -3280,6 +3308,12 @@ export class Match {
     this.updateDarkEmperor(dt);
     this.updateKokuraitei(dt); // R33 黒雷帝 ambient pack
     this.updateChargeAttack(dt);
+    this.updateExoticHoldFireCharge(dt);
+    this.updateShuraCharge(dt);
+    this.updateBanjinKagemai(dt);
+    this.updateGekkouMoon(dt);
+    this.updateShuraKourin(dt);
+    this.updateShinkirouKyozou(dt);
     this.updateRaiteiChargeStrikes();
     this.updateGeppaRaigou(dt);
     this.updateGokuraiZetsumetsu(dt);
@@ -4582,7 +4616,9 @@ export class Match {
     const weapon = this.activeWeapon;
     const charged = this.staffChargeTimer >= 0.8;
     const aoeRadius = 3 * (charged ? 2.5 : 1); // 強化: 完全チャージ倍率1.5→2.5(=半径7.5m)
-    this.staffProjectiles.push({ mesh, sparkGroup, pos: origin.clone(), vel, damage: weapon.def.damage, aoeRadius, timer: 0 });
+    // R33: 完全チャージ弾はAoE300(基礎160)
+    const boltDamage = charged ? 300 : weapon.def.damage;
+    this.staffProjectiles.push({ mesh, sparkGroup, pos: origin.clone(), vel, damage: boltDamage, aoeRadius, timer: 0 });
     this.player.shotsFired += 1;
   }
 
@@ -4988,9 +5024,12 @@ export class Match {
   ): boolean {
     // takeDamage前の満タン判定(one-shotメダル用)
     const fullHp = bot.hp >= bot.maxHp;
-    const finalDamage = (this.config.mode === 'zombie' && bot.kind === 'zombie' && this.zombiePerkDamageMul > 1)
+    let finalDamage = (this.config.mode === 'zombie' && bot.kind === 'zombie' && this.zombiePerkDamageMul > 1)
       ? damage * this.zombiePerkDamageMul
       : damage;
+    if (this.exoticDamageBoost > 1 && srcClass !== null) {
+      finalDamage *= this.exoticDamageBoost;
+    }
     // painDir: humanoidが被弾方向へ振り向く材料(bot→射手=プレイヤー)。tank/turret/droneは
     // 全周維持なので影響なし、方向不明経路も takeDamage 側で全周フォールバック
     const died = bot.takeDamage(finalDamage, this.player.eyePosition.clone().sub(bot.position));
@@ -5742,7 +5781,9 @@ export class Match {
         }
         continue;
       }
-      bot.update(dt, {
+      // R33 虚像世界: 発動中は敵全体の時間を×0.1へスロー(移動・射撃とも減速)
+      const kyozouSlowMul = this.shinkirouKyozouTimer > 0 && bot.team !== PLAYER_TEAM ? 0.1 : 1;
+      bot.update(dt * kyozouSlowMul, {
         targetEye,
         objective: bot.alive ? this.objectiveFor(bot) : null,
         tuning: effectiveTuning,
@@ -5762,7 +5803,7 @@ export class Match {
         const botDist = botDistToPlayer;
         if (botDist < 25 && bot.horizSpeedMps > 0.1) {
           const prev = this.botStepPhase.get(bot.uid) ?? 0;
-          const next = prev + bot.horizSpeedMps * dt;
+          const next = prev + bot.horizSpeedMps * dt * kyozouSlowMul; // V37: 虚像世界スロー中は足音ケイデンスも同期
           this.botStepPhase.set(bot.uid, next % 2.2);
           if (next >= 2.2) {
             // ストライドイベント発火
@@ -6432,6 +6473,8 @@ export class Match {
     // killcam/alive/fists ガードは従来の ult4 経路と同一(alive は本メソッド冒頭で return 済み)。
     const mPressed = this.isNinja && this.input.wasPressed('ult4') && !this.killcamCamActive;
     const nPressed = this.isNinja && this.input.wasPressed('ult3') && !this.killcamCamActive;
+    const isExoticEquipped = !this.isNinja && this.activeWeapon.def.class === 'exotic';
+    const exoticMPressed = isExoticEquipped && this.input.wasPressed('ult4') && !this.killcamCamActive;
     let nUltFired = false;
     let mUltFired = false;
 
@@ -6463,6 +6506,8 @@ export class Match {
           // M: シュヴァルツヴァルト
           this.activateSchwarzwald();
         }
+      } else if (exoticMPressed) {
+        this.activateExoticUlt(this.activeWeapon.def.id);
       }
     }
     // triple-M 黒雷帝化: 1.5s 内の3押し(1押し目がウルト発動済み=armed)で追加発動
@@ -6473,12 +6518,13 @@ export class Match {
     // ③ 黒雷帝バフ: 移動+15% / 被ダメ-30%。ult上書きと非衝突(乗算スタック)
     const kokuraiSpeedMul = this.kokuraiteiMode ? KOKURAITEI_SPEED_MUL : 1;
     const kokuraiResist = this.kokuraiteiMode ? KOKURAITEI_DAMAGE_RESIST : 0;
+    const shuraKourinSpeedMul = this.shuraKourinTimer > 0 ? 1.3 : 1; // 阿修羅降臨: 移動+30%
     if (this.ultActive > 0) {
       this.ultActive = Math.max(0, this.ultActive - dt);
-      this.player.speedMul = OVERDRIVE_SPEED_MUL * this.zombiePerkMoveMul * kokuraiSpeedMul;
+      this.player.speedMul = OVERDRIVE_SPEED_MUL * this.zombiePerkMoveMul * kokuraiSpeedMul * shuraKourinSpeedMul;
       this.player.damageResist = Math.max(OVERDRIVE_RESIST, kokuraiResist);
     } else {
-      this.player.speedMul = this.zombiePerkMoveMul * kokuraiSpeedMul;
+      this.player.speedMul = this.zombiePerkMoveMul * kokuraiSpeedMul * shuraKourinSpeedMul;
       this.player.damageResist = kokuraiResist;
     }
 
@@ -8758,7 +8804,13 @@ export class Match {
       darkEmperorPermanent: this.isNinja && !isFinite(this.darkEmperorTimer) ? true : undefined,
       raiteiMode: this.isNinja && this.raiteiMode ? true : undefined,
       kokuraiteiMode: this.isNinja && this.kokuraiteiMode ? true : undefined,
-      chargeRatio: this.isNinja && this.isCharging ? Math.min(1, this.chargeTimer / 1.2) : undefined,
+      chargeRatio: this.isNinja && this.isCharging
+        ? Math.min(1, this.chargeTimer / 1.2)
+        : this.exoticHoldFireCharging
+          ? Math.min(1, this.exoticHoldFireTimer / 1.2)
+          : this.shuraRampageTimer > 0 ? 1
+            : this.shuraChargeTimer > 0 ? this.shuraChargeTimer
+              : undefined,
       // 修羅スピンアップRPMゲージ(minigun装備+スピン>0のみ供給。0..1=currentRpm/def.rpm)
       minigunSpin01:
         weapon.def.special === 'minigun' && this.minigunCurrentRpm > 0
@@ -9857,6 +9909,22 @@ export class Match {
     this._prevFramePlaying = true; // ポーズ検出フラグをリセット
     this.isCharging = false;
     this.chargeTimer = 0;
+    this.exoticHoldFireTimer = 0;
+    this.exoticHoldFireCharging = false;
+    this.exoticHoldFireActive = false;
+    this.shuraChargeTimer = 0;
+    this.shuraChargeTickTimer = 0;
+    this.shuraRampageTimer = 0;
+    this.shuraRampageFireTimer = 0;
+    this.tenraiMaxChargeFired = false;
+    this.banjinKagemaiTimer = 0;
+    this.banjinKagemaiDmgTimer = 0;
+    this.gekkouMoonTimer = 0;
+    this.gekkouMoonPos = null;
+    this.shinkirouKyozouTimer = 0;
+    this.shuraKourinTimer = 0;
+    this.shuraKourinDmgTimer = 0;
+    this.exoticDamageBoost = 1;
     this.geppaRaigouTimer = 0;
     this.geppaRaigouDmgTimer = 0;
     this.gokuraiZetsumetsuTimer = 0;
@@ -10000,6 +10068,488 @@ export class Match {
     });
     this.disposeTrainingTargets();
     this.physics.free();
+  }
+
+  // ── 特殊兵装: 月光弓 満月の矢 ──────────────────────────────────
+  private fireGekkouFullMoon(): void {
+    const origin = this.player.eyePosition.clone();
+    const dir = new THREE.Vector3(0, 0, -1).applyEuler(
+      new THREE.Euler(this.player.pitch, this.player.yaw, 0, 'YXZ'),
+    );
+    this.effects.gekkouFullMoon(origin, dir);
+    this.sounds.gekkouFullMoonSound();
+    this.viewModel.fire(true);
+    this.addShake(0.18);
+    this.alertBots(ALERT_RADIUS_SUPPRESSED);
+    // 貫通hitscan ×3本 各200dmg
+    const BASE_DMG = 200;
+    for (let i = 0; i < 3; i++) {
+      const spread = (i - 1) * 0.015;
+      const spreadDir = dir.clone().applyEuler(new THREE.Euler(spread, spread * 0.5, 0));
+      spreadDir.normalize();
+      this.fireExoticBeamRay(origin, spreadDir, BASE_DMG, 600, '月光弓');
+    }
+  }
+
+  // ── 特殊兵装: 天雷杖 天罰 ──────────────────────────────────────
+  private fireTenraiTenbatsu(): void {
+    const origin = this.player.eyePosition.clone();
+    const dir = new THREE.Vector3(0, 0, -1).applyEuler(
+      new THREE.Euler(this.player.pitch, this.player.yaw, 0, 'YXZ'),
+    );
+    // 照準点(60m以内の着弾点)へ天雷を落とす
+    const aimHit = this.castRay(origin, dir, 60, this.player.body);
+    const center = origin.clone().addScaledVector(dir, aimHit ? hitToi(aimHit) : 30);
+    const radius = 12;
+    this.effects.tenraiTenbatsu(center, radius, this.settings.reduceMotion);
+    this.sounds.tenraiTenbatsuSound();
+    this.addShake(0.25);
+    this.alertBots(ALERT_RADIUS);
+    const dmg = 800; // 桁外れ: 基礎160の5倍
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      if (bot.position.distanceTo(center) <= radius) {
+        this.applyBotDamage(bot, dmg, bot.position.clone(), false, '天雷杖', true, false, 'exotic');
+        this.botStunUntil.set(bot, this.elapsed + 2.0);
+      }
+    }
+  }
+
+  // ── 特殊兵装: 貫通ビームhitscan共通 ─────────────────────────────
+  private fireExoticBeamRay(
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    damage: number,
+    range: number,
+    weaponName = '特殊兵装',
+    grantUlt = true,
+    srcClass: WeaponClass | null = 'exotic',
+    stopAtWorld = false,
+  ): void {
+    const hitSet = new Set<number>();
+    let from = origin.clone();
+    let remaining = range;
+    for (let pass = 0; pass < 6 && remaining > 0; pass++) {
+      const hit = this.castRay(from, dir, remaining, this.player.body);
+      if (!hit) break;
+      const toi = hitToi(hit);
+      const tag = this.tags.get(hit.collider.handle);
+      // V37: 万刃/修羅は壁で止まる(満月の矢/蜃気楼は全貫通=仕様)
+      if (stopAtWorld && tag?.kind === 'world') break;
+      if (tag?.kind === 'bot' && tag.bot.alive && tag.bot.team !== PLAYER_TEAM && !hitSet.has(tag.bot.uid)) {
+        hitSet.add(tag.bot.uid);
+        const pt = from.clone().addScaledVector(dir, toi);
+        this.applyBotDamage(tag.bot, damage, pt, false, weaponName, grantUlt, false, srcClass);
+      }
+      from = from.clone().addScaledVector(dir, toi + 0.05);
+      remaining -= toi + 0.05;
+    }
+  }
+
+  // ── 特殊兵装: hold-fire溜めチャージ更新 ──────────────────────────
+  private updateExoticHoldFireCharge(dt: number): void {
+    const weapon = this.activeWeapon;
+    if (!EXOTIC_HOLD_FIRE_IDS.has(weapon.def.id) || !this.player.alive || this.killcamCamActive) {
+      // 武器替え/死亡/killcam中は溜め状態を破棄(リスポーン直後の暴発防止)
+      if (this.exoticHoldFireCharging || this.exoticHoldFireActive) {
+        this.exoticHoldFireCharging = false;
+        this.exoticHoldFireActive = false;
+        this.exoticHoldFireTimer = 0;
+        this.viewModel.setExoticCharge(weapon.def.id, 0);
+      }
+      return;
+    }
+
+    const triggerDown = this.input.fireDown();
+    if (triggerDown && !this.exoticHoldFireActive) {
+      this.exoticHoldFireActive = true;
+      this.exoticHoldFireTimer = 0;
+    }
+    if (this.exoticHoldFireActive) {
+      if (triggerDown) {
+        this.exoticHoldFireTimer += dt;
+        if (this.exoticHoldFireTimer >= 0.25) {
+          this.exoticHoldFireCharging = true;
+        }
+        if (this.exoticHoldFireCharging) {
+          this.viewModel.setExoticCharge(weapon.def.id, Math.min(1, this.exoticHoldFireTimer / 1.2));
+        }
+      } else {
+        if (this.exoticHoldFireCharging && this.exoticHoldFireTimer >= 0.25) {
+          this.fireExoticHoldFireRelease(weapon.def.id, Math.min(1, this.exoticHoldFireTimer / 1.2));
+        }
+        this.exoticHoldFireActive = false;
+        this.exoticHoldFireCharging = false;
+        this.exoticHoldFireTimer = 0;
+        this.viewModel.setExoticCharge(weapon.def.id, 0);
+      }
+    }
+  }
+
+  // ── 特殊兵装: hold-fire溜め発射 ──────────────────────────────────
+  private fireExoticHoldFireRelease(weaponId: string, charge01: number): void {
+    const origin = this.player.eyePosition.clone();
+    const dir = new THREE.Vector3(0, 0, -1).applyEuler(
+      new THREE.Euler(this.player.pitch, this.player.yaw, 0, 'YXZ'),
+    );
+    const isMax = charge01 >= 0.99;
+    switch (weaponId) {
+      case 'banjin-smg': {
+        if (isMax) {
+          this.effects.banjinStorm(origin, dir);
+          this.sounds.banjinStormSound();
+          this.addShake(0.15);
+          const pellets = 16;
+          for (let i = 0; i < pellets; i++) {
+            const angle = ((i / (pellets - 1)) - 0.5) * Math.PI * 0.5;
+            const spreadDir = dir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+            this.fireExoticBeamRay(origin, spreadDir, 45 * charge01 * 2, 60, '万刃', true, 'exotic', true);
+          }
+        } else {
+          for (let i = 0; i < 3; i++) {
+            this.fireExoticBeamRay(origin, dir, 45 * charge01 * 2, 60, '万刃', true, 'exotic', true);
+          }
+          this.addShake(0.05);
+        }
+        this.alertBots(ALERT_RADIUS_SUPPRESSED);
+        break;
+      }
+      case 'fujin-fan': {
+        this.effects.fujinTyphoon(origin, dir);
+        this.sounds.fujinTyphoonSound();
+        this.addShake(0.12);
+        const fanRange = 12 + charge01 * 8;
+        for (const bot of this.bots) {
+          if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+          const toBotDir = bot.position.clone().sub(origin).normalize();
+          const dot = toBotDir.dot(dir);
+          const dist = bot.position.distanceTo(origin);
+          if (dot > 0.5 && dist <= fanRange) {
+            const dmg = 35 * charge01 * 10;
+            this.applyBotDamage(bot, dmg, bot.position.clone(), false, '風神扇', true, false, 'exotic');
+            this.botStunUntil.set(bot, this.elapsed + 0.8 * charge01);
+          }
+        }
+        this.alertBots(ALERT_RADIUS);
+        break;
+      }
+      case 'gouen-musket': {
+        // 照準先の着弾点(120m以内)に大爆風
+        const aimHit = this.castRay(origin, dir, 120, this.player.body);
+        const target = origin.clone().addScaledVector(dir, aimHit ? hitToi(aimHit) : 120);
+        this.effects.gouenBlast(target, this.settings.reduceMotion);
+        this.sounds.gouenBlastSound();
+        this.addShake(0.3 * charge01);
+        const blastR = 6 + charge01 * 6;
+        for (const bot of this.bots) {
+          if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+          if (bot.position.distanceTo(target) <= blastR) {
+            const dmg = 260 * charge01 * 3; // 桁外れ: 最大780
+            this.applyBotDamage(bot, dmg, bot.position.clone(), false, '業炎銃', true, false, 'exotic');
+          }
+        }
+        // 爆心に延焼床
+        this.firePatches.push({
+          pos: target.clone(),
+          radius: blastR * 0.6,
+          until: this.elapsed + 3 * charge01,
+          tickIn: 0,
+          crackleIn: 0,
+        });
+        this.alertBots(ALERT_RADIUS);
+        break;
+      }
+      case 'shinkirou-sniper': {
+        const yawFrom = this.player.yaw - 0.3 * charge01;
+        const yawTo = this.player.yaw + 0.3 * charge01;
+        this.effects.shinkirouSweep(origin, yawFrom, yawTo);
+        this.sounds.shinkirouSweepSound();
+        this.addShake(0.1);
+        const sweepSteps = 7;
+        for (let i = 0; i < sweepSteps; i++) {
+          const yaw = yawFrom + (yawTo - yawFrom) * (i / (sweepSteps - 1));
+          const sweepDir = new THREE.Vector3(0, 0, -1).applyEuler(
+            new THREE.Euler(this.player.pitch, yaw, 0, 'YXZ'),
+          );
+          this.fireExoticBeamRay(origin, sweepDir, 90 * charge01 * 3, 600, '蜃気楼');
+        }
+        this.alertBots(ALERT_RADIUS);
+        break;
+      }
+    }
+  }
+
+  // ── 特殊兵装: 修羅チャージ(ADS+fire hold) ───────────────────────
+  private updateShuraCharge(dt: number): void {
+    const weapon = this.activeWeapon;
+    if (weapon.def.special !== 'minigun' || !this.player.alive || this.killcamCamActive) {
+      // 武器替え/死亡/killcam中は溜め・連撃とも破棄
+      if (this.shuraChargeTimer > 0 || this.shuraRampageTimer > 0) {
+        this.shuraChargeTimer = 0;
+        this.shuraRampageTimer = 0;
+        this.shuraRampageFireTimer = 0;
+        this.exoticDamageBoost = 1;
+        this.viewModel.setExoticCharge('shura-lmg', 0);
+      }
+      return;
+    }
+    if (this.shuraRampageTimer > 0) {
+      this.shuraRampageTimer -= dt;
+      this.exoticDamageBoost = this.shuraRampageTimer > 0 ? 1.5 : 1;
+      this.shuraRampageFireTimer -= dt;
+      if (this.shuraRampageFireTimer <= 0 && this.shuraRampageTimer > 0) {
+        this.shuraRampageFireTimer = 0.05;
+        const rampageOrigin = this.player.eyePosition.clone();
+        const rampageDir = new THREE.Vector3(0, 0, -1).applyEuler(
+          new THREE.Euler(this.player.pitch, this.player.yaw, 0, 'YXZ'),
+        );
+        const spread = Math.sin(this.elapsed * 97.3) * 0.02; // 決定論スプレッド(乱数不使用)
+        const spreadDir = rampageDir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), spread);
+        this.fireExoticBeamRay(rampageOrigin, spreadDir, 28, 360, '修羅', true, 'exotic', true);
+        this.sounds.shot('lmg');
+        this.effects.shuraRampage(rampageOrigin);
+      }
+      if (this.shuraRampageTimer <= 0) {
+        this.shuraRampageTimer = 0;
+        this.exoticDamageBoost = 1;
+        this.viewModel.setExoticCharge('shura-lmg', 0);
+      }
+      return;
+    }
+    const adsHeld = weapon.adsProgress > 0.3 && this.input.fireDown();
+    if (adsHeld) {
+      // 仕様: ADS-hold 1.0s で阿修羅連撃
+      this.shuraChargeTimer = Math.min(1, this.shuraChargeTimer + dt);
+      this.viewModel.setExoticCharge('shura-lmg', this.shuraChargeTimer);
+      this.shuraChargeTickTimer -= dt;
+      if (this.shuraChargeTickTimer <= 0) {
+        this.shuraChargeTickTimer = 0.2;
+        this.sounds.staffChargeTick(this.shuraChargeTimer);
+      }
+      if (this.shuraChargeTimer >= 1) {
+        this.shuraRampageTimer = 4.0;
+        this.shuraRampageFireTimer = 0;
+        this.exoticDamageBoost = 1.5;
+        this.effects.shuraRampage(this.player.eyePosition.clone());
+        this.sounds.shuraRampageSound();
+        this.announcements.push('阿修羅連撃');
+        this.addShake(0.3);
+        this.shuraChargeTimer = 0;
+        this.viewModel.setExoticCharge('shura-lmg', 0);
+      }
+    } else {
+      if (this.shuraChargeTimer > 0) {
+        this.shuraChargeTimer = Math.max(0, this.shuraChargeTimer - dt * 2);
+        this.viewModel.setExoticCharge('shura-lmg', this.shuraChargeTimer);
+      }
+    }
+  }
+
+  // ── 特殊兵装: 影分身・万刃繚乱 持続更新(4秒間0.4s毎に可視全敵へ150) ──
+  private updateBanjinKagemai(dt: number): void {
+    if (this.banjinKagemaiTimer <= 0) return;
+    this.banjinKagemaiTimer = Math.max(0, this.banjinKagemaiTimer - dt);
+    this.banjinKagemaiDmgTimer -= dt;
+    if (this.banjinKagemaiDmgTimer > 0) return;
+    this.banjinKagemaiDmgTimer = 0.4;
+    const eye = this.player.eyePosition;
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const toBot = bot.position.clone().sub(eye);
+      const dist = toBot.length();
+      // 可視判定: world遮蔽が無い敵のみ(boundaryは視線を通す)
+      const losHit = this.castRay(eye, toBot.clone().normalize(), Math.max(0.1, dist - 0.3), this.player.body,
+        (c) => this.tags.get(c.handle)?.kind === 'world');
+      if (losHit) continue;
+      const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+      this.applyBotDamage(bot, 150, point, false, '影分身・万刃繚乱', false);
+    }
+    this.alertBots(ALERT_RADIUS_SUPPRESSED);
+  }
+
+  // ── 特殊兵装: 月落とし 着弾更新(発動2秒後に照準点30m圏へ5000) ──
+  private updateGekkouMoon(dt: number): void {
+    if (this.gekkouMoonTimer <= 0) return;
+    this.gekkouMoonTimer -= dt;
+    if (this.gekkouMoonTimer > 0) return;
+    this.gekkouMoonTimer = 0;
+    const center = this.gekkouMoonPos;
+    this.gekkouMoonPos = null;
+    if (!center) return;
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      if (bot.position.distanceTo(center) > 30) continue;
+      const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+      this.applyBotDamage(bot, 5000, point, false, '月落とし', false);
+    }
+    this.addShake(this.settings.reduceMotion ? 0.3 : 0.7);
+    this.alertBots(80);
+  }
+
+  // ── 特殊兵装: 蜃気楼 虚像世界 持続更新 ─────────────────────────
+  private updateShinkirouKyozou(dt: number): void {
+    if (this.shinkirouKyozouTimer <= 0) return;
+    this.shinkirouKyozouTimer -= dt;
+    if (this.shinkirouKyozouTimer > 0) {
+      this.exoticDamageBoost = 1.5;
+    } else {
+      this.shinkirouKyozouTimer = 0;
+      this.exoticDamageBoost = 1;
+    }
+  }
+
+  // ── 特殊兵装: 阿修羅降臨 持続更新(5秒間0.15s毎に最寄り可視敵へ自動120) ──
+  private updateShuraKourin(dt: number): void {
+    if (this.shuraKourinTimer <= 0) return;
+    this.shuraKourinTimer = Math.max(0, this.shuraKourinTimer - dt);
+    this.shuraKourinDmgTimer -= dt;
+    if (this.shuraKourinDmgTimer > 0) return;
+    this.shuraKourinDmgTimer = 0.15;
+    const eye = this.player.eyePosition;
+    let nearest: Bot | null = null;
+    let nearestDist = Infinity;
+    for (const bot of this.bots) {
+      if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+      const dist = bot.position.distanceTo(eye);
+      if (dist >= nearestDist) continue;
+      const toBot = bot.position.clone().sub(eye);
+      const losHit = this.castRay(eye, toBot.clone().normalize(), Math.max(0.1, dist - 0.3), this.player.body,
+        (c) => this.tags.get(c.handle)?.kind === 'world');
+      if (losHit) continue;
+      nearest = bot;
+      nearestDist = dist;
+    }
+    if (nearest) {
+      const point = new THREE.Vector3(nearest.position.x, nearest.position.y + 0.3, nearest.position.z);
+      this.applyBotDamage(nearest, 120, point, false, '阿修羅降臨', false);
+    }
+  }
+
+  // ── 特殊兵装: Mウルト発動ルーター(ゲージ全消費 + TTS/バナー告知) ──
+  private activateExoticUlt(weaponId: string): void {
+    if (this.ultCharge < 1) return;
+    this.ultCharge = 0;
+    this.ultReadyNotified = false;
+    const origin = this.player.eyePosition.clone();
+    const dir = new THREE.Vector3(0, 0, -1).applyEuler(
+      new THREE.Euler(this.player.pitch, this.player.yaw, 0, 'YXZ'),
+    );
+    const announce = (label: string): void => {
+      this.announcements.push(label);
+      this.sounds.announceStreak(label, this.settings.announcerVolume);
+    };
+    switch (weaponId) {
+      case 'banjin-smg': {
+        // 影分身・万刃繚乱: 4秒間0.4s毎に可視全敵へ150(updateBanjinKagemai)
+        this.effects.banjinKagemai(this.player.position.clone(), this.settings.reduceMotion);
+        this.sounds.banjinKagemaiSound();
+        this.banjinKagemaiTimer = 4.0;
+        this.banjinKagemaiDmgTimer = 0;
+        announce('影分身・万刃繚乱');
+        this.addShake(0.3);
+        break;
+      }
+      case 'gekkou-bow': {
+        // 月落とし: 照準点へ2秒後に着弾、30m圏5000(updateGekkouMoon)
+        const aimHit = this.castRay(origin, dir, 200, this.player.body);
+        const aimPt = origin.clone().addScaledVector(dir, aimHit ? hitToi(aimHit) : 100);
+        this.effects.gekkouTsukiotoshi(aimPt, this.settings.reduceMotion);
+        this.sounds.gekkouTsukiotoshiSound();
+        this.gekkouMoonTimer = 2.0;
+        this.gekkouMoonPos = aimPt;
+        announce('月落とし');
+        this.addShake(0.2);
+        break;
+      }
+      case 'fujin-fan': {
+        // 神風・天空舞: 全敵の足元に竜巻 + 1500 + 1.5sスタン
+        this.effects.fujinKamikaze(this.player.position.clone(), 60, this.settings.reduceMotion);
+        this.sounds.fujinKamikazeSound();
+        for (const bot of this.bots) {
+          if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+          this.effects.fujinTornadoAt(bot.position.clone());
+          const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+          this.applyBotDamage(bot, 1500, point, false, '神風・天空舞', false);
+          this.botStunUntil.set(bot, Math.max(this.botStunUntil.get(bot) ?? 0, this.elapsed + 1.5));
+        }
+        announce('神風・天空舞');
+        this.addShake(0.5);
+        this.alertBots(80);
+        break;
+      }
+      case 'gouen-musket': {
+        // 業火滅世: 前方60m×幅20mの回廊に2000 + 延焼床
+        this.effects.gouenMesse(origin, dir, this.settings.reduceMotion);
+        this.sounds.gouenMesseSound();
+        const fwdH = new THREE.Vector3(dir.x, 0, dir.z).normalize();
+        const right = new THREE.Vector3().crossVectors(fwdH, new THREE.Vector3(0, 1, 0)).normalize();
+        for (const bot of this.bots) {
+          if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+          const toBot = new THREE.Vector3(bot.position.x - origin.x, 0, bot.position.z - origin.z);
+          const along = fwdH.dot(toBot);
+          if (along < 0 || along > 60) continue;
+          if (Math.abs(right.dot(toBot)) > 10) continue;
+          const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+          this.applyBotDamage(bot, 2000, point, false, '業火滅世', false);
+        }
+        // 回廊に沿って延焼床(足元高さ)
+        const foot = this.player.position.clone();
+        foot.y -= PLAYER_FEET_OFFSET;
+        // V37修正: 第1パッチを12mから(半径8.4mの判定内に術者が入り自己延焼していた)
+        for (let d = 12; d <= 60; d += 12) {
+          this.firePatches.push({
+            pos: foot.clone().addScaledVector(fwdH, d),
+            radius: 8,
+            until: this.elapsed + 4,
+            tickIn: 0,
+            crackleIn: 0,
+          });
+        }
+        announce('業火滅世');
+        this.addShake(0.5);
+        this.alertBots(80);
+        break;
+      }
+      case 'tenrai-staff': {
+        // 神鳴八雷: 全敵の頭上へ落雷、各2500
+        const positions: THREE.Vector3[] = [];
+        for (const bot of this.bots) {
+          if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+          positions.push(bot.position.clone());
+        }
+        this.effects.tenraiHachirai(positions, this.settings.reduceMotion);
+        this.sounds.tenraiHachiraiSound();
+        for (const bot of this.bots) {
+          if (!bot.alive || bot.team === PLAYER_TEAM) continue;
+          const point = new THREE.Vector3(bot.position.x, bot.position.y + 0.3, bot.position.z);
+          this.applyBotDamage(bot, 2500, point, false, '神鳴八雷', false);
+        }
+        announce('神鳴八雷');
+        this.addShake(0.6);
+        this.alertBots(80);
+        break;
+      }
+      case 'shinkirou-sniper': {
+        // 虚像世界: 6秒間 敵全体速度×0.1スロー + 自ダメージ×1.5バフ
+        this.effects.shinkirouKyozou(6, this.settings.reduceMotion);
+        this.sounds.shinkirouKyozouSound();
+        this.shinkirouKyozouTimer = 6.0;
+        this.exoticDamageBoost = 1.5;
+        announce('虚像世界');
+        this.addShake(0.25);
+        break;
+      }
+      case 'shura-lmg': {
+        // 阿修羅降臨: 5秒間0.15s毎に最寄り可視敵へ自動120 + 移動+30%
+        this.effects.shuraKourin(this.player.position.clone(), this.settings.reduceMotion);
+        this.sounds.shuraKourinSound();
+        this.shuraKourinTimer = 5.0;
+        this.shuraKourinDmgTimer = 0;
+        announce('阿修羅降臨');
+        this.addShake(0.3);
+        break;
+      }
+    }
   }
 }
 

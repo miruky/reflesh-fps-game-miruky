@@ -727,6 +727,173 @@ export const STAFF_FIRE_SPEC = {
   rumbleDurationS: 0.38,
 } as const;
 
+// ─── R34 特殊武器溜め/ウルト音スペック ─────────────────────────────────────
+
+// 千刃嵐: 金属風切り+カオス帯
+export const BANJIN_STORM_SPEC = {
+  metalHz: 3800,
+  metalGain: 0.34,
+  metalDurationS: 0.42,
+  wooshHz: 1800,
+  wooshEndHz: 400,
+  wooshGain: 0.28,
+  wooshDurationS: 0.35,
+} as const;
+
+// 満月の矢: 荘厳な弦音+月柱低域
+export const GEKKOU_FULL_MOON_SPEC = {
+  stringHz: 1200,
+  stringGain: 0.26,
+  stringDurationS: 0.06,
+  pillarFreqHz: 180,
+  pillarEndFreqHz: 60,
+  pillarGain: 0.38,
+  pillarDurationS: 0.8,
+  novaFreqHz: 240,
+  novaGain: 0.44,
+  novaDurationS: 0.5,
+} as const;
+
+// 大颶風: 嵐の低域ドローン+ガスト
+export const FUJIN_TYPHOON_SPEC = {
+  stormLowHz: 80,
+  stormHighHz: 320,
+  stormGain: 0.42,
+  stormDurationS: 1.2,
+  gustHz: 1600,
+  gustEndHz: 300,
+  gustGain: 0.30,
+  gustDurationS: 0.9,
+} as const;
+
+// 大業火弾: 低域ブーム+クラックル
+export const GOUEN_BLAST_SPEC = {
+  boomFreqHz: 60,
+  boomEndFreqHz: 18,
+  boomGain: 0.72,
+  boomDurationS: 0.5,
+  crackleHz: 2200,
+  crackleGain: 0.36,
+  crackleDurationS: 0.7,
+} as const;
+
+// 天罰: 連続雷鳴+クラック
+export const TENRAI_TENBATSU_SPEC = {
+  thunderFreqHz: 95,
+  thunderEndHz: 28,
+  thunderGain: 0.55,
+  thunderDurationS: 0.6,
+  crackHz: 4800,
+  crackGain: 0.38,
+  crackDurationS: 0.04,
+} as const;
+
+// 千里眼閃: 高周波上昇sweep
+export const SHINKIROU_SWEEP_SPEC = {
+  startHz: 3200,
+  endHz: 6800,
+  gain: 0.36,
+  durationS: 0.65,
+  filterType: 'bandpass' as BiquadFilterType,
+  q: 1.2,
+} as const;
+
+// 阿修羅連撃: 連射帯域ノイズ+低域パルス
+export const SHURA_RAMPAGE_SPEC = {
+  rapidHz: 1400,
+  rapidGain: 0.32,
+  rapidDurationS: 1.1,
+  bassFreqHz: 85,
+  bassEndFreqHz: 40,
+  bassGain: 0.38,
+  bassDurationS: 1.0,
+} as const;
+
+// 影分身・万刃繚乱: 分身召喚+手裏剣嵐音
+export const BANJIN_KAGEMAI_SPEC = {
+  shadowFreqHz: 220,
+  shadowEndHz: 55,
+  shadowGain: 0.44,
+  shadowDurationS: 0.8,
+  shurikenHz: 4200,
+  shurikenGain: 0.28,
+  shurikenDurationS: 0.5,
+} as const;
+
+// 月落とし: 落下→衝撃
+export const GEKKOU_TSUKIOTOSHI_SPEC = {
+  fallFreqHz: 340,
+  fallEndHz: 60,
+  fallGain: 0.36,
+  fallDurationS: 0.9,
+  impactFreqHz: 45,
+  impactEndHz: 15,
+  impactGain: 0.75,
+  impactDurationS: 0.6,
+} as const;
+
+// 神風・天空舞: マップ嵐ドローン+渦音
+export const FUJIN_KAMIKAZE_SPEC = {
+  maelstromLowHz: 65,
+  maelstromHighHz: 280,
+  maelstromGain: 0.45,
+  maelstromDurationS: 3.5,
+  vortexHz: 1400,
+  vortexEndHz: 320,
+  vortexGain: 0.28,
+  vortexDurationS: 2.0,
+} as const;
+
+// 業火滅世: 業火低域ドローン+炎噴出
+export const GOUEN_MESSE_SPEC = {
+  infernoFreqHz: 72,
+  infernoEndHz: 22,
+  infernoGain: 0.62,
+  infernoDurationS: 3.5,
+  blazeHz: 1800,
+  blazeEndHz: 600,
+  blazeGain: 0.35,
+  blazeDurationS: 2.5,
+} as const;
+
+// 神鳴八雷: 8重落雷(時差あり)
+export const TENRAI_HACHIRAI_SPEC = {
+  thunderFreqHz: 88,
+  thunderEndHz: 24,
+  thunderGain: 0.65,
+  thunderDurationS: 0.7,
+  crackHz: 5200,
+  crackGain: 0.42,
+  crackDurationS: 0.03,
+  staggerS: 0.12,
+} as const;
+
+// 虚像世界: 時間逆転+シマー
+export const SHINKIROU_KYOZOU_SPEC = {
+  reverseFreqHz: 880,
+  reverseEndHz: 2200,
+  reverseGain: 0.30,
+  reverseDurationS: 1.2,
+  shimmerHz: 3400,
+  shimmerEndHz: 1200,
+  shimmerGain: 0.18,
+  shimmerDurationS: 0.8,
+} as const;
+
+// 阿修羅降臨: 太鼓連打+オーラドローン
+export const SHURA_KOURIN_SPEC = {
+  taikoFreqHz: 72,
+  taikoEndHz: 30,
+  taikoGain: 0.68,
+  taikoDurationS: 0.3,
+  taikoCount: 4,
+  taikoStepS: 0.18,
+  auraDroneHz: 48,
+  auraDroneEndHz: 28,
+  auraDroneGain: 0.28,
+  auraDroneDurationS: 3.0,
+} as const;
+
 export class SoundKit {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -2802,6 +2969,140 @@ export class SoundKit {
     this.tone({ freq: 160, endFreq: 50, durationS: 0.5, type: 'triangle', gain: 0.28, delayS: 0.05 });
     // 暗帝気配(低い唸り)
     this.tone({ freq: 48, endFreq: 28, durationS: 0.8, type: 'sawtooth', gain: 0.2, drive: 3, delayS: 0.1 });
+  }
+
+  // ─── R34 特殊武器溜め/ウルト音 ──────────────────────────────────────────
+
+  /** 千刃嵐: 金属風切り+カオスノイズ */
+  banjinStormSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-6, 0.15);
+    this.noiseBurst({ durationS: BANJIN_STORM_SPEC.metalDurationS, filterHz: BANJIN_STORM_SPEC.metalHz, filterType: 'highpass', gain: BANJIN_STORM_SPEC.metalGain });
+    this.noiseBurst({ durationS: BANJIN_STORM_SPEC.wooshDurationS, filterHz: BANJIN_STORM_SPEC.wooshHz, filterType: 'bandpass', filterEndHz: BANJIN_STORM_SPEC.wooshEndHz, gain: BANJIN_STORM_SPEC.wooshGain, delayS: 0.04 });
+    this.tone({ freq: 280, endFreq: 80, durationS: 0.3, type: 'triangle', gain: 0.22, delayS: 0.06 });
+  }
+
+  /** 満月の矢: 荘厳な弦音+月光柱+ノヴァ衝撃 */
+  gekkouFullMoonSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-5, 0.1);
+    this.noiseBurst({ durationS: GEKKOU_FULL_MOON_SPEC.stringDurationS, filterHz: GEKKOU_FULL_MOON_SPEC.stringHz, filterType: 'bandpass', q: 3.5, gain: GEKKOU_FULL_MOON_SPEC.stringGain });
+    this.tone({ freq: GEKKOU_FULL_MOON_SPEC.pillarFreqHz, endFreq: GEKKOU_FULL_MOON_SPEC.pillarEndFreqHz, durationS: GEKKOU_FULL_MOON_SPEC.pillarDurationS, type: 'sine', gain: GEKKOU_FULL_MOON_SPEC.pillarGain, delayS: 0.05 });
+    this.tone({ freq: GEKKOU_FULL_MOON_SPEC.novaFreqHz, endFreq: 60, durationS: GEKKOU_FULL_MOON_SPEC.novaDurationS, type: 'sine', gain: GEKKOU_FULL_MOON_SPEC.novaGain, drive: 2, delayS: 0.6 });
+  }
+
+  /** 大颶風: 嵐の低域ドローン+ガスト */
+  fujinTyphoonSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-5, 0.2);
+    this.tone({ freq: FUJIN_TYPHOON_SPEC.stormLowHz, endFreq: FUJIN_TYPHOON_SPEC.stormHighHz, durationS: FUJIN_TYPHOON_SPEC.stormDurationS, type: 'sawtooth', gain: FUJIN_TYPHOON_SPEC.stormGain, drive: 3 });
+    this.noiseBurst({ durationS: FUJIN_TYPHOON_SPEC.gustDurationS, filterHz: FUJIN_TYPHOON_SPEC.gustHz, filterType: 'bandpass', filterEndHz: FUJIN_TYPHOON_SPEC.gustEndHz, gain: FUJIN_TYPHOON_SPEC.gustGain, delayS: 0.05 });
+  }
+
+  /** 大業火弾: 低域ブーム+クラックル */
+  gouenBlastSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-9, 0.2);
+    this.tone({ freq: GOUEN_BLAST_SPEC.boomFreqHz, endFreq: GOUEN_BLAST_SPEC.boomEndFreqHz, durationS: GOUEN_BLAST_SPEC.boomDurationS, type: 'sine', gain: GOUEN_BLAST_SPEC.boomGain, drive: 8 });
+    this.noiseBurst({ durationS: GOUEN_BLAST_SPEC.crackleDurationS, filterHz: GOUEN_BLAST_SPEC.crackleHz, filterType: 'bandpass', gain: GOUEN_BLAST_SPEC.crackleGain, delayS: 0.04 });
+    this.noiseBurst({ durationS: 0.8, filterHz: 380, filterType: 'lowpass', gain: 0.44, delayS: 0.08 });
+  }
+
+  /** 天罰: 連続雷鳴(3打) */
+  tenraiTenbatsuSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-7, 0.3);
+    for (let i = 0; i < 3; i++) {
+      const delay = i * 0.5;
+      this.tone({ freq: TENRAI_TENBATSU_SPEC.thunderFreqHz, endFreq: TENRAI_TENBATSU_SPEC.thunderEndHz, durationS: TENRAI_TENBATSU_SPEC.thunderDurationS, type: 'sine', gain: TENRAI_TENBATSU_SPEC.thunderGain, drive: 6, delayS: delay });
+      this.noiseBurst({ durationS: TENRAI_TENBATSU_SPEC.crackDurationS, filterHz: TENRAI_TENBATSU_SPEC.crackHz, filterType: 'bandpass', gain: TENRAI_TENBATSU_SPEC.crackGain, delayS: delay + 0.01 });
+    }
+  }
+
+  /** 千里眼閃: 高周波上昇sweep */
+  shinkirouSweepSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-4, 0.1);
+    this.noiseBurst({
+      durationS: SHINKIROU_SWEEP_SPEC.durationS,
+      filterHz: SHINKIROU_SWEEP_SPEC.startHz,
+      filterEndHz: SHINKIROU_SWEEP_SPEC.endHz,
+      filterType: SHINKIROU_SWEEP_SPEC.filterType,
+      q: SHINKIROU_SWEEP_SPEC.q,
+      gain: SHINKIROU_SWEEP_SPEC.gain,
+    });
+    this.tone({ freq: 480, endFreq: 1200, durationS: 0.5, type: 'sine', gain: 0.14 });
+  }
+
+  /** 阿修羅連撃: 連射帯域ノイズ+低域パルス */
+  shuraRampageSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-6, 0.2);
+    this.noiseBurst({ durationS: SHURA_RAMPAGE_SPEC.rapidDurationS, filterHz: SHURA_RAMPAGE_SPEC.rapidHz, filterType: 'bandpass', gain: SHURA_RAMPAGE_SPEC.rapidGain });
+    this.tone({ freq: SHURA_RAMPAGE_SPEC.bassFreqHz, endFreq: SHURA_RAMPAGE_SPEC.bassEndFreqHz, durationS: SHURA_RAMPAGE_SPEC.bassDurationS, type: 'sine', gain: SHURA_RAMPAGE_SPEC.bassGain, drive: 5 });
+  }
+
+  /** 影分身・万刃繚乱: 分身召喚+手裏剣嵐音 */
+  banjinKagemaiSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-8, 0.5);
+    this.tone({ freq: BANJIN_KAGEMAI_SPEC.shadowFreqHz, endFreq: BANJIN_KAGEMAI_SPEC.shadowEndHz, durationS: BANJIN_KAGEMAI_SPEC.shadowDurationS, type: 'sawtooth', gain: BANJIN_KAGEMAI_SPEC.shadowGain, drive: 5 });
+    this.noiseBurst({ durationS: BANJIN_KAGEMAI_SPEC.shurikenDurationS, filterHz: BANJIN_KAGEMAI_SPEC.shurikenHz, filterType: 'highpass', gain: BANJIN_KAGEMAI_SPEC.shurikenGain, delayS: 0.3 });
+  }
+
+  /** 月落とし: 落下sweep→衝撃ブーム */
+  gekkouTsukiotoshiSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-9, 0.4);
+    this.tone({ freq: GEKKOU_TSUKIOTOSHI_SPEC.fallFreqHz, endFreq: GEKKOU_TSUKIOTOSHI_SPEC.fallEndHz, durationS: GEKKOU_TSUKIOTOSHI_SPEC.fallDurationS, type: 'sine', gain: GEKKOU_TSUKIOTOSHI_SPEC.fallGain });
+    this.tone({ freq: GEKKOU_TSUKIOTOSHI_SPEC.impactFreqHz, endFreq: GEKKOU_TSUKIOTOSHI_SPEC.impactEndHz, durationS: GEKKOU_TSUKIOTOSHI_SPEC.impactDurationS, type: 'sine', gain: GEKKOU_TSUKIOTOSHI_SPEC.impactGain, drive: 8, delayS: 1.0 });
+    this.noiseBurst({ durationS: 0.7, filterHz: 800, filterType: 'lowpass', gain: 0.48, delayS: 1.0 });
+  }
+
+  /** 神風・天空舞: マップ嵐ドローン+渦音 */
+  fujinKamikazeSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-7, 0.8);
+    this.tone({ freq: FUJIN_KAMIKAZE_SPEC.maelstromLowHz, endFreq: FUJIN_KAMIKAZE_SPEC.maelstromHighHz, durationS: FUJIN_KAMIKAZE_SPEC.maelstromDurationS, type: 'sawtooth', gain: FUJIN_KAMIKAZE_SPEC.maelstromGain, drive: 4 });
+    this.noiseBurst({ durationS: FUJIN_KAMIKAZE_SPEC.vortexDurationS, filterHz: FUJIN_KAMIKAZE_SPEC.vortexHz, filterType: 'bandpass', filterEndHz: FUJIN_KAMIKAZE_SPEC.vortexEndHz, gain: FUJIN_KAMIKAZE_SPEC.vortexGain, delayS: 0.1 });
+  }
+
+  /** 業火滅世: 業火低域+炎噴出 */
+  gouenMesseSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-9, 0.8);
+    this.tone({ freq: GOUEN_MESSE_SPEC.infernoFreqHz, endFreq: GOUEN_MESSE_SPEC.infernoEndHz, durationS: GOUEN_MESSE_SPEC.infernoDurationS, type: 'sawtooth', gain: GOUEN_MESSE_SPEC.infernoGain, drive: 7 });
+    this.noiseBurst({ durationS: GOUEN_MESSE_SPEC.blazeDurationS, filterHz: GOUEN_MESSE_SPEC.blazeHz, filterType: 'bandpass', filterEndHz: GOUEN_MESSE_SPEC.blazeEndHz, gain: GOUEN_MESSE_SPEC.blazeGain, delayS: 0.15 });
+  }
+
+  /** 神鳴八雷: 8重落雷音(時差12連打) */
+  tenraiHachiraiSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-9, 0.6);
+    for (let i = 0; i < 8; i++) {
+      const delay = i * TENRAI_HACHIRAI_SPEC.staggerS;
+      this.tone({ freq: TENRAI_HACHIRAI_SPEC.thunderFreqHz, endFreq: TENRAI_HACHIRAI_SPEC.thunderEndHz, durationS: TENRAI_HACHIRAI_SPEC.thunderDurationS, type: 'sine', gain: TENRAI_HACHIRAI_SPEC.thunderGain * (0.7 + 0.3 * (i % 2)), drive: 7, delayS: delay });
+      this.noiseBurst({ durationS: TENRAI_HACHIRAI_SPEC.crackDurationS, filterHz: TENRAI_HACHIRAI_SPEC.crackHz, filterType: 'bandpass', gain: TENRAI_HACHIRAI_SPEC.crackGain, delayS: delay + 0.005 });
+    }
+  }
+
+  /** 虚像世界: 時間逆転上昇+シマー(NOT postfx) */
+  shinkirouKyozouSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-5, 0.5);
+    this.tone({ freq: SHINKIROU_KYOZOU_SPEC.reverseFreqHz, endFreq: SHINKIROU_KYOZOU_SPEC.reverseEndHz, durationS: SHINKIROU_KYOZOU_SPEC.reverseDurationS, type: 'sine', gain: SHINKIROU_KYOZOU_SPEC.reverseGain });
+    this.noiseBurst({ durationS: SHINKIROU_KYOZOU_SPEC.shimmerDurationS, filterHz: SHINKIROU_KYOZOU_SPEC.shimmerHz, filterEndHz: SHINKIROU_KYOZOU_SPEC.shimmerEndHz, filterType: 'bandpass', q: 2, gain: SHINKIROU_KYOZOU_SPEC.shimmerGain, delayS: 0.2 });
+  }
+
+  /** 阿修羅降臨: 太鼓連打+オーラドローン */
+  shuraKourinSound(): void {
+    if (this.liveVoices() > 225) return;
+    this.duck(-8, 0.4);
+    for (let i = 0; i < SHURA_KOURIN_SPEC.taikoCount; i++) {
+      const delay = i * SHURA_KOURIN_SPEC.taikoStepS;
+      this.tone({ freq: SHURA_KOURIN_SPEC.taikoFreqHz, endFreq: SHURA_KOURIN_SPEC.taikoEndHz, durationS: SHURA_KOURIN_SPEC.taikoDurationS, type: 'sine', gain: SHURA_KOURIN_SPEC.taikoGain, drive: 8, delayS: delay });
+    }
+    this.tone({ freq: SHURA_KOURIN_SPEC.auraDroneHz, endFreq: SHURA_KOURIN_SPEC.auraDroneEndHz, durationS: SHURA_KOURIN_SPEC.auraDroneDurationS, type: 'sawtooth', gain: SHURA_KOURIN_SPEC.auraDroneGain, drive: 3, delayS: 0.2 });
   }
 
   slide(): void {

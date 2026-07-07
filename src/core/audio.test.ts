@@ -5,12 +5,20 @@ import {
   BGM_ROOT_HZ,
   bgmNoteHz,
   type BgmProfileKey,
+  BANJIN_KAGEMAI_SPEC,
+  BANJIN_STORM_SPEC,
   BOW_RELEASE_SPEC,
   COMPRESSOR_PARAMS,
   dbToGain,
   deriveReverbPreset,
   enemyShotParams,
   FAN_WHOOSH_SPEC,
+  FUJIN_KAMIKAZE_SPEC,
+  FUJIN_TYPHOON_SPEC,
+  GEKKOU_FULL_MOON_SPEC,
+  GEKKOU_TSUKIOTOSHI_SPEC,
+  GOUEN_BLAST_SPEC,
+  GOUEN_MESSE_SPEC,
   healthCutoffHz,
   layerGains,
   makeAsymCurveData,
@@ -24,9 +32,15 @@ import {
   renderImpulse,
   REVERB_PRESETS,
   scoreVoice,
+  SHINKIROU_KYOZOU_SPEC,
+  SHINKIROU_SWEEP_SPEC,
   SHOT_PROFILES,
+  SHURA_KOURIN_SPEC,
+  SHURA_RAMPAGE_SPEC,
   SoundKit,
   STAFF_FIRE_SPEC,
+  TENRAI_HACHIRAI_SPEC,
+  TENRAI_TENBATSU_SPEC,
   type VoiceLike,
 } from './audio';
 import { STAGES } from '../game/stages';
@@ -521,5 +535,125 @@ describe('R33 Sランク武器サウンドスペック', () => {
   it('staffFire: AudioContext無しで例外を投げない', () => {
     const kit = new SoundKit();
     expect(() => kit.staffFire()).not.toThrow();
+  });
+
+  // ── R34 特殊武器スペック整合テスト ─────────────────────────────────────
+  it('BANJIN_STORM_SPEC: gain値が 0–1 範囲内', () => {
+    expect(BANJIN_STORM_SPEC.metalGain).toBeGreaterThan(0);
+    expect(BANJIN_STORM_SPEC.metalGain).toBeLessThanOrEqual(1);
+    expect(BANJIN_STORM_SPEC.wooshGain).toBeGreaterThan(0);
+    expect(BANJIN_STORM_SPEC.wooshGain).toBeLessThanOrEqual(1);
+  });
+  it('BANJIN_STORM_SPEC: durationSが正', () => {
+    expect(BANJIN_STORM_SPEC.metalDurationS).toBeGreaterThan(0);
+    expect(BANJIN_STORM_SPEC.wooshDurationS).toBeGreaterThan(0);
+  });
+  it('GEKKOU_FULL_MOON_SPEC: pillarFreqHz > pillarEndFreqHz (下降sweep)', () => {
+    expect(GEKKOU_FULL_MOON_SPEC.pillarFreqHz).toBeGreaterThan(GEKKOU_FULL_MOON_SPEC.pillarEndFreqHz);
+  });
+  it('GEKKOU_FULL_MOON_SPEC: gain値が 0–1 範囲内', () => {
+    expect(GEKKOU_FULL_MOON_SPEC.stringGain).toBeGreaterThan(0);
+    expect(GEKKOU_FULL_MOON_SPEC.pillarGain).toBeGreaterThan(0);
+    expect(GEKKOU_FULL_MOON_SPEC.novaGain).toBeGreaterThan(0);
+    expect(GEKKOU_FULL_MOON_SPEC.novaGain).toBeLessThanOrEqual(1);
+  });
+  it('FUJIN_TYPHOON_SPEC: stormHighHz > stormLowHz (上昇sweep)', () => {
+    expect(FUJIN_TYPHOON_SPEC.stormHighHz).toBeGreaterThan(FUJIN_TYPHOON_SPEC.stormLowHz);
+  });
+  it('FUJIN_TYPHOON_SPEC: gustHz > gustEndHz (下降sweep)', () => {
+    expect(FUJIN_TYPHOON_SPEC.gustHz).toBeGreaterThan(FUJIN_TYPHOON_SPEC.gustEndHz);
+  });
+  it('GOUEN_BLAST_SPEC: boomGain は 0.9 以下 (白飛び防止)', () => {
+    expect(GOUEN_BLAST_SPEC.boomGain).toBeLessThanOrEqual(0.9);
+  });
+  it('GOUEN_BLAST_SPEC: boomFreqHz > boomEndFreqHz (下降sweep)', () => {
+    expect(GOUEN_BLAST_SPEC.boomFreqHz).toBeGreaterThan(GOUEN_BLAST_SPEC.boomEndFreqHz);
+  });
+  it('TENRAI_TENBATSU_SPEC: thunderFreqHz > thunderEndHz (下降)', () => {
+    expect(TENRAI_TENBATSU_SPEC.thunderFreqHz).toBeGreaterThan(TENRAI_TENBATSU_SPEC.thunderEndHz);
+  });
+  it('SHINKIROU_SWEEP_SPEC: endHz > startHz (上昇sweep)', () => {
+    expect(SHINKIROU_SWEEP_SPEC.endHz).toBeGreaterThan(SHINKIROU_SWEEP_SPEC.startHz);
+  });
+  it('SHINKIROU_SWEEP_SPEC: gain が 0–1 範囲内', () => {
+    expect(SHINKIROU_SWEEP_SPEC.gain).toBeGreaterThan(0);
+    expect(SHINKIROU_SWEEP_SPEC.gain).toBeLessThanOrEqual(1);
+  });
+  it('SHURA_RAMPAGE_SPEC: gain値が 0–1 範囲内', () => {
+    expect(SHURA_RAMPAGE_SPEC.rapidGain).toBeGreaterThan(0);
+    expect(SHURA_RAMPAGE_SPEC.bassGain).toBeGreaterThan(0);
+  });
+  it('BANJIN_KAGEMAI_SPEC: shadowFreqHz > shadowEndHz (下降)', () => {
+    expect(BANJIN_KAGEMAI_SPEC.shadowFreqHz).toBeGreaterThan(BANJIN_KAGEMAI_SPEC.shadowEndHz);
+  });
+  it('GEKKOU_TSUKIOTOSHI_SPEC: impactGain は 0.9 以下 (白飛び防止)', () => {
+    expect(GEKKOU_TSUKIOTOSHI_SPEC.impactGain).toBeLessThanOrEqual(0.9);
+  });
+  it('FUJIN_KAMIKAZE_SPEC: durationSが正', () => {
+    expect(FUJIN_KAMIKAZE_SPEC.maelstromDurationS).toBeGreaterThan(0);
+    expect(FUJIN_KAMIKAZE_SPEC.vortexDurationS).toBeGreaterThan(0);
+  });
+  it('GOUEN_MESSE_SPEC: infernoGain は 0.9 以下', () => {
+    expect(GOUEN_MESSE_SPEC.infernoGain).toBeLessThanOrEqual(0.9);
+  });
+  it('TENRAI_HACHIRAI_SPEC: staggerS が正', () => {
+    expect(TENRAI_HACHIRAI_SPEC.staggerS).toBeGreaterThan(0);
+  });
+  it('TENRAI_HACHIRAI_SPEC: crackHz > thunderFreqHz (クラックは高い)', () => {
+    expect(TENRAI_HACHIRAI_SPEC.crackHz).toBeGreaterThan(TENRAI_HACHIRAI_SPEC.thunderFreqHz);
+  });
+  it('SHINKIROU_KYOZOU_SPEC: reverseEndHz > reverseFreqHz (上昇)', () => {
+    expect(SHINKIROU_KYOZOU_SPEC.reverseEndHz).toBeGreaterThan(SHINKIROU_KYOZOU_SPEC.reverseFreqHz);
+  });
+  it('SHURA_KOURIN_SPEC: taikoCount > 0 かつ taikoStepS > 0', () => {
+    expect(SHURA_KOURIN_SPEC.taikoCount).toBeGreaterThan(0);
+    expect(SHURA_KOURIN_SPEC.taikoStepS).toBeGreaterThan(0);
+  });
+  it('SHURA_KOURIN_SPEC: taikoGain は 0.9 以下 (白飛び防止)', () => {
+    expect(SHURA_KOURIN_SPEC.taikoGain).toBeLessThanOrEqual(0.9);
+  });
+
+  // ── R34 SoundKit メソッド 無例外テスト ──────────────────────────────────
+  it('banjinStormSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().banjinStormSound()).not.toThrow();
+  });
+  it('gekkouFullMoonSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().gekkouFullMoonSound()).not.toThrow();
+  });
+  it('fujinTyphoonSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().fujinTyphoonSound()).not.toThrow();
+  });
+  it('gouenBlastSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().gouenBlastSound()).not.toThrow();
+  });
+  it('tenraiTenbatsuSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().tenraiTenbatsuSound()).not.toThrow();
+  });
+  it('shinkirouSweepSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().shinkirouSweepSound()).not.toThrow();
+  });
+  it('shuraRampageSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().shuraRampageSound()).not.toThrow();
+  });
+  it('banjinKagemaiSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().banjinKagemaiSound()).not.toThrow();
+  });
+  it('gekkouTsukiotoshiSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().gekkouTsukiotoshiSound()).not.toThrow();
+  });
+  it('fujinKamikazeSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().fujinKamikazeSound()).not.toThrow();
+  });
+  it('gouenMesseSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().gouenMesseSound()).not.toThrow();
+  });
+  it('tenraiHachiraiSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().tenraiHachiraiSound()).not.toThrow();
+  });
+  it('shinkirouKyozouSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().shinkirouKyozouSound()).not.toThrow();
+  });
+  it('shuraKourinSound: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().shuraKourinSound()).not.toThrow();
   });
 });

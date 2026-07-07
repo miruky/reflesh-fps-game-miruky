@@ -1120,6 +1120,8 @@ export function buildGunBody(
       const blade = new THREE.BoxGeometry(0.160, 0.024, 0.010);
       setColor(blade, col(def.tracerColor), 'flat');
       const bm = new THREE.Mesh(blade, accent);
+      bm.name = 'vm:shurikenBlade'; // setExoticCharge('banjin-smg') が参照
+      bm.userData.shurikenBaseZ = -0.12;
       bm.position.set(0, 0, -0.12);
       bm.rotation.set(0, 0, angle);
       gun.add(bm);
@@ -1240,6 +1242,8 @@ export function buildGunBody(
       const isEdge = i === 0 || i === ribCount - 1;
       setColor(rib, col(isEdge ? C_PIVOT : def.tracerColor), 'flat');
       const rm = new THREE.Mesh(rib, isEdge ? metalVC : accent);
+      rm.name = 'vm:fanRib'; // setExoticCharge('fujin-fan') が参照
+      rm.userData.fanBaseAngle = angle;
       rm.position.set(Math.sin(angle) * 0.11, Math.cos(angle) * 0.11 - 0.02, -0.12);
       rm.rotation.set(0, 0, angle);
       gun.add(rm);
@@ -1289,6 +1293,7 @@ export function buildGunBody(
     const crystal = new THREE.OctahedronGeometry(0.04, 0);
     setColor(crystal, col(def.tracerColor), 'flat');
     const crm = new THREE.Mesh(crystal, accent);
+    crm.name = 'vm:crystal'; // setStaffCharge / setExoticCharge がこの名前で参照
     crm.position.set(0, 0, -0.54);
     crm.rotation.set(Math.PI / 4, Math.PI / 4, 0);
     gun.add(crm);
@@ -3142,6 +3147,68 @@ export class ViewModel {
 
   setMinigunSpin(spin01: number): void {
     this._minigunSpin01 = Math.max(0, Math.min(1, spin01));
+  }
+
+  /**
+   * 特殊武器7種の溜め視覚を統一APIで制御する。
+   * 'gekkou-bow'      → setBowCharge (vm:strT/B, vm:limbT/B, vm:arrowShaft/Tip)
+   * 'tenrai-staff'    → setStaffCharge (vm:crystal emissiveIntensity)
+   * 'shura-lmg'       → setMinigunSpin
+   * 'fujin-fan'       → vm:fanRib の fan spread を広げる + emissive
+   * 'banjin-smg'      → vm:shurikenBlade の emissive + Z 浮上
+   * 'gouen-musket'    → 非黒 emissive 材を全輝度引き上げ (tracerColor 0xff4400)
+   * 'shinkirou-sniper'→ 非黒 emissive 材を全輝度引き上げ (tracerColor 0x00eecc)
+   */
+  setExoticCharge(weaponId: string, charge01: number): void {
+    const c = Math.max(0, Math.min(1, charge01));
+    switch (weaponId) {
+      case 'gekkou-bow':
+        this.setBowCharge(c);
+        return;
+      case 'tenrai-staff':
+        this.setStaffCharge(c);
+        return;
+      case 'shura-lmg':
+        this.setMinigunSpin(c);
+        return;
+      default:
+        break;
+    }
+    if (!this.gun) return;
+    // fan: vm:fanRib の spread + emissive
+    if (weaponId === 'fujin-fan') {
+      this.gun.traverse((child) => {
+        if (child.name !== 'vm:fanRib' || !(child instanceof THREE.Mesh)) return;
+        const base = child.userData.fanBaseAngle as number | undefined;
+        if (base !== undefined) child.rotation.z = base * (1 + c * 0.35);
+        const mat = child.material as THREE.MeshStandardMaterial;
+        if (mat.emissive) mat.emissiveIntensity = 0.5 + c * 0.35;
+      });
+      return;
+    }
+    // banjin: vm:shurikenBlade の emissive + Z 浮上
+    if (weaponId === 'banjin-smg') {
+      this.gun.traverse((child) => {
+        if (child.name !== 'vm:shurikenBlade' || !(child instanceof THREE.Mesh)) return;
+        const baseZ = child.userData.shurikenBaseZ as number ?? -0.12;
+        child.position.z = baseZ - c * 0.06;
+        const mat = child.material as THREE.MeshStandardMaterial;
+        if (mat.emissive) mat.emissiveIntensity = 0.5 + c * 0.42;
+      });
+      return;
+    }
+    // gouen-musket / shinkirou-sniper: accent材(非黒 emissive)を輝度引き上げ
+    this.gun.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const mat = child.material as THREE.MeshStandardMaterial;
+      if (!(mat instanceof THREE.MeshStandardMaterial)) return;
+      if (mat.emissive.r === 0 && mat.emissive.g === 0 && mat.emissive.b === 0) return;
+      if (child.userData.exoticEmissiveBase === undefined) {
+        child.userData.exoticEmissiveBase = mat.emissiveIntensity;
+      }
+      const base = child.userData.exoticEmissiveBase as number;
+      mat.emissiveIntensity = base + c * 0.4;
+    });
   }
 
   // ── 黒帝モード API ─────────────────────────────────────────────────────────
