@@ -827,11 +827,15 @@ export function ckCamPos(
   const horizLen = Math.sqrt(sx * sx + sz * sz);
   let perpX = 0; let perpZ = 1;
   if (horizLen > 0.01) { perpX = (-sz / horizLen) * side; perpZ = (sx / horizLen) * side; }
-  const midX = (killer.x + victim.x) * 0.5;
-  const midY = (killer.y + victim.y) * 0.5;
-  const midZ = (killer.z + victim.z) * 0.5;
-  const d = segLen * 0.9 + 6 + dollyOffset;
-  return new THREE.Vector3(midX + perpX * d, midY + height, midZ + perpZ * d);
+  // V48修正: 遠距離キルでカメラが無制限に遠のき両者が点になる問題。
+  // アンカーを「近距離=中点 / 遠距離(18m超)=被害者寄り」へ滑らかに移し、距離も20mでクランプ。
+  // 遠距離キルは被害者の倒れ込み+着弾トレーサーを見せる構図になる。
+  const anchorT = Math.min(1, Math.max(0, (segLen - 18) / 24));
+  const ax = (killer.x + victim.x) * 0.5 * (1 - anchorT) + victim.x * anchorT;
+  const ay = (killer.y + victim.y) * 0.5 * (1 - anchorT) + victim.y * anchorT;
+  const az = (killer.z + victim.z) * 0.5 * (1 - anchorT) + victim.z * anchorT;
+  const d = Math.min(segLen * 0.9 + 6, 20) + dollyOffset;
+  return new THREE.Vector3(ax + perpX * d, ay + height, az + perpZ * d);
 }
 
 /**
@@ -9891,7 +9895,18 @@ export class Match {
     }
 
     // ── シネマティックカメラ ──
-    this._kcLook.set(victimX, victimY, victimZ);
+    // V48修正: 近距離は中点寄りを注視して両者をフレームイン、遠距離は被害者を注視
+    {
+      const dx = victimX - killerX; const dz = victimZ - killerZ;
+      const segL = Math.sqrt(dx * dx + dz * dz);
+      const lookT = Math.min(1, Math.max(0, (segL - 18) / 24)); // 0=中点寄り, 1=被害者
+      const mixV = 0.55 + 0.45 * lookT; // 被害者の重み 0.55..1.0
+      this._kcLook.set(
+        victimX * mixV + (killerX + victimX) * 0.5 * (1 - mixV),
+        victimY * mixV + (killerY + victimY) * 0.5 * (1 - mixV),
+        victimZ * mixV + (killerZ + victimZ) * 0.5 * (1 - mixV),
+      );
+    }
     this.camera.position.copy(this._ckCamBase).addScaledVector(this._ckDollyDir, this._ckDollyDist);
     this.camera.lookAt(this._kcLook);
     if (Math.abs(this.camera.fov - CK_FOV) > 0.01) {

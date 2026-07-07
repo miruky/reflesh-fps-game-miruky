@@ -1374,7 +1374,11 @@ export class Hud {
     const sorted = [...snap.medals].sort((a, b) => medalRank(b.id) - medalRank(a.id));
     let topBadgeFired = false;
     for (const m of sorted) {
-      if (SUPPRESS_BADGE.has(m.id)) continue;
+      if (SUPPRESS_BADGE.has(m.id)) {
+        // V48修正: 抑止=中央バッジのみ。左のテキスト行では通知する(完全不可視化の回帰を修正)
+        this.pushMedalText(m);
+        continue;
+      }
       if (MULTI_KILL_IDS.has(m.id)) {
         this.pushMultiKillBanner(m, snap.reduceMotion);
         continue;
