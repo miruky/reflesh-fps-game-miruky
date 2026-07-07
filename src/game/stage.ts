@@ -58,6 +58,23 @@ export interface StagePalette {
 /** stage.ts 内の buildXxx 関数が対応する 5 種のメガ建造物 */
 export type BuildingKind = 'arena' | 'hangar' | 'tower' | 'warehouse' | 'cathedral';
 
+// ── 環境オブジェクト36種 ──────────────────────────────────────────────────
+export type PropKind =
+  | 'conifer' | 'broadleaf' | 'deadtree' | 'sakura' | 'bamboo'
+  | 'rock' | 'towercrane' | 'portalkrane' | 'smokestack' | 'gastank'
+  | 'watertower' | 'transformer' | 'antenna' | 'truck' | 'derelictcar'
+  | 'forklift' | 'barricadecar' | 'concretebarrier' | 'fence' | 'watchpost'
+  | 'tankhull' | 'scaffold' | 'streetlight' | 'signboard' | 'bench'
+  | 'vendingmachine' | 'drumgroup' | 'pallet' | 'torii' | 'stonelantern'
+  | 'well' | 'pier' | 'utilitypole' | 'rubble' | 'gasbottlegroup' | 'supplycrate';
+
+export interface ObjectEntry {
+  kind: PropKind;
+  count: number;
+  scatter: 'random' | 'perimeter' | 'cluster';
+  clusterRadius?: number;
+}
+
 /** ステージ個性レシピ。StageDef の任意フィールド。後方互換(未設定時は汎用配置) */
 export interface StageRecipe {
   /** テーマ説明(1行) */
@@ -65,6 +82,8 @@ export interface StageRecipe {
   /** 配置する建造物アーキタイプ(1〜3棟) */
   buildings: BuildingKind[];
   notes?: string;
+  /** 環境オブジェクト配置リスト(パイロット段階: DC+40箱/ステージ以内) */
+  objects?: ObjectEntry[];
 }
 
 export interface StageDef {
@@ -108,6 +127,10 @@ export interface BoxSpec {
    */
   breakable?: { hp: number };
   structural?: boolean; // V31: 構造支持材(キャットウォーク支柱等)=絶対に破壊不可
+  /** 環境オブジェクト由来のボックス。将来のマージ描画振り分け用マーカー */
+  prop?: boolean;
+  /** h > 3 の大型プロップに自動付与。シャドウキャスター対象フラグ */
+  shadowCaster?: boolean;
 }
 
 export type SpawnPoint = [number, number, number];
@@ -118,7 +141,7 @@ export interface StageLayout {
   botSpawns: SpawnPoint[];
 }
 
-interface Aabb {
+export interface Aabb {
   minX: number;
   maxX: number;
   minZ: number;
@@ -497,6 +520,334 @@ function generateExtendedTerrain(def: StageDef, half: number): BoxSpec[] {
   ];
 }
 
+// ── 環境プロップ フットプリント近似 [w, d] (クリアランス計算用) ────────────
+const PROP_FOOTPRINTS: Record<PropKind, [number, number]> = {
+  conifer: [3, 3], broadleaf: [5, 5], deadtree: [2, 2], sakura: [5, 5], bamboo: [2, 2],
+  rock: [3, 3], towercrane: [13, 5], portalkrane: [11, 4], smokestack: [2.5, 2.5],
+  gastank: [5, 5], watertower: [4.5, 4.5], transformer: [3, 2.5], antenna: [1.5, 1.5],
+  truck: [8, 3.5], derelictcar: [3, 5], forklift: [2.5, 3], barricadecar: [5, 5],
+  concretebarrier: [1.5, 3], fence: [5, 1], watchpost: [4, 4], tankhull: [5, 7],
+  scaffold: [4, 3], streetlight: [1, 1], signboard: [3, 1], bench: [2, 1],
+  vendingmachine: [1.2, 0.8], drumgroup: [2, 2], pallet: [1.5, 1.2], torii: [4.5, 1.5],
+  stonelantern: [1, 1], well: [2, 2], pier: [7, 3], utilitypole: [1, 1],
+  rubble: [3, 3], gasbottlegroup: [1.5, 1.5], supplycrate: [2, 2],
+};
+
+/**
+ * 環境プロップ36種の BoxSpec 配列を生成する。
+ * - 全ボックスに prop:true
+ * - h > 3 のボックスに shadowCaster:true
+ * - 幹=world / 樹冠=decor / 構造材=structural / 小物=通常(breakable自動付与対象)
+ */
+export function buildProp(
+  kind: PropKind,
+  cx: number,
+  cz: number,
+  rot: number,
+  _rand: () => number,
+  palette: StagePalette,
+): BoxSpec[] {
+  const c = palette.obstacle;
+  const ac = palette.accent;
+  const e = palette.emissiveAccent;
+  const BROWN = '#5a3a1a';
+  const D_GREEN = '#2a5220';
+  const GREEN = '#3a7a2a';
+  const PINK = '#e8b4c8';
+  const BAMBOO = '#6a9a4a';
+  const STONE = '#8a8278';
+
+  function p(
+    lx: number,
+    lz: number,
+    yBot: number,
+    lw: number,
+    lh: number,
+    ld: number,
+    color: string,
+    emissive = false,
+    opts: { decor?: boolean; structural?: boolean } = {},
+  ): BoxSpec {
+    const base = pb(cx, cz, rot, lx, lz, yBot, lw, lh, ld, color, emissive);
+    const box: BoxSpec = { ...base, prop: true };
+    if (lh > 3) box.shadowCaster = true;
+    if (opts.decor) box.decor = true;
+    if (opts.structural) box.structural = true;
+    return box;
+  }
+
+  switch (kind) {
+    case 'conifer':
+      return [
+        p(0, 0, 0, 0.5, 3.5, 0.5, BROWN),
+        p(0, 0, 2, 2.5, 4, 2.5, D_GREEN, false, { decor: true }),
+      ];
+    case 'broadleaf':
+      return [
+        p(0, 0, 0, 0.5, 3.5, 0.5, BROWN),
+        p(0, 0, 2.5, 4.5, 3, 4.5, GREEN, false, { decor: true }),
+      ];
+    case 'deadtree':
+      return [
+        p(0, 0, 0, 0.4, 4.5, 0.4, BROWN),
+        p(1, 0, 3.5, 2, 0.3, 0.3, BROWN, false, { decor: true }),
+        p(0, 0.8, 3, 0.3, 0.3, 1.5, BROWN, false, { decor: true }),
+      ];
+    case 'sakura':
+      return [
+        p(0, 0, 0, 0.5, 3.5, 0.5, BROWN),
+        p(0, 0, 2.5, 4.5, 3, 4.5, PINK, false, { decor: true }),
+      ];
+    case 'bamboo':
+      return [
+        p(0, 0, 0, 0.2, 6, 0.2, BAMBOO),
+        p(0.5, 0.3, 0, 0.2, 5, 0.2, BAMBOO),
+        p(-0.4, 0.5, 0, 0.2, 5.5, 0.2, BAMBOO),
+      ];
+    case 'rock':
+      return [p(0, 0, 0, 2.2, 1.4, 2.2, STONE)];
+    case 'towercrane':
+      return [
+        p(0, 0, 0, 1, 18, 1, c, false, { structural: true }),
+        p(5, 0, 17, 10, 0.6, 0.8, c, false, { structural: true }),
+        p(-2.5, 0, 17, 5, 0.6, 0.8, c, false, { structural: true }),
+      ];
+    case 'portalkrane':
+      return [
+        p(-4, 0, 0, 1, 8, 1, c, false, { structural: true }),
+        p(4, 0, 0, 1, 8, 1, c, false, { structural: true }),
+        p(0, 0, 8, 9.5, 0.8, 1, c, false, { structural: true }),
+      ];
+    case 'smokestack':
+      return [p(0, 0, 0, 1.5, 16, 1.5, c, false, { structural: true })];
+    case 'gastank':
+      return [
+        p(0, 0, 0, 3, 2, 3, c, false, { structural: true }),
+        p(0, 0, 2, 4, 3.5, 4, c, false, { structural: true }),
+      ];
+    case 'watertower':
+      return [
+        p(0, 0, 0, 1.5, 5, 1.5, c, false, { structural: true }),
+        p(0, 0, 5, 3.5, 3, 3.5, c, false, { structural: true }),
+      ];
+    case 'transformer':
+      return [
+        p(0, 0, 0, 2, 1.5, 1.5, c),
+        p(-0.6, 0, 1.5, 0.2, 2, 0.2, c),
+        p(0.6, 0, 1.5, 0.2, 2, 0.2, c),
+      ];
+    case 'antenna':
+      return [p(0, 0, 0, 0.3, 12, 0.3, c, false, { structural: true })];
+    case 'truck':
+      return [
+        p(-2, 0, 0, 2, 2.5, 2.5, c),
+        p(1.5, 0, 0, 5, 2.2, 2.5, c),
+      ];
+    case 'derelictcar':
+      return [p(0, 0, 0, 2, 1.3, 4, c)];
+    case 'forklift':
+      return [
+        p(0, 0, 0, 1.5, 2, 2, c),
+        p(0, 1.2, 0, 1, 2.5, 0.3, c),
+      ];
+    case 'barricadecar':
+      return [
+        p(-1.5, 0, 0, 2, 1.2, 4, c),
+        p(1.5, 0, 0, 2, 1.2, 4, c),
+      ];
+    case 'concretebarrier':
+      return [p(0, 0, 0, 0.6, 1, 2.4, c)];
+    case 'fence':
+      return [p(0, 0, 0, 4, 1.5, 0.15, c)];
+    case 'watchpost':
+      return [
+        p(0, 0, 0, 0.5, 4, 0.5, c, false, { structural: true }),
+        p(0, 0, 4, 3, 0.3, 3, c, false, { structural: true }),
+      ];
+    case 'tankhull':
+      return [
+        p(0, 0, 0, 4, 1.5, 6, c),
+        p(0, 0, 1.5, 2, 0.8, 2, c),
+      ];
+    case 'scaffold':
+      return [
+        p(-1.4, 0, 0, 0.15, 3.5, 0.15, c, false, { structural: true }),
+        p(1.4, 0, 0, 0.15, 3.5, 0.15, c, false, { structural: true }),
+        p(0, 0, 3.5, 3.2, 0.2, 2, c, false, { structural: true }),
+      ];
+    case 'streetlight':
+      return [
+        p(0, 0, 0, 0.15, 5, 0.15, c),
+        p(0.4, 0, 4.8, 0.8, 0.2, 0.4, ac, e),
+      ];
+    case 'signboard':
+      return [
+        p(0, 0, 0, 0.15, 3.5, 0.15, c),
+        p(0, 0, 2.8, 2.5, 1, 0.1, ac, e),
+      ];
+    case 'bench':
+      return [p(0, 0, 0, 1.5, 0.45, 0.5, c)];
+    case 'vendingmachine':
+      return [p(0, 0, 0, 0.7, 1.8, 0.4, c, e)];
+    case 'drumgroup':
+      return [
+        p(-0.5, 0, 0, 0.6, 0.9, 0.6, c),
+        p(0.5, 0, 0, 0.6, 0.9, 0.6, c),
+        p(0, 0.6, 0, 0.6, 0.9, 0.6, c),
+      ];
+    case 'pallet':
+      return [p(0, 0, 0, 1.2, 0.15, 0.8, c)];
+    case 'torii':
+      return [
+        p(-1.5, 0, 0, 0.4, 3.5, 0.4, c),
+        p(1.5, 0, 0, 0.4, 3.5, 0.4, c),
+        p(0, 0, 3.3, 3.6, 0.3, 0.4, c),
+      ];
+    case 'stonelantern':
+      return [
+        p(0, 0, 0, 0.5, 0.3, 0.5, STONE),
+        p(0, 0, 0.3, 0.35, 0.7, 0.35, STONE),
+        p(0, 0, 1, 0.6, 0.3, 0.6, STONE),
+      ];
+    case 'well':
+      return [
+        p(0, 0, 0, 1.5, 0.6, 1.5, STONE),
+        p(0, 0, 0.6, 0.15, 1, 0.15, c),
+      ];
+    case 'pier':
+      return [
+        p(-2, 0, 0, 0.3, 0.6, 0.3, c),
+        p(2, 0, 0, 0.3, 0.6, 0.3, c),
+        p(0, 0, 0.6, 6, 0.3, 2, c),
+      ];
+    case 'utilitypole':
+      return [
+        p(0, 0, 0, 0.25, 8, 0.25, c),
+        p(0, 0, 7, 2, 0.15, 0.15, c),
+      ];
+    case 'rubble':
+      return [
+        p(0, 0, 0, 2.2, 0.8, 2.2, c),
+        p(0.3, 0.3, 0.8, 1.4, 0.6, 1.4, c),
+      ];
+    case 'gasbottlegroup':
+      return [
+        p(-0.4, 0, 0, 0.3, 1.0, 0.3, c),
+        p(0.4, 0, 0, 0.3, 1.0, 0.3, c),
+        p(0, 0.4, 0, 0.3, 1.0, 0.3, c),
+      ];
+    case 'supplycrate':
+      return [
+        p(0, 0, 0, 1, 0.8, 1, ac),
+        p(0.1, 0.1, 0.8, 1, 0.8, 1, ac),
+      ];
+    default: {
+      const _exhaustive: never = kind;
+      void _exhaustive;
+      return [];
+    }
+  }
+}
+
+/**
+ * StageRecipe.objects に従い環境プロップを配置する。
+ * 別シード(def.seed ^ 0x7e57ab1e)を使用→既存レイアウトRNG非汚染。
+ * クリアランス: スポーン6m / 建造物AABB+2m / プロップ間1.5m
+ */
+export function generateThemeObjects(
+  def: StageDef,
+  buildingPlaced: Aabb[],
+  rand: () => number,
+): BoxSpec[] {
+  const objects = def.recipe?.objects;
+  if (!objects?.length) return [];
+
+  const half = def.size / 2;
+  const boxes: BoxSpec[] = [];
+  const propPlaced: Aabb[] = [];
+
+  // 固定スポーン座標を決定論的に再現(rand消費なし)
+  const edge = half - 4;
+  const allSpawns: [number, number][] = [
+    [edge, edge], [-edge, edge], [edge, -edge], [-edge, -edge],
+    [0, edge], [0, -edge], [edge, 0], [-edge, 0],
+    [edge / 2, -edge / 2], [-edge / 2, edge / 2],
+  ];
+  const extraCount = Math.max(0, def.botCount - 6);
+  for (let i = 0; i < extraCount; i++) {
+    const ang = (i / Math.max(1, extraCount)) * Math.PI * 2 + 0.3;
+    const r = edge * 0.6;
+    allSpawns.push([
+      Math.round((Math.cos(ang) * r) / GRID) * GRID,
+      Math.round((Math.sin(ang) * r) / GRID) * GRID,
+    ]);
+  }
+
+  for (const entry of objects) {
+    const fp = PROP_FOOTPRINTS[entry.kind];
+
+    // クラスター中心を1エントリにつき1回決定
+    let clusterCx = 0;
+    let clusterCz = 0;
+    if (entry.scatter === 'cluster') {
+      clusterCx = Math.round(((rand() * 2 - 1) * (half - 20)) / GRID) * GRID;
+      clusterCz = Math.round(((rand() * 2 - 1) * (half - 20)) / GRID) * GRID;
+    }
+
+    for (let n = 0; n < entry.count; n++) {
+      let placedOk = false;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        let px: number;
+        let pz: number;
+
+        if (entry.scatter === 'random') {
+          px = Math.round(((rand() * 2 - 1) * (half - 10)) / GRID) * GRID;
+          pz = Math.round(((rand() * 2 - 1) * (half - 10)) / GRID) * GRID;
+        } else if (entry.scatter === 'perimeter') {
+          const side = Math.floor(rand() * 4);
+          const along = Math.round(((rand() * 2 - 1) * (half - 12)) / GRID) * GRID;
+          const depth = Math.round((half - 8 - rand() * 12) / GRID) * GRID;
+          switch (side) {
+            case 0: px = along; pz = -depth; break;
+            case 1: px = along; pz = depth; break;
+            case 2: px = -depth; pz = along; break;
+            default: px = depth; pz = along; break;
+          }
+        } else {
+          // cluster
+          const r = entry.clusterRadius ?? 10;
+          px = Math.round((clusterCx + (rand() * 2 - 1) * r) / GRID) * GRID;
+          pz = Math.round((clusterCz + (rand() * 2 - 1) * r) / GRID) * GRID;
+          px = Math.max(-(half - 8), Math.min(half - 8, px));
+          pz = Math.max(-(half - 8), Math.min(half - 8, pz));
+        }
+
+        // スポーンクリアランス
+        const nearSpawn = allSpawns.some(([sx, sz]) => Math.hypot(px - sx, pz - sz) < SPAWN_CLEARANCE);
+        if (nearSpawn) continue;
+
+        // 建造物クリアランス
+        const propAabb = aabbOf(px, pz, fp[0] + 3, fp[1] + 3);
+        if (buildingPlaced.some((b) => overlaps(b, propAabb, 0))) continue;
+
+        // プロップ間クリアランス(1.5m)
+        const propFootAabb = aabbOf(px, pz, fp[0], fp[1]);
+        if (propPlaced.some((b) => overlaps(b, propFootAabb, 1.5))) continue;
+
+        const propRot = Math.floor(rand() * 4);
+        const propBoxes = buildProp(entry.kind, px, pz, propRot, rand, def.palette);
+        boxes.push(...propBoxes);
+        propPlaced.push(aabbOf(px, pz, fp[0], fp[1]));
+        placedOk = true;
+        break;
+      }
+      void placedOk;
+    }
+  }
+
+  return boxes;
+}
+
 // シードから決定論的にレイアウトを生成する。障害物は原点対称に複製し、
 // 対戦時にどのスポーンからも地形条件が同じになるようにする。
 export function generateStage(def: StageDef): StageLayout {
@@ -596,6 +947,10 @@ export function generateStage(def: StageDef): StageLayout {
       void placed_ok;
     }
   }
+
+  // ③.5 テーマ環境オブジェクト(別シード・既存レイアウトRNG非汚染)
+  const propRand = mulberry32(def.seed ^ 0x7e57ab1e);
+  boxes.push(...generateThemeObjects(def, placed, propRand));
 
   // ④ 拡張視覚地形 + 遠景シルエット(decor = 境界外装飾)
   boxes.push(...generateExtendedTerrain(def, half));

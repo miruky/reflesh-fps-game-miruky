@@ -657,3 +657,156 @@ describe('R33 Sランク武器サウンドスペック', () => {
     expect(() => new SoundKit().shuraKourinSound()).not.toThrow();
   });
 });
+
+// ── 音響祭 新API スペック定数 境界テスト ──────────────────────────────────
+import {
+  KOKURAI_WORLD_BREATHE_SPEC,
+  DARK_EMPEROR_AURA_SPEC,
+  RAITEI_AURA_SPEC,
+} from './audio';
+
+describe('KOKURAI_WORLD_BREATHE_SPEC 定数境界テスト', () => {
+  it('duckDb は負の値 (音量を下げる)', () => {
+    expect(KOKURAI_WORLD_BREATHE_SPEC.duckDb).toBeLessThan(0);
+  });
+  it('duckHoldS > 0', () => {
+    expect(KOKURAI_WORLD_BREATHE_SPEC.duckHoldS).toBeGreaterThan(0);
+  });
+  it('duckReleaseS > 0', () => {
+    expect(KOKURAI_WORLD_BREATHE_SPEC.duckReleaseS).toBeGreaterThan(0);
+  });
+  it('preRumbleStartHz > preRumbleEndHz (下降)', () => {
+    expect(KOKURAI_WORLD_BREATHE_SPEC.preRumbleStartHz).toBeGreaterThan(KOKURAI_WORLD_BREATHE_SPEC.preRumbleEndHz);
+  });
+  it('mainImpactGain は 0–1 範囲内', () => {
+    expect(KOKURAI_WORLD_BREATHE_SPEC.mainImpactGain).toBeGreaterThan(0);
+    expect(KOKURAI_WORLD_BREATHE_SPEC.mainImpactGain).toBeLessThanOrEqual(1);
+  });
+  it('mainImpactDrive > 0', () => {
+    expect(KOKURAI_WORLD_BREATHE_SPEC.mainImpactDrive).toBeGreaterThan(0);
+  });
+  it('crackHz > 0', () => {
+    expect(KOKURAI_WORLD_BREATHE_SPEC.crackHz).toBeGreaterThan(0);
+  });
+  it('wetTail は 0–1 範囲内', () => {
+    expect(KOKURAI_WORLD_BREATHE_SPEC.wetTail).toBeGreaterThanOrEqual(0);
+    expect(KOKURAI_WORLD_BREATHE_SPEC.wetTail).toBeLessThanOrEqual(1);
+  });
+  it('tailDurationS > 0', () => {
+    expect(KOKURAI_WORLD_BREATHE_SPEC.tailDurationS).toBeGreaterThan(0);
+  });
+});
+
+describe('DARK_EMPEROR_AURA_SPEC 定数境界テスト', () => {
+  it('beat1FreqHz > 0', () => {
+    expect(DARK_EMPEROR_AURA_SPEC.beat1FreqHz).toBeGreaterThan(0);
+  });
+  it('beat1EndHz > 0', () => {
+    expect(DARK_EMPEROR_AURA_SPEC.beat1EndHz).toBeGreaterThan(0);
+  });
+  it('beat1Gain は 0–1 範囲内', () => {
+    expect(DARK_EMPEROR_AURA_SPEC.beat1Gain).toBeGreaterThan(0);
+    expect(DARK_EMPEROR_AURA_SPEC.beat1Gain).toBeLessThanOrEqual(1);
+  });
+  it('beat1Drive > 0', () => {
+    expect(DARK_EMPEROR_AURA_SPEC.beat1Drive).toBeGreaterThan(0);
+  });
+  it('beat2DelayS > 0', () => {
+    expect(DARK_EMPEROR_AURA_SPEC.beat2DelayS).toBeGreaterThan(0);
+  });
+  it('intervalMinS < intervalMaxS', () => {
+    expect(DARK_EMPEROR_AURA_SPEC.intervalMinS).toBeLessThan(DARK_EMPEROR_AURA_SPEC.intervalMaxS);
+  });
+});
+
+describe('RAITEI_AURA_SPEC 定数境界テスト', () => {
+  it('osc1Hz > 0', () => {
+    expect(RAITEI_AURA_SPEC.osc1Hz).toBeGreaterThan(0);
+  });
+  it('osc1HpHz > osc1Hz (HPFカットオフは基音より高い)', () => {
+    expect(RAITEI_AURA_SPEC.osc1HpHz).toBeGreaterThan(RAITEI_AURA_SPEC.osc1Hz);
+  });
+  it('osc1Gain は 0–1 範囲内', () => {
+    expect(RAITEI_AURA_SPEC.osc1Gain).toBeGreaterThan(0);
+    expect(RAITEI_AURA_SPEC.osc1Gain).toBeLessThanOrEqual(1);
+  });
+  it('osc2Hz > 0', () => {
+    expect(RAITEI_AURA_SPEC.osc2Hz).toBeGreaterThan(0);
+  });
+  it('osc2HpHz > osc2Hz (HPFカットオフは基音より高い)', () => {
+    expect(RAITEI_AURA_SPEC.osc2HpHz).toBeGreaterThan(RAITEI_AURA_SPEC.osc2Hz);
+  });
+  it('osc2Gain は 0–1 範囲内', () => {
+    expect(RAITEI_AURA_SPEC.osc2Gain).toBeGreaterThan(0);
+    expect(RAITEI_AURA_SPEC.osc2Gain).toBeLessThanOrEqual(1);
+  });
+  it('lfoHz > 0 (LFO周波数は正)', () => {
+    expect(RAITEI_AURA_SPEC.lfoHz).toBeGreaterThan(0);
+  });
+});
+
+// ── 音響祭 新/改修 SoundKit API 無例外テスト ─────────────────────────────
+describe('音響祭 新API 無例外テスト', () => {
+  it('kokuraiWorldBreathe: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().kokuraiWorldBreathe()).not.toThrow();
+  });
+  it('kunaiSlashDark(0): AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().kunaiSlashDark(0)).not.toThrow();
+  });
+  it('kunaiSlashDark(1): variation≥1 tailあり/例外なし', () => {
+    expect(() => new SoundKit().kunaiSlashDark(1)).not.toThrow();
+  });
+  it('setDarkEmperorAura(true): AudioContext無しで例外を投げない', () => {
+    const sk = new SoundKit();
+    expect(() => sk.setDarkEmperorAura(true)).not.toThrow();
+    sk.setDarkEmperorAura(false); // cleanup
+  });
+  it('setDarkEmperorAura(false): 二重解除で例外を投げない', () => {
+    const sk = new SoundKit();
+    expect(() => { sk.setDarkEmperorAura(false); sk.setDarkEmperorAura(false); }).not.toThrow();
+  });
+  it('setRaiteiAura(true/false): AudioContext無しで例外を投げない', () => {
+    const sk = new SoundKit();
+    expect(() => sk.setRaiteiAura(true)).not.toThrow();
+    expect(() => sk.setRaiteiAura(false)).not.toThrow();
+  });
+  it('playerBodyHit(0, 0): AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().playerBodyHit(0, 0)).not.toThrow();
+  });
+  it('playerBodyHit(pan, heaviness): クランプ(pan±2, heaviness2.5)で例外なし', () => {
+    expect(() => new SoundKit().playerBodyHit(-2, 2.5)).not.toThrow();
+    expect(() => new SoundKit().playerBodyHit(2, -1)).not.toThrow();
+  });
+  it('footstep(1, false, "dark"): dark variant で例外なし', () => {
+    expect(() => new SoundKit().footstep(1, false, 'dark')).not.toThrow();
+  });
+  it('footstep(1, true, "raitei"): raitei landing で例外なし', () => {
+    expect(() => new SoundKit().footstep(1, true, 'raitei')).not.toThrow();
+  });
+  it('bowRelease: 琴余韻追加後も例外なし', () => {
+    expect(() => new SoundKit().bowRelease()).not.toThrow();
+  });
+  it('gekkouFullMoonSound: 琴余韻追加後も例外なし', () => {
+    expect(() => new SoundKit().gekkouFullMoonSound()).not.toThrow();
+  });
+  it('fujinTyphoonSound: 地鳴りroll+detuned追加後も例外なし', () => {
+    expect(() => new SoundKit().fujinTyphoonSound()).not.toThrow();
+  });
+  it('headshot: 9000Hz追加後も例外なし', () => {
+    expect(() => new SoundKit().headshot()).not.toThrow();
+  });
+  it('kill: 330→520Hz triangle追加後も例外なし', () => {
+    expect(() => new SoundKit().kill()).not.toThrow();
+  });
+  it('reload(800): 3イベントメカ音で例外なし', () => {
+    expect(() => new SoundKit().reload(800)).not.toThrow();
+  });
+  it('uiClick: 1100→750Hz sweep + 5200Hz追加後も例外なし', () => {
+    expect(() => new SoundKit().uiClick()).not.toThrow();
+  });
+  it('quiesce: setDarkEmperorAura/setRaiteiAura呼び出し後も例外なし', () => {
+    const sk = new SoundKit();
+    sk.setDarkEmperorAura(true);
+    expect(() => sk.quiesce()).not.toThrow();
+  });
+});

@@ -61,8 +61,13 @@ export class StreakManager {
     return true;
   }
 
-  /** 指定インデックスのストリークを強制バンク(ケアパッケージの報酬付与に使う) */
-  forceBankOne(preferIdx: StreakIndex): StreakIndex {
+  /**
+   * 指定インデックスのストリークを強制バンク(ケアパッケージの報酬付与に使う)。
+   * 未バンクのスロットが存在すればそのインデックスを返す。
+   * 全スロットが既バンク済みの場合は null を返す(呼び出し元でガードすること)。
+   * match.ts 側: `const idx = forceBankOne(...); if (idx !== null) { ... }` で使用。
+   */
+  forceBankOne(preferIdx: StreakIndex): StreakIndex | null {
     // 未バンクのものを優先してバンク。preferIdx が既バンクなら次の未バンクへ
     for (let pass = 0; pass < 2; pass += 1) {
       const start = pass === 0 ? (preferIdx as number) : 0;
@@ -73,9 +78,8 @@ export class StreakManager {
         }
       }
     }
-    // 全てバンク済みの場合: 最後のものを上書き(稀ケース)
-    this._banked[STREAK_DEFS.length - 1] = true;
-    return (STREAK_DEFS.length - 1) as StreakIndex;
+    // 全てバンク済みの場合: null を返す(match 側でガードすること)
+    return null;
   }
 
   get state(): { progress: number; banked: readonly boolean[] } {

@@ -1406,7 +1406,7 @@ export class Bot {
       this.headingTimer -= dt;
       if (this.headingTimer <= 0) {
         this.heading = ctx.rand() * Math.PI * 2;
-        this.headingTimer = 2 + ctx.rand() * 3;
+        this.headingTimer = 1 + ctx.rand() * 1.5; // 直線暴走の抑制(旧: 2+rand*3)
       }
       const f = this.facing();
       wishX = f.x * this.moveSpeed * 0.7;

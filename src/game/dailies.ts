@@ -3,6 +3,7 @@
 // progression.ts への import が一切ないため循環参照が発生しない。
 
 import type { GameMode } from './modes';
+import { PRIMARY_IDS, WEAPON_DEFS } from './weapons';
 
 // ── 型定義 ─────────────────────────────────────────────────────────
 
@@ -20,6 +21,8 @@ export interface DailySummaryInput {
   weaponKills: Record<string, number>;
   killsByWeapon?: Record<string, number>;
   medalCounts: Record<string, number>;
+  /** ウルト発動キル数。省略時は 0 扱い(match.ts が填入する) */
+  ults?: number;
 }
 
 export interface DailyChallengeDef {
@@ -28,7 +31,7 @@ export interface DailyChallengeDef {
   target: number;
   /**
    * xpMul 対象外の固定報酬XP。
-   * 難易度別: easy=2000 / medium=5000 / hard=10000
+   * 難易度別: easy=20000 / medium=50000 / hard=100000
    */
   rewardXp: number;
   /**
@@ -68,8 +71,14 @@ export function emptyDailyState(): DailyState {
 
 // ── 武器クラス別キル計算ヘルパー ─────────────────────────────────
 
-// スナイパークラスの武器ID一覧(yamasemi-dmr も class:'sniper')
-const SNIPER_IDS: readonly string[] = ['yamasemi-dmr', 'raicho-sniper', 'shirayuki-sniper'];
+// スナイパークラスの武器ID一覧 ── weapons.ts の class:'sniper' から動的生成(hardcode廃止)
+const SNIPER_IDS: readonly string[] = PRIMARY_IDS.filter(
+  (id) => WEAPON_DEFS[id]?.class === 'sniper',
+);
+// 特殊兵装(exotic class)の武器ID一覧 ── dynamic generation
+export const EXOTIC_IDS: readonly string[] = PRIMARY_IDS.filter(
+  (id) => WEAPON_DEFS[id]?.class === 'exotic',
+);
 // ロケットランチャーの武器ID一覧
 const LAUNCHER_IDS: readonly string[] = ['gouka-rl'];
 
@@ -82,36 +91,36 @@ function totalMedals(summary: DailySummaryInput): number {
   return Object.values(summary.medalCounts).reduce((a, b) => a + b, 0);
 }
 
-// ── チャレンジプール (各難易度5種 × 3難易度 = 15種) ────────────────
+// ── チャレンジプール (easy6/medium7/hard7 = 計20種) ────────────────
 
-/** 難易度: easy — 報酬 2000 XP */
+/** 難易度: easy — 報酬 20000 XP */
 export const POOL_EASY: readonly DailyChallengeDef[] = [
   {
     id: 'daily-win',
     label: '1試合勝利する',
     target: 1,
-    rewardXp: 2000,
+    rewardXp: 20000,
     check: (s) => (s.won ? 1 : 0),
   },
   {
     id: 'daily-kill-5',
     label: '1試合でキル5以上',
     target: 5,
-    rewardXp: 2000,
+    rewardXp: 20000,
     check: (s) => s.kills,
   },
   {
     id: 'daily-hs-3',
     label: 'ヘッドショットキル3回',
     target: 3,
-    rewardXp: 2000,
+    rewardXp: 20000,
     check: (s) => s.headshots,
   },
   {
     id: 'daily-melee-3',
     label: '近接キル3回',
     target: 3,
-    rewardXp: 2000,
+    rewardXp: 20000,
     // 近接(ナイフ)またはクナイ(ガンゲームの最終段)のどちらも計上
     check: (s) => (s.weaponKills['近接'] ?? 0) + (s.weaponKills['クナイ'] ?? 0),
   },
@@ -119,86 +128,121 @@ export const POOL_EASY: readonly DailyChallengeDef[] = [
     id: 'daily-streak-4',
     label: '4連続キル達成',
     target: 1,
-    rewardXp: 2000,
+    rewardXp: 20000,
     check: (s) => (s.bestStreak >= 4 ? 1 : 0),
+  },
+  {
+    id: 'daily-gungame-win',
+    label: 'ガンゲームで勝利する',
+    target: 1,
+    rewardXp: 20000,
+    check: (s, m) => (m === 'gungame' && s.won ? 1 : 0),
   },
 ];
 
-/** 難易度: medium — 報酬 5000 XP */
+/** 難易度: medium — 報酬 50000 XP */
 export const POOL_MEDIUM: readonly DailyChallengeDef[] = [
   {
     id: 'daily-kill-10',
     label: '1試合でキル10以上',
     target: 10,
-    rewardXp: 5000,
+    rewardXp: 50000,
     check: (s) => s.kills,
   },
   {
     id: 'daily-hs-5',
     label: 'ヘッドショットキル5回',
     target: 5,
-    rewardXp: 5000,
+    rewardXp: 50000,
     check: (s) => s.headshots,
   },
   {
     id: 'daily-launcher-3',
     label: 'ロケランでキル3回',
     target: 3,
-    rewardXp: 5000,
+    rewardXp: 50000,
     check: (s) => weaponIdKills(s, LAUNCHER_IDS),
   },
   {
     id: 'daily-sniper-3',
     label: 'スナイパーキル3回',
     target: 3,
-    rewardXp: 5000,
+    rewardXp: 50000,
     check: (s) => weaponIdKills(s, SNIPER_IDS),
   },
   {
     id: 'daily-zombie-20',
     label: 'ゾンビで20体以上倒す',
     target: 20,
-    rewardXp: 5000,
+    rewardXp: 50000,
     check: (s, m) => (m === 'zombie' ? s.kills : 0),
+  },
+  {
+    id: 'daily-exotic-kill-5',
+    label: '特殊兵装でキル5回',
+    target: 5,
+    rewardXp: 50000,
+    check: (s) => weaponIdKills(s, EXOTIC_IDS),
+  },
+  {
+    id: 'daily-kc-tag-5',
+    label: 'キルコンファームでタグ5回回収',
+    target: 5,
+    rewardXp: 50000,
+    check: (s, m) => (m === 'killconfirm' ? s.captures : 0),
   },
 ];
 
-/** 難易度: hard — 報酬 10000 XP */
+/** 難易度: hard — 報酬 100000 XP */
 export const POOL_HARD: readonly DailyChallengeDef[] = [
   {
     id: 'daily-kill-15',
     label: '1試合でキル15以上',
     target: 15,
-    rewardXp: 10000,
+    rewardXp: 100000,
     check: (s) => s.kills,
   },
   {
     id: 'daily-nodeath-8',
     label: 'デスなしでキル8以上',
     target: 1,
-    rewardXp: 10000,
+    rewardXp: 100000,
     check: (s) => (s.deaths === 0 && s.kills >= 8 ? 1 : 0),
   },
   {
     id: 'daily-medal-5',
     label: '1試合でメダル5個以上',
     target: 1,
-    rewardXp: 10000,
+    rewardXp: 100000,
     check: (s) => (totalMedals(s) >= 5 ? 1 : 0),
   },
   {
     id: 'daily-cap3-win',
     label: '拠点制圧3回以上で勝利',
     target: 1,
-    rewardXp: 10000,
+    rewardXp: 100000,
     check: (s) => (s.captures >= 3 && s.won ? 1 : 0),
   },
   {
     id: 'daily-streak-6',
     label: '6連続キル達成',
     target: 1,
-    rewardXp: 10000,
+    rewardXp: 100000,
     check: (s) => (s.bestStreak >= 6 ? 1 : 0),
+  },
+  {
+    id: 'daily-hp-occupy',
+    label: 'ハードポイントで5回占領',
+    target: 5,
+    rewardXp: 100000,
+    check: (s, m) => (m === 'hardpoint' ? s.captures : 0),
+  },
+  {
+    id: 'daily-ult-kill-3',
+    label: 'ウルトスキルでキル3回',
+    target: 3,
+    rewardXp: 100000,
+    check: (s) => s.ults ?? 0,
   },
 ];
 

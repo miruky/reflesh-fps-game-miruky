@@ -20,9 +20,9 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
   gungame: {
     id: 'gungame',
     name: 'ガンゲーム',
-    desc: '全員が同じ20段武器ラダーを進む。最終段(クナイ)でキルした者が勝者',
+    desc: '全員が同じ26段武器ラダーを進む。特殊兵装枠(18-23段)を経て最終段(クナイ)でキルした者が勝者',
     teamBased: false,
-    scoreTarget: 20, // ランク=スコアとして表示。実勝利はGunGameStateが管理
+    scoreTarget: 26, // ランク=スコアとして表示。実勝利はGunGameStateが管理
   },
   ffa: {
     id: 'ffa',
@@ -380,8 +380,9 @@ export class ScoreBoard {
   }
 }
 
-// ── ガンゲーム: 20段武器ラダー(固定順。ステージ非依存) ──────────────────────────────
-// ピストル→リボルバー→SG→SMG→AR→BR/LMG→マークスマン→スナイパー→ロケラン→クナイ(最終)
+// ── ガンゲーム: 26段武器ラダー(固定順。ステージ非依存) ──────────────────────────────
+// ピストル→リボルバー→SG→SMG→AR→BR/LMG→マークスマン→スナイパー→特殊兵装(6種)→スナイパー2→ロケラン→クナイ(最終)
+// rank18-23 が特殊兵装枠(exotic) ─ GG終盤の独自性を強調する
 export const GG_LADDER: readonly string[] = [
   'kawasemi-pistol',  // rank  1: ピストル
   'taka-revolver',    // rank  2: リボルバー
@@ -400,13 +401,19 @@ export const GG_LADDER: readonly string[] = [
   'shirasagi-mk',     // rank 15: マークスマン
   'hibari-mk',        // rank 16: マークスマン2
   'yamasemi-dmr',     // rank 17: DSRスナイパー
-  'raicho-sniper',    // rank 18: スナイパー2
-  'gouka-rl',         // rank 19: 業火ロケットランチャー
-  'fists',            // rank 20: クナイ(最終段・キルで勝利)
+  'gekkou-bow',       // rank 18: 月光弓(特殊兵装)
+  'tenrai-staff',     // rank 19: 天雷杖(特殊兵装)
+  'shinkirou-sniper', // rank 20: 蜃気楼スナイパー(特殊兵装)
+  'shura-lmg',        // rank 21: 修羅LMG ミニガン(特殊兵装)
+  'fujin-fan',        // rank 22: 藤神鉄扇(特殊兵装)
+  'banjin-smg',       // rank 23: 万人SMG 手裏剣連射(特殊兵装)
+  'raicho-sniper',    // rank 24: スナイパー2
+  'gouka-rl',         // rank 25: 業火ロケットランチャー
+  'fists',            // rank 26: クナイ(最終段・キルで勝利)
 ] as const;
 
 // botのランクに応じたダメージ/連射パラメタ近似テーブル(tuning部分上書き用)
-// 低ランクは弱く、高ランクは強くなるように線形スケール
+// 低ランクは弱く、高ランクは強くなるように線形スケール(26段対応)
 export const GG_BOT_RANK_TUNING: readonly { damage: number; burstPauseMin: number; burstPauseMax: number }[] = [
   { damage:  7, burstPauseMin: 0.90, burstPauseMax: 1.40 }, // rank  1: pistol
   { damage:  9, burstPauseMin: 0.90, burstPauseMax: 1.40 }, // rank  2: revolver
@@ -424,10 +431,16 @@ export const GG_BOT_RANK_TUNING: readonly { damage: number; burstPauseMin: numbe
   { damage: 14, burstPauseMin: 0.50, burstPauseMax: 0.75 }, // rank 14: lmg2
   { damage: 16, burstPauseMin: 0.60, burstPauseMax: 0.90 }, // rank 15: marksman
   { damage: 17, burstPauseMin: 0.60, burstPauseMax: 0.90 }, // rank 16: marksman2
-  { damage: 20, burstPauseMin: 1.00, burstPauseMax: 1.60 }, // rank 17: sniper
-  { damage: 22, burstPauseMin: 1.00, burstPauseMax: 1.60 }, // rank 18: sniper2
-  { damage: 25, burstPauseMin: 1.80, burstPauseMax: 2.50 }, // rank 19: launcher
-  { damage: 30, burstPauseMin: 0.50, burstPauseMax: 0.70 }, // rank 20: fists
+  { damage: 20, burstPauseMin: 1.00, burstPauseMax: 1.60 }, // rank 17: sniper(DSR)
+  { damage: 18, burstPauseMin: 1.20, burstPauseMax: 1.80 }, // rank 18: gekkou-bow(弓)
+  { damage: 19, burstPauseMin: 0.80, burstPauseMax: 1.20 }, // rank 19: tenrai-staff(杖)
+  { damage: 26, burstPauseMin: 1.40, burstPauseMax: 2.00 }, // rank 20: shinkirou-sniper(ビーム)
+  { damage: 16, burstPauseMin: 0.35, burstPauseMax: 0.55 }, // rank 21: shura-lmg(ミニガン)
+  { damage: 17, burstPauseMin: 0.40, burstPauseMax: 0.60 }, // rank 22: fujin-fan(扇)
+  { damage: 14, burstPauseMin: 0.30, burstPauseMax: 0.50 }, // rank 23: banjin-smg(手裏剣)
+  { damage: 22, burstPauseMin: 1.00, burstPauseMax: 1.60 }, // rank 24: raicho-sniper
+  { damage: 25, burstPauseMin: 1.80, burstPauseMax: 2.50 }, // rank 25: gouka-rl
+  { damage: 30, burstPauseMin: 0.50, burstPauseMax: 0.70 }, // rank 26: fists(最終)
 ] as const;
 
 // ── GunGameState: ランク進行の純ロジック(描画・物理に依存しない) ────────────────────
@@ -435,9 +448,9 @@ export class GunGameState {
   private playerRank = 1;
   private readonly botRanks = new Map<number, number>(); // bot.uid → rank(1-20)
 
-  // ラダー武器IDを返す(rank は 1-20)
+  // ラダー武器IDを返す(rank は 1-26)
   getWeaponIdAt(rank: number): string {
-    return GG_LADDER[Math.max(0, Math.min(19, rank - 1))] ?? 'fists';
+    return GG_LADDER[Math.max(0, Math.min(25, rank - 1))] ?? 'fists';
   }
 
   getPlayerRank(): number { return this.playerRank; }
@@ -445,9 +458,9 @@ export class GunGameState {
 
   // プレイヤーがキルを取ったとき。返り値 isWin=true なら試合終了
   playerRankUp(): { newRank: number; isWin: boolean } {
-    const wasAt20 = this.playerRank === 20;
-    if (!wasAt20) this.playerRank += 1;
-    return { newRank: this.playerRank, isWin: wasAt20 };
+    const wasAt26 = this.playerRank === 26;
+    if (!wasAt26) this.playerRank += 1;
+    return { newRank: this.playerRank, isWin: wasAt26 };
   }
 
   // 近接キルされたとき(BO2 setback): プレイヤーランク -1(最低1)
@@ -459,9 +472,9 @@ export class GunGameState {
   // botがキルを取ったとき
   botRankUp(uid: number): { newRank: number; isWin: boolean } {
     const current = this.getBotRank(uid);
-    const wasAt20 = current === 20;
-    if (!wasAt20) this.botRanks.set(uid, current + 1);
-    return { newRank: this.getBotRank(uid), isWin: wasAt20 };
+    const wasAt26 = current === 26;
+    if (!wasAt26) this.botRanks.set(uid, current + 1);
+    return { newRank: this.getBotRank(uid), isWin: wasAt26 };
   }
 
   // bot が近接キルされたとき: ランク -1(最低1)

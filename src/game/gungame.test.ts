@@ -4,12 +4,12 @@ import { GG_LADDER, GunGameState } from './modes';
 // ─── GG_LADDER ─────────────────────────────────────────────────────────────────
 
 describe('GG_LADDER', () => {
-  it('ちょうど20段ある', () => {
-    expect(GG_LADDER.length).toBe(20);
+  it('ちょうど26段ある(特殊兵装6種追加)', () => {
+    expect(GG_LADDER.length).toBe(26);
   });
 
-  it('最後がfists(ナイフ)', () => {
-    expect(GG_LADDER[19]).toBe('fists');
+  it('最後がfists(クナイ最終段)', () => {
+    expect(GG_LADDER[25]).toBe('fists');
   });
 
   it('重複エントリがない', () => {
@@ -35,26 +35,26 @@ describe('GunGameState', () => {
     expect(isWin).toBe(false);
   });
 
-  it('ランク19→20でまだ勝利ではない(ランク20に到達しただけ)', () => {
+  it('ランク25→26でまだ勝利ではない(ランク26に到達しただけ)', () => {
     const gg = new GunGameState();
-    for (let i = 0; i < 18; i++) gg.playerRankUp();
-    const { newRank, isWin } = gg.playerRankUp(); // 19→20
-    expect(newRank).toBe(20);
+    for (let i = 0; i < 24; i++) gg.playerRankUp();
+    const { newRank, isWin } = gg.playerRankUp(); // 25→26
+    expect(newRank).toBe(26);
     expect(isWin).toBe(false);
   });
 
-  it('ランク20でキルすると isWin = true', () => {
+  it('ランク26でキルすると isWin = true', () => {
     const gg = new GunGameState();
-    for (let i = 0; i < 19; i++) gg.playerRankUp(); // → rank 20
-    expect(gg.getPlayerRank()).toBe(20);
-    const { isWin } = gg.playerRankUp(); // rank 20でのキル = 勝利
+    for (let i = 0; i < 25; i++) gg.playerRankUp(); // → rank 26
+    expect(gg.getPlayerRank()).toBe(26);
+    const { isWin } = gg.playerRankUp(); // rank 26でのキル = 勝利
     expect(isWin).toBe(true);
   });
 
-  it('ランクは20を超えない', () => {
+  it('ランクは26を超えない', () => {
     const gg = new GunGameState();
-    for (let i = 0; i < 25; i++) gg.playerRankUp();
-    expect(gg.getPlayerRank()).toBe(20);
+    for (let i = 0; i < 30; i++) gg.playerRankUp();
+    expect(gg.getPlayerRank()).toBe(26);
   });
 
   it('ランクダウンは1未満にならない', () => {
@@ -87,9 +87,9 @@ describe('GunGameState', () => {
     expect(isWin).toBe(false);
   });
 
-  it('ボットもランク20でキルすると isWin = true', () => {
+  it('ボットもランク26でキルすると isWin = true', () => {
     const gg = new GunGameState();
-    for (let i = 0; i < 19; i++) gg.botRankUp(99); // → rank 20
+    for (let i = 0; i < 25; i++) gg.botRankUp(99); // → rank 26
     const { isWin } = gg.botRankUp(99);
     expect(isWin).toBe(true);
   });
@@ -130,13 +130,13 @@ describe('GunGameState', () => {
   it('getWeaponIdAtはラダーIDを返す', () => {
     const gg = new GunGameState();
     expect(gg.getWeaponIdAt(1)).toBe(GG_LADDER[0]);
-    expect(gg.getWeaponIdAt(20)).toBe('fists');
+    expect(gg.getWeaponIdAt(26)).toBe('fists');
   });
 
   it('getWeaponIdAtは範囲外でもクランプする', () => {
     const gg = new GunGameState();
     expect(gg.getWeaponIdAt(0)).toBe(GG_LADDER[0]);
-    expect(gg.getWeaponIdAt(21)).toBe('fists');
+    expect(gg.getWeaponIdAt(27)).toBe('fists');
   });
 
   // UID独立性

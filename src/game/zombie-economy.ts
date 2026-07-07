@@ -110,7 +110,8 @@ export interface WallBuyDef {
 }
 
 /**
- * 壁購入武器リスト。入門500/AR級1200/強武器1500/クナイ2000/DSR2500の8本。
+ * 壁購入武器リスト。入門500/AR級1200/強武器1500/クナイ3500/DSR2500の8本(標準) +
+ * 特殊兵装4本(業火RL2500/修羅LMG3000/月光弓2200/天雷杖2800) = 計12本。
  * generateShopLayout は fists・yamasemi-dmr を常に配置し、残りから4〜6本を選ぶ。
  * weapons.ts の WEAPON_DEFS に実在する primary 武器 ID のみを使用する。
  */
@@ -125,8 +126,13 @@ export const WALL_BUYS: readonly WallBuyDef[] = [
   { weaponId: 'miyama-br', price: 1500 },
   { weaponId: 'kasasagi-ar', price: 1500 },
   // 必置武器 ─ generateShopLayout が常に配置する
-  { weaponId: 'fists', price: 2000 },
+  { weaponId: 'fists', price: 3500 },      // クナイ(旧2000→3500: 強力な近接戦力に見合う価格)
   { weaponId: 'yamasemi-dmr', price: 2500 },
+  // 特殊兵装枠 ─ 高ラウンド向けエキゾチック武器(optional pool に追加)
+  { weaponId: 'gouka-rl', price: 2500 },      // 業火ロケットランチャー
+  { weaponId: 'shura-lmg', price: 3000 },     // 修羅LMG(ミニガン)
+  { weaponId: 'gekkou-bow', price: 2200 },    // 月光弓
+  { weaponId: 'tenrai-staff', price: 2800 },  // 天雷杖
 ];
 
 /** generateShopLayout が必ず配置する壁武器 ID */
@@ -136,11 +142,14 @@ export const MANDATORY_WALL_BUY_IDS: readonly string[] = ['fists', 'yamasemi-dmr
 
 /**
  * ミステリーボックスで排出可能な全武器 ID。
- * fists(クナイ)を除く全プライマリ武器。スナイパー・LMG 含む。
+ * fists(クナイ)を除く全プライマリ武器 + セカンダリexotic(banjin-smg/misago-pistol)。
+ * スナイパー・LMG・特殊兵装含む。高ラウンドの報酬多様性向上のため副武器exoticを追加。
  */
-export const MYSTERY_BOX_POOL: readonly string[] = PRIMARY_IDS.filter(
-  (id) => id !== 'fists',
-);
+export const MYSTERY_BOX_POOL: readonly string[] = [
+  ...PRIMARY_IDS.filter((id) => id !== 'fists'),
+  'banjin-smg',    // セカンダリexotic: 手裏剣連射SMG
+  'misago-pistol', // セカンダリexotic: 特殊ハンドガン
+];
 
 // ─── 純関数 ───────────────────────────────────────────────────────────────────
 

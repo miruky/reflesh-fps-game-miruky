@@ -55,6 +55,8 @@ export class Effects {
   private gouenCorridorFX: Timed<THREE.Group>[] = [];   // 業火滅世 火柱回廊+地割れ
   private shinkirouMirageFX: Timed<THREE.Group>[] = []; // 虚像世界 歪曲リング+熱揺らぎ
   private shuraKourinFX: Timed<THREE.Group>[] = [];     // 阿修羅降臨 3頭6腕
+  // ── R35 エフェクト追加プール ──
+  private kokuteiMantleFX: Timed<THREE.Group>[] = [];  // BE-1 黒帝羽根煙マントル
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -1139,6 +1141,65 @@ export class Effects {
       this.scene.add(invGroup);
       this.geppaRings.push({ obj: invGroup, life: 4.0, maxLife: 4.0 });
     }
+
+    // ── KE-5 追加演出 ──
+
+    // 垂直世界亀裂10本(0.05×28m、0xaa00ff、streaksフリッカー)
+    const vertCrackCount = reduceMotion ? 0 : 10;
+    for (let i = 0; i < vertCrackCount; i++) {
+      const a = (i / vertCrackCount) * Math.PI * 2 + Math.random() * 0.3;
+      const d = maxR * (0.1 + Math.random() * 0.7);
+      const crackGeo = new THREE.BoxGeometry(0.05, 28, 0.05);
+      const crackMat = new THREE.MeshBasicMaterial({
+        color: 0xaa00ff, transparent: true, opacity: 0.72,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const crack = new THREE.Mesh(crackGeo, crackMat);
+      crack.position.set(
+        center.x + Math.cos(a) * d,
+        center.y + 14,
+        center.z + Math.sin(a) * d,
+      );
+      crack.userData.fissure = true;
+      crack.userData.baseOpacity = 0.72;
+      const sg = new THREE.Group();
+      sg.add(crack);
+      this.scene.add(sg);
+      this.streaks.push({ obj: sg, life: 3.0 + Math.random() * 0.5, maxLife: 3.5 });
+    }
+
+    // 反転フラッシュ3段スケジューラ(t=1.2/1.6/2.2s、tenraiBoltFX相乗り)
+    if (!reduceMotion) {
+      const flashSched = new THREE.Group();
+      flashSched.position.copy(center);
+      flashSched.userData.age = 0;
+      flashSched.userData.maxR = maxR;
+      flashSched.userData.stageTimers = [1.2, 1.6, 2.2];
+      flashSched.userData.stagesFired = [false, false, false];
+      flashSched.userData.isFlashScheduler = true;
+      this.scene.add(flashSched);
+      this.tenraiBoltFX.push({ obj: flashSched, life: 3.5, maxLife: 3.5 });
+    }
+
+    // 空間裂目ライン3本(420m長、0x9900ff、tracers)
+    if (!reduceMotion) {
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2 + Math.random() * 0.4;
+        const half = 210;
+        const riftGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(center.x - Math.cos(a) * half, center.y + 4 + i * 2.5, center.z - Math.sin(a) * half),
+          new THREE.Vector3(center.x + Math.cos(a) * half, center.y + 4 + i * 2.5, center.z + Math.sin(a) * half),
+        ]);
+        const riftMat = new THREE.LineBasicMaterial({
+          color: 0x9900ff, transparent: true, opacity: 0.62,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        });
+        const rift = new THREE.Line(riftGeo, riftMat);
+        rift.userData.baseOpacity = 0.62;
+        this.scene.add(rift);
+        this.tracers.push({ obj: rift, life: 3.5, maxLife: 3.5 });
+      }
+    }
   }
 
   buildBranchBolt(
@@ -1872,7 +1933,7 @@ export class Effects {
 
   // ─── R34 特殊武器溜め攻撃エフェクト ───────────────────────────────────────
 
-  /** 千刃嵐: 溜め放出 — 銀十字ブレード30枚が扇状ストリーム(0.8s) */
+  /** 千刃嵐: 溜め放出 — 銀十字ブレード30枚が扇状ストリーム(0.8s)。EX-2: 残像尾2本+終幕shurikenBlade×6 */
   banjinStorm(origin: THREE.Vector3, dir: THREE.Vector3): void {
     const group = new THREE.Group();
     const COUNT = 30;
@@ -1906,7 +1967,27 @@ export class Effects {
       }));
       vLine.userData.baseOpacity = 0.72;
       group.add(vLine);
+      // EX-2: 残像尾2本(グループ内子、プール非消費)
+      for (let trail = 1; trail <= 2; trail++) {
+        const trailPos = pos.clone().addScaledVector(bladeDir, -trail * 0.28);
+        const tOp = 0.35 - trail * 0.12;
+        const tGeo = new THREE.BufferGeometry().setFromPoints([
+          trailPos.clone().addScaledVector(right, -hLen * 0.75),
+          trailPos.clone().addScaledVector(right, hLen * 0.75),
+        ]);
+        const tLine = new THREE.Line(tGeo, new THREE.LineBasicMaterial({
+          color: 0x8899cc, transparent: true, opacity: tOp,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+        tLine.userData.baseOpacity = tOp;
+        tLine.userData.isTrail = true;
+        group.add(tLine);
+      }
     }
+    // EX-2: 終幕バースト用データ
+    group.userData.origin = origin.clone();
+    group.userData.dir = D.clone();
+    group.userData.burstFired = false;
     this.scene.add(group);
     this.banjinBladesFX.push({ obj: group, life: 0.8, maxLife: 0.8 });
   }
@@ -2541,6 +2622,491 @@ export class Effects {
     this.shuraKourinFX.push({ obj: group, life: 3.5, maxLife: 3.5 });
   }
 
+  // ─── R35 新規エフェクト API ────────────────────────────────────────────────
+
+  /** KE-2: 黒雷帝足跡ルーン — 暗紫拡大リング(0.18→0.85m/0.32s)+分岐ボルト小1本 */
+  walkKokuraiRune(pos: THREE.Vector3, reduceMotion = false): void {
+    const geo = new THREE.RingGeometry(0.7, 1.0, 32);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x5500aa, transparent: true, opacity: 0.78,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(geo, mat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.copy(pos);
+    ring.scale.setScalar(0.18);
+    ring.userData.targetScale = 0.85;
+    ring.userData.baseOpacity = 0.78;
+    this.scene.add(ring);
+    this.impactRings.push({ obj: ring, life: 0.32, maxLife: 0.32 });
+    if (!reduceMotion) {
+      this.buildBranchBolt(new THREE.Vector3(pos.x, pos.y + 2.5, pos.z), pos, 1, true, 0.18);
+    }
+  }
+
+  /** KE-3: 魂吸引ビーム — 吸引ライン3本+発生地ノヴァリング+吸引パーティクル5 */
+  soulAbsorbBeam(fromPos: THREE.Vector3, toPos: THREE.Vector3, reduceMotion = false): void {
+    const OPACITIES = [0.58, 0.38, 0.22] as const;
+    const COLORS = [0x9900ff, 0x6600bb, 0x440088] as const;
+    for (let i = 0; i < 3; i++) {
+      const off = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.08, (Math.random() - 0.5) * 0.08, (Math.random() - 0.5) * 0.08,
+      );
+      const beamGeo = new THREE.BufferGeometry().setFromPoints([fromPos.clone().add(off), toPos.clone().add(off)]);
+      const beamMat = new THREE.LineBasicMaterial({
+        color: COLORS[i]!, transparent: true, opacity: OPACITIES[i]!,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const line = new THREE.Line(beamGeo, beamMat);
+      line.userData.baseOpacity = OPACITIES[i]!;
+      this.scene.add(line);
+      this.tracers.push({ obj: line, life: 0.42, maxLife: 0.42 });
+    }
+    // 発生地ノヴァリング
+    const novaGeo = new THREE.RingGeometry(0.5, 0.8, 24);
+    const novaMat = new THREE.MeshBasicMaterial({
+      color: 0x8800cc, transparent: true, opacity: 0.65,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const novaRing = new THREE.Mesh(novaGeo, novaMat);
+    novaRing.rotation.x = -Math.PI / 2;
+    novaRing.position.copy(fromPos);
+    novaRing.scale.setScalar(0.15);
+    novaRing.userData.targetScale = 1.2;
+    novaRing.userData.baseOpacity = 0.65;
+    this.scene.add(novaRing);
+    this.impactRings.push({ obj: novaRing, life: 0.28, maxLife: 0.28 });
+    // 吸引パーティクル5(darkPuffs、toPos方向8-14m/s)
+    if (!reduceMotion) {
+      const absorbDir = new THREE.Vector3().subVectors(toPos, fromPos).normalize();
+      for (let i = 0; i < 5; i++) {
+        const spread = new THREE.Vector3(
+          (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 1.5,
+        );
+        const puffMat = new THREE.MeshBasicMaterial({
+          color: 0x330055, transparent: true, opacity: 0.55, depthWrite: false,
+        });
+        const puff = new THREE.Mesh(this.puffGeometry, puffMat);
+        puff.position.copy(fromPos).add(spread);
+        puff.scale.setScalar(0.3 + Math.random() * 0.25);
+        puff.userData.vel = absorbDir.clone().multiplyScalar(8 + Math.random() * 6);
+        this.scene.add(puff);
+        this.darkPuffs.push({ obj: puff, life: 0.42, maxLife: 0.42 });
+      }
+    }
+  }
+
+  /** KE-4: 暗黒空虚パルス — 暗転球(BackSide Normal)+紫電コア+収縮吸引8粒 */
+  darkVoidPulse(pos: THREE.Vector3, charge01: number, reduceMotion = false): void {
+    const c = Math.max(0, Math.min(1, charge01));
+    const radius = 0.25 + c * 0.8;
+    const darkMat = new THREE.MeshBasicMaterial({
+      color: 0x020005, transparent: true, opacity: 0.82,
+      blending: THREE.NormalBlending, depthWrite: false, side: THREE.BackSide,
+    });
+    const darkBall = new THREE.Mesh(this.blastGeometry, darkMat);
+    darkBall.position.copy(pos);
+    darkBall.scale.setScalar(radius * 0.2);
+    darkBall.userData.targetScale = radius;
+    darkBall.userData.baseOpacity = 0.82;
+    this.scene.add(darkBall);
+    this.darkNovas.push({ obj: darkBall as THREE.Mesh, life: 0.38, maxLife: 0.38 });
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0x7700dd, transparent: true, opacity: 0.68,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const core = new THREE.Mesh(this.blastGeometry, coreMat);
+    core.position.copy(pos);
+    core.scale.setScalar(radius * 0.08);
+    core.userData.targetScale = radius * 0.4;
+    core.userData.baseOpacity = 0.68;
+    this.scene.add(core);
+    this.darkNovas.push({ obj: core as THREE.Mesh, life: 0.22, maxLife: 0.22 });
+    if (!reduceMotion) {
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const r = 1.2 + Math.random() * 0.8;
+        const puffMat = new THREE.MeshBasicMaterial({
+          color: 0x1a0030, transparent: true, opacity: 0.48, depthWrite: false,
+        });
+        const puff = new THREE.Mesh(this.puffGeometry, puffMat);
+        puff.position.set(pos.x + Math.cos(angle) * r, pos.y + (Math.random() - 0.5) * 0.6, pos.z + Math.sin(angle) * r);
+        puff.scale.setScalar(0.2 + Math.random() * 0.2);
+        puff.userData.vel = new THREE.Vector3(pos.x - puff.position.x, pos.y - puff.position.y, pos.z - puff.position.z)
+          .normalize().multiplyScalar(6 + Math.random() * 4);
+        this.scene.add(puff);
+        this.darkPuffs.push({ obj: puff, life: 0.32, maxLife: 0.32 });
+      }
+    }
+  }
+
+  /** RE-2: 雷帝足跡 — 氷青リング+氷青ボルト1本 */
+  raiteiFootprint(pos: THREE.Vector3, reduceMotion = false): void {
+    const geo = new THREE.RingGeometry(0.55, 0.78, 28);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x44aaff, transparent: true, opacity: 0.70,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(geo, mat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.copy(pos);
+    ring.scale.setScalar(0.15);
+    ring.userData.targetScale = 1.0;
+    ring.userData.baseOpacity = 0.70;
+    this.scene.add(ring);
+    this.impactRings.push({ obj: ring, life: 0.28, maxLife: 0.28 });
+    if (!reduceMotion) {
+      this.buildBranchBolt(new THREE.Vector3(pos.x, pos.y + 2.0, pos.z), pos, 1, false, 0.15);
+    }
+  }
+
+  /** BE-1: 黒帝煙マントル — 羽根形状2+胴体煙ブロブ3 */
+  kokuteiSmokeMantle(pos: THREE.Vector3, reduceMotion = false): void {
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    for (const wingAngle of [1.1, -1.1]) {
+      const wing = new THREE.Mesh(this.streakGeometry, new THREE.MeshBasicMaterial({
+        color: 0x050010, transparent: true, opacity: 0.72,
+        blending: THREE.NormalBlending, depthWrite: false, side: THREE.DoubleSide,
+      }));
+      wing.scale.set(3.5, 1.5, 4.2);
+      wing.rotation.z = wingAngle;
+      wing.rotation.y = Math.PI / 2;
+      wing.position.y = 0.8;
+      wing.userData.baseOpacity = 0.72;
+      group.add(wing);
+    }
+    if (!reduceMotion) {
+      for (let i = 0; i < 3; i++) {
+        const blobMat = new THREE.MeshBasicMaterial({
+          color: 0x07000e, transparent: true, opacity: 0, depthWrite: false,
+        });
+        const blob = new THREE.Mesh(this.cloudGeometry, blobMat);
+        blob.position.set((Math.random() - 0.5) * 0.6, 0.3 + i * 0.5, (Math.random() - 0.5) * 0.4);
+        blob.scale.setScalar(0.35 + Math.random() * 0.2);
+        blob.userData.isSmoke = true;
+        group.add(blob);
+      }
+    }
+    this.scene.add(group);
+    this.kokuteiMantleFX.push({ obj: group, life: 0.65, maxLife: 0.65 });
+  }
+
+  /** BE-2: 黒帝斬撃残光ライン — 赤残光1本(0xcc0011 Additive 0.32/0.50s) */
+  kokuteiSlashResidual(from: THREE.Vector3, to: THREE.Vector3): void {
+    const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+    const mat = new THREE.LineBasicMaterial({
+      color: 0xcc0011, transparent: true, opacity: 0.32,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const line = new THREE.Line(geo, mat);
+    line.userData.baseOpacity = 0.32;
+    this.scene.add(line);
+    this.tracers.push({ obj: line, life: 0.50, maxLife: 0.50 });
+  }
+
+  /** EX-1: 月光弓月相チャージ — 三日月(c=0)→満月(c=1)リング+満月バースト */
+  gekkouMoonPhaseCharge(origin: THREE.Vector3, charge01: number, reduceMotion = false): void {
+    const c = Math.max(0, Math.min(1, charge01));
+    const innerR = 0.3 + c * 0.55;
+    const arcAngle = Math.PI * (0.5 + c * 1.5);
+    const cresGeo = new THREE.RingGeometry(innerR, innerR + 0.12, 24, 1, 0, arcAngle);
+    const cresMat = new THREE.MeshBasicMaterial({
+      color: c > 0.8 ? 0xffffff : 0xddeeff,
+      transparent: true, opacity: 0.65 + c * 0.25,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(cresGeo, cresMat);
+    mesh.position.copy(origin);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.userData.baseOpacity = 0.65 + c * 0.25;
+    mesh.userData.targetScale = 1.0;
+    this.scene.add(mesh);
+    this.crescents.push({ obj: mesh, life: 0.28, maxLife: 0.28 });
+    if (c >= 0.9 && !reduceMotion) {
+      this.bowImpact(origin);
+      const burstGeo = new THREE.RingGeometry(0.82, 1.0, 36);
+      const burstMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.72,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const burstRing = new THREE.Mesh(burstGeo, burstMat);
+      burstRing.rotation.x = -Math.PI / 2;
+      burstRing.position.copy(origin);
+      burstRing.scale.setScalar(0.5);
+      burstRing.userData.targetScale = 4.5;
+      burstRing.userData.baseOpacity = 0.72;
+      this.scene.add(burstRing);
+      this.rings.push({ obj: burstRing, life: 0.35, maxLife: 0.35 });
+    }
+  }
+
+  /** GE-1: ボット死亡エフェクト(武器クラス別) */
+  botDeathFxByClass(
+    point: THREE.Vector3,
+    teamColor: number,
+    weaponClass: string,
+    reduceMotion = false,
+  ): void {
+    switch (weaponClass) {
+      case 'sniper': {
+        if (!reduceMotion) {
+          for (let i = 0; i < 4; i++) {
+            const a = (i / 4) * Math.PI * 2 + Math.random() * 0.4;
+            const len = 1.2 + Math.random() * 0.8;
+            const lineGeo = new THREE.BufferGeometry().setFromPoints([
+              point,
+              point.clone().add(new THREE.Vector3(Math.cos(a) * len, (Math.random() - 0.3) * len * 0.5, Math.sin(a) * len)),
+            ]);
+            const lineMat = new THREE.LineBasicMaterial({
+              color: 0xccddee, transparent: true, opacity: 0.78,
+              blending: THREE.AdditiveBlending, depthWrite: false,
+            });
+            const sl = new THREE.Line(lineGeo, lineMat);
+            sl.userData.baseOpacity = 0.78;
+            this.scene.add(sl);
+            this.tracers.push({ obj: sl, life: 0.25, maxLife: 0.25 });
+          }
+        }
+        this.impactRing(point, 0xffffff);
+        break;
+      }
+      case 'shotgun': {
+        const sparkGroup = new THREE.Group();
+        sparkGroup.position.copy(point);
+        const cnt = reduceMotion ? 8 : 20;
+        for (let i = 0; i < cnt; i++) {
+          const shard = new THREE.Mesh(this.sparkGeometry, new THREE.MeshBasicMaterial({
+            color: i % 4 === 0 ? 0xffffff : 0xff8822,
+            transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false,
+          }));
+          const a = Math.random() * Math.PI * 2;
+          const spd = 3 + Math.random() * 7;
+          shard.userData.vel = new THREE.Vector3(Math.cos(a) * spd, Math.random() * 5 + 1, Math.sin(a) * spd);
+          sparkGroup.add(shard);
+        }
+        this.scene.add(sparkGroup);
+        this.sparks.push({ obj: sparkGroup, life: 0.55, maxLife: 0.55 });
+        const coreMesh = new THREE.Mesh(this.blastGeometry, new THREE.MeshBasicMaterial({
+          color: 0xff6600, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+        coreMesh.position.copy(point);
+        coreMesh.scale.setScalar(0.25);
+        coreMesh.userData.targetScale = 1.0;
+        coreMesh.userData.baseOpacity = 0.85;
+        this.scene.add(coreMesh);
+        this.blasts.push({ obj: coreMesh, life: 0.25, maxLife: 0.25 });
+        break;
+      }
+      case 'launcher': {
+        this.rocketBlast(point, 2.5);
+        break;
+      }
+      case 'melee': {
+        this.shockwaveRing(point.clone(), 2.0, 0x8822ff);
+        if (!reduceMotion) {
+          for (let i = 0; i < 2; i++) {
+            const puffMat = new THREE.MeshBasicMaterial({
+              color: 0x1a0030, transparent: true, opacity: 0.55, depthWrite: false,
+            });
+            const puff = new THREE.Mesh(this.puffGeometry, puffMat);
+            puff.position.copy(point).add(new THREE.Vector3(
+              (Math.random() - 0.5) * 0.6, Math.random() * 0.5, (Math.random() - 0.5) * 0.6,
+            ));
+            puff.scale.setScalar(0.6 + Math.random() * 0.4);
+            this.scene.add(puff);
+            this.darkPuffs.push({ obj: puff, life: 0.8, maxLife: 0.8 });
+          }
+        }
+        break;
+      }
+      case 'exotic': {
+        this.deathBurst(point, teamColor);
+        const accentGeo = new THREE.RingGeometry(0.82, 1.0, 36);
+        const accentMat = new THREE.MeshBasicMaterial({
+          color: teamColor, transparent: true, opacity: 0.70,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+        });
+        const accentRing = new THREE.Mesh(accentGeo, accentMat);
+        accentRing.rotation.x = -Math.PI / 2;
+        accentRing.position.copy(point);
+        accentRing.scale.setScalar(0.3);
+        accentRing.userData.targetScale = 2.8;
+        accentRing.userData.baseOpacity = 0.70;
+        this.scene.add(accentRing);
+        this.rings.push({ obj: accentRing, life: 0.4, maxLife: 0.4 });
+        break;
+      }
+      default: {
+        this.deathBurst(point, teamColor);
+        break;
+      }
+    }
+  }
+
+  /** GE-2: ヘッドショットフレアV2 — 黄金十字線2+拡大黄金リング+球scale0.18/opacity0.75。シグネチャ互換 */
+  headshotFlareV2(point: THREE.Vector3): void {
+    const crossPairs: Array<[THREE.Vector3, THREE.Vector3]> = [
+      [new THREE.Vector3(-0.4, 0.4, 0), new THREE.Vector3(0.4, -0.4, 0)],
+      [new THREE.Vector3(-0.4, -0.4, 0), new THREE.Vector3(0.4, 0.4, 0)],
+    ];
+    for (const [a, b] of crossPairs) {
+      const crossGeo = new THREE.BufferGeometry().setFromPoints([point.clone().add(a), point.clone().add(b)]);
+      const crossMat = new THREE.LineBasicMaterial({
+        color: 0xffd700, transparent: true, opacity: 0.88, blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const crossLine = new THREE.Line(crossGeo, crossMat);
+      crossLine.userData.baseOpacity = 0.88;
+      this.scene.add(crossLine);
+      this.tracers.push({ obj: crossLine, life: 0.22, maxLife: 0.22 });
+    }
+    const hsRingGeo = new THREE.RingGeometry(0.82, 1.0, 32);
+    const hsRingMat = new THREE.MeshBasicMaterial({
+      color: 0xffd700, transparent: true, opacity: 0.80,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const hsRing = new THREE.Mesh(hsRingGeo, hsRingMat);
+    hsRing.position.copy(point);
+    hsRing.rotation.x = -Math.PI / 2;
+    hsRing.scale.setScalar(0.2);
+    hsRing.userData.targetScale = 1.8;
+    hsRing.userData.baseOpacity = 0.80;
+    this.scene.add(hsRing);
+    this.rings.push({ obj: hsRing, life: 0.22, maxLife: 0.22 });
+    const flareMat = new THREE.MeshBasicMaterial({
+      color: 0xffe8a0, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const flare = new THREE.Mesh(this.flareGeometry, flareMat);
+    flare.position.copy(point);
+    flare.scale.setScalar(0.18);
+    flare.userData.baseOpacity = 0.75;
+    this.scene.add(flare);
+    this.flares.push({ obj: flare, life: 0.22, maxLife: 0.22 });
+  }
+
+  /** GE-3: スライドスパーク — 橙6+白2の後方スパーク(重力 sparks tick準拠) */
+  slideSparks(pos: THREE.Vector3, dir: THREE.Vector3, reduceMotion = false): void {
+    if (reduceMotion) return;
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    const back = dir.clone().negate().normalize();
+    const COLORS = [0xff8800, 0xff6600, 0xff9900, 0xff7700, 0xff8800, 0xff6600, 0xffffff, 0xffffff] as const;
+    for (let i = 0; i < 8; i++) {
+      const shard = new THREE.Mesh(this.sparkGeometry, new THREE.MeshBasicMaterial({
+        color: COLORS[i]!, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      const spread = (Math.random() - 0.5) * 1.0;
+      const spd = 4 + Math.random() * 5;
+      shard.userData.vel = new THREE.Vector3(back.x * spd + spread, Math.random() * 1.5 + 0.3, back.z * spd + spread);
+      group.add(shard);
+    }
+    this.scene.add(group);
+    this.sparks.push({ obj: group, life: 0.35, maxLife: 0.35 });
+  }
+
+  /** GE-4: 着地衝撃波 — 地面リング+土煙6+強着地で亀裂2本(strength01>=0.5) */
+  landingShockwave(pos: THREE.Vector3, strength01: number, reduceMotion = false): void {
+    const s = Math.max(0, Math.min(1, strength01));
+    const ringR = 0.8 + s * 1.5;
+    const shockOpacity = 0.65 + s * 0.25;
+    const shockGeo = new THREE.RingGeometry(0.82, 1.0, 36);
+    const shockMat = new THREE.MeshBasicMaterial({
+      color: 0xaaaaaa, transparent: true, opacity: shockOpacity,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const shockRing = new THREE.Mesh(shockGeo, shockMat);
+    shockRing.rotation.x = -Math.PI / 2;
+    shockRing.position.copy(pos);
+    shockRing.scale.setScalar(0.2);
+    shockRing.userData.targetScale = ringR;
+    shockRing.userData.baseOpacity = shockOpacity;
+    this.scene.add(shockRing);
+    this.rings.push({ obj: shockRing, life: 0.38, maxLife: 0.38 });
+    const dustCount = reduceMotion ? 3 : 6;
+    for (let i = 0; i < dustCount; i++) {
+      const dustMat = new THREE.MeshBasicMaterial({
+        color: 0x887766, transparent: true, opacity: 0, depthWrite: false,
+      });
+      const dust = new THREE.Mesh(this.puffGeometry, dustMat);
+      const a = Math.random() * Math.PI * 2;
+      const r = ringR * (0.2 + Math.random() * 0.5);
+      dust.position.set(pos.x + Math.cos(a) * r, pos.y, pos.z + Math.sin(a) * r);
+      dust.scale.setScalar(0.3 + s * 0.4 + Math.random() * 0.3);
+      dust.userData.velY = 1.5 + Math.random() * 1.5;
+      dust.userData.baseOpacity = 0.48 + s * 0.25;
+      dust.userData.targetScale = 2.0;
+      this.scene.add(dust);
+      this.blasts.push({ obj: dust, life: 0.65 + s * 0.3, maxLife: 0.95 });
+    }
+    if (s >= 0.5 && !reduceMotion) {
+      for (let i = 0; i < 2; i++) {
+        const a = Math.random() * Math.PI;
+        const len = ringR * (0.6 + Math.random() * 0.4);
+        const crackDir = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+        const crackMesh = new THREE.Mesh(this.streakGeometry, new THREE.MeshBasicMaterial({
+          color: 0x665544, transparent: true, opacity: 0.68, blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+        crackMesh.scale.z = len;
+        crackMesh.scale.x = 0.07;
+        crackMesh.position.copy(pos).addScaledVector(crackDir, len * 0.5);
+        crackMesh.position.y -= 0.04;
+        crackMesh.rotation.y = a;
+        crackMesh.userData.fissure = true;
+        crackMesh.userData.baseOpacity = 0.68;
+        const crackGroup = new THREE.Group();
+        crackGroup.add(crackMesh);
+        this.scene.add(crackGroup);
+        this.streaks.push({ obj: crackGroup, life: 0.55 + s * 0.2, maxLife: 0.75 });
+      }
+    }
+  }
+
+  /** GE-5: 壁走りスパーク — 橙4+白2 */
+  wallRunSparks(pos: THREE.Vector3, wallNormal: THREE.Vector3, reduceMotion = false): void {
+    if (reduceMotion) return;
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    const COLORS = [0xff8800, 0xff9900, 0xff7700, 0xff8800, 0xffffff, 0xffffff] as const;
+    for (let i = 0; i < 6; i++) {
+      const shard = new THREE.Mesh(this.sparkGeometry, new THREE.MeshBasicMaterial({
+        color: COLORS[i]!, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      const bounce = wallNormal.clone().multiplyScalar(1.5 + Math.random() * 2);
+      shard.userData.vel = bounce.clone().add(
+        new THREE.Vector3((Math.random() - 0.5) * 3, Math.random() * 2 + 0.5, (Math.random() - 0.5) * 3),
+      );
+      group.add(shard);
+    }
+    this.scene.add(group);
+    this.sparks.push({ obj: group, life: 0.28, maxLife: 0.28 });
+  }
+
+  /** GE-6: リロード完了フラッシュ — 白フレア小+ガンメタルリング */
+  reloadCompleteFlash(origin: THREE.Vector3): void {
+    const flareMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.72, blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const flare = new THREE.Mesh(this.flareGeometry, flareMat);
+    flare.position.copy(origin);
+    flare.scale.setScalar(0.22);
+    flare.userData.baseOpacity = 0.72;
+    this.scene.add(flare);
+    this.flares.push({ obj: flare, life: 0.18, maxLife: 0.18 });
+    const rcRingGeo = new THREE.RingGeometry(0.82, 1.0, 28);
+    const rcRingMat = new THREE.MeshBasicMaterial({
+      color: 0x8899aa, transparent: true, opacity: 0.62,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const rcRing = new THREE.Mesh(rcRingGeo, rcRingMat);
+    rcRing.position.copy(origin);
+    rcRing.rotation.x = -Math.PI / 2;
+    rcRing.scale.setScalar(0.15);
+    rcRing.userData.targetScale = 0.9;
+    rcRing.userData.baseOpacity = 0.62;
+    this.scene.add(rcRing);
+    this.impactRings.push({ obj: rcRing, life: 0.22, maxLife: 0.22 });
+  }
+
   /** 万刃 命中スパーク */
   shurikenImpact(point: THREE.Vector3): void {
     for (let i = 0; i < 5; i += 1) {
@@ -2656,6 +3222,9 @@ export class Effects {
     this.darkPuffs = this.tick(this.darkPuffs, dt, (puff, ratio) => {
       (puff.material as THREE.MeshBasicMaterial).opacity = 0.62 * ratio;
       puff.scale.multiplyScalar(1 + dt * 0.55); // ゆっくり膨らむ
+      // KE-3/KE-4: vel指定時は位置更新(収縮・飛翔パーティクル対応)
+      const vel = puff.userData.vel as THREE.Vector3 | undefined;
+      if (vel) puff.position.addScaledVector(vel, dt);
     });
     this.darkAuras = this.tick(this.darkAuras, dt, (wisp, ratio) => {
       // 素早くフェードイン→ゆっくりフェードアウト
@@ -2863,7 +3432,26 @@ export class Effects {
     this.banjinBladesFX = this.tick(this.banjinBladesFX, dt, (group, ratio) => {
       for (const child of group.children) {
         const base = (child.userData.baseOpacity as number) ?? 0.72;
-        ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio;
+        // EX-2: 残像尾は通常の半分の不透明度で早めにフェード
+        const trailMul = child.userData.isTrail === true ? 0.5 : 1.0;
+        ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity = base * ratio * trailMul;
+      }
+      // EX-2: 終幕(ratio≈life<0.18s/0.8s=0.225)にshurikenMotionBlade×6を一度だけスポーン
+      if (!(group.userData.burstFired as boolean) && ratio < 0.225) {
+        group.userData.burstFired = true;
+        const o = group.userData.origin as THREE.Vector3 | undefined;
+        const d = group.userData.dir as THREE.Vector3 | undefined;
+        if (o && d) {
+          for (let sb = 0; sb < 6; sb++) {
+            const a = (sb / 6) * Math.PI * 2;
+            const sDir = d.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), a);
+            this.shurikenMotionBlade(
+              o.clone().add(new THREE.Vector3(Math.cos(a) * 2.0, 0.5, Math.sin(a) * 2.0)),
+              sDir,
+              0xddeeff,
+            );
+          }
+        }
       }
     });
     this.gekkouArrowFX = this.tick(this.gekkouArrowFX, dt, (group, ratio) => {
@@ -2932,6 +3520,26 @@ export class Effects {
             ));
             this.buildBranchBolt(top, bolt.pos, 3, false, 0.4);
             this.impactRing(bolt.pos, 0x44aaff);
+          }
+        }
+      }
+      // KE-5: 反転フラッシュスケジューラ
+      if (group.userData.isFlashScheduler === true) {
+        const timers = group.userData.stageTimers as number[];
+        const fired = group.userData.stagesFired as boolean[];
+        const maxR = (group.userData.maxR as number) ?? 32;
+        for (let si = 0; si < timers.length; si++) {
+          if (!fired[si] && age >= timers[si]!) {
+            fired[si] = true;
+            const flash = new THREE.Mesh(this.blastGeometry, new THREE.MeshBasicMaterial({
+              color: 0xffffff, transparent: true, opacity: 0.72,
+              blending: THREE.AdditiveBlending, depthWrite: false,
+            }));
+            flash.position.copy(group.position);
+            flash.scale.setScalar(maxR * 0.5);
+            flash.userData.targetScale = maxR * 1.2;
+            this.scene.add(flash);
+            this.blasts.push({ obj: flash, life: 0.15, maxLife: 0.15 });
           }
         }
       }
@@ -3006,9 +3614,37 @@ export class Effects {
           const moon = child as THREE.Mesh;
           if (!(group.userData.impactDone as boolean)) {
             moon.position.y -= (moon.userData.fallSpeed as number ?? 22) * dt;
+
+            // EX-3: 落下中の空暗転パルス(y>floorY+22 と y>floorY+10 で各1回)
+            if (!(moon.userData.darkPulseA as boolean) && moon.position.y <= floorY + 22) {
+              moon.userData.darkPulseA = true;
+              this.darkNova(moon.position.clone(), 4.0, 0.55);
+            }
+            if (!(moon.userData.darkPulseB as boolean) && moon.position.y <= floorY + 10) {
+              moon.userData.darkPulseB = true;
+              this.darkNova(moon.position.clone(), 6.0, 0.72);
+            }
+
+            // EX-3: 軌跡puff(0.08s毎)
+            const trailTimer = ((moon.userData.trailTimer as number | undefined) ?? 0) + dt;
+            moon.userData.trailTimer = trailTimer;
+            if (trailTimer >= 0.08) {
+              moon.userData.trailTimer = 0;
+              const puffMat = new THREE.MeshBasicMaterial({
+                color: 0xddeeff, transparent: true, opacity: 0.35, depthWrite: false,
+              });
+              const trailPuff = new THREE.Mesh(this.puffGeometry, puffMat);
+              trailPuff.position.copy(moon.position);
+              trailPuff.scale.setScalar(0.8 + Math.random() * 0.4);
+              this.scene.add(trailPuff);
+              this.blasts.push({ obj: trailPuff, life: 0.45, maxLife: 0.45 });
+            }
+
             if (moon.position.y <= floorY + 0.5) {
               moon.position.y = floorY;
               group.userData.impactDone = true;
+              // EX-3: 着弾時fissureGlow
+              this.fissureGlow(moon.position.clone(), 14);
               for (const sib of group.children) {
                 if (sib.userData.isNova === true || sib.userData.isCrater === true || sib.userData.delayShow === true) {
                   sib.visible = true;
@@ -3093,6 +3729,24 @@ export class Effects {
         }
       }
     });
+    // ── R35 追加 tick ──
+    // BE-1 黒帝煙マントル: 羽根フェードアウト+煙ブロブフェードイン→フェードアウト
+    this.kokuteiMantleFX = this.tick(this.kokuteiMantleFX, dt, (group, ratio) => {
+      const age = 1 - ratio;
+      const fadeIn = Math.min(1, age * 6);
+      for (const child of group.children) {
+        const base = (child.userData.baseOpacity as number) ?? 0.65;
+        if ((child as THREE.Mesh).isMesh) {
+          if (child.userData.isSmoke === true) {
+            const smokeFade = Math.min(1, age * 5) * ratio;
+            ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.45 * smokeFade;
+            (child as THREE.Mesh).scale.multiplyScalar(1 + dt * 0.6);
+          } else {
+            ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = base * fadeIn * ratio;
+          }
+        }
+      }
+    });
   }
 
   clear(): void {
@@ -3155,6 +3809,7 @@ export class Effects {
       this.gouenCorridorFX as unknown as Timed<THREE.Object3D>[],
       this.shinkirouMirageFX as unknown as Timed<THREE.Object3D>[],
       this.shuraKourinFX as unknown as Timed<THREE.Object3D>[],
+      this.kokuteiMantleFX as unknown as Timed<THREE.Object3D>[],
     ]) {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;

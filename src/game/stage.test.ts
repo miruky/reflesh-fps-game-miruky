@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { generateStage } from './stage';
+import { buildProp, generateStage, generateThemeObjects } from './stage';
+import type { PropKind } from './stage';
+import { mulberry32 } from '../core/rng';
 import { STAGES } from './stages';
 
 describe('generateStage', () => {
@@ -148,6 +150,138 @@ describe('generateStage', () => {
       const aBreakable = a.boxes.map((x) => x.breakable);
       const bBreakable = b.boxes.map((x) => x.breakable);
       expect(JSON.stringify(aBreakable)).toBe(JSON.stringify(bBreakable));
+    }
+  });
+});
+
+// ── buildProp / generateThemeObjects テスト ────────────────────────────────
+
+const ALL_PROP_KINDS: PropKind[] = [
+  'conifer', 'broadleaf', 'deadtree', 'sakura', 'bamboo',
+  'rock', 'towercrane', 'portalkrane', 'smokestack', 'gastank',
+  'watertower', 'transformer', 'antenna', 'truck', 'derelictcar',
+  'forklift', 'barricadecar', 'concretebarrier', 'fence', 'watchpost',
+  'tankhull', 'scaffold', 'streetlight', 'signboard', 'bench',
+  'vendingmachine', 'drumgroup', 'pallet', 'torii', 'stonelantern',
+  'well', 'pier', 'utilitypole', 'rubble', 'gasbottlegroup', 'supplycrate',
+];
+
+describe('buildProp', () => {
+  const PALETTE = STAGES[0]!.palette;
+  const RAND = mulberry32(42);
+
+  it('全36種が定義されており1個以上のBoxSpecを返す', () => {
+    expect(ALL_PROP_KINDS).toHaveLength(36);
+    for (const kind of ALL_PROP_KINDS) {
+      const boxes = buildProp(kind, 0, 0, 0, RAND, PALETTE);
+      expect(boxes.length, `${kind}: ≥1 box`).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('全ボックスに prop:true が付く', () => {
+    for (const kind of ALL_PROP_KINDS) {
+      const boxes = buildProp(kind, 0, 0, 0, RAND, PALETTE);
+      for (const box of boxes) {
+        expect(box.prop, `${kind}: prop`).toBe(true);
+      }
+    }
+  });
+
+  it('h>3 のボックスに shadowCaster:true が付く / h<=3 には付かない', () => {
+    for (const kind of ALL_PROP_KINDS) {
+      const boxes = buildProp(kind, 0, 0, 0, RAND, PALETTE);
+      for (const box of boxes) {
+        if (box.h > 3) {
+          expect(box.shadowCaster, `${kind} h=${box.h}: shadowCaster`).toBe(true);
+        } else {
+          expect(box.shadowCaster, `${kind} h=${box.h}: no shadowCaster`).toBeUndefined();
+        }
+      }
+    }
+  });
+
+  it('全ボックスの寸法が正の数', () => {
+    for (const kind of ALL_PROP_KINDS) {
+      const boxes = buildProp(kind, 0, 0, 0, RAND, PALETTE);
+      for (const box of boxes) {
+        expect(box.w, `${kind}: w>0`).toBeGreaterThan(0);
+        expect(box.h, `${kind}: h>0`).toBeGreaterThan(0);
+        expect(box.d, `${kind}: d>0`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('大型プロップ(smokestack/towercrane/antenna/utilitypole/watertower)は少なくとも1ボックスにshadowCaster', () => {
+    const large: PropKind[] = ['smokestack', 'towercrane', 'antenna', 'utilitypole', 'watertower'];
+    for (const kind of large) {
+      const boxes = buildProp(kind, 0, 0, 0, RAND, PALETTE);
+      expect(boxes.some((b) => b.shadowCaster === true), `${kind}: shadowCaster`).toBe(true);
+    }
+  });
+
+  it('rot=0 と rot=2 で同じbox数を返す(回転対称)', () => {
+    for (const kind of ALL_PROP_KINDS) {
+      const b0 = buildProp(kind, 0, 0, 0, RAND, PALETTE);
+      const b2 = buildProp(kind, 0, 0, 2, RAND, PALETTE);
+      expect(b0.length, `${kind}: box count same for rot 0 and 2`).toBe(b2.length);
+    }
+  });
+});
+
+describe('generateThemeObjects', () => {
+  it('同じdef+buildingPlacedからは常に同じ結果(決定論)', () => {
+    for (const def of STAGES.slice(0, 6)) {
+      const r1 = mulberry32(def.seed ^ 0x7e57ab1e);
+      const r2 = mulberry32(def.seed ^ 0x7e57ab1e);
+      const a = generateThemeObjects(def, [], r1);
+      const b = generateThemeObjects(def, [], r2);
+      expect(JSON.stringify(a), `${def.id}: determinism`).toBe(JSON.stringify(b));
+    }
+  });
+
+  it('生成されたプロップは全て prop:true を持つ', () => {
+    for (const def of STAGES) {
+      const rand = mulberry32(def.seed ^ 0x7e57ab1e);
+      const boxes = generateThemeObjects(def, [], rand);
+      for (const box of boxes) {
+        expect(box.prop, `${def.id}: prop`).toBe(true);
+      }
+    }
+  });
+
+  it('パイロット段階: 全ステージのプロップbox数が40以下', () => {
+    for (const def of STAGES) {
+      const rand = mulberry32(def.seed ^ 0x7e57ab1e);
+      const boxes = generateThemeObjects(def, [], rand);
+      expect(boxes.length, `${def.id}: DC budget (${boxes.length} boxes)`).toBeLessThanOrEqual(40);
+    }
+  });
+
+  it('プロップ(decorを除く)はステージ境界+2m以内に収まる', () => {
+    for (const def of STAGES) {
+      const half = def.size / 2;
+      const rand = mulberry32(def.seed ^ 0x7e57ab1e);
+      const boxes = generateThemeObjects(def, [], rand);
+      for (const box of boxes) {
+        if (box.decor) continue;
+        expect(Math.abs(box.x) + box.w / 2, `${def.id}: x bound`).toBeLessThanOrEqual(half + 2);
+        expect(Math.abs(box.z) + box.d / 2, `${def.id}: z bound`).toBeLessThanOrEqual(half + 2);
+      }
+    }
+  });
+
+  it('generateStage に統合後も全体の決定論は保たれる', () => {
+    for (const def of STAGES.slice(0, 5)) {
+      const a = generateStage(def);
+      const b = generateStage(def);
+      expect(JSON.stringify(a), `${def.id}: generateStage determinism`).toBe(JSON.stringify(b));
+    }
+  });
+
+  it('objects未設定ステージも含め全ステージで0エラー', () => {
+    for (const def of STAGES) {
+      const rand = mulberry32(def.seed ^ 0x7e57ab1e);
+      expect(() => generateThemeObjects(def, [], rand)).not.toThrow();
     }
   });
 });

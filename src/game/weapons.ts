@@ -1229,7 +1229,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     falloff: { start: 300, end: 400, minFactor: 0.8 }, // hitscan 非使用だが start<end 制約
     mode: 'semi',
     burstCount: 1,
-    adsFovScale: 0.85,
+    adsFovScale: 0.72, // Fix-9: 0.85→0.72(ゴーストリング視認性向上のためより深くズーム)
     adsTimeMs: 350,
     switchMs: 650,
     // 強い発射反動(frontLoad で初弾をドカン)
@@ -1530,7 +1530,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     falloff: { start: 3, end: 20, minFactor: 0.25 },
     mode: 'semi',
     burstCount: 1,
-    adsFovScale: 0.9,
+    adsFovScale: 1.0, // Fix-追加: 0.9→1.0(ADS廃止=リブ59%閉塞のため。hold-fire型なので溜め機構に影響なし)
     adsTimeMs: 120,
     switchMs: 280,
     recoilPattern: buildRecoil({ steps: 2, pitchDeg: 0.8, driftDeg: 0.0, frontLoad: 0.5 }),
@@ -1606,7 +1606,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     falloff: { start: 100, end: 400, minFactor: 0.7 },
     mode: 'semi',
     burstCount: 1,
-    adsFovScale: 0.85,
+    adsFovScale: 0.55, // Fix-8: 0.85→0.55(狙点クリア化のための深ズーム)
     adsTimeMs: 300,
     switchMs: 600,
     recoilPattern: buildRecoil({ steps: 2, pitchDeg: 0.55, driftDeg: 0.0, frontLoad: 0.8 }),
@@ -1675,7 +1675,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     reloadTacticalMs: 3800, // A2: 4500→3800
     reloadEmptyMs: 5500,
     spreadHipDeg: 3.8,
-    spreadAdsDeg: 0.55,
+    spreadAdsDeg: 3.8, // Fix-3: 0.55→3.8(ADS廃止=バレル65%閉塞。spreadHipDegに合わせ腰だめ設計へ)
     bloomPerShotDeg: 0.08,
     bloomMaxDeg: 1.6,
     bloomRecoveryDegPerS: 1.0,
@@ -1683,7 +1683,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     falloff: { start: 22, end: 50, minFactor: 0.65 },
     mode: 'auto',
     burstCount: 1,
-    adsFovScale: 0.7,
+    adsFovScale: 1.0, // Fix-3: 0.7→1.0(ADS廃止=FOV変化なし)
     adsTimeMs: 800,
     switchMs: 900,
     recoilPattern: buildRecoil({ steps: 18, pitchDeg: 0.28, driftDeg: 0.08, decay: 0.1 }),

@@ -145,19 +145,53 @@ export function camoTierFor(stats: WeaponCamoStats | undefined): number {
   return n;
 }
 
-// その武器がゴールド到達済みか
+// その武器がゴールド到達済みか(武器クラス非依存=後方互換。新コードは goldForWeapon を使う)
 export function goldFor(stats: WeaponCamoStats | undefined): boolean {
   return camoTierFor(stats) >= CAMO_TIERS.length;
 }
 
-// ダイヤ: 同クラスのカモ対象武器が全てゴールドで解除
+// exoticクラスのゴールド条件緩和定数(7本あるため 500kills+HS100 → 250kills+HS50)
+export const EXOTIC_GOLD_KILLS = 250;
+export const EXOTIC_GOLD_HS = 50;
+
+/**
+ * 武器クラスを考慮したゴールド解除条件を返す。
+ * exotic クラスは 250kills+HS50、それ以外は標準(500kills+HS100)。
+ * launcher は緩和しない(exotic 内でも shooter 系とは別枠)。
+ */
+export function goldConditionFor(weaponId: string): { kills: number; headshots: number } {
+  const goldTier = CAMO_TIERS.find((t) => t.id === 'gold')!;
+  const cls = WEAPON_DEFS[weaponId]?.class;
+  if (cls === 'exotic') {
+    return { kills: EXOTIC_GOLD_KILLS, headshots: EXOTIC_GOLD_HS };
+  }
+  return { kills: goldTier.kills, headshots: goldTier.headshots };
+}
+
+/**
+ * 武器クラスを考慮したゴールド到達判定。
+ * exotic クラスは緩和条件(250kills+HS50)で判定する。
+ */
+export function goldForWeapon(weaponId: string, stats: WeaponCamoStats | undefined): boolean {
+  const s = stats ?? EMPTY_STATS;
+  // gold 手前の 8 段階は標準条件で確認(exotic も同じ閾値)
+  for (let i = 0; i < CAMO_TIERS.length - 1; i++) {
+    const tier = CAMO_TIERS[i]!;
+    if (s.kills < tier.kills || s.headshots < tier.headshots) return false;
+  }
+  // 最終段(gold)は武器クラス依存条件
+  const gc = goldConditionFor(weaponId);
+  return s.kills >= gc.kills && s.headshots >= gc.headshots;
+}
+
+// ダイヤ: 同クラスのカモ対象武器が全てゴールドで解除(exotic は緩和条件で判定)
 export function diamondFor(
   cls: WeaponClass,
   allStats: Record<string, WeaponCamoStats>,
 ): boolean {
   const weapons = camoWeaponsOfClass(cls);
   if (weapons.length === 0) return false;
-  return weapons.every((id) => goldFor(statsOf(allStats, id)));
+  return weapons.every((id) => goldForWeapon(id, statsOf(allStats, id)));
 }
 
 // ダークマター: 全クラスがダイヤで解除(全武器に適用可)
@@ -179,6 +213,10 @@ export function isCamoUnlocked(
   }
   const idx = CAMO_TIERS.findIndex((t) => t.id === camoId);
   if (idx < 0) return false;
+  // gold(最終段)は武器クラス依存の緩和条件を使う
+  if (camoId === 'gold') {
+    return goldForWeapon(weaponId, statsOf(allStats, weaponId));
+  }
   return camoTierFor(statsOf(allStats, weaponId)) > idx;
 }
 
@@ -201,24 +239,27 @@ export function camoProgress(
   if (camoId === 'diamond') {
     const cls = camoClassOf(weaponId);
     const weapons = cls ? camoWeaponsOfClass(cls) : [];
-    const current = weapons.filter((id) => goldFor(statsOf(allStats, id))).length;
+    const current = weapons.filter((id) => goldForWeapon(id, statsOf(allStats, id))).length;
     const clsLabel = cls ? CAMO_CLASS_LABELS[cls] : 'クラス';
     return { current, target: Math.max(1, weapons.length), label: `${clsLabel}全武器をゴールドに` };
   }
   const tier = CAMO_TIERS.find((t) => t.id === camoId);
   if (!tier) return { current: 0, target: 1, label: '' };
   const s = statsOf(allStats, weaponId);
-  if (tier.headshots > 0 && s.kills >= tier.kills) {
+  // ゴールドは武器クラス依存条件(exotic は 250kills+HS50)
+  const effectiveKills = camoId === 'gold' ? goldConditionFor(weaponId).kills : tier.kills;
+  const effectiveHs = camoId === 'gold' ? goldConditionFor(weaponId).headshots : tier.headshots;
+  if (effectiveHs > 0 && s.kills >= effectiveKills) {
     // キル条件は満了 → 残るHS条件の進捗を出す(ゴールド)
     return {
-      current: Math.min(s.headshots, tier.headshots),
-      target: tier.headshots,
-      label: `HSキル ${tier.headshots}(累計${tier.kills}キル達成済)`,
+      current: Math.min(s.headshots, effectiveHs),
+      target: effectiveHs,
+      label: `HSキル ${effectiveHs}(累計${effectiveKills}キル達成済)`,
     };
   }
   const label =
-    tier.headshots > 0 ? `累計${tier.kills}キル + HSキル${tier.headshots}` : `累計${tier.kills}キル`;
-  return { current: Math.min(s.kills, tier.kills), target: tier.kills, label };
+    effectiveHs > 0 ? `累計${effectiveKills}キル + HSキル${effectiveHs}` : `累計${effectiveKills}キル`;
+  return { current: Math.min(s.kills, effectiveKills), target: effectiveKills, label };
 }
 
 // ── クナイ(fists)専用カモラダー ──────────────────────────────────────────

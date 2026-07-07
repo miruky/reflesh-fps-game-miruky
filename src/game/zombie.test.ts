@@ -91,10 +91,10 @@ describe('zombie boss curves', () => {
     expect(zombieBossHp(20)).toBe(26000);
   });
 
-  it('zombieBossHp: r20超は×1.9で増加し200000でクランプ', () => {
-    expect(zombieBossHp(25)).toBe(Math.min(200000, Math.round(26000 * 1.9)));
-    // 十分大きいラウンドで上限へ
-    expect(zombieBossHp(200)).toBe(200000);
+  it('zombieBossHp: r20超は×1.5で増加し80000でクランプ(緩和済み)', () => {
+    expect(zombieBossHp(25)).toBe(Math.min(80000, Math.round(26000 * 1.5)));
+    // 十分大きいラウンドで上限(80000)へ
+    expect(zombieBossHp(200)).toBe(80000);
   });
 
   it('zombieBossSpeedMul: r5=1.2, r10=1.3, 上限2.0', () => {
@@ -134,7 +134,7 @@ describe('r=999 クランプ・NaN なし(ラウンド選択1-999対応)', () =>
   });
 
   it('ボス曲線がr999以上で上限クランプ(NaN・Infinity 無し)', () => {
-    expect(zombieBossHp(995)).toBe(200000);
+    expect(zombieBossHp(995)).toBe(80000);
     expect(zombieBossSpeedMul(995)).toBe(2.0);
     expect(zombieBossDamage(995)).toBe(90);
     // 全曲線でNaNが出ないことを確認

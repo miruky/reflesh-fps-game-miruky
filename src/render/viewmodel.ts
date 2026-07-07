@@ -638,10 +638,11 @@ function getShared(): SharedMats {
     glassScope.userData.shared = true;
     // R14: 全光学のドット印を赤・小型・高透過へ(旧: 水色0x7ad1ff/opacity0.68で大きく視界を塞いだ)。
     // 加算合成なので赤でも芯は明るく残るが、透過を上げて背後の標的を隠さない
+    // Fix-2: opacity 0.55→0.72(暗ステージでの視認性向上)
     const reflexDot = new THREE.MeshBasicMaterial({
       color: 0xff2a1c,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.72,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -1292,7 +1293,12 @@ export function buildGunBody(
     }
     const crystal = new THREE.OctahedronGeometry(0.04, 0);
     setColor(crystal, col(def.tracerColor), 'flat');
-    const crm = new THREE.Mesh(crystal, accent);
+    // Fix-8: ADS透過のため accent をクローンして transparent 対応の専用材へ(共有キャッシュ汚染回避)
+    // userData.shared は false → dispose() の gun traversal で解放。
+    const crystalMat = accent.clone();
+    crystalMat.transparent = true;
+    crystalMat.opacity = 0.9;
+    const crm = new THREE.Mesh(crystal, crystalMat);
     crm.name = 'vm:crystal'; // setStaffCharge / setExoticCharge がこの名前で参照
     crm.position.set(0, 0, -0.54);
     crm.rotation.set(Math.PI / 4, Math.PI / 4, 0);
@@ -1713,7 +1719,8 @@ export function buildGunBody(
       // 枠の底に突く(底突き)ため 0.072 で止める。他機は 0.066。
       const earPy = det.railTop === 'full' ? 0.072 : 0.066;
       for (const sx of [-1, 1] as const) {
-        boxP(metalParts, C_DARK, 0.01, 0.04, 0.01, sx * 0.028, earPy, -recD - 0.006, 0, 0, sx * 0.34);
+        // Fix-1: 後照星耳を明るいミリタリーグレー(0x6a7e9a)へ。暗ステージで照門が消える問題の根治
+        boxP(metalParts, 0x6a7e9a, 0.01, 0.04, 0.01, sx * 0.028, earPy, -recD - 0.006, 0, 0, sx * 0.34);
         amberDot(sx * 0.022, 0.06, -recD - 0.009, 0.003);
       }
     }
@@ -1726,22 +1733,30 @@ export function buildGunBody(
         const RING_Z = -recHalf * 0.35; // レシーバ前方寄りの位置
         // マウンティングポスト(レシーバ天板 r.h/2 〜 リング中心 RING_Y)
         boxP(metalParts, C_DARK, 0.009, RING_Y - r.h / 2, 0.009, 0, (r.h / 2 + RING_Y) / 2, RING_Z);
-        // アパーチャリング(ゴーストリング)
-        const ringGeo = new THREE.RingGeometry(0.012, 0.017, 22);
+        // アパーチャリング(ゴーストリング) Fix-9: 外径 0.017→0.028(視認面積3倍化)
+        const ringGeo = new THREE.RingGeometry(0.012, 0.028, 22);
         bakeAt(polishParts, ringGeo, C_POLISH_HI, 0, RING_Y, RING_Z, 0, 0, 0, 'flat');
         // センター琥珀ドット(着弾点の直感的な目安)
         amberDot(0, RING_Y, RING_Z - 0.005, 0.003);
       } else {
         // ショットガン等: バレル上の前照星ビード(brassはresolveSightY契約=polish top cluster)
+        // Fix-7: SG3種(shotgun-pump/double)の bead Y を +0.016 引き上げ(レシーバ上端突出を解消)
+        const isSgBead = def.shape === 'shotgun-pump' || def.shape === 'shotgun-double'
+          || (!def.shape && def.class === 'shotgun');
+        const beadY = BARREL_Y + gauge * 0.6 + (isSgBead ? 0.016 : 0);
+        // Fix-6: musket ビードをバレル前端(barFrontZ≈-0.678)→銃口後方(z=-0.16)へ前出し(画面上3倍化)
+        const beadZ = def.shape === 'musket' ? -0.16 : barFrontZ + 0.02;
+        const amberZ = def.shape === 'musket' ? -0.156 : barFrontZ + 0.024;
         const bead = new THREE.SphereGeometry(0.006, 10, 8);
-        bakeAt(polishParts, bead, C_BRASS, 0, BARREL_Y + gauge * 0.6, barFrontZ + 0.02, 0, 0, 0, 'flat');
-        amberDot(0, BARREL_Y + gauge * 0.6, barFrontZ + 0.024, 0.0026);
+        bakeAt(polishParts, bead, C_BRASS, 0, beadY, beadZ, 0, 0, 0, 'flat');
+        amberDot(0, beadY, amberZ, 0.0026);
       }
     } else if (det.iron !== 'none') {
-      // 前照星の小ポスト(黒・やや太く0.006)+ 目立つ琥珀ビード(0.0032)。狙点=resolveSightY 0.062 に一致・
+      // 前照星の小ポスト(黒・やや太く0.006)+ 目立つ琥珀ビード。狙点=resolveSightY 0.062 に一致・
       // 凍結(x0/y0.062/z0.14 は不変)。広げた耳の間に中央で載る。
+      // Fix-仕上げ: amberDot r 0.0032→0.0045(全アイアン武器の照星を視認しやすく)
       boxP(metalParts, C_DARK, 0.006, 0.018, 0.007, 0, 0.056, 0.14);
-      amberDot(0, 0.062, 0.14, 0.0032);
+      amberDot(0, 0.062, 0.14, 0.0045);
     }
   }
 
@@ -2082,7 +2097,7 @@ export function buildGunBody(
           for (const sx of [-1, 1] as const) {
             boxP(metalParts, C_DARK, 0.006, 0.05, 0.05, sx * 0.023, sy - 0.002, 0.05, 0, 0, 0, 'flat');
           }
-          reflexDotWindow(sy, 0.018, 0.006, 0.05);
+          reflexDotWindow(sy, 0.018, 0.009, 0.05); // Fix-2: dotS 0.006→0.009
           break;
         }
         case 'holo': {
@@ -2094,7 +2109,8 @@ export function buildGunBody(
           screen.position.set(0, sy, 0.05);
           screen.renderOrder = 2;
           // R15: 他光学のドットに合わせて小型化(旧0.02は突出して大きかった)
-          const dot = new THREE.Mesh(new THREE.PlaneGeometry(0.008, 0.008), reflexDot);
+          // Fix-2: holo ドット 0.008→0.012 (×1.5 統一拡大)
+          const dot = new THREE.Mesh(new THREE.PlaneGeometry(0.012, 0.012), reflexDot);
           dot.position.set(0, sy, 0.045);
           dot.renderOrder = 3;
           gun.add(screen, dot);
@@ -2108,7 +2124,7 @@ export function buildGunBody(
             boxP(metalParts, C_DARK, 0.005, 0.03 * f, 0.03, sx * 0.014, sy, 0.05, 0, 0, 0, 'flat');
           }
           boxP(metalParts, C_DARK, 0.032, 0.005, 0.01, 0, sy + 0.016 * f, 0.045, 0, 0, 0, 'flat');
-          reflexDotWindow(sy, 0.011, 0.005, 0.05);
+          reflexDotWindow(sy, 0.011, 0.008, 0.05); // Fix-2: dotS 0.005→0.008
           break;
         }
         case 'delta': {
@@ -2117,14 +2133,14 @@ export function buildGunBody(
           boxP(metalParts, C_RIM, 0.038, 0.006, 0.05, 0, sy + 0.016, 0.05, 0, 0, 0, 'flat');
           // R13: レンズ/ドットは筐体の射手側面(z≈0.075)より手前へ。ソリッド箱に潜ると
           // 不透明筐体が先に深度を書き、depthTestでドット断片が破棄されて見えなくなる
-          reflexDotWindow(sy, 0.014, 0.006, 0.09);
+          reflexDotWindow(sy, 0.014, 0.009, 0.09); // Fix-2: dotS 0.006→0.009
           break;
         }
         case 'canted': {
           // カンテッド(副照準): 左へ僅かにロールした小型ハウジング。ADS整合のため dot は sy 中心。
           bakeAt(metalParts, chamferBox(0.03, 0.03, 0.04, 0.003), C_DARK, 0, sy - 0.006, 0.055, 0, 0, 0.5);
           // R13: dz を筐体の射手側面(z≈0.075)より手前へ出しドット埋没(深度オクルージョン)を回避
-          reflexDotWindow(sy, 0.01, 0.005, 0.088);
+          reflexDotWindow(sy, 0.01, 0.008, 0.088); // Fix-2: dotS 0.005→0.008
           break;
         }
         case 'acog': {
@@ -2159,7 +2175,7 @@ export function buildGunBody(
           for (const sx of [-1, 1] as const) {
             boxP(metalParts, C_DARK, 0.005, 0.045, 0.04, sx * 0.021, sy, -0.02, 0, 0, 0, 'flat');
           }
-          reflexDotWindow(sy, 0.016, 0.006, -0.02);
+          reflexDotWindow(sy, 0.016, 0.009, -0.02); // Fix-2: dotS 0.006→0.009
           mountedScopeTube(sy, 0.02, 0.07, 0.06);
           break;
         }
@@ -2260,7 +2276,12 @@ export function resolveSightY(def: WeaponDef): number {
   const attachments = def.attachmentIds ?? [];
   if (attachments.includes('telescopic')) return 0.08;
   const det = resolveDetail(sil, def);
-  if (det.iron === 'bead') return BARREL_Y + sil.barrelGauge * 0.6;
+  if (det.iron === 'bead') {
+    // Fix-7: SG3種(shotgun-pump/double) の bead sightY を +0.016 引き上げ(0.036→0.052)
+    const resolvedShape = def.shape ?? classDefault(def.class);
+    const isSgShape = resolvedShape === 'shotgun-pump' || resolvedShape === 'shotgun-double';
+    return BARREL_Y + sil.barrelGauge * 0.6 + (isSgShape ? 0.016 : 0);
+  }
   return 0.062;
 }
 
@@ -2290,8 +2311,14 @@ const FIST_KUNAI = 'vm:kunai';
 // ── スイングトレイル / 黒帝オーラの定数 ──────────────────────────────────
 const TRAIL_POOL_SIZE = 3;
 const TRAIL_MAX_LIFE = 0.12; // s
-const DARK_AURA_POOL_SIZE = 10;
-const DARK_AURA_SPAWN_INTERVAL = 0.03; // s
+// KE-1: 10→22 (TrackA 黒炎14 + TrackB 紫電スパーク8)
+const DARK_AURA_POOL_SIZE = 22;
+const DARK_AURA_FLAME_COUNT = 14;          // KE-1 TrackA 枚数
+const DARK_AURA_SPAWN_INTERVAL = 0.03;     // s (TrackA 黒炎スポーン間隔)
+const DARK_SPARK_SPAWN_INTERVAL = 0.05;    // s (KE-1 TrackB 紫電スパーク間隔)
+// RE-1: 雷帝常時スパーク雨
+const LIGHTNING_SPARK_POOL_SIZE = 12;
+const LIGHTNING_SPARK_SPAWN_INTERVAL = 0.08; // s
 const FIST_POSES: FistPose[] = [
   // 刃: 順手(切先-Z前方)→ 逆手(切先を下〜後ろへ倒し、刃腹をカメラへロール)
   { name: FIST_KUNAI, rest: { p: [0.02, -0.05, 0], r: [-0.12, 0.06, 0] }, ads: { p: [-0.05, -0.02, -0.02], r: [-2.0, 0.15, 0.5] } },
@@ -2392,8 +2419,12 @@ export class ViewModel {
     life: number;
     maxLife: number;
     vel: THREE.Vector3;
+    track: 'flame' | 'spark'; // KE-1: TrackA=flame(黒炎), TrackB=spark(紫電)
+    sinPhase: number;          // KE-1 TrackA: X sin揺れ位相
+    baseX: number;             // KE-1 TrackA: X揺れ基準位置
   }> = [];
   private _darkAuraSpawnTimer = 0;
+  private _darkSparkSpawnTimer = 0; // KE-1 TrackB 紫電スパーク用タイマー
   // 黒帝モードで追加した黒刀グループ(THREE.Group)またはリムメッシュ。disposal で traverse する
   private _darkOverlayMeshes: THREE.Object3D[] = [];
 
@@ -2404,12 +2435,23 @@ export class ViewModel {
   private _lightningOverlayMeshes: THREE.Object3D[] = [];
   // TubeGeometry ベースの電気アーク(3本)。雷帝発動中に可視, darkMode 優先で非表示。
   private _lightningArcMeshes: THREE.Mesh[] = [];
+  // ── RE-1 雷帝常時スパーク雨プール ────────────────────────────────────────────
+  private readonly _lightningSparkPool: Array<{
+    mesh: THREE.Mesh;
+    life: number;
+    maxLife: number;
+    velY: number; // 落下速度 (負値 m/s)
+  }> = [];
+  private readonly _lightningSparkGroup = new THREE.Group();
+  private _lightningSparkSpawnTimer = 0;
 
   // ── R33 特殊武器 状態フィールド ──────────────────────────────────────────
   private _bowCharge01 = 0;       // 月光弓チャージ 0-1
   private _staffCharge01 = 0;     // 天雷杖チャージ 0-1
   private _minigunBarrelRot = 0;  // 修羅バレル回転角 (rad)
   private _minigunSpin01 = 0;     // 修羅スピン度合い 0-1 (スムース)
+  // Fix-5: 万刃 ADS-z 制御用チャージ保存(setExoticCharge → update 橋渡し)
+  private _banjinCharge01 = 0;
 
   // ── スクラッチ変数(Vector3/Matrix4 alloc を避ける) ──────────────────────
   private readonly _v3scratch = new THREE.Vector3();
@@ -2457,25 +2499,61 @@ export class ViewModel {
     trailGeoBase.dispose();
     this.root.add(this._trailGroup);
 
-    // ── 黒帝オーラプール初期化(暗色 PlaneGeometry × DARK_AURA_POOL_SIZE) ──
-    const auraGeoBase = new THREE.PlaneGeometry(0.04, 0.04);
+    // ── 黒帝オーラプール初期化(KE-1: TrackA黒炎×14 + TrackB紫電スパーク×8) ──
+    // TrackA: PlaneGeometry 0.06×0.08, NormalBlending, 漆黒 0x040008
+    // TrackB: PlaneGeometry 0.03×0.03, AdditiveBlending, 暗紫 0x7700bb
+    // 白飛び0.9規則: maxOpacity=0.52(TrackA) / 0.55(TrackB) ≤ 0.55 ✓
+    const flameGeoBase = new THREE.PlaneGeometry(0.06, 0.08);
+    const sparkGeoBase = new THREE.PlaneGeometry(0.03, 0.03);
     for (let _ai = 0; _ai < DARK_AURA_POOL_SIZE; _ai += 1) {
+      const isFlame = _ai < DARK_AURA_FLAME_COUNT;
       const mat = new THREE.MeshBasicMaterial({
-        color: 0x1a0030,
+        color: isFlame ? 0x040008 : 0x7700bb,
         transparent: true,
         opacity: 0,
-        blending: THREE.NormalBlending,
+        blending: isFlame ? THREE.NormalBlending : THREE.AdditiveBlending,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
-      const mesh = new THREE.Mesh(auraGeoBase.clone(), mat);
+      const mesh = new THREE.Mesh(isFlame ? flameGeoBase.clone() : sparkGeoBase.clone(), mat);
       mesh.visible = false;
       mesh.renderOrder = 4;
       this._darkAuraGroup.add(mesh);
-      this._darkAuraPool.push({ mesh, life: 0, maxLife: 0, vel: new THREE.Vector3() });
+      this._darkAuraPool.push({
+        mesh,
+        life: 0,
+        maxLife: 0,
+        vel: new THREE.Vector3(),
+        track: isFlame ? 'flame' : 'spark',
+        sinPhase: 0,
+        baseX: 0,
+      });
     }
-    auraGeoBase.dispose();
+    flameGeoBase.dispose();
+    sparkGeoBase.dispose();
     this.root.add(this._darkAuraGroup);
+
+    // ── RE-1 雷帝スパーク雨プール初期化(PlaneGeometry 0.04 × LIGHTNING_SPARK_POOL_SIZE) ──
+    // _kokuraiteiMode=false かつ _lightningMode=true の時のみ頭周囲へスポーン。
+    // 白飛び0.9規則: maxOpacity=0.52 ≤ 0.55 ✓
+    const lsGeoBase = new THREE.PlaneGeometry(0.04, 0.04);
+    for (let _lsi = 0; _lsi < LIGHTNING_SPARK_POOL_SIZE; _lsi += 1) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x44aaff,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(lsGeoBase.clone(), mat);
+      mesh.visible = false;
+      mesh.renderOrder = 4;
+      this._lightningSparkGroup.add(mesh);
+      this._lightningSparkPool.push({ mesh, life: 0, maxLife: 0, velY: 0 });
+    }
+    lsGeoBase.dispose();
+    this.root.add(this._lightningSparkGroup);
   }
 
   setWeapon(def: WeaponDef): void {
@@ -2681,10 +2759,15 @@ export class ViewModel {
       t.mesh.geometry.dispose();
       (t.mesh.material as THREE.Material).dispose();
     }
-    // オーラプール解放
+    // オーラプール解放(KE-1: TrackA/TrackB 共通)
     for (const a of this._darkAuraPool) {
       a.mesh.geometry.dispose();
       (a.mesh.material as THREE.Material).dispose();
+    }
+    // RE-1 雷帝スパーク雨プール解放
+    for (const s of this._lightningSparkPool) {
+      s.mesh.geometry.dispose();
+      (s.mesh.material as THREE.Material).dispose();
     }
     // ダークリムオーバーレイ解放
     this._removeDarkRimOverlay();
@@ -2916,6 +2999,8 @@ export class ViewModel {
     // スイングトレイルと黒帝オーラの毎フレーム更新
     this._updateTrails(dt);
     this._updateDarkAura(dt);
+    // RE-1 雷帝スパーク雨の毎フレーム更新
+    this._updateLightningSparkRain(dt);
     // R33 修羅バレル回転
     if (this._minigunSpin01 > 0.01 && this.gun) {
       this._minigunBarrelRot += dt * this._minigunSpin01 * 26;
@@ -2923,6 +3008,23 @@ export class ViewModel {
         if (child.name === 'vm:barrel') {
           child.rotation.z = this._minigunBarrelRot;
         }
+      });
+    }
+    // Fix-5: 万刃 ADS時ディスクz引き込み。腰だめ z=-0.12 → ADS z=+0.04 で視界クリア化。
+    // setExoticCharge の charge オフセット(-c*0.06)と加算して update() が毎フレーム統合制御する。
+    if (this.gun) {
+      this.gun.traverse((child) => {
+        if (child.name !== 'vm:shurikenBlade') return;
+        child.position.z = THREE.MathUtils.lerp(-0.12, 0.04, adsVis) - this._banjinCharge01 * 0.06;
+      });
+    }
+    // Fix-8: 天雷杖クリスタル ADS透過 (vm:crystal は tenrai-staff のみ存在)。
+    // opacity 0.9(腰だめ) → 0.05(ADS) で視界確保。transparent=true は buildGunBody で設定済み。
+    if (this.gun) {
+      this.gun.traverse((child) => {
+        if (child.name !== 'vm:crystal' || !(child instanceof THREE.Mesh)) return;
+        const mat = child.material as THREE.MeshStandardMaterial;
+        if (mat.transparent) mat.opacity = THREE.MathUtils.lerp(0.9, 0.05, adsVis);
       });
     }
   }
@@ -3008,64 +3110,125 @@ export class ViewModel {
     }
   }
 
-  // ── 黒帝オーラのスポーン ──────────────────────────────────────────────────
-  private _spawnDarkAura(): void {
-    const slot = this._darkAuraPool.find((a) => a.life <= 0);
+  // ── KE-1 TrackA 黒炎スポーン ──────────────────────────────────────────────
+  // PlaneGeometry 0.06×0.08, NormalBlending 0x040008, velY 0.9-1.6(上昇), 寿命0.35-0.55s
+  // opacity 0→0.52→0(三角エンベロープ)。X は ±0.018 sin揺れで生存中に揺動する。
+  private _spawnDarkFlame(): void {
+    const slot = this._darkAuraPool.find((a) => a.life <= 0 && a.track === 'flame');
     if (!slot) return;
     const kunai = this.gun?.getObjectByName(FIST_KUNAI);
     if (!kunai) return;
     this.root.updateWorldMatrix(true, false);
-    // 刃の中間付近にランダム散布。黒帝モード中は大型化後の黒刀刀身(Z: -0.19〜-1.09)をカバー
+    // 刃身全域にランダム散布(黒帝中は黒刀全域, 通常は刃身域)
     const auraZ = this._darkMode
-      ? -0.19 - Math.random() * 0.90   // 黒刀刀身全域(大型化後 0.90m)
-      : -0.22 - Math.random() * 0.26;  // 新クナイ刃身域(Z: -0.22 ～ -0.48)
+      ? -0.19 - Math.random() * 0.90
+      : -0.22 - Math.random() * 0.26;
     this._v3scratch.set(
-      (Math.random() - 0.5) * 0.05,
-      0.006 + (Math.random() - 0.5) * 0.05,
+      (Math.random() - 0.5) * 0.04,
+      0.006 + (Math.random() - 0.5) * 0.03,
       auraZ,
     );
     kunai.localToWorld(this._v3scratch);
     this._v3scratch.applyMatrix4(this._m4scratch.copy(this.root.matrixWorld).invert());
     slot.mesh.position.copy(this._v3scratch);
-    slot.mesh.scale.setScalar(0.4 + Math.random() * 0.6);
+    slot.baseX = this._v3scratch.x;
+    slot.sinPhase = Math.random() * Math.PI * 2; // 初期位相ランダム
+    slot.mesh.scale.setScalar(0.6 + Math.random() * 0.4);
     slot.mesh.rotation.z = Math.random() * Math.PI * 2;
-    slot.life = 0.18 + Math.random() * 0.15;
+    slot.life = 0.35 + Math.random() * 0.20; // 0.35-0.55s
     slot.maxLife = slot.life;
-    slot.vel.set((Math.random() - 0.5) * 0.008, 0.004 + Math.random() * 0.008, 0);
+    slot.vel.set(0, 0.9 + Math.random() * 0.7, 0); // velY 0.9-1.6 m/s (上昇)
     slot.mesh.visible = true;
-    (slot.mesh.material as THREE.MeshBasicMaterial).opacity = 0.38;
+    (slot.mesh.material as THREE.MeshBasicMaterial).opacity = 0;
   }
 
-  // ── 黒帝オーラの毎フレーム更新 ────────────────────────────────────────────
+  // ── KE-1 TrackB 紫電スパークスポーン ─────────────────────────────────────
+  // PlaneGeometry 0.03, AdditiveBlending, 0x7700bb(通常)/0x8800ff(黒雷帝), velY -1.5〜-3.5
+  // 0.05s毎に刃上ランダム位置へジャンプ。opacity 0→0.55→0, 寿命0.12-0.22s
+  private _spawnDarkSpark(): void {
+    const slot = this._darkAuraPool.find((a) => a.life <= 0 && a.track === 'spark');
+    if (!slot) return;
+    const kunai = this.gun?.getObjectByName(FIST_KUNAI);
+    if (!kunai) return;
+    this.root.updateWorldMatrix(true, false);
+    const sparkZ = this._darkMode
+      ? -0.19 - Math.random() * 0.90
+      : -0.22 - Math.random() * 0.26;
+    this._v3scratch.set(
+      (Math.random() - 0.5) * 0.06,
+      0.006 + (Math.random() - 0.5) * 0.04,
+      sparkZ,
+    );
+    kunai.localToWorld(this._v3scratch);
+    this._v3scratch.applyMatrix4(this._m4scratch.copy(this.root.matrixWorld).invert());
+    slot.mesh.position.copy(this._v3scratch);
+    slot.mesh.scale.setScalar(0.8 + Math.random() * 0.4);
+    slot.mesh.rotation.z = Math.random() * Math.PI * 2;
+    slot.life = 0.12 + Math.random() * 0.10; // 0.12-0.22s
+    slot.maxLife = slot.life;
+    slot.vel.set(0, -(1.5 + Math.random() * 2.0), 0); // velY -1.5〜-3.5 m/s (落下)
+    slot.mesh.visible = true;
+    (slot.mesh.material as THREE.MeshBasicMaterial).opacity = 0;
+    // 黒雷帝時はTrackBを強調色へ
+    const sparkColor = this._kokuraiteiMode ? 0x8800ff : 0x7700bb;
+    (slot.mesh.material as THREE.MeshBasicMaterial).color.setHex(sparkColor);
+  }
+
+  // ── 黒帝オーラの毎フレーム更新 (KE-1: 2トラック対応) ───────────────────────
+  // TrackA 黒炎: Y上昇(velY m/s直積分) + X sin揺れ(±0.018) + 三角opacity(0→0.52→0)
+  // TrackB 紫電: Y落下(velY m/s直積分) + 三角opacity(0→0.55→0)
+  // darkMode=false: 既存の即フェード契約継承(dt*3倍速、線形減衰)
   private _updateDarkAura(dt: number): void {
     if (!this._darkMode) {
-      // darkMode=false でも生き残りパーティクルをフェードアウト
+      // darkMode=false でも生き残りパーティクルをフェードアウト(既存契約継承)
       for (const a of this._darkAuraPool) {
         if (a.life > 0) {
           a.life -= dt * 3; // 早めにフェード
+          const peakOp = a.track === 'spark' ? 0.55 : 0.52;
           (a.mesh.material as THREE.MeshBasicMaterial).opacity =
-            Math.max(0, a.life / a.maxLife) * 0.38;
+            Math.max(0, a.life / a.maxLife) * peakOp;
           if (a.life <= 0) a.mesh.visible = false;
         }
       }
       return;
     }
-    // 生存パーティクルの移動・フェード
+    // 生存パーティクルの移動・フェード(2トラック分岐)
     for (const a of this._darkAuraPool) {
       if (a.life > 0) {
         a.life -= dt;
-        a.mesh.position.addScaledVector(a.vel, dt * 60);
-        const ratio = Math.max(0, a.life / a.maxLife);
-        (a.mesh.material as THREE.MeshBasicMaterial).opacity = ratio * 0.38;
-        if (a.life <= 0) a.mesh.visible = false;
+        if (a.track === 'flame') {
+          // TrackA 黒炎: Y上昇(直積分) + X sin揺れ
+          a.mesh.position.y += a.vel.y * dt;
+          a.sinPhase += dt * 4.0; // ~0.64 Hz 揺れ
+          a.mesh.position.x = a.baseX + 0.018 * Math.sin(a.sinPhase);
+        } else {
+          // TrackB 紫電スパーク: Y落下のみ(直積分)
+          a.mesh.position.y += a.vel.y * dt;
+        }
+        // 三角エンベロープ opacity(0→peak→0)
+        const peakOp = a.track === 'spark' ? 0.55 : 0.52;
+        const ratio = a.life / a.maxLife; // 1→0
+        (a.mesh.material as THREE.MeshBasicMaterial).opacity =
+          peakOp * Math.sin(Math.PI * (1 - ratio));
+        if (a.life <= 0) {
+          (a.mesh.material as THREE.MeshBasicMaterial).opacity = 0;
+          a.mesh.visible = false;
+        }
       }
     }
     // fists装備中のみスポーン
     if (this.gun?.getObjectByName(FIST_KUNAI)) {
+      // TrackA 黒炎: 0.03s 毎
       this._darkAuraSpawnTimer -= dt;
       if (this._darkAuraSpawnTimer <= 0) {
-        this._spawnDarkAura();
+        this._spawnDarkFlame();
         this._darkAuraSpawnTimer = DARK_AURA_SPAWN_INTERVAL;
+      }
+      // TrackB 紫電スパーク: 0.05s 毎
+      this._darkSparkSpawnTimer -= dt;
+      if (this._darkSparkSpawnTimer <= 0) {
+        this._spawnDarkSpark();
+        this._darkSparkSpawnTimer = DARK_SPARK_SPAWN_INTERVAL;
       }
     }
     // 電弧フリッカー: 0.05-0.09s ごとにランダム透明度変動
@@ -3186,12 +3349,11 @@ export class ViewModel {
       });
       return;
     }
-    // banjin: vm:shurikenBlade の emissive + Z 浮上
+    // banjin: vm:shurikenBlade の emissive を更新。Z は update() で ads01+charge 統合制御(Fix-5)
     if (weaponId === 'banjin-smg') {
+      this._banjinCharge01 = c; // update() の ADS-z lerp で使用
       this.gun.traverse((child) => {
         if (child.name !== 'vm:shurikenBlade' || !(child instanceof THREE.Mesh)) return;
-        const baseZ = child.userData.shurikenBaseZ as number ?? -0.12;
-        child.position.z = baseZ - c * 0.06;
         const mat = child.material as THREE.MeshStandardMaterial;
         if (mat.emissive) mat.emissiveIntensity = 0.5 + c * 0.42;
       });
@@ -3286,6 +3448,64 @@ export class ViewModel {
     } else {
       for (const tr of this._trailPool) {
         (tr.mesh.material as THREE.MeshBasicMaterial).color.setHex(0x55bbff);
+      }
+    }
+  }
+
+  // ── RE-1 雷帝スパーク雨: スポーン ─────────────────────────────────────────
+  // 頭(カメラ)周囲1.5m球内のランダム位置へスポーン。velY -1.5〜-3.5 m/s で落下。
+  // root-local における頭座標 ≈ -HIP_POSITION = (-0.24, 0.22, 0.5)
+  private _spawnLightningSparkParticle(): void {
+    const slot = this._lightningSparkPool.find((s) => s.life <= 0);
+    if (!slot) return;
+    // 頭位置 (root-local) = カメラの root-local 座標 ≈ -HIP_POSITION
+    // HIP_POSITION = (0.24, -0.22, -0.5). root.position = HIP_POSITION in camera-local.
+    // camera in root-local = -HIP_POSITION = (-0.24, 0.22, 0.5)
+    const headX = -HIP_POSITION.x;  // -0.24
+    const headY = -HIP_POSITION.y;  //  0.22
+    const headZ = -HIP_POSITION.z;  //  0.5
+    // 1.5m 球内ランダム: 簡易 box-sample (ほぼ球として十分)
+    slot.mesh.position.set(
+      headX + (Math.random() - 0.5) * 3.0,
+      headY + (Math.random() - 0.5) * 3.0,
+      headZ + (Math.random() - 0.5) * 3.0,
+    );
+    slot.velY = -(1.5 + Math.random() * 2.0); // -1.5〜-3.5 m/s 落下
+    slot.life = 0.4 + Math.random() * 0.3;    // 0.4-0.7s
+    slot.maxLife = slot.life;
+    slot.mesh.visible = true;
+    (slot.mesh.material as THREE.MeshBasicMaterial).opacity = 0;
+  }
+
+  // ── RE-1 雷帝スパーク雨: 毎フレーム更新 ─────────────────────────────────
+  // _kokuraiteiMode=false かつ _lightningMode=true の時のみスポーン継続。
+  // モード解除後は新規スポーン停止 → 生存粒子は三角エンベロープで自然消滅。
+  private _updateLightningSparkRain(dt: number): void {
+    // 生存パーティクルの移動・フェード(モード問わず自然消滅)
+    for (const s of this._lightningSparkPool) {
+      if (s.life > 0) {
+        s.life -= dt;
+        s.mesh.position.y += s.velY * dt; // 直積分 m/s
+        // 三角エンベロープ opacity(0→0.52→0)
+        const ratio = s.life / s.maxLife;
+        (s.mesh.material as THREE.MeshBasicMaterial).opacity =
+          0.52 * Math.sin(Math.PI * (1 - ratio));
+        if (s.life <= 0) {
+          (s.mesh.material as THREE.MeshBasicMaterial).opacity = 0;
+          s.mesh.visible = false;
+        }
+      }
+    }
+    // スポーン: kokuraitei=false かつ lightningMode=true の時のみ
+    if (!this._kokuraiteiMode && this._lightningMode) {
+      this._lightningSparkSpawnTimer -= dt;
+      if (this._lightningSparkSpawnTimer <= 0) {
+        // 0.08s毎に1-2粒スポーン
+        const count = Math.random() < 0.5 ? 2 : 1;
+        for (let i = 0; i < count; i += 1) {
+          this._spawnLightningSparkParticle();
+        }
+        this._lightningSparkSpawnTimer = LIGHTNING_SPARK_SPAWN_INTERVAL;
       }
     }
   }

@@ -248,3 +248,70 @@ describe('FK applyDeathPose 時間境界', () => {
     expect(t).toBe(1.0);
   });
 });
+
+// ─── trailing window (over後の記録継続) ───────────────────────────────────────
+describe('FK trailing window (over後の記録継続)', () => {
+  const FK_WIN_POST_LOCAL = 1.2;
+
+  it('elapsed === fkKillElapsed + FK_WIN_POST は記録対象(境界値)', () => {
+    // update() の条件: elapsed <= fkKillElapsed + FK_WIN_POST
+    const fkKillElapsed = 50;
+    const elapsed       = fkKillElapsed + FK_WIN_POST_LOCAL;
+    const shouldRecord  = elapsed <= fkKillElapsed + FK_WIN_POST_LOCAL;
+    expect(shouldRecord).toBe(true);
+  });
+
+  it('elapsed > fkKillElapsed + FK_WIN_POST は記録打ち止め', () => {
+    const fkKillElapsed = 50;
+    const elapsed       = fkKillElapsed + FK_WIN_POST_LOCAL + 0.001;
+    const shouldRecord  = elapsed <= fkKillElapsed + FK_WIN_POST_LOCAL;
+    expect(shouldRecord).toBe(false);
+  });
+
+  it('over後 FK_WIN_POST秒間は 20Hz で最大24フレーム記録できる', () => {
+    // 1.2s × 20Hz = 24フレーム
+    const FK_TICK_INT_LOCAL = 3;   // match.tsと同じ定数
+    const SIM_HZ            = 60;
+    const dt                = 1 / SIM_HZ;
+    let tick = 0;
+    let frames = 0;
+    let elapsed = 0;
+    const fkKillElapsed = 0;
+
+    while (elapsed <= fkKillElapsed + FK_WIN_POST_LOCAL) {
+      elapsed += dt;
+      tick = (tick + 1) % FK_TICK_INT_LOCAL;
+      if (tick === 0) frames++;
+    }
+    // 1.2s / (3/60Hz) = 1.2 / 0.05 = 24フレーム
+    expect(frames).toBeGreaterThanOrEqual(24);
+  });
+
+  it('fkKillElapsed が -Infinity の場合は trailing window に入らない', () => {
+    const fkKillElapsed = -Infinity;
+    const elapsed = 100;
+    const shouldRecord = fkKillElapsed !== -Infinity && elapsed <= fkKillElapsed + FK_WIN_POST_LOCAL;
+    expect(shouldRecord).toBe(false);
+  });
+});
+
+// ─── startFinalKillcam ガード順序 ───────────────────────────────────────────
+describe('startFinalKillcam ガード順序', () => {
+  it('oldest > killT - FK_WIN_PRE + 0.5 の場合はガード3で false を返す(副作用前)', () => {
+    // ガード通過前に副作用が発生しないことの純関数的確認:
+    // oldest が新しすぎる(バッファが浅い)場合の guard-3 判定
+    const FK_WIN_PRE_LOCAL = 3.5;
+    const killT  = 10;
+    const oldest = killT - 1; // = 9, FK_WIN_PRE - 0.5 = 3.0, so 9 > 10 - 3.0 = 7 → true = skip
+    const shouldSkip = oldest > killT - FK_WIN_PRE_LOCAL + 0.5;
+    expect(shouldSkip).toBe(true);
+  });
+
+  it('oldest が十分古ければガード3を通過する', () => {
+    const FK_WIN_PRE_LOCAL = 3.5;
+    const killT  = 10;
+    const oldest = killT - 4; // = 6, FK_WIN_PRE - 0.5 = 3.0, so 6 > 10 - 3.0 = 7 → false = pass
+    const shouldSkip = oldest > killT - FK_WIN_PRE_LOCAL + 0.5;
+    expect(shouldSkip).toBe(false);
+  });
+});

@@ -77,8 +77,8 @@ describe('PERKS', () => {
 // ─── WALL_BUYS ────────────────────────────────────────────────────────────────
 
 describe('WALL_BUYS', () => {
-  it('ちょうど8本ある', () => {
-    expect(WALL_BUYS).toHaveLength(8);
+  it('ちょうど12本ある(標準8 + 特殊兵装4)', () => {
+    expect(WALL_BUYS).toHaveLength(12);
   });
 
   it('入門500が2本', () => {
@@ -93,14 +93,21 @@ describe('WALL_BUYS', () => {
     expect(WALL_BUYS.filter((w) => w.price === 1500)).toHaveLength(2);
   });
 
-  it('fists 2000が1本', () => {
+  it('fists 3500が1本(クナイ価格改定)', () => {
     expect(WALL_BUYS.filter((w) => w.weaponId === 'fists')).toHaveLength(1);
-    expect(WALL_BUYS.find((w) => w.weaponId === 'fists')?.price).toBe(2000);
+    expect(WALL_BUYS.find((w) => w.weaponId === 'fists')?.price).toBe(3500);
   });
 
   it('yamasemi-dmr 2500が1本', () => {
     expect(WALL_BUYS.filter((w) => w.weaponId === 'yamasemi-dmr')).toHaveLength(1);
     expect(WALL_BUYS.find((w) => w.weaponId === 'yamasemi-dmr')?.price).toBe(2500);
+  });
+
+  it('特殊兵装4本の価格が正しい', () => {
+    expect(WALL_BUYS.find((w) => w.weaponId === 'gouka-rl')?.price).toBe(2500);
+    expect(WALL_BUYS.find((w) => w.weaponId === 'shura-lmg')?.price).toBe(3000);
+    expect(WALL_BUYS.find((w) => w.weaponId === 'gekkou-bow')?.price).toBe(2200);
+    expect(WALL_BUYS.find((w) => w.weaponId === 'tenrai-staff')?.price).toBe(2800);
   });
 
   it('全 weaponId が weapons.ts の実在武器', () => {
@@ -113,6 +120,10 @@ describe('WALL_BUYS', () => {
       'kasasagi-ar',
       'fists',
       'yamasemi-dmr',
+      'gouka-rl',
+      'shura-lmg',
+      'gekkou-bow',
+      'tenrai-staff',
     ]);
     for (const wb of WALL_BUYS) {
       expect(knownIds.has(wb.weaponId)).toBe(true);
@@ -131,6 +142,11 @@ describe('MYSTERY_BOX_POOL', () => {
     expect(MYSTERY_BOX_POOL).toContain('yamasemi-dmr');
     expect(MYSTERY_BOX_POOL).toContain('raicho-sniper');
     expect(MYSTERY_BOX_POOL).toContain('kumagera-lmg');
+  });
+
+  it('セカンダリexotic(banjin-smg/misago-pistol)が追加されている', () => {
+    expect(MYSTERY_BOX_POOL).toContain('banjin-smg');
+    expect(MYSTERY_BOX_POOL).toContain('misago-pistol');
   });
 
   it('24武器以上が在庫される', () => {

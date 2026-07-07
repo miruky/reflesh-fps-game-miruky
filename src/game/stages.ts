@@ -41,6 +41,13 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '広大な射撃訓練場+大型格納庫+多層タワー+倉庫街',
       buildings: ['hangar', 'tower', 'warehouse', 'arena'],
+      objects: [
+        { kind: 'concretebarrier', count: 2, scatter: 'random' },
+        { kind: 'fence', count: 2, scatter: 'random' },
+        { kind: 'streetlight', count: 3, scatter: 'perimeter' },
+        { kind: 'bench', count: 2, scatter: 'random' },
+        { kind: 'supplycrate', count: 1, scatter: 'random' },
+      ],
     },
   },
   {
@@ -80,6 +87,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '巨大コンテナ港湾倉庫群+格納庫+アリーナ+監視塔',
       buildings: ['warehouse', 'hangar', 'arena', 'tower'],
+      objects: [
+        { kind: 'truck', count: 2, scatter: 'random' },
+        { kind: 'pallet', count: 3, scatter: 'random' },
+        { kind: 'drumgroup', count: 2, scatter: 'random' },
+        { kind: 'concretebarrier', count: 2, scatter: 'random' },
+      ],
     },
   },
   {
@@ -119,6 +132,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '中世宮殿中庭+大聖堂ホール+中庭塔',
       buildings: ['cathedral', 'tower', 'arena'],
+      objects: [
+        { kind: 'stonelantern', count: 3, scatter: 'perimeter' },
+        { kind: 'broadleaf', count: 2, scatter: 'cluster', clusterRadius: 15 },
+        { kind: 'bench', count: 2, scatter: 'random' },
+        { kind: 'rock', count: 2, scatter: 'random' },
+      ],
     },
   },
   {
@@ -158,6 +177,11 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '砂漠神殿回廊+大聖堂+多層塔',
       buildings: ['cathedral', 'tower', 'arena'],
+      objects: [
+        { kind: 'stonelantern', count: 2, scatter: 'random' },
+        { kind: 'rock', count: 3, scatter: 'random' },
+        { kind: 'signboard', count: 2, scatter: 'perimeter' },
+      ],
     },
   },
   {
@@ -197,6 +221,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '超大型工業港湾+クレーン格納庫+コンテナ倉庫群+港湾塔',
       buildings: ['hangar', 'warehouse', 'arena', 'tower'],
+      objects: [
+        { kind: 'truck', count: 2, scatter: 'random' },
+        { kind: 'portalkrane', count: 1, scatter: 'perimeter' },
+        { kind: 'gastank', count: 1, scatter: 'random' },
+        { kind: 'concretebarrier', count: 3, scatter: 'random' },
+      ],
     },
   },
   {
@@ -238,6 +268,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '夕暮れ丘陵要塞+監視塔+アリーナ観覧席+格納庫',
       buildings: ['tower', 'arena', 'hangar', 'warehouse'],
+      objects: [
+        { kind: 'rock', count: 3, scatter: 'perimeter' },
+        { kind: 'deadtree', count: 2, scatter: 'cluster', clusterRadius: 20 },
+        { kind: 'conifer', count: 2, scatter: 'cluster', clusterRadius: 15 },
+        { kind: 'antenna', count: 1, scatter: 'perimeter' },
+      ],
     },
   },
   {
@@ -279,6 +315,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '砂漠戦車戦域+砂漠格納庫+前線倉庫街',
       buildings: ['hangar', 'warehouse', 'arena'],
+      objects: [
+        { kind: 'rock', count: 4, scatter: 'random' },
+        { kind: 'deadtree', count: 2, scatter: 'random' },
+        { kind: 'fence', count: 2, scatter: 'random' },
+        { kind: 'tankhull', count: 1, scatter: 'random' },
+      ],
     },
   },
   {
@@ -320,6 +362,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '極地研究施設+格納庫+アリーナ型避難所+倉庫',
       buildings: ['hangar', 'arena', 'warehouse', 'tower'],
+      objects: [
+        { kind: 'conifer', count: 4, scatter: 'cluster', clusterRadius: 20 },
+        { kind: 'deadtree', count: 2, scatter: 'random' },
+        { kind: 'rock', count: 2, scatter: 'random' },
+        { kind: 'fence', count: 2, scatter: 'perimeter' },
+      ],
     },
   },
   {
@@ -359,6 +407,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '巨大重工業プラント+鉄骨アリーナ+格納庫+倉庫街',
       buildings: ['arena', 'hangar', 'warehouse', 'tower'],
+      objects: [
+        { kind: 'smokestack', count: 1, scatter: 'perimeter' },
+        { kind: 'gastank', count: 1, scatter: 'random' },
+        { kind: 'transformer', count: 2, scatter: 'random' },
+        { kind: 'drumgroup', count: 3, scatter: 'random' },
+      ],
     },
   },
   {
@@ -399,6 +453,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: 'ネオン夜市繁華街+倉庫街+ライブアリーナ+塔',
       buildings: ['warehouse', 'arena', 'tower', 'cathedral'],
+      objects: [
+        { kind: 'vendingmachine', count: 3, scatter: 'perimeter' },
+        { kind: 'signboard', count: 3, scatter: 'perimeter' },
+        { kind: 'streetlight', count: 4, scatter: 'perimeter' },
+        { kind: 'bench', count: 2, scatter: 'random' },
+      ],
     },
   },
   // ── ここから R8 追加の10ステージ ──
@@ -438,6 +498,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '超高層ヘリポート複合+多層タワー+格納庫',
       buildings: ['tower', 'hangar', 'arena'],
+      objects: [
+        { kind: 'antenna', count: 2, scatter: 'perimeter' },
+        { kind: 'fence', count: 3, scatter: 'perimeter' },
+        { kind: 'concretebarrier', count: 2, scatter: 'random' },
+        { kind: 'streetlight', count: 2, scatter: 'perimeter' },
+      ],
     },
   },
   {
@@ -479,6 +545,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '大型採石プラント+格納庫+倉庫街+アリーナ',
       buildings: ['hangar', 'warehouse', 'arena', 'tower'],
+      objects: [
+        { kind: 'rock', count: 4, scatter: 'cluster', clusterRadius: 20 },
+        { kind: 'rubble', count: 3, scatter: 'random' },
+        { kind: 'truck', count: 1, scatter: 'random' },
+        { kind: 'forklift', count: 1, scatter: 'random' },
+      ],
     },
   },
   {
@@ -519,6 +591,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '竹林寺社境内+大聖堂礼拝堂+神殿回廊+塔',
       buildings: ['cathedral', 'tower', 'warehouse', 'arena'],
+      objects: [
+        { kind: 'bamboo', count: 5, scatter: 'cluster', clusterRadius: 25 },
+        { kind: 'sakura', count: 2, scatter: 'random' },
+        { kind: 'stonelantern', count: 2, scatter: 'random' },
+        { kind: 'torii', count: 1, scatter: 'random' },
+      ],
     },
   },
   {
@@ -560,6 +638,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '水田農村集落+倉庫+水辺アリーナ',
       buildings: ['warehouse', 'arena'],
+      objects: [
+        { kind: 'pier', count: 2, scatter: 'random' },
+        { kind: 'well', count: 1, scatter: 'random' },
+        { kind: 'broadleaf', count: 2, scatter: 'cluster', clusterRadius: 20 },
+        { kind: 'bench', count: 2, scatter: 'random' },
+      ],
     },
   },
   {
@@ -599,6 +683,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '岬の軍事要塞+監視塔+格納庫+倉庫',
       buildings: ['tower', 'hangar', 'arena', 'warehouse'],
+      objects: [
+        { kind: 'pier', count: 2, scatter: 'perimeter' },
+        { kind: 'rock', count: 3, scatter: 'perimeter' },
+        { kind: 'antenna', count: 1, scatter: 'perimeter' },
+        { kind: 'fence', count: 2, scatter: 'perimeter' },
+      ],
     },
   },
   {
@@ -640,6 +730,11 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '廃工場鉄道ヤード+アリーナ型車庫+格納庫+倉庫街',
       buildings: ['arena', 'hangar', 'warehouse', 'tower'],
+      objects: [
+        { kind: 'derelictcar', count: 3, scatter: 'random' },
+        { kind: 'barricadecar', count: 2, scatter: 'random' },
+        { kind: 'concretebarrier', count: 3, scatter: 'random' },
+      ],
     },
   },
   {
@@ -681,6 +776,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '赤岩峡谷要塞都市+監視塔+大聖堂+倉庫街',
       buildings: ['tower', 'cathedral', 'arena', 'warehouse'],
+      objects: [
+        { kind: 'rock', count: 4, scatter: 'perimeter' },
+        { kind: 'conifer', count: 2, scatter: 'cluster', clusterRadius: 20 },
+        { kind: 'tankhull', count: 1, scatter: 'random' },
+        { kind: 'rubble', count: 2, scatter: 'random' },
+      ],
     },
   },
   {
@@ -721,6 +822,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '湖畔観測ステーション+格納庫+倉庫',
       buildings: ['hangar', 'warehouse'],
+      objects: [
+        { kind: 'pier', count: 2, scatter: 'perimeter' },
+        { kind: 'broadleaf', count: 3, scatter: 'cluster', clusterRadius: 20 },
+        { kind: 'stonelantern', count: 2, scatter: 'random' },
+        { kind: 'well', count: 1, scatter: 'random' },
+      ],
     },
   },
   {
@@ -762,6 +869,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '国際空港エプロン+超大型格納庫+アリーナ型機体整備',
       buildings: ['hangar', 'arena', 'warehouse'],
+      objects: [
+        { kind: 'truck', count: 3, scatter: 'random' },
+        { kind: 'towercrane', count: 1, scatter: 'perimeter' },
+        { kind: 'concretebarrier', count: 3, scatter: 'random' },
+        { kind: 'fence', count: 2, scatter: 'perimeter' },
+      ],
     },
   },
   {
@@ -802,6 +915,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '温泉街迷路+大聖堂浴場+倉庫街+塔',
       buildings: ['cathedral', 'warehouse', 'tower'],
+      objects: [
+        { kind: 'stonelantern', count: 3, scatter: 'random' },
+        { kind: 'torii', count: 2, scatter: 'random' },
+        { kind: 'well', count: 2, scatter: 'random' },
+        { kind: 'signboard', count: 2, scatter: 'perimeter' },
+      ],
     },
   },
   // ── ⑥ ゾンビモード専用ステージ z01〜z10 ──
@@ -854,6 +973,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '廃墟都市夜間戦+倉庫街+アリーナ廃工場+塔',
       buildings: ['warehouse', 'arena', 'tower', 'hangar'],
+      objects: [
+        { kind: 'derelictcar', count: 2, scatter: 'random' },
+        { kind: 'rubble', count: 2, scatter: 'random' },
+        { kind: 'concretebarrier', count: 2, scatter: 'random' },
+        { kind: 'gasbottlegroup', count: 1, scatter: 'random' },
+      ],
     },
   },
   {
@@ -903,6 +1028,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '炎上市街地+燃えるアリーナ+倉庫街廃墟+格納庫',
       buildings: ['arena', 'warehouse', 'hangar', 'tower'],
+      objects: [
+        { kind: 'rubble', count: 3, scatter: 'random' },
+        { kind: 'derelictcar', count: 2, scatter: 'random' },
+        { kind: 'barricadecar', count: 1, scatter: 'random' },
+        { kind: 'gasbottlegroup', count: 2, scatter: 'random' },
+      ],
     },
   },
   {
@@ -951,6 +1082,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '廃埠頭霧中戦+クレーン格納庫+コンテナ倉庫群+アリーナ',
       buildings: ['hangar', 'warehouse', 'arena', 'tower'],
+      objects: [
+        { kind: 'truck', count: 2, scatter: 'random' },
+        { kind: 'rubble', count: 2, scatter: 'random' },
+        { kind: 'portalkrane', count: 1, scatter: 'perimeter' },
+        { kind: 'concretebarrier', count: 2, scatter: 'random' },
+      ],
     },
   },
   {
@@ -999,6 +1136,11 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '崩壊大聖堂+廃塔+倉庫廃墟+格納庫',
       buildings: ['cathedral', 'tower', 'warehouse', 'hangar'],
+      objects: [
+        { kind: 'rubble', count: 3, scatter: 'random' },
+        { kind: 'stonelantern', count: 2, scatter: 'random' },
+        { kind: 'deadtree', count: 2, scatter: 'random' },
+      ],
     },
   },
   {
@@ -1049,6 +1191,11 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '溶岩採掘施設+耐熱格納庫+多層坑道塔',
       buildings: ['hangar', 'tower', 'arena'],
+      objects: [
+        { kind: 'rock', count: 3, scatter: 'random' },
+        { kind: 'gasbottlegroup', count: 2, scatter: 'random' },
+        { kind: 'drumgroup', count: 2, scatter: 'random' },
+      ],
     },
   },
   {
@@ -1097,6 +1244,11 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '廃工場暗渠+アリーナ屠殺場+倉庫街',
       buildings: ['arena', 'warehouse', 'hangar'],
+      objects: [
+        { kind: 'barricadecar', count: 2, scatter: 'random' },
+        { kind: 'derelictcar', count: 2, scatter: 'random' },
+        { kind: 'rubble', count: 2, scatter: 'random' },
+      ],
     },
   },
   {
@@ -1145,6 +1297,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '封鎖線複合施設+格納庫+塔+倉庫街',
       buildings: ['hangar', 'tower', 'warehouse', 'arena'],
+      objects: [
+        { kind: 'concretebarrier', count: 3, scatter: 'random' },
+        { kind: 'barricadecar', count: 2, scatter: 'random' },
+        { kind: 'derelictcar', count: 1, scatter: 'random' },
+        { kind: 'fence', count: 2, scatter: 'perimeter' },
+      ],
     },
   },
   {
@@ -1194,6 +1352,12 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '廃地下商店街+アリーナ跡+倉庫迷宮+大聖堂',
       buildings: ['arena', 'warehouse', 'cathedral'],
+      objects: [
+        { kind: 'vendingmachine', count: 2, scatter: 'perimeter' },
+        { kind: 'signboard', count: 2, scatter: 'perimeter' },
+        { kind: 'rubble', count: 2, scatter: 'random' },
+        { kind: 'bench', count: 2, scatter: 'random' },
+      ],
     },
   },
   {
@@ -1241,6 +1405,11 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '廃遊園地+大聖堂廃墟+アリーナ観覧席+塔',
       buildings: ['cathedral', 'arena', 'tower'],
+      objects: [
+        { kind: 'deadtree', count: 3, scatter: 'random' },
+        { kind: 'rubble', count: 2, scatter: 'random' },
+        { kind: 'derelictcar', count: 1, scatter: 'random' },
+      ],
     },
   },
   {
@@ -1291,6 +1460,11 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '溶岩火口要塞+多層溶岩塔+耐熱格納庫',
       buildings: ['tower', 'hangar', 'arena'],
+      objects: [
+        { kind: 'rock', count: 4, scatter: 'random' },
+        { kind: 'gasbottlegroup', count: 2, scatter: 'random' },
+        { kind: 'rubble', count: 2, scatter: 'random' },
+      ],
     },
   },
   // ── 訓練場専用ステージ ──
@@ -1330,6 +1504,11 @@ export const STAGES: StageDef[] = [
     recipe: {
       theme: '平坦な的当て訓練場',
       buildings: [],
+      objects: [
+        { kind: 'bench', count: 2, scatter: 'random' },
+        { kind: 'concretebarrier', count: 1, scatter: 'random' },
+        { kind: 'streetlight', count: 2, scatter: 'perimeter' },
+      ],
     },
   },
 ];

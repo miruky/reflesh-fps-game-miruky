@@ -158,7 +158,10 @@ const DIFFICULTIES: Array<{ id: Difficulty; label: string; desc: string }> = [
   { id: 'hard', label: '精鋭', desc: '反応が速く、正確に当てる' },
 ];
 
+// セクションヘッダーは keys='' とし、renderControls で grid-column: 1/-1 のスパンセルとして描画
 const CONTROLS: Array<[string, string]> = [
+  // ── 基本操作 ──
+  ['', '基本操作'],
   ['移動', 'W A S D'],
   ['視点', 'マウス'],
   ['射撃', '左クリック'],
@@ -175,12 +178,28 @@ const CONTROLS: Array<[string, string]> = [
   ['リロード', 'R'],
   ['武器切替', '1 / 2 / ホイール'],
   ['グレネード', 'G 長押しで構え、離して投擲'],
-  ['投擲物切替', '3'],
+  ['投擲物切替', 'H'],
   ['近接攻撃', 'V'],
-  ['アルティメット', 'F(ゲージ満タンで発動)'],
   ['息止め(スコープ)', 'Shift(覗き込み中に揺れを止める)'],
   ['スコアボード', 'Tab'],
   ['ポーズ', 'Esc'],
+  // ── スコアストリーク ──
+  ['', 'スコアストリーク'],
+  ['ストリーク装備(3枠)', '3 / 4 / 5 キー(選択) → 試合中に発動'],
+  ['ストリーク発動(スロット)', '3(1番) / 4(2番) / 5(3番)'],
+  ['ケアパッケージ展開', 'E(マーカー投擲 → 上空投下)'],
+  // ── 特殊兵装 / クナイ奥義 ──
+  ['', 'クナイ奥義 (クナイ選択時)'],
+  ['アルティメット(F技)', 'F — 衝撃波/シュヴァルツヴァルト(黒帝中)'],
+  ['バック技(B技)', 'B — 藤神大手裏剣'],
+  ['雷帝モード(N)', 'N — 常時雷帝ON(雷撃AoE+月花雷轟)'],
+  ['黒帝モード(M)', 'M — シュヴァルツヴァルト/ゾンビ月落とし 等'],
+  // ── ゾンビモード ──
+  ['', 'ゾンビモード専用'],
+  ['壁購入 / パーク購入', 'E(表示されたプロンプトを押す)'],
+  ['ミステリーボックス', 'E(箱の前で押す)'],
+  // ── その他 ──
+  ['', 'その他'],
   ['ゲームパッド', 'PS4等に対応 / 下の「設定」で配置変更'],
   ['ポーズ(パッド)', 'OPTIONS'],
 ];
@@ -774,6 +793,7 @@ export class Menu {
               <div><dt>Primary</dt><dd data-id="brief-weapon"></dd></div>
               <div><dt>Utility</dt><dd data-id="brief-grenade"></dd></div>
               <div><dt>Threat</dt><dd data-id="brief-difficulty"></dd></div>
+              <div data-id="brief-zombie-round" hidden><dt>開始R</dt><dd data-id="brief-zombie-round-val"></dd></div>
             </dl>
             <div class="deploy-lever">
               <span class="lever-beacon" aria-hidden="true"></span>
@@ -825,8 +845,8 @@ export class Menu {
                   </section>
                   <section class="menu-section">
                     <h2>特殊オプション</h2>
-                    <label class="menu-toggle"><input type="checkbox" data-id="hellMode"><span>超鬼畜モード</span></label>
-                    <label class="menu-toggle"><input type="checkbox" data-id="allGiantMode"><span>全巨躯モード</span></label>
+                    <label class="menu-toggle"><input type="checkbox" data-id="hellMode"><span>超鬼畜モード<small class="toggle-desc"> — 全敵HP/速度2倍。達人向け高難度</small></span></label>
+                    <label class="menu-toggle"><input type="checkbox" data-id="allGiantMode"><span>全巨躯モード<small class="toggle-desc"> — 全敵がエリートサイズ。視認困難+追尾射撃</small></span></label>
                   </section>
                 </div>
               </section>
@@ -1258,6 +1278,7 @@ export class Menu {
   }
 
   showPause(): void {
+    this.clearBgTransition();
     this.teardownPreview();
     this.root.hidden = false;
     this.root.innerHTML = `
@@ -1386,10 +1407,12 @@ export class Menu {
   // リザルト下部の獲得XP・レベル・レート変動の表示
   private progressHtml(progress: MatchProgress): string {
     const xpRows = progress.xpBreakdown
-      .map(
-        (entry) =>
-          `<li><span class="xp-label">${entry.label}</span><span class="xp-value">+${entry.xp}</span></li>`,
-      )
+      .map((entry) => {
+        // デイリーチャレンジ達成エントリはラベルが 'デイリー達成！' で始まる
+        const isDaily = entry.label.startsWith('デイリー達成！');
+        const cls = isDaily ? 'xp-daily' : '';
+        return `<li${cls ? ` class="${cls}"` : ''}><span class="xp-label">${entry.label}</span><span class="xp-value">+${entry.xp}</span></li>`;
+      })
       .join('');
     const level = progress.levelAfter;
     const xpRatio = level.toNext > 0 ? (level.intoLevel / level.toNext) * 100 : 100;
@@ -1690,9 +1713,9 @@ export class Menu {
       return;
     }
     if (!CAMO_WEAPON_IDS.includes(def.id)) {
-      // 副武器はカモ対象外(セクションごと畳む)
-      host.hidden = true;
-      host.replaceChildren();
+      // 副武器はカモ非対応 — セクションを完全に隠さず注記を表示する
+      host.hidden = false;
+      host.innerHTML = '<p class="camo-unsupported">副武器はカモ非対応</p>';
       return;
     }
     ensureCamoStyle();
@@ -2147,6 +2170,13 @@ export class Menu {
         ? `${grenade.name} / Attach ${this.selection.attachments.length}`
         : grenade.name;
     this.query('brief-difficulty').textContent = difficulty?.label ?? '-';
+    // ゾンビモード限定行: 開始ラウンド表示 (hidden属性はDOMで切り替え)
+    const zombieRoundRow = this.root.querySelector<HTMLElement>('[data-id="brief-zombie-round"]');
+    if (zombieRoundRow) {
+      zombieRoundRow.hidden = this.selection.mode !== 'zombie';
+      this.query('brief-zombie-round-val').textContent =
+        `R${this.selection.zombieStartRound ?? 1}`;
+    }
   }
 
   private markSelected(container: HTMLElement, key: string, value: string): void {
@@ -2161,6 +2191,15 @@ export class Menu {
   private renderControls(): void {
     const grid = this.query('controls');
     for (const [label, keys] of CONTROLS) {
+      // keys==='' はセクションヘッダー行: 両カラムをまたぐ見出しセルとして描画
+      if (keys === '') {
+        const hdr = document.createElement('span');
+        hdr.className = 'control-section-header';
+        hdr.style.cssText = 'grid-column:1/-1;font-size:0.7em;letter-spacing:0.12em;color:#ffc04b;text-transform:uppercase;padding:0.6em 0 0.1em;opacity:0.85;';
+        hdr.textContent = label;
+        grid.append(hdr);
+        continue;
+      }
       const action = document.createElement('span');
       action.className = 'control-action';
       action.textContent = label;

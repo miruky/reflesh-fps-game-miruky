@@ -333,6 +333,10 @@ const BOT_VIEW_CONE_COS = Math.cos((75 * Math.PI) / 180);
 // 直近の戦闘イベント(キル/発砲/被弾)位置のEMAを非交戦botの徘徊目標に供給する。
 const HOTSPOT_DECAY_S = 10; // 最後の戦闘イベントからこの秒数でホットスポット失効
 const HOTSPOT_ARRIVE_M = 25; // 到達圏。これ以内に入ったら通常の局所徘徊へ戻す
+// ── 敵AI気配システム(P-E): 敵bot60%にプレイヤー周辺の気配点を30秒バケット毎に供給 ──
+const GHOST_REFRESH_S = 30; // 気配点を更新するバケット長(s)
+const GHOST_FUZZ_M    = 15; // プレイヤー位置からの最大オフセット(m)。最小は5m固定
+const GHOST_ARRIVE_M  = 8;  // この距離以内で到達とみなし、同バケット内は通常徘徊へ戻す
 // 警戒中の拡張視野(半角95度)。全周検知は廃止し、警戒は「音源へ振り向く」調査行動で表現
 const BOT_ALERT_CONE_COS = Math.cos((95 * Math.PI) / 180);
 // スプリント/スライドの足音が聞こえる距離。しゃがみ/歩きは無音=背後忍び寄りが可能
@@ -819,6 +823,9 @@ export class Match {
   // ── ① 戦闘引力: ホットスポット追跡 ──
   private readonly hotspotPos = new THREE.Vector3();  // 直近戦闘位置のEMA
   private hotspotLastT = -Infinity;                    // 最後の戦闘イベント elapsed
+  // ── 敵AI気配システム(P-E) ──
+  private readonly botGhostUpdateBucket = new Map<number, number>(); // uid → 最後に処理したバケット番号
+  private readonly botGhostPos          = new Map<number, THREE.Vector3>(); // uid → 気配目標位置
   // ── ③ 発砲ブリップ ──
   private readonly _fireBlips: Array<{ x: number; z: number; spawnedAt: number; botUid: number }> = [];
   private readonly _fireBlipLastT = new Map<number, number>(); // botUid → 最後のブリップ elapsed
@@ -2893,7 +2900,21 @@ export class Match {
 
   // 固定60Hzで呼ばれるゲームロジック本体
   update(dt: number): void {
-    if (this.over) return;
+    if (this.over) {
+      // キルカム trailing window: over後もFK_WIN_POST秒間だけelapsed/fkTick/fkRecordFrameを継続。
+      // 物理/AI/スコアは動かさない=記録専用。これでキル後のフレームがバッファに蓄積され、
+      // スロー再生後半(kill〜kill+1.2s)が静止画面になるバグを根治する。
+      if (
+        this.config.mode !== 'zombie' &&
+        this.fkKillElapsed !== -Infinity &&
+        this.elapsed <= this.fkKillElapsed + FK_WIN_POST
+      ) {
+        this.elapsed += dt;
+        this.fkTick = (this.fkTick + 1) % FK_TICK_INT;
+        if (this.fkTick === 0) this.fkRecordFrame();
+      }
+      return;
+    }
     this.elapsed += dt;
     this.tracker.tick(dt);
     // ゾンビは「ダウンするまで無限ウェーブ」。共通試合タイマーで強制終了させない(致命バグ回避)。
@@ -5447,7 +5468,7 @@ export class Match {
           // ランダムなストリーク1種をバンクへ付与
           const preferIdx = Math.floor(Math.random() * 7) as StreakIndex;
           const granted = this.streakManager.forceBankOne(preferIdx);
-          const def = STREAK_DEFS[granted];
+          const def = granted !== null ? STREAK_DEFS[granted] : undefined;
           if (def) {
             this.announcements.push(`CARE PACKAGE: ${def.name} RECEIVED`);
             this.sounds.announceMedal(1, vol);
@@ -6146,6 +6167,37 @@ export class Match {
       // V31修正: 新鮮な警戒(近くの銃声=R16の振り向き調査)を持つbotにはソフト引力を
       // 供給しない(局所反応が戦闘重心への直行に潰されないように。dom等の拠点目標は上で返済済み)
       if (bot.alert > 0 && bot.alertPos) return null;
+
+      // ── 気配システム(P-E): FFA/TDM等の敵bot 60%(uid%5<3)にプレイヤー周辺の気配点を供給 ──
+      // 30秒バケット毎の決定論ハッシュ(uid*40503^bucket*7919)でrand非消費。
+      // alert優先(上でreturn済み)/combat除外(外側のaiState !== 'combat')/ゾンビ・訓練・ミッション不変。
+      // 到達(8m)で同バケット内の気配点を消去 → hotspot/中心散布へfall-through。
+      if (bot.team !== PLAYER_TEAM && (bot.uid % 5) < 3) {
+        const bucket = Math.floor(this.elapsed / GHOST_REFRESH_S);
+        const prevBucket = this.botGhostUpdateBucket.get(bot.uid) ?? -1;
+        if (bucket !== prevBucket) {
+          // 決定論ハッシュでプレイヤー周辺5-15mの点を計算(rand経路は消費しない)
+          const h = (bot.uid * 40503) ^ (bucket * 7919);
+          const angle = ((h & 0xffff) / 0x10000) * Math.PI * 2;
+          const t     = ((h >>> 16) & 0xffff) / 0xffff;
+          const radius = 5 + t * (GHOST_FUZZ_M - 5); // 5..15m
+          const px = this.player.position.x + Math.cos(angle) * radius;
+          const pz = this.player.position.z + Math.sin(angle) * radius;
+          this.botGhostPos.set(bot.uid, new THREE.Vector3(px, bot.position.y, pz));
+          this.botGhostUpdateBucket.set(bot.uid, bucket);
+        }
+        const ghostTarget = this.botGhostPos.get(bot.uid);
+        if (ghostTarget) {
+          const dist = bot.position.distanceTo(ghostTarget);
+          if (dist > GHOST_ARRIVE_M) {
+            return ghostTarget.clone();
+          } else {
+            // 到達: 同バケット内は通常徘徊へ戻す(bucketは据え置き=再算出しない)
+            this.botGhostPos.delete(bot.uid);
+          }
+        }
+      }
+
       const hotValid =
         Number.isFinite(this.hotspotLastT) && this.elapsed - this.hotspotLastT < HOTSPOT_DECAY_S;
       if (hotValid) {
@@ -6378,6 +6430,10 @@ export class Match {
 
   // killerは敵BOTに倒された場合のみ。自爆や火災ではキルカメラを出さない
   private notePlayerDeath(killer: Bot | null = null): void {
+    // P-H確証バグ修正: トグル設定時のラッチが死亡でリセットされず、リスポーン直後に
+    // しゃがみ/ADSが継続していた
+    this.crouchLatch = false;
+    this.adsLatch = false;
     // 訓練場: プレイヤーは無敵なので呼ばれないはずだが念のためガード
     if (this.config.mode === 'training') return;
     this.scoreboardDirty = true; // ★6 デス(相手キル)確定は即時反映
@@ -9083,9 +9139,17 @@ export class Match {
    * 条件を満たせば再生状態をセットアップして true、対象外なら false を返す。
    */
   startFinalKillcam(): boolean {
+    // ─── ガード1-3: 全条件を先に評価し、副作用はガード通過後に限定する ───
+    // (ガード失敗でリザルト直行する場合に pauseCombatLoops 等の副作用を残さない)
     if (this.config.mode === 'zombie') return false;
     if (this.fkFill === 0 || this.fkKillElapsed === -Infinity) return false;
-    // V33: キルカムに遠雷/ハムと黒転ビネットを持ち込まない(開始が確定した場合のみ)
+    const killT  = this.fkKillElapsed;
+    const oldIdx = (this.fkHead - this.fkFill + FK_MAX_FRAMES) % FK_MAX_FRAMES;
+    const oldest = this.fkTimeArr[oldIdx]!;
+    // バッファが kill から 2.2s 前まで届いていない場合はスキップ
+    if (oldest > killT - FK_WIN_PRE + 0.5) return false;
+    // ─── ガード通過確定: 以下は副作用クリーンアップ ───
+    // V33: キルカムに遠雷/ハムと黒転ビネットを持ち込まない
     this.sounds.pauseCombatLoops(true);
     this.postfx?.setKokurai(0);
     // キルカム開始時に飛行中のHKメッシュを全て除去(凍結表示を防ぐ)
@@ -9115,11 +9179,6 @@ export class Match {
     this.deathVeil = 0;
     this.whiteout = 0;
     this.shingetsuPhase = 'idle';
-    const killT  = this.fkKillElapsed;
-    const oldIdx = (this.fkHead - this.fkFill + FK_MAX_FRAMES) % FK_MAX_FRAMES;
-    const oldest = this.fkTimeArr[oldIdx]!;
-    // バッファが kill から 2.2s 前まで届いていない場合はスキップ
-    if (oldest > killT - FK_WIN_PRE + 0.5) return false;
     this.fkWinKill    = killT;
     this.fkWinEnd     = killT + FK_WIN_POST;
     // カーソルはバッファの実際の先頭(oldest)と窓先頭の大きい方から開始する。
@@ -10067,6 +10126,8 @@ export class Match {
       }
     });
     this.disposeTrainingTargets();
+    this.botGhostUpdateBucket.clear();
+    this.botGhostPos.clear();
     this.physics.free();
   }
 

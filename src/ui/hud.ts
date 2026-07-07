@@ -2,7 +2,7 @@ import { RADAR_RANGE_M, RETICLE_COLORS } from '../core/settings';
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
 import { MOVE_SPEEDS } from '../game/player';
-import { SUPPRESS_BADGE, ALWAYS_BADGE, starPoints, type MedalEvent, type MedalId } from '../game/medals';
+import { SUPPRESS_BADGE, ALWAYS_BADGE, medalRank, starPoints, type MedalEvent, type MedalId } from '../game/medals';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -59,9 +59,12 @@ const ZONE_R = 3.5;
 
 // ── R21 マルチキルバナー ──────────────────────────────────────────────────────────────────
 // マルチキル系メダルID(これらはバナーへルーティングし、pushMedalText/pushBadgeを出さない)
+// 既存8 + チェーン拡張8 = 16件
 const MULTI_KILL_IDS: ReadonlySet<MedalId> = new Set<MedalId>([
   'double-kill', 'triple-kill', 'fury-kill', 'frenzy-kill',
   'super-kill', 'mega-kill', 'ultra-kill', 'kill-chain',
+  'chain-10', 'chain-12', 'chain-15', 'chain-18',
+  'chain-20', 'chain-25', 'chain-30', 'chain-35',
 ]);
 
 type MkCfg = {
@@ -81,7 +84,16 @@ const MK_CFG: Partial<Record<MedalId, MkCfg>> = {
   'super-kill':   { pips: 6, color: '#ff3a2c', slamScale: 1.38, chromaPx: 2.3, lifetimeMs: 2800 },
   'mega-kill':    { pips: 7, color: '#ffcf4d', slamScale: 1.40, chromaPx: 2.5, lifetimeMs: 3000 },
   'ultra-kill':   { pips: 8, color: '#ffcf4d', slamScale: 1.40, chromaPx: 2.5, lifetimeMs: 3200 },
-  'kill-chain':   { pips: 9, color: '#ffd700', slamScale: 1.40, chromaPx: 3.0, lifetimeMs: 3600 },
+  'kill-chain':   { pips: 9,  color: '#ffd700', slamScale: 1.40, chromaPx: 3.0, lifetimeMs: 3600 },
+  // L: チェーン拡張(chain-10~chain-35 はバナーへ)
+  'chain-10': { pips: 10, color: '#ffd700', slamScale: 1.42, chromaPx: 3.0, lifetimeMs: 3800 },
+  'chain-12': { pips: 12, color: '#ffd700', slamScale: 1.43, chromaPx: 3.2, lifetimeMs: 4000 },
+  'chain-15': { pips: 15, color: '#e0c0ff', slamScale: 1.44, chromaPx: 3.5, lifetimeMs: 4200 },
+  'chain-18': { pips: 18, color: '#e0c0ff', slamScale: 1.45, chromaPx: 3.8, lifetimeMs: 4500 },
+  'chain-20': { pips: 20, color: '#c0a0ff', slamScale: 1.46, chromaPx: 4.0, lifetimeMs: 4800 },
+  'chain-25': { pips: 25, color: '#c0a0ff', slamScale: 1.47, chromaPx: 4.2, lifetimeMs: 5000 },
+  'chain-30': { pips: 30, color: '#ff80ff', slamScale: 1.48, chromaPx: 4.5, lifetimeMs: 5200 },
+  'chain-35': { pips: 35, color: '#ff80ff', slamScale: 1.48, chromaPx: 4.8, lifetimeMs: 5500 },
 };
 
 // 円形HPリングの可視弧長。r=38 の円周(2π·38≈238.76)の 240°/360°=2/3 が見える弧。
@@ -100,6 +112,8 @@ export class Hud {
   private scopeOn = false; // スコープ表示の立ち上がり検出用
   private wasSteady = false; // 息止め成立の立ち上がり検出用(集中グリント再発火)
   private badgeSeq = 0; // バッジSVGの一意ID用カウンタ(gradient/filterのid衝突回避)
+  private readonly badgeQueue: MedalEvent[] = []; // ALWAYS_BADGE複数同時→500ms間隔キュー
+  private badgeQueueTimer = 0;
   private lastHpOff = ''; // HPリングの stroke-dashoffset 直近書込み値(無変化フレームの書込み抑止)
   private lastPipMag = -1; // 弾ピップの生成済み本数(=装弾数)。変化時のみ作り直す
   private lastPipAmmo = -1; // 弾ピップの点灯本数(=残弾)。変化時のみ点灯を更新
@@ -589,6 +603,9 @@ export class Hud {
     if (badges) badges.innerHTML = '';
     const medalStack = this.el['medalstack'];
     if (medalStack) medalStack.innerHTML = '';
+    // バッジキューリセット
+    this.badgeQueue.length = 0;
+    if (this.badgeQueueTimer) { window.clearInterval(this.badgeQueueTimer); this.badgeQueueTimer = 0; }
     // ミニマップ: 試合ごとにクリア(前試合のキャッシュを持ち越さない)
     if (this.minimapCtx) {
       this.minimapCtx.clearRect(0, 0, 144, 144);
@@ -1351,19 +1368,41 @@ export class Hud {
 
   // メダル表示: 初取得=中央のバッジ解放カード / 2回目以降=左の大文字。HSは抑止(フィードのみ)
   // R21: マルチキル系はバナーへルーティングし、従来のテキスト行/バッジには出さない
+  // 同一キルで複数バッジ: medalRank最上位を即時表示、残りは500ms間隔キューへ
   private pushMedals(snap: MatchSnapshot): void {
-    for (const m of snap.medals) {
+    // medalRank降順にソートして最上位バッジを即時に出す
+    const sorted = [...snap.medals].sort((a, b) => medalRank(b.id) - medalRank(a.id));
+    let topBadgeFired = false;
+    for (const m of sorted) {
       if (SUPPRESS_BADGE.has(m.id)) continue;
-      // マルチキル系: 専用バナーへ(pushMedalText/pushBadgeは使わない)
       if (MULTI_KILL_IDS.has(m.id)) {
         this.pushMultiKillBanner(m, snap.reduceMotion);
         continue;
       }
-      // R18: レベルの高い実績(ALWAYS_BADGE=キルストリーク大台/希少偉業)は取得済みでも毎回
-      // バッジを出す(達成感・気持ち良さ)。日常的に出る状況キル系・低tierは初回のみバッジ。
-      if (m.firstUnlock || ALWAYS_BADGE.has(m.id)) this.pushBadge(m);
-      else this.pushMedalText(m);
+      if (m.firstUnlock || ALWAYS_BADGE.has(m.id)) {
+        if (!topBadgeFired) {
+          this.renderBadge(m);
+          topBadgeFired = true;
+        } else {
+          this.badgeQueue.push(m);
+          if (!this.badgeQueueTimer) {
+            this.badgeQueueTimer = window.setInterval(() => { this.flushBadgeQueue(); }, 500);
+          }
+        }
+      } else {
+        this.pushMedalText(m);
+      }
     }
+  }
+
+  private flushBadgeQueue(): void {
+    const m = this.badgeQueue.shift();
+    if (!m) {
+      window.clearInterval(this.badgeQueueTimer);
+      this.badgeQueueTimer = 0;
+      return;
+    }
+    this.renderBadge(m);
   }
 
   // R21 マルチキルバナー: 画面中央上寄りに段階エスカレーション演出で表示する。
@@ -1459,13 +1498,12 @@ export class Hud {
     }, cfg.lifetimeMs);
   }
 
-  private pushBadge(m: MedalEvent): void {
+  private renderBadge(m: MedalEvent): void {
     const stack = this.el['badgestack'];
     if (!stack) return;
     const card = document.createElement('div');
     card.className = 'hud-badge';
-    card.style.color = m.color; // SVGの currentColor / アクセントに使う
-    // V18: 初回取得は「実績解放」、再取得(ALWAYS_BADGE)は達成表記(「解放」の誤表示を避ける)
+    card.style.color = m.color;
     const tag = m.firstUnlock ? '実績解放' : '達成';
     card.innerHTML = `${this.makeBadgeSvg(m)}<div class="badge-name">${m.name}</div><div class="badge-tag">${tag}</div>`;
     stack.appendChild(card);
@@ -1474,7 +1512,8 @@ export class Hud {
       card.classList.add('out');
       window.setTimeout(() => card.remove(), 500);
     }, 3200);
-    while (stack.childElementCount > 2) stack.firstElementChild?.remove();
+    // cap 3 (2→3)
+    while (stack.childElementCount > 3) stack.firstElementChild?.remove();
   }
 
   private pushMedalText(m: MedalEvent): void {
@@ -1491,7 +1530,7 @@ export class Hud {
       row.classList.add('out');
       window.setTimeout(() => row.remove(), 400);
     }, 1800);
-    while (stack.childElementCount > 4) stack.firstElementChild?.remove();
+    while (stack.childElementCount > 6) stack.firstElementChild?.remove();
   }
 
   // 階級ごとに形の違うエンブレムをSVGで生成(盾/六角/星/八角 + 金属グラデ + グロー + 中央アイコン)

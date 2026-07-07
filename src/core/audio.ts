@@ -884,7 +884,7 @@ export const SHINKIROU_KYOZOU_SPEC = {
 export const SHURA_KOURIN_SPEC = {
   taikoFreqHz: 72,
   taikoEndHz: 30,
-  taikoGain: 0.68,
+  taikoGain: 0.80,
   taikoDurationS: 0.3,
   taikoCount: 4,
   taikoStepS: 0.18,
@@ -892,6 +892,46 @@ export const SHURA_KOURIN_SPEC = {
   auraDroneEndHz: 28,
   auraDroneGain: 0.28,
   auraDroneDurationS: 3.0,
+} as const;
+
+// ── 音響祭 R32+ 新規スペック定数 ─────────────────────────────────────────────
+
+// 黒雷帝世界の呼吸(kokuraiWorldBreathe)スペック
+export const KOKURAI_WORLD_BREATHE_SPEC = {
+  duckDb: -22,
+  duckHoldS: 0.40,
+  duckReleaseS: 0.90,
+  preRumbleStartHz: 30,
+  preRumbleEndHz: 18,
+  mainImpactStartHz: 18,
+  mainImpactEndHz: 7,
+  mainImpactGain: 0.68,
+  mainImpactDrive: 16,
+  crackHz: 4800,
+  wetTail: 0.5,
+  tailDurationS: 2.8,
+} as const;
+
+// 黒帝心臓音オーラ(setDarkEmperorAura)スペック
+export const DARK_EMPEROR_AURA_SPEC = {
+  beat1FreqHz: 55,
+  beat1EndHz: 36,
+  beat1Gain: 0.30,
+  beat1Drive: 6,
+  beat2DelayS: 0.20,
+  intervalMinS: 1.1,
+  intervalMaxS: 1.5,
+} as const;
+
+// 雷帝オーラ(setRaiteiAura)スペック
+export const RAITEI_AURA_SPEC = {
+  osc1Hz: 220,
+  osc1HpHz: 9000,
+  osc1Gain: 0.016,
+  osc2Hz: 330,
+  osc2HpHz: 11000,
+  osc2Gain: 0.009,
+  lfoHz: 0.28,
 } as const;
 
 export class SoundKit {
@@ -941,6 +981,10 @@ export class SoundKit {
   private lastExplosionS = 0; // 爆発の0.08sスロットル
   private lastWhizzS = 0;
   private lastImpactS = 0;
+  private _darkEmperorAuraActive = false;   // 黒帝心臓音オーラの動作フラグ
+  private _darkEmperorAuraTimer = 0;         // scheduleBlackEmperorHeartbeat setTimeout ハンドル
+  private _raiteiAuraOscNodes: OscillatorNode[] = []; // 雷帝オーラ: 停止が必要なOsc
+  private _raiteiAuraAllNodes: AudioNode[] = [];      // 雷帝オーラ: disconnect が必要な全ノード
   private lastDarkSlashS = 0; // 黒帝斬撃波の連打スロットル(~0.06s)
   private _lastLightningStrikeS = 0; // 雷帝AoEの連打スロットル(~0.1s)
   private _lightningHumOsc: OscillatorNode | null = null;
@@ -1407,8 +1451,9 @@ export class SoundKit {
   }
 
   // サイドチェイン風ダッキング: 発砲/爆発の瞬間だけBGMを沈め、SFXの抜けを作る。
-  // 自動化はduckBus専用(音量設定と構造的に直交)。復帰目標は低HP時のみ下がる
-  private duck(db: number, holdS = 0.04): void {
+  // 自動化はduckBus専用(音量設定と構造的に直交)。復帰目標は低HP時のみ下がる。
+  // releaseS: 回復時定数。既定0.15=通常応答。kokuraiWorldBreathe等は0.90で超長残響。
+  private duck(db: number, holdS = 0.04, releaseS = 0.15): void {
     if (!this.ctx || !this.duckBus) return;
     const g = this.duckBus.gain;
     const now = this.ctx.currentTime;
@@ -1416,7 +1461,7 @@ export class SoundKit {
     g.cancelScheduledValues(now);
     g.setValueAtTime(cur, now);
     g.linearRampToValueAtTime(dbToGain(db), now + 0.012);
-    g.setTargetAtTime(this.duckRecoverTarget, now + 0.012 + holdS, 0.1);
+    g.setTargetAtTime(this.duckRecoverTarget, now + 0.012 + holdS, releaseS);
   }
 
   // 武器クラスごとの発砲音(SHOT_PROFILESデータ駆動の4層+毎発変奏)。
@@ -1677,22 +1722,24 @@ export class SoundKit {
   }
 
   // ヘッドショット: 高い"ping"(1800Hz開始)+ 倍音リング + 低い確認thump。
-  // hit()の square tic と明確に聴き分けられるよう sine/高周波スタートで「澄んだリング」感。
+  // 拡張: 9000Hz q14 g0.40 超高域ティック追加+既存2本ゲインup
   headshot(): void {
-    this.tone({ freq: 1800, endFreq: 900, durationS: 0.07, type: 'sine', gain: 0.55, attackS: 0.001, bus: this.uiBus ?? undefined });
-    this.tone({ freq: 2700, durationS: 0.05, type: 'sine', gain: 0.3, delayS: 0.022, bus: this.uiBus ?? undefined });
+    this.tone({ freq: 1800, endFreq: 900, durationS: 0.07, type: 'sine', gain: 0.65, attackS: 0.001, bus: this.uiBus ?? undefined }); // gain up 0.55→0.65
+    this.tone({ freq: 2700, durationS: 0.05, type: 'sine', gain: 0.40, delayS: 0.022, bus: this.uiBus ?? undefined }); // gain up 0.30→0.40
     this.noiseBurst({ durationS: 0.008, filterHz: 6500, filterType: 'highpass', gain: 0.28, attackS: 0.001, bus: this.uiBus ?? undefined });
     this.tone({ freq: 240, endFreq: 120, durationS: 0.06, type: 'sine', gain: 0.35, delayS: 0.01, bus: this.uiBus ?? undefined });
+    // 追加: 9000Hz q14 g0.40 超高域ティック
+    this.noiseBurst({ durationS: 0.007, filterHz: 9000, filterType: 'bandpass', q: 14, gain: 0.40, attackS: 0.001, bus: this.uiBus ?? undefined });
   }
 
   // キル確認: BO2スタイル — 低いトーン(~220Hzベル) + 上昇スイープ(~80ms)。
-  // hit()の高tic・headshot()の高pingと明確に異なる「低→リフト」の確定感。
+  // 拡張: ベル0.13s + 330→520Hz triangle温かみ + 4500Hzエアクリック
   kill(pitch = 1): void {
-    // 低いベル(220Hz降下100ms): 「重い確定」の骨格
+    // 低いベル(220Hz降下 0.13s): 「重い確定」の骨格
     this.tone({
       freq: 220 * pitch,
       endFreq: 110 * pitch,
-      durationS: 0.10,
+      durationS: 0.13,
       type: 'sine',
       gain: 0.44,
       attackS: 0.001,
@@ -1709,8 +1756,30 @@ export class SoundKit {
       attackS: 0.001,
       bus: this.uiBus ?? undefined,
     });
-    // 極短エアトランジェント(uiBus・ドライ)
-    this.noiseBurst({ durationS: 0.012, filterHz: 5500, filterType: 'highpass', gain: 0.12, delayS: 0.04, attackS: 0.001, bus: this.uiBus ?? undefined });
+    // 追加: 330→520Hz triangle 温かみ
+    this.tone({
+      freq: 330 * pitch,
+      endFreq: 520 * pitch,
+      durationS: 0.09,
+      type: 'triangle',
+      gain: 0.22,
+      delayS: 0.01,
+      bus: this.uiBus ?? undefined,
+    });
+    // 4500Hz エアクリック(5500→4500Hz に変更)
+    this.noiseBurst({ durationS: 0.012, filterHz: 4500, filterType: 'highpass', gain: 0.12, delayS: 0.04, attackS: 0.001, bus: this.uiBus ?? undefined });
+  }
+
+  // プレイヤー被弾感: pan(-1~+1)×heaviness(0~1)で左右+重さを表現
+  // lowpass 220+h×280Hz g0.18h + 750Hz bandpass g0.12h delay0.012s
+  playerBodyHit(pan: number, heaviness: number): void {
+    const h = Math.max(0, Math.min(1, heaviness));
+    const p = Math.max(-1, Math.min(1, pan));
+    const lpFreq = 220 + h * 280;
+    // 低域ドスッ
+    this.noiseBurst({ durationS: 0.08, filterHz: lpFreq, filterType: 'lowpass', gain: 0.18 * h, pan: p, attackS: 0.002 });
+    // 750Hz bandpass 肉着弾感
+    this.noiseBurst({ durationS: 0.06, filterHz: 750, filterType: 'bandpass', q: 3, gain: 0.12 * h, pan: p, delayS: 0.012, attackS: 0.001 });
   }
 
   // Valorant式連続キルピッチラダー: tier(0-4)で半音ずつ(2^(tier/12))ピッチが上昇。
@@ -2443,22 +2512,19 @@ export class SoundKit {
     }
   }
 
+  // リロードメカ音(3イベント): カチャ(マグ解除)/ガシャ(装填)/チャンバー(閉鎖)
   reload(durationMs: number): void {
-    this.noiseBurst({ durationS: 0.05, filterHz: 3000, filterType: 'bandpass', gain: 0.3 });
-    this.noiseBurst({
-      durationS: 0.05,
-      filterHz: 2200,
-      filterType: 'bandpass',
-      gain: 0.3,
-      delayS: durationMs / 2000,
-    });
-    this.noiseBurst({
-      durationS: 0.06,
-      filterHz: 3600,
-      filterType: 'bandpass',
-      gain: 0.35,
-      delayS: durationMs / 1000 - 0.08,
-    });
+    // カチャ: 軽いラッチ解除(高域バンドパス+金属クリックトーン)
+    this.noiseBurst({ durationS: 0.04, filterHz: 3400, filterType: 'bandpass', q: 5, gain: 0.26 });
+    this.tone({ freq: 2200, durationS: 0.025, type: 'triangle', gain: 0.10 });
+    // ガシャ: マガジン装填(中域重めのガシャン)
+    const midDelay = durationMs / 2000;
+    this.noiseBurst({ durationS: 0.07, filterHz: 1600, filterType: 'bandpass', q: 3, gain: 0.35, delayS: midDelay });
+    this.tone({ freq: 680, endFreq: 280, durationS: 0.06, type: 'triangle', gain: 0.18, delayS: midDelay + 0.01 });
+    // チャンバー: 薬室閉鎖(低い金属音+ノイズ)
+    const endDelay = durationMs / 1000 - 0.08;
+    this.noiseBurst({ durationS: 0.05, filterHz: 2800, filterType: 'bandpass', q: 4, gain: 0.32, delayS: endDelay });
+    this.tone({ freq: 420, endFreq: 180, durationS: 0.07, type: 'sine', gain: 0.20, delayS: endDelay + 0.01 });
   }
 
   dryfire(): void {
@@ -2506,6 +2572,20 @@ export class SoundKit {
       });
       this.tone({ freq: 2400, endFreq: 4800, durationS: 0.09, type: 'sine', gain: 0.22, attackS: 0.001 });
       this.tone({ freq: 3600, durationS: 0.25, type: 'sine', gain: 0.08, delayS: 0.07, attackS: 0.01 });
+    }
+  }
+
+  // 黒帝クナイスラッシュ: 通常slash層 + 5600Hz放電 + 260→80Hz雷鳴 + variation≥1 tail
+  kunaiSlashDark(variation: number): void {
+    // 通常slash層を呼ぶ
+    this.kunaiSlash(variation);
+    // 追加: 5600Hz bandpass q7 g0.18 放電
+    this.noiseBurst({ durationS: 0.06, filterHz: 5600, filterType: 'bandpass', q: 7, gain: 0.18, attackS: 0.001 });
+    // 追加: 260→80Hz g0.14 雷鳴(低い轟き)
+    this.tone({ freq: 260, endFreq: 80, durationS: 0.14, type: 'sine', gain: 0.14, drive: 6, curve: 'asym' });
+    // variation≥1 のとき余韻尾引き
+    if (variation >= 1) {
+      this.noiseBurst({ durationS: 0.25, filterHz: 2800, filterType: 'bandpass', q: 3, gain: 0.08, delayS: 0.06, attackS: 0.02 });
     }
   }
 
@@ -2621,11 +2701,16 @@ export class SoundKit {
     this.noiseBurst({ durationS: 0.12, filterHz: 5500, filterType: 'bandpass', q: 6, gain: 0.22, attackS: 0.001 });
   }
 
-  // 雷帝モード: 常時電気ヒム・ティック(フレーム毎に呼ぶ想定ではなく periodic tick 用)
+  // 雷帝モード: 常時電気ヒム・ティック v2(フレーム毎に呼ぶ想定ではなく periodic tick 用)
+  // v2: 放電帯域を3200Hz→7500Hz(より高い稲妻感)+720→960Hz上昇ティック追加
   raiteiHumTick(): void {
     if (this.liveVoices() > 220) return;
-    this.noiseBurst({ durationS: 0.06, filterHz: 3200, filterType: 'bandpass', q: 4, gain: 0.08, attackS: 0.002 });
+    // 7500Hz 放電バースト(高周波の鋭い接地雷)
+    this.noiseBurst({ durationS: 0.06, filterHz: 7500, filterType: 'bandpass', q: 4, gain: 0.08, attackS: 0.002 });
+    // 既存: 低域上昇ティック
     this.tone({ freq: 180, endFreq: 260, durationS: 0.05, type: 'sine', gain: 0.06 });
+    // v2 追加: 720→960Hz 上昇ティック(放電前の電位上昇感)
+    this.tone({ freq: 720, endFreq: 960, durationS: 0.04, type: 'sine', gain: 0.05, delayS: 0.01 });
   }
 
   // 雷帝/黒雷帝の常時帯電ハム(active=trueで開始・false/切替で停止)
@@ -2684,20 +2769,48 @@ export class SoundKit {
     this.tone({ freq: 82, endFreq: 65, durationS: 3.0, type: 'sawtooth', gain: 0.16, drive: 2, delayS: 0.2 });
   }
 
+  // 極黒雷 世界の息吹(黒帝モード起動時の重圧出現音): KOKURAI_WORLD_BREATHE_SPEC準拠
+  // duck(-22,0.40,0.90) → 沈黙 → 30→18Hz プレルンブル → 0.22s後: 18→7Hz超低域一撃 +
+  // 4800Hzクラック → 2段サブ → のこぎりコーラス×2 → 160Hz 2.8s残響(wet0.5)
+  kokuraiWorldBreathe(): void {
+    const spec = KOKURAI_WORLD_BREATHE_SPEC;
+    this.duck(spec.duckDb, spec.duckHoldS, spec.duckReleaseS);
+    // プレルンブル: 30→18Hz
+    this.tone({ freq: spec.preRumbleStartHz, endFreq: spec.preRumbleEndHz, durationS: 0.20, type: 'sine', gain: 0.30, drive: 8, curve: 'asym' });
+    // メインインパクト: 18→7Hz(0.22s後)
+    const impDelay = 0.22;
+    this.tone({ freq: spec.mainImpactStartHz, endFreq: spec.mainImpactEndHz, durationS: 0.6, type: 'sine', gain: spec.mainImpactGain, drive: spec.mainImpactDrive, curve: 'asym', delayS: impDelay });
+    // 4800Hz クラック
+    this.noiseBurst({ durationS: 0.04, filterHz: spec.crackHz, filterType: 'bandpass', q: 6, gain: 0.55, attackS: 0.001, delayS: impDelay });
+    // 2段サブ: 12→5Hz
+    this.tone({ freq: 12, endFreq: 5, durationS: 1.2, type: 'sine', gain: 0.52, drive: 12, curve: 'asym', delayS: impDelay + 0.1 });
+    this.tone({ freq: 9, endFreq: 3, durationS: 1.0, type: 'sine', gain: 0.40, drive: 14, curve: 'asym', delayS: impDelay + 0.28 });
+    // のこぎりコーラス×2
+    this.tone({ freq: 32, endFreq: 55, durationS: 2.2, type: 'sawtooth', gain: 0.18, drive: 4, delayS: impDelay + 0.35 });
+    this.tone({ freq: 28, endFreq: 48, durationS: 2.0, type: 'sawtooth', gain: 0.14, drive: 3, delayS: impDelay + 0.55, detuneCents: 22 });
+    // 160Hz lowpass 2.8s reverb tail (wet0.5)
+    this.noiseBurst({ durationS: spec.tailDurationS, filterHz: 160, filterType: 'lowpass', gain: 0.30, delayS: impDelay + 0.4, attackS: 0.12, wet: spec.wetTail });
+  }
+
   // M ウルト(黒雷帝中): 極雷絶滅 — 4s 終焉/虚無(沈黙→超低域一撃→長残響)
+  // 改修: duckBgmOnly(-22,0.45,0.90)、サブ3層(22→8/32→12/48→18Hz)、
+  //       落雷柱タイミング[0.82,1.36,2.0,2.82,3.5]でgain0.52、残響3.0s+余韻ドローン(55→80Hz saw 4.5s)
   gokuraiZetsumetsu(): void {
-    this.duck(-10, 0.15); // A4-F03/F01: コンプポンプ抑制 + ×0.7 gain
-    // 一拍の無音後に暗黒超低域パルス
+    this.duck(-22, 0.45, 0.90); // BGMを深く・長く沈める(duckBgmOnly相当)
+    // サブ3層: 3段の超低域プレッシャー
     this.tone({ freq: 22, endFreq: 8,  durationS: 2.0, type: 'sine', gain: 0.56, drive: 14, curve: 'asym', delayS: 0.3 });
-    this.tone({ freq: 15, endFreq: 6,  durationS: 1.8, type: 'sine', gain: 0.42, drive: 12, curve: 'asym', delayS: 0.5 });
-    // 5本の巨大落雷柱(重く遅くゆっくり落ちる)
-    const boltTimes = [0.8, 1.4, 2.0, 2.8, 3.5];
+    this.tone({ freq: 32, endFreq: 12, durationS: 1.8, type: 'sine', gain: 0.48, drive: 12, curve: 'asym', delayS: 0.4 });
+    this.tone({ freq: 48, endFreq: 18, durationS: 1.6, type: 'sine', gain: 0.40, drive: 10, curve: 'asym', delayS: 0.5 });
+    // 5本の巨大落雷柱(タイミング更新・gain0.52)
+    const boltTimes = [0.82, 1.36, 2.0, 2.82, 3.5];
     for (const d of boltTimes) {
-      this.noiseBurst({ durationS: 0.04, filterHz: 3800, filterType: 'bandpass', q: 1.5, gain: 0.39, attackS: 0.002, delayS: d });
-      this.tone({ freq: 35, endFreq: 10, durationS: 1.0, type: 'sine', gain: 0.34, drive: 8, curve: 'asym', delayS: d });
+      this.noiseBurst({ durationS: 0.04, filterHz: 3800, filterType: 'bandpass', q: 1.5, gain: 0.45, attackS: 0.002, delayS: d });
+      this.tone({ freq: 35, endFreq: 10, durationS: 1.0, type: 'sine', gain: 0.52, drive: 8, curve: 'asym', delayS: d });
     }
-    // 長い残響(~3.8s 以降)
-    this.noiseBurst({ durationS: 1.5, filterHz: 180, filterType: 'lowpass', gain: 0.28, delayS: 3.8, attackS: 0.3 });
+    // 残響 3.0s(ロングテール拡張)
+    this.noiseBurst({ durationS: 3.0, filterHz: 180, filterType: 'lowpass', gain: 0.28, delayS: 3.8, attackS: 0.3 });
+    // 余韻ドローン(55→80Hz saw 4.5s: 終焉の低い唸り)
+    this.tone({ freq: 55, endFreq: 80, durationS: 4.5, type: 'sawtooth', gain: 0.20, drive: 3, delayS: 3.6 });
   }
 
   // ── R33 黒雷帝 ambient pack ──────────────────────────────────────────────
@@ -2742,13 +2855,18 @@ export class SoundKit {
   }
 
   // 黒雷帝キル音レイヤー: 高域紫電クラック。3キル以上でace chord 雷版
+  // 拡張: 魂ブーム(40→58Hz g0.20)+逆再生風スウィープ(180→3400Hz attack0.10)+streak≥3追加紫電
   kokuraiKillLayer(streak: number): void {
     if (!this.ctx || !this.sfxBus) return;
     if (this.liveVoices() > 228) return;
-    // 高域クラック(紫電の細い亀裂音) A4-F09: L1にdelayS:0.03を追加(タイミング整合)
+    // 高域クラック(紫電の細い亀裂音)
     this.noiseBurst({ durationS: 0.015, filterHz: 7500, filterType: 'bandpass', q: 4, gain: 0.22, attackS: 0.001, delayS: 0.03, bus: this.uiBus ?? undefined });
+    // 魂ブーム(40→58Hz: 低域から魂が押し出される感覚)
+    this.tone({ freq: 40, endFreq: 58, durationS: 0.25, type: 'sine', gain: 0.20, bus: this.uiBus ?? undefined });
+    // 逆再生風スウィープ(180→3400Hz bandpass, attack0.10: エネルギーが湧き上がる感覚)
+    this.noiseBurst({ durationS: 0.30, filterHz: 180, filterEndHz: 3400, filterType: 'bandpass', q: 1.5, gain: 0.15, attackS: 0.10, bus: this.uiBus ?? undefined });
     if (streak >= 3) {
-      // マルチキル: 遠雷轟音を重ねる。A4-F10: L2にbusをuiBusへ変更
+      // マルチキル: 遠雷轟音を重ねる
       this.noiseBurst({ durationS: 0.025, filterHz: 4800, filterType: 'bandpass', q: 2, gain: 0.45, attackS: 0.001, delayS: 0.04, bus: this.uiBus ?? undefined });
       this.tone({ freq: 58, endFreq: 22, durationS: 0.45, type: 'sine', gain: 0.42, drive: 7, curve: 'asym', delayS: 0.04, bus: this.uiBus ?? undefined });
       // 黒雷版上昇アルペジオ(暗い和声で轟く)
@@ -2765,6 +2883,8 @@ export class SoundKit {
           bus: this.uiBus ?? undefined,
         });
       }
+      // 追加紫電: より細く高い稲妻(9000Hz超高域・短い)
+      this.noiseBurst({ durationS: 0.010, filterHz: 9000, filterType: 'bandpass', q: 8, gain: 0.18, attackS: 0.001, delayS: 0.08, bus: this.uiBus ?? undefined });
     }
   }
 
@@ -2831,6 +2951,99 @@ export class SoundKit {
 
   // ── R33 黒雷帝 ambient pack ここまで ──────────────────────────────────────
 
+  // ── 黒帝オーラ心臓音ループ ────────────────────────────────────────────────
+  // 黒帝モード中、1.1-1.5s間隔で鼓動2打+低ハム。ambBus経由(コンプ迂回)。
+  setDarkEmperorAura(active: boolean): void {
+    if (active === this._darkEmperorAuraActive) return;
+    this._darkEmperorAuraActive = active;
+    if (active) {
+      this._scheduleBlackEmperorHeartbeat();
+    } else {
+      if (this._darkEmperorAuraTimer) {
+        clearTimeout(this._darkEmperorAuraTimer);
+        this._darkEmperorAuraTimer = 0;
+      }
+    }
+  }
+
+  private _scheduleBlackEmperorHeartbeat(): void {
+    if (!this._darkEmperorAuraActive || typeof window === 'undefined') return;
+    const spec = DARK_EMPEROR_AURA_SPEC;
+    const intervalMs = (spec.intervalMinS + this.rng() * (spec.intervalMaxS - spec.intervalMinS)) * 1000;
+    this._darkEmperorAuraTimer = window.setTimeout(() => {
+      this._darkEmperorAuraTimer = 0;
+      this._fireBlackEmperorHeartbeat();
+      this._scheduleBlackEmperorHeartbeat();
+    }, intervalMs);
+  }
+
+  private _fireBlackEmperorHeartbeat(): void {
+    if (!this.ctx || !this.ambBus) return;
+    const spec = DARK_EMPEROR_AURA_SPEC;
+    // 1拍目
+    this.tone({ freq: spec.beat1FreqHz, endFreq: spec.beat1EndHz, durationS: 0.22, type: 'sine', gain: spec.beat1Gain, drive: spec.beat1Drive, curve: 'asym', bus: this.ambBus });
+    // 2拍目(0.20s後: 少し弱め)
+    this.tone({ freq: spec.beat1FreqHz * 0.90, endFreq: spec.beat1EndHz * 0.85, durationS: 0.18, type: 'sine', gain: spec.beat1Gain * 0.70, drive: spec.beat1Drive, curve: 'asym', delayS: spec.beat2DelayS, bus: this.ambBus });
+    // 低いハム(55Hz 0.6s持続)
+    this.tone({ freq: 55, durationS: 0.6, type: 'sine', gain: 0.06, attackS: 0.05, bus: this.ambBus });
+  }
+
+  // ── 雷帝オーラ: ハイパスのこぎり+LFO変調。ambBus経由。 ──────────────────
+  // setRaiteiAura(true)でノードを生成しloop開始, false で全停止+disconnect。
+  setRaiteiAura(active: boolean): void {
+    if (!this.ctx || !this.ambBus) return;
+    // 停止: 既存ノードを全て切る
+    for (const n of this._raiteiAuraOscNodes) { try { n.stop(); } catch { /* already stopped */ } }
+    this._raiteiAuraOscNodes = [];
+    for (const n of this._raiteiAuraAllNodes) { try { n.disconnect(); } catch { /* already disconnected */ } }
+    this._raiteiAuraAllNodes = [];
+    if (!active) return;
+    const ctx = this.ctx;
+    const spec = RAITEI_AURA_SPEC;
+    // LFO (0.28Hz sine)
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = spec.lfoHz;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 0.006; // lfo depth for gain modulation
+    lfo.connect(lfoGain);
+    this._raiteiAuraAllNodes.push(lfo, lfoGain);
+    // Layer 1: 220Hz saw → HPF 9000Hz → gain 0.016
+    const osc1 = ctx.createOscillator();
+    osc1.type = 'sawtooth';
+    osc1.frequency.value = spec.osc1Hz;
+    const hpf1 = ctx.createBiquadFilter();
+    hpf1.type = 'highpass';
+    hpf1.frequency.value = spec.osc1HpHz;
+    const g1 = ctx.createGain();
+    g1.gain.value = spec.osc1Gain;
+    lfoGain.connect(g1.gain);
+    osc1.connect(hpf1);
+    hpf1.connect(g1);
+    g1.connect(this.ambBus);
+    osc1.start();
+    this._raiteiAuraOscNodes.push(osc1);
+    this._raiteiAuraAllNodes.push(hpf1, g1);
+    // Layer 2: 330Hz saw → HPF 11000Hz → gain 0.009
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'sawtooth';
+    osc2.frequency.value = spec.osc2Hz;
+    const hpf2 = ctx.createBiquadFilter();
+    hpf2.type = 'highpass';
+    hpf2.frequency.value = spec.osc2HpHz;
+    const g2 = ctx.createGain();
+    g2.gain.value = spec.osc2Gain;
+    lfoGain.connect(g2.gain);
+    osc2.connect(hpf2);
+    hpf2.connect(g2);
+    g2.connect(this.ambBus);
+    osc2.start();
+    this._raiteiAuraOscNodes.push(osc2);
+    this._raiteiAuraAllNodes.push(hpf2, g2);
+    // start LFO
+    lfo.start();
+  }
+
   // ── R33 Sランク武器サウンド ───────────────────────────────────────────────
   // 月光弓 発射音: 弦解放スラップ(hi-pass噪音) + 矢風切りsweep の2層。
   // BOW_RELEASE_SPEC の値と一致させること。
@@ -2854,6 +3067,13 @@ export class SoundKit {
       gain: BOW_RELEASE_SPEC.windGain,
       delayS: 0.008,
     });
+    // 琴・箏の三角波余韻(440/660/880Hz) + 月光パッド + シマー
+    const kotoFreqs = [440, 660, 880] as const;
+    for (let i = 0; i < kotoFreqs.length; i += 1) {
+      this.tone({ freq: kotoFreqs[i]!, durationS: 0.45 - i * 0.08, type: 'triangle', gain: 0.06 - i * 0.015, delayS: 0.01 + i * 0.01, wet: 0.25 });
+    }
+    this.tone({ freq: 220, durationS: 0.6, type: 'sine', gain: 0.08, delayS: 0.02, wet: 0.30 });
+    this.noiseBurst({ durationS: 0.5, filterHz: 7500, filterType: 'highpass', gain: 0.04, delayS: 0.015, attackS: 0.10, wet: 0.40 });
   }
 
   // 風神扇 スイング音: 広域bandpass+ノイズsweep。FAN_WHOOSH_SPEC の値と一致させること。
@@ -2982,21 +3202,37 @@ export class SoundKit {
     this.tone({ freq: 280, endFreq: 80, durationS: 0.3, type: 'triangle', gain: 0.22, delayS: 0.06 });
   }
 
-  /** 満月の矢: 荘厳な弦音+月光柱+ノヴァ衝撃 */
+  /** 満月の矢: 荘厳な弦音+月光柱+ノヴァ衝撃+琴余韻+月光パッド+シマー */
   gekkouFullMoonSound(): void {
     if (this.liveVoices() > 225) return;
     this.duck(-5, 0.1);
     this.noiseBurst({ durationS: GEKKOU_FULL_MOON_SPEC.stringDurationS, filterHz: GEKKOU_FULL_MOON_SPEC.stringHz, filterType: 'bandpass', q: 3.5, gain: GEKKOU_FULL_MOON_SPEC.stringGain });
     this.tone({ freq: GEKKOU_FULL_MOON_SPEC.pillarFreqHz, endFreq: GEKKOU_FULL_MOON_SPEC.pillarEndFreqHz, durationS: GEKKOU_FULL_MOON_SPEC.pillarDurationS, type: 'sine', gain: GEKKOU_FULL_MOON_SPEC.pillarGain, delayS: 0.05 });
     this.tone({ freq: GEKKOU_FULL_MOON_SPEC.novaFreqHz, endFreq: 60, durationS: GEKKOU_FULL_MOON_SPEC.novaDurationS, type: 'sine', gain: GEKKOU_FULL_MOON_SPEC.novaGain, drive: 2, delayS: 0.6 });
+    // 琴・箏の三角波余韻(440/660/880Hz) + 月光パッド + シマー
+    const kotoFreqs = [440, 660, 880] as const;
+    for (let i = 0; i < kotoFreqs.length; i += 1) {
+      this.tone({ freq: kotoFreqs[i]!, durationS: 0.65 - i * 0.10, type: 'triangle', gain: 0.08 - i * 0.02, delayS: 0.02 + i * 0.01, wet: 0.30 });
+    }
+    this.tone({ freq: 220, durationS: 0.9, type: 'sine', gain: 0.10, delayS: 0.05, wet: 0.35 });
+    this.noiseBurst({ durationS: 0.8, filterHz: 7500, filterType: 'highpass', gain: 0.05, delayS: 0.06, attackS: 0.15, wet: 0.45 });
   }
 
-  /** 大颶風: 嵐の低域ドローン+ガスト */
+  /** 大颶風: 嵐の低域ドローン+ガスト+地鳴りロール+detuned第2風+高空の怒り */
   fujinTyphoonSound(): void {
     if (this.liveVoices() > 225) return;
     this.duck(-5, 0.2);
+    // 既存: メインストーム
     this.tone({ freq: FUJIN_TYPHOON_SPEC.stormLowHz, endFreq: FUJIN_TYPHOON_SPEC.stormHighHz, durationS: FUJIN_TYPHOON_SPEC.stormDurationS, type: 'sawtooth', gain: FUJIN_TYPHOON_SPEC.stormGain, drive: 3 });
+    // 既存: ガスト
     this.noiseBurst({ durationS: FUJIN_TYPHOON_SPEC.gustDurationS, filterHz: FUJIN_TYPHOON_SPEC.gustHz, filterType: 'bandpass', filterEndHz: FUJIN_TYPHOON_SPEC.gustEndHz, gain: FUJIN_TYPHOON_SPEC.gustGain, delayS: 0.05 });
+    // 地鳴りロール(超低域ランブル)
+    this.noiseBurst({ durationS: 1.0, filterHz: 55, filterType: 'lowpass', gain: 0.32, attackS: 0.10 });
+    this.tone({ freq: 40, endFreq: 20, durationS: 0.9, type: 'sine', gain: 0.24, drive: 5, curve: 'asym', delayS: 0.05 });
+    // detuned第2風(位相の違う第2レイヤー)
+    this.tone({ freq: Math.round(FUJIN_TYPHOON_SPEC.stormLowHz * 1.07), endFreq: Math.round(FUJIN_TYPHOON_SPEC.stormHighHz * 0.95), durationS: FUJIN_TYPHOON_SPEC.stormDurationS * 0.8, type: 'sawtooth', gain: FUJIN_TYPHOON_SPEC.stormGain * 0.5, drive: 2, delayS: 0.12, detuneCents: 18 });
+    // 高空の怒り(高域の切り裂く嵐)
+    this.noiseBurst({ durationS: 0.7, filterHz: 5500, filterType: 'highpass', gain: 0.18, delayS: 0.08, attackS: 0.06 });
   }
 
   /** 大業火弾: 低域ブーム+クラックル */
@@ -3094,14 +3330,24 @@ export class SoundKit {
     this.noiseBurst({ durationS: SHINKIROU_KYOZOU_SPEC.shimmerDurationS, filterHz: SHINKIROU_KYOZOU_SPEC.shimmerHz, filterEndHz: SHINKIROU_KYOZOU_SPEC.shimmerEndHz, filterType: 'bandpass', q: 2, gain: SHINKIROU_KYOZOU_SPEC.shimmerGain, delayS: 0.2 });
   }
 
-  /** 阿修羅降臨: 太鼓連打+オーラドローン */
+  /** 阿修羅降臨: 太鼓連打+皮鳴り+ひっきり音+最終打後の「シャン」+共鳴ドローン */
   shuraKourinSound(): void {
     if (this.liveVoices() > 225) return;
     this.duck(-8, 0.4);
     for (let i = 0; i < SHURA_KOURIN_SPEC.taikoCount; i++) {
       const delay = i * SHURA_KOURIN_SPEC.taikoStepS;
-      this.tone({ freq: SHURA_KOURIN_SPEC.taikoFreqHz, endFreq: SHURA_KOURIN_SPEC.taikoEndHz, durationS: SHURA_KOURIN_SPEC.taikoDurationS, type: 'sine', gain: SHURA_KOURIN_SPEC.taikoGain, drive: 8, delayS: delay });
+      // 太鼓: g0.80 drive11
+      this.tone({ freq: SHURA_KOURIN_SPEC.taikoFreqHz, endFreq: SHURA_KOURIN_SPEC.taikoEndHz, durationS: SHURA_KOURIN_SPEC.taikoDurationS, type: 'sine', gain: SHURA_KOURIN_SPEC.taikoGain, drive: 11, delayS: delay });
+      // 皮鳴り(太鼓の皮共鳴: 高域バンドパス)
+      this.noiseBurst({ durationS: 0.04, filterHz: 1800, filterType: 'bandpass', q: 5, gain: 0.14, attackS: 0.002, delayS: delay + 0.005 });
+      // ひっきり音(引き切る上昇スウィープ)
+      this.tone({ freq: 240, endFreq: 480, durationS: 0.03, type: 'triangle', gain: 0.08, delayS: delay + 0.022 });
     }
+    // 最終打後の「シャン」(金属の余韻鈴音)
+    const finalDelay = (SHURA_KOURIN_SPEC.taikoCount - 1) * SHURA_KOURIN_SPEC.taikoStepS + SHURA_KOURIN_SPEC.taikoDurationS;
+    this.tone({ freq: 2200, durationS: 0.35, type: 'sine', gain: 0.14, delayS: finalDelay + 0.02, attackS: 0.001 });
+    this.noiseBurst({ durationS: 0.08, filterHz: 4500, filterType: 'highpass', gain: 0.10, delayS: finalDelay + 0.02, attackS: 0.001 });
+    // 共鳴ドローン
     this.tone({ freq: SHURA_KOURIN_SPEC.auraDroneHz, endFreq: SHURA_KOURIN_SPEC.auraDroneEndHz, durationS: SHURA_KOURIN_SPEC.auraDroneDurationS, type: 'sawtooth', gain: SHURA_KOURIN_SPEC.auraDroneGain, drive: 3, delayS: 0.2 });
   }
 
@@ -3353,28 +3599,47 @@ export class SoundKit {
     });
   }
 
-  // 足音v2: 材質(ステージパレット由来)×ヒール・トゥの2打。歩行の「コツ、コ」が
-  // 出ると空間の実在感が跳ねる。intensity>=0.8は着地系(単打+低域増厚)として分岐
-  footstep(intensity: number, landing = false): void {
-    // V9修正: 着地は暗黙のintensity閾値でなく明示引数(スプリント歩行=1が着地音に化けていた)
+  // 足音v2: 材質(ステージパレット由来)×ヒール・トゥの2打。
+  // variant?: 'dark'=黒帝ヒール52Hz×1.4+サブ+雷鳴、'raitei'=7000Hz接地放電追加
+  footstep(intensity: number, landing = false, variant?: 'dark' | 'raitei'): void {
     const mat = this.surface.floor;
-    // ヒール(かかと): 低い芯
-    this.tone({
-      freq: this.jit(82, 0.15),
-      endFreq: 48,
-      durationS: landing ? 0.07 : 0.045,
-      type: 'sine',
-      gain: (landing ? 0.3 : 0.2) * intensity,
-      attackS: 0.002,
-      wet: 0,
-    });
+    if (variant === 'dark') {
+      // 黒帝ヒール: 52Hz×1.4(≈72.8Hz) drive4
+      this.tone({
+        freq: this.jit(52 * 1.4, 0.15),
+        endFreq: 48,
+        durationS: landing ? 0.07 : 0.045,
+        type: 'sine',
+        gain: (landing ? 0.3 : 0.2) * intensity,
+        drive: 4, curve: 'asym',
+        attackS: 0.002, wet: 0,
+      });
+      // 40→26Hz サブ
+      this.tone({ freq: 40, endFreq: 26, durationS: landing ? 0.09 : 0.055, type: 'sine', gain: 0.20 * intensity, drive: 5, curve: 'asym', wet: 0 });
+      // 15%確率微雷鳴
+      if (this.rng() < 0.15) {
+        this.noiseBurst({ durationS: 0.025, filterHz: 5500, filterType: 'bandpass', q: 5, gain: 0.06 * intensity, attackS: 0.001, wet: 0 });
+      }
+    } else {
+      // 通常/raitei のヒール
+      this.tone({
+        freq: this.jit(82, 0.15),
+        endFreq: 48,
+        durationS: landing ? 0.07 : 0.045,
+        type: 'sine',
+        gain: (landing ? 0.3 : 0.2) * intensity,
+        attackS: 0.002, wet: 0,
+      });
+      if (variant === 'raitei') {
+        // 7000Hz q9 接地放電
+        this.noiseBurst({ durationS: 0.018, filterHz: 7000, filterType: 'bandpass', q: 9, gain: 0.12 * intensity, attackS: 0.001, wet: 0 });
+      }
+    }
     this.footstepTexture(mat, intensity, 0, 1);
     if (landing) {
-      // 着地: 低域を厚く(ドスッ)
       this.noiseBurst({ durationS: 0.09, filterHz: 260, filterType: 'lowpass', gain: 0.22 * intensity, wet: 0 });
       return;
     }
-    // トゥ(つま先): 少し遅れて軽く
     const toeDelay = 0.05 + this.rng() * 0.02;
     this.footstepTexture(mat, intensity * 0.55, toeDelay, 1.3);
   }
@@ -3522,12 +3787,24 @@ export class SoundKit {
     this.tone({ freq: 220, endFreq: 60, durationS: 0.5, type: 'sawtooth', gain: 0.25 });
   }
 
+  // UIクリック: 1100→750Hz降下 + 5200Hzカチッ(より明快なメカニカル感)
   uiClick(): void {
     this.tone({
-      freq: 700,
+      freq: 1100,
+      endFreq: 750,
       durationS: 0.04,
       type: 'sine',
       gain: 0.15,
+      bus: this.uiBus ?? undefined,
+    });
+    // 5200Hz カチッ
+    this.noiseBurst({
+      durationS: 0.007,
+      filterHz: 5200,
+      filterType: 'bandpass',
+      q: 8,
+      gain: 0.12,
+      attackS: 0.001,
       bus: this.uiBus ?? undefined,
     });
   }
@@ -3612,12 +3889,21 @@ export class SoundKit {
         clearTimeout(this._kokuraiThunderTimer);
         this._kokuraiThunderTimer = 0;
       }
+      // 黒帝心臓音タイマーをポーズ時に一時停止(フラグは維持)
+      if (this._darkEmperorAuraTimer) {
+        clearTimeout(this._darkEmperorAuraTimer);
+        this._darkEmperorAuraTimer = 0;
+      }
     } else if (this.distantBattleActive && !this.distantBattleTimer) {
       this.scheduleDistantBoom();
     }
     // 黒雷帝遠雷: ポーズ解除後にスケジューラ再開(フラグがまだ立っている場合)
     if (!paused && this._kokuraiThunderActive && !this._kokuraiThunderTimer) {
       this._scheduleKokuraiThunder();
+    }
+    // 黒帝心臓音: ポーズ解除後に再開(フラグがまだ立っている場合)
+    if (!paused && this._darkEmperorAuraActive && !this._darkEmperorAuraTimer) {
+      this._scheduleBlackEmperorHeartbeat();
     }
   }
 
@@ -3738,6 +4024,10 @@ export class SoundKit {
     this.setLightningHum(false);
     // 黒雷帝遠雷スケジューラを確実に停止
     this.stopKokuraiThunder();
+    // 黒帝心臓音オーラを確実に停止
+    this.setDarkEmperorAura(false);
+    // 雷帝オーラを確実に停止
+    this.setRaiteiAura(false);
     // 長尺ボイス(耳鳴り/フラッシュリング等)を止め、読み上げも破棄する
     for (const v of this.longVoices) {
       try {

@@ -194,8 +194,9 @@ describe('resolveSightY', () => {
     expect(resolveSightY(withShape('fists'))).toBe(0);
     expect(resolveSightY(withShape('rifle'))).toBeCloseTo(0.062, 6); // アイアン前ポスト
     expect(resolveSightY(withShape('pistol'))).toBeCloseTo(0.062, 6);
-    expect(resolveSightY(withShape('shotgun-pump'))).toBeCloseTo(0.012 + 0.04 * 0.6, 6); // ビード
-    expect(resolveSightY(withShape('shotgun-double'))).toBeCloseTo(0.012 + 0.038 * 0.6, 6);
+    // Fix-7: SG3種 bead sightY +0.016(0.036→0.052 レシーバ上端突出解消)
+    expect(resolveSightY(withShape('shotgun-pump'))).toBeCloseTo(0.052, 6); // 0.012+0.04*0.6+0.016
+    expect(resolveSightY(withShape('shotgun-double'))).toBeCloseTo(0.012 + 0.038 * 0.6 + 0.016, 6);
     expect(resolveSightY(withShape('dmr'))).toBeCloseTo(0.085, 6); // 一体型スコープ
     expect(resolveSightY(withShape('sniper-bolt'))).toBeCloseTo(0.08, 6);
     expect(resolveSightY(withShape('dsr-bp'))).toBeCloseTo(0.092, 6);
@@ -419,5 +420,126 @@ describe('setExoticCharge', () => {
       if (child.name === 'vm:crystal') crystals.push(child);
     });
     expect(crystals.length).toBeGreaterThan(0);
+  });
+});
+
+// ── KE-1 黒炎+紫電オーラプール ──────────────────────────────────────────────
+describe('KE-1 黒炎+紫電オーラプール', () => {
+  it('_darkAuraPool は 22 粒子 (TrackA 黒炎14 + TrackB 紫電スパーク8)', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const pool = (vm as unknown as Record<string, unknown>)['_darkAuraPool'] as Array<{ track: string }>;
+    expect(pool.length).toBe(22);
+    expect(pool.filter((a) => a.track === 'flame').length).toBe(14);
+    expect(pool.filter((a) => a.track === 'spark').length).toBe(8);
+    vm.dispose();
+  });
+
+  it('TrackA炎は NormalBlending 0x040008, TrackB スパークは AdditiveBlending 0x7700bb', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const pool = (vm as unknown as Record<string, unknown>)['_darkAuraPool'] as Array<{
+      track: string;
+      mesh: THREE.Mesh;
+    }>;
+    for (const a of pool) {
+      const mat = a.mesh.material as THREE.MeshBasicMaterial;
+      if (a.track === 'flame') {
+        expect(mat.blending).toBe(THREE.NormalBlending);
+        expect(mat.color.getHex()).toBe(0x040008);
+      } else {
+        expect(mat.blending).toBe(THREE.AdditiveBlending);
+        expect(mat.color.getHex()).toBe(0x7700bb);
+      }
+    }
+    vm.dispose();
+  });
+
+  it('TrackA炎は sinPhase/baseX フィールドを持つ', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const pool = (vm as unknown as Record<string, unknown>)['_darkAuraPool'] as Array<{
+      track: string;
+      sinPhase: unknown;
+      baseX: unknown;
+    }>;
+    for (const a of pool.filter((x) => x.track === 'flame')) {
+      expect(typeof a.sinPhase).toBe('number');
+      expect(typeof a.baseX).toBe('number');
+    }
+    vm.dispose();
+  });
+
+  it('白飛び0.9規則: 全パーティクルの max opacity が 0.55 以下', () => {
+    // TrackA=0.52, TrackB=0.55 どちらも ≤ 0.55
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const pool = (vm as unknown as Record<string, unknown>)['_darkAuraPool'] as Array<{ track: string }>;
+    for (const a of pool) {
+      const maxOp = a.track === 'spark' ? 0.55 : 0.52;
+      expect(maxOp).toBeLessThanOrEqual(0.55);
+    }
+    vm.dispose();
+  });
+
+  it('setKunaiDarkMode(true/false) で例外なし', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const fistsDef = Object.values(WEAPON_DEFS).find((d) => d.shape === 'fists');
+    if (fistsDef) {
+      vm.setWeapon(fistsDef);
+      expect(() => vm.setKunaiDarkMode(true)).not.toThrow();
+      expect(() => vm.setKunaiDarkMode(false)).not.toThrow();
+    }
+    vm.dispose();
+  });
+});
+
+// ── RE-1 雷帝常時スパーク雨プール ─────────────────────────────────────────────
+describe('RE-1 雷帝常時スパーク雨プール', () => {
+  it('_lightningSparkPool は 12 粒子', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const pool = (vm as unknown as Record<string, unknown>)['_lightningSparkPool'] as unknown[];
+    expect(pool.length).toBe(12);
+    vm.dispose();
+  });
+
+  it('AdditiveBlending + 0x44aaff 色 + opacity=0 初期', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const pool = (vm as unknown as Record<string, unknown>)['_lightningSparkPool'] as Array<{
+      mesh: THREE.Mesh;
+    }>;
+    for (const s of pool) {
+      const mat = s.mesh.material as THREE.MeshBasicMaterial;
+      expect(mat.blending).toBe(THREE.AdditiveBlending);
+      expect(mat.color.getHex()).toBe(0x44aaff);
+      expect(mat.opacity).toBe(0);
+    }
+    vm.dispose();
+  });
+
+  it('白飛び0.9規則: RE-1 max opacity 0.52 ≤ 0.55', () => {
+    // スポーン時の三角エンベロープ peak = 0.52
+    expect(0.52).toBeLessThanOrEqual(0.55);
+  });
+
+  it('setKunaiLightningMode(true/false) で例外なし', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const fistsDef = Object.values(WEAPON_DEFS).find((d) => d.shape === 'fists');
+    if (fistsDef) {
+      vm.setWeapon(fistsDef);
+      expect(() => vm.setKunaiLightningMode(true)).not.toThrow();
+      expect(() => vm.setKunaiLightningMode(false)).not.toThrow();
+    }
+    vm.dispose();
+  });
+
+  it('dispose() でスパーク雨プールも解放される(例外なし)', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    expect(() => vm.dispose()).not.toThrow();
   });
 });

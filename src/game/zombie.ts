@@ -47,16 +47,17 @@ export function isBossRound(r: number): boolean {
 }
 
 /**
- * ボスのHP。r5=3000/r10=7000/r15=14000/r20=26000/以降×1.9毎5ラウンド、上限200000。
+ * ボスのHP。r5=3000/r10=7000/r15=14000/r20=26000/以降×1.5毎5ラウンド、上限80000。
+ * R35付近で上限に到達。実用DPSで2〜4分で撃破できる水準(序盤 r5/r10 は従来値を維持)。
  */
 export function zombieBossHp(r: number): number {
   const tier = Math.floor(r / 5);
   if (tier <= 0) return 3000;
   const base = [0, 3000, 7000, 14000, 26000] as const;
   if (tier <= 4) return base[tier] ?? 3000;
-  // r20超: 26000 × 1.9^(tier-4)
+  // r20超: 26000 × 1.5^(tier-4)、上限80000
   const steps = tier - 4;
-  return Math.min(200000, Math.round(26000 * Math.pow(1.9, steps)));
+  return Math.min(80000, Math.round(26000 * Math.pow(1.5, steps)));
 }
 
 /**

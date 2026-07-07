@@ -260,3 +260,832 @@ describe('QuadFeed と Collateral', () => {
     expect(ids(out)).toContain('collateral');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════
+// 新メダル180種テスト
+// ══════════════════════════════════════════════════════════════════
+
+describe('A: 移動系メダル', () => {
+  it('blinkAgeMs<=800のキルでblink-kill、2連でblink-double', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ blinkAgeMs: 300 }), out);
+    expect(ids(out)).toContain('blink-kill');
+    t.onKill(mk({ blinkAgeMs: 200 }), out);
+    expect(ids(out)).toContain('blink-double');
+  });
+
+  it('blinkAgeMs>800ではblink-killが出ない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ blinkAgeMs: 900 }), out);
+    expect(ids(out)).not.toContain('blink-kill');
+  });
+
+  it('ブリンク3連でblink-triple', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk({ blinkAgeMs: 200 }), out);
+    expect(ids(out)).toContain('blink-triple');
+  });
+
+  it('スライド中2連続でslide-double', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ sliding: true }), out);
+    t.onKill(mk({ sliding: true }), out);
+    expect(ids(out)).toContain('slide-double');
+    expect(ids(out)).not.toContain('slide-triple');
+  });
+
+  it('スライド中3連続でslide-triple', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk({ sliding: true }), out);
+    expect(ids(out)).toContain('slide-triple');
+  });
+
+  it('空中2連でair-double', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ grounded: false }), out);
+    t.onKill(mk({ grounded: false }), out);
+    expect(ids(out)).toContain('air-double');
+  });
+
+  it('空中3連でair-triple', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk({ grounded: false }), out);
+    expect(ids(out)).toContain('air-triple');
+  });
+
+  it('壁走り2連でwall-double', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ wallRunning: true }), out);
+    t.onKill(mk({ wallRunning: true }), out);
+    expect(ids(out)).toContain('wall-double');
+  });
+
+  it('壁走り3連でwall-triple', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk({ wallRunning: true }), out);
+    expect(ids(out)).toContain('wall-triple');
+  });
+
+  it('しゃがみキルでcrouch-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ crouching: true }), out);
+    expect(ids(out)).toContain('crouch-kill');
+  });
+
+  it('スプリントキルでsprint-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ sprinting: true }), out);
+    expect(ids(out)).toContain('sprint-kill');
+  });
+
+  it('RONIN(scopeWeapon+adsProgress<0.5+空中)3連でronin-chain', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      t.onKill(mk({ scopeWeapon: true, adsProgress: 0.3, grounded: false }), out);
+    }
+    expect(ids(out)).toContain('ronin-chain');
+  });
+
+  it('窓切れ後は連続がリセットされslide-doubleが出ない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ sliding: true }), out);
+    t.tick(5); // 窓(4s)超過
+    t.onKill(mk({ sliding: true }), out);
+    expect(ids(out)).not.toContain('slide-double');
+  });
+});
+
+describe('B: 距離メダル', () => {
+  it('1m以内でclose-extreme', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ distM: 0.8 }), out);
+    expect(ids(out)).toContain('close-extreme');
+  });
+
+  it('ARで38m以上でar-longshot-b', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ weaponClass: 'ar', distM: 40 }), out);
+    expect(ids(out)).toContain('ar-longshot-b');
+  });
+
+  it('SMGで26m以上でsmg-longshot-b', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ weaponClass: 'smg', distM: 30 }), out);
+    expect(ids(out)).toContain('smg-longshot-b');
+  });
+
+  it('スナイパー200mでsniper-200m', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ weaponClass: 'sniper', scopeWeapon: true, adsProgress: 1, distM: 250 }), out);
+    expect(ids(out)).toContain('sniper-200m');
+    expect(ids(out)).not.toContain('sniper-400m');
+  });
+
+  it('スナイパー400mでsniper-400m', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ weaponClass: 'sniper', scopeWeapon: true, adsProgress: 1, distM: 450 }), out);
+    expect(ids(out)).toContain('sniper-400m');
+  });
+
+  it('スナイパー999mでsniper-999m', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ weaponClass: 'sniper', scopeWeapon: true, adsProgress: 1, distM: 999 }), out);
+    expect(ids(out)).toContain('sniper-999m');
+  });
+
+  it('QS条件(adsProgress>0.85, adsAgeMs<=350)+200mでqs-200m', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ scopeWeapon: true, adsProgress: 0.9, adsAgeMs: 300, distM: 250 }), out);
+    expect(ids(out)).toContain('qs-200m');
+  });
+
+  it('QS999mでqs-999m', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ scopeWeapon: true, adsProgress: 0.9, adsAgeMs: 300, distM: 999 }), out);
+    expect(ids(out)).toContain('qs-999m');
+  });
+});
+
+describe('C: HS連続 (6秒窓)', () => {
+  it('HS2連でhs-streak-2', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ headshot: true }), out);
+    t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).toContain('hs-streak-2');
+  });
+
+  it('HS5連でhs-streak-5', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).toContain('hs-streak-5');
+  });
+
+  it('6秒超でHSストリークリセット', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ headshot: true }), out);
+    t.tick(7);
+    t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).not.toContain('hs-streak-2');
+  });
+
+  it('非HSキルはHSストリークをリセットしない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ headshot: true }), out);
+    t.onKill(mk({ headshot: false }), out); // 非HS(ストリーク維持)
+    t.onKill(mk({ headshot: true }), out);
+    // 2個目のHS後もストリーク=2のまま → 窓内なのでhs-streak-2
+    expect(ids(out)).toContain('hs-streak-2');
+  });
+});
+
+describe('D: 武器クラスメダル', () => {
+  it('ARキルでar-specialist', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ weaponClass: 'ar' }), out);
+    expect(ids(out)).toContain('ar-specialist');
+  });
+
+  it('ピストル3連でpistol-chain', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk({ weaponClass: 'pistol' }), out);
+    expect(ids(out)).toContain('pistol-chain');
+  });
+
+  it('ピストル5連でpistol-rampage', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) t.onKill(mk({ weaponClass: 'pistol' }), out);
+    expect(ids(out)).toContain('pistol-rampage');
+  });
+
+  it('エキゾチック3連でexotic-rampage', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk({ weaponClass: 'exotic' }), out);
+    expect(ids(out)).toContain('exotic-rampage');
+  });
+
+  it('ピストル連続が非ピストルキルでリセットされる', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ weaponClass: 'pistol' }), out);
+    t.onKill(mk({ weaponClass: 'pistol' }), out);
+    t.onKill(mk({ weaponClass: 'ar' }), out); // 分断
+    t.onKill(mk({ weaponClass: 'pistol' }), out);
+    expect(ids(out)).not.toContain('pistol-chain');
+  });
+
+  it('10クラス全使用でall-class-kills', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    const classes = ['ar','smg','sniper','shotgun','br','lmg','pistol','marksman','launcher','exotic'] as const;
+    for (const cls of classes) t.onKill(mk({ weaponClass: cls }), out);
+    expect(ids(out)).toContain('all-class-kills');
+  });
+
+  it('onCollateralでshotgun-doubleとshotgun-triple', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onCollateral(3, out);
+    expect(ids(out)).toContain('shotgun-double');
+    expect(ids(out)).toContain('shotgun-triple');
+    const out2: MedalEvent[] = [];
+    t.onCollateral(2, out2);
+    expect(ids(out2)).toContain('shotgun-double');
+    expect(ids(out2)).not.toContain('shotgun-triple');
+  });
+});
+
+describe('E: 状況メダル', () => {
+  it('matchKillCount=1でfirst-blood', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ matchKillCount: 1 }), out);
+    expect(ids(out)).toContain('first-blood');
+  });
+
+  it('first-bloodは1回だけ発火', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ matchKillCount: 1 }), out);
+    const out2: MedalEvent[] = [];
+    t.onKill(mk({ matchKillCount: 1 }), out2); // 2回目はfired=true
+    expect(ids(out2)).not.toContain('first-blood');
+  });
+
+  it('matchElapsed<=5でspeed-opener', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ matchElapsed: 3 }), out);
+    expect(ids(out)).toContain('speed-opener');
+  });
+
+  it('matchElapsed>5ではspeed-openerが出ない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ matchElapsed: 6 }), out);
+    expect(ids(out)).not.toContain('speed-opener');
+  });
+
+  it('playerHpRatio<0.2でlow-hp-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ playerHpRatio: 0.15 }), out);
+    expect(ids(out)).toContain('low-hp-kill');
+  });
+
+  it('playerHpRatio<0.1でclutch-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ playerHpRatio: 0.05 }), out);
+    expect(ids(out)).toContain('clutch-kill');
+    // 0.1未満は0.2未満も満たすが、clutchの方が下位なのでlow-hp-killも出るかは実装による
+    // 設計: <0.1はclutch-kill, 0.1-0.2はlow-hp-kill(排他)
+    expect(ids(out)).not.toContain('low-hp-kill');
+  });
+
+  it('magAmmoBeforeKill=1でlast-bullet', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ magAmmoBeforeKill: 1 }), out);
+    expect(ids(out)).toContain('last-bullet');
+  });
+
+  it('botKind=masterでmaster-killとboss-slayer', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ botKind: 'master' }), out);
+    expect(ids(out)).toContain('master-kill');
+    expect(ids(out)).toContain('boss-slayer');
+  });
+
+  it('botKind=tankでtank-killとboss-slayer', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ botKind: 'tank' }), out);
+    expect(ids(out)).toContain('tank-kill');
+    expect(ids(out)).toContain('boss-slayer');
+  });
+
+  it('botKind=droneでdrone-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ botKind: 'drone' }), out);
+    expect(ids(out)).toContain('drone-kill');
+  });
+
+  it('botKind=zombieでzombie-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ botKind: 'zombie' }), out);
+    expect(ids(out)).toContain('zombie-kill');
+  });
+
+  it('noScope+HSでno-scope-hs', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ scopeWeapon: true, adsProgress: 0.3, headshot: true }), out);
+    expect(ids(out)).toContain('no-scope-hs');
+  });
+
+  it('QS+HSでqs-hs', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ scopeWeapon: true, adsProgress: 0.9, adsAgeMs: 300, headshot: true }), out);
+    expect(ids(out)).toContain('qs-hs');
+  });
+
+  it('onPlayerDamaged後はnoDmgKillStreakリセット→no-damage-5が出ない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 4; i += 1) t.onKill(mk(), out);
+    t.onPlayerDamaged();
+    t.onKill(mk(), out);
+    expect(ids(out)).not.toContain('no-damage-5');
+  });
+
+  it('5連無被弾でno-damage-5', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) t.onKill(mk(), out);
+    expect(ids(out)).toContain('no-damage-5');
+  });
+
+  it('同じ敵に3回やられるとnextkillでnemesis-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onPlayerDeath(42);
+    t.onPlayerDeath(42);
+    t.onPlayerDeath(42);
+    // nemesisUid = 42
+    t.onKill(mk({ victimId: 42 }), out);
+    expect(ids(out)).toContain('nemesis-kill');
+    expect(ids(out)).toContain('nemesis-revenge');
+  });
+
+  it('宿敵討ち後はnextkillでnemesis-killが出ない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onPlayerDeath(42);
+    t.onPlayerDeath(42);
+    t.onPlayerDeath(42);
+    t.onKill(mk({ victimId: 42 }), out);
+    const out2: MedalEvent[] = [];
+    t.onKill(mk({ victimId: 42 }), out2);
+    expect(ids(out2)).not.toContain('nemesis-kill');
+  });
+});
+
+describe('F: フィード拡張', () => {
+  it('5連フィードでpenta-feed', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) { t.onKill(mk(), out); t.tick(0.4); }
+    expect(ids(out)).toContain('penta-feed');
+  });
+
+  it('他者キルで分断するとpenta-feedが出ない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk(), out);
+    t.onFeed(false); // 分断
+    for (let i = 0; i < 2; i += 1) t.onKill(mk(), out);
+    expect(ids(out)).not.toContain('penta-feed');
+  });
+
+  it('HS2連フィードでhs-feed-2', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ headshot: true }), out);
+    t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).toContain('hs-feed-2');
+  });
+
+  it('非HSキルでhs-feedストリークリセット', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ headshot: true }), out);
+    t.onKill(mk({ headshot: false }), out); // 分断
+    t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).not.toContain('hs-feed-2');
+  });
+
+  it('HS3連フィードでhs-feed-3', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).toContain('hs-feed-3');
+  });
+});
+
+describe('G: ストリーク延長', () => {
+  it('streak=35でstreak-35', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ streak: 35 }), out);
+    expect(ids(out)).toContain('streak-35');
+  });
+
+  it('streak=100でstreak-100', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ streak: 100 }), out);
+    expect(ids(out)).toContain('streak-100');
+  });
+
+  it('streak=50でstreak-50', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ streak: 50 }), out);
+    expect(ids(out)).toContain('streak-50');
+  });
+});
+
+describe('H: マガジンメダル', () => {
+  it('1マガジン2キルでmag-2', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk(), out);
+    t.onKill(mk(), out);
+    expect(ids(out)).toContain('mag-2');
+  });
+
+  it('1マガジン3キルでmag-3', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk(), out);
+    expect(ids(out)).toContain('mag-3');
+  });
+
+  it('onReloadDoneでmagKillSeqがリセットされる', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk(), out);
+    t.onKill(mk(), out);
+    t.onReloadDone();
+    t.onKill(mk(), out);
+    // リロード後は1キル目 → mag-3にはならない
+    expect(ids(out)).not.toContain('mag-3');
+  });
+
+  it('3連続HSマガジンでmag-all-hs', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).toContain('mag-all-hs');
+  });
+
+  it('非HSが混在するとmag-all-hsが出ない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ headshot: true }), out);
+    t.onKill(mk({ headshot: false }), out);
+    t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).not.toContain('mag-all-hs');
+  });
+
+  it('1マガジン5キルでmag-5', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) t.onKill(mk(), out);
+    expect(ids(out)).toContain('mag-5');
+  });
+});
+
+describe('I: スライド/空中特化', () => {
+  it('スライド中HSでslide-hs', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ sliding: true, headshot: true }), out);
+    expect(ids(out)).toContain('slide-hs');
+  });
+
+  it('空中スナイパーキルでair-snipe', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ grounded: false, weaponClass: 'sniper', scopeWeapon: true, adsProgress: 1 }), out);
+    expect(ids(out)).toContain('air-snipe');
+  });
+
+  it('スライド中QSでslide-qs', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ sliding: true, scopeWeapon: true, adsProgress: 0.9, adsAgeMs: 300 }), out);
+    expect(ids(out)).toContain('slide-qs');
+  });
+
+  it('空中中QSでair-qs', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ grounded: false, scopeWeapon: true, adsProgress: 0.9, adsAgeMs: 300 }), out);
+    expect(ids(out)).toContain('air-qs');
+  });
+
+  it('空中でグラビティスラムでair-slam-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ grounded: false, weaponName: 'グラビティスラム' }), out);
+    expect(ids(out)).toContain('air-slam-kill');
+  });
+});
+
+describe('J: 特殊モードメダル', () => {
+  it('darkEmperorActive=trueでdark-emperor-killとde-activation-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ darkEmperorActive: true }), out);
+    expect(ids(out)).toContain('dark-emperor-kill');
+    expect(ids(out)).toContain('de-activation-kill');
+  });
+
+  it('黒帝5連でdark-emperor-5', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) t.onKill(mk({ darkEmperorActive: true }), out);
+    expect(ids(out)).toContain('dark-emperor-5');
+  });
+
+  it('onPlayerDamaged後は黒帝無被弾メダルが出ない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) t.onKill(mk({ darkEmperorActive: true }), out);
+    t.onPlayerDamaged();
+    for (let i = 0; i < 5; i += 1) t.onKill(mk({ darkEmperorActive: true }), out);
+    expect(ids(out)).not.toContain('dark-emperor-nodmg');
+  });
+
+  it('raiteiActive=trueでraitei-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ raiteiActive: true }), out);
+    expect(ids(out)).toContain('raitei-kill');
+    expect(ids(out)).toContain('raitei-activation-kill');
+  });
+
+  it('kokuraiteiActive=trueでkokurai-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ kokuraiteiActive: true }), out);
+    expect(ids(out)).toContain('kokurai-kill');
+    expect(ids(out)).toContain('kokurai-activation-kill');
+  });
+
+  it('hellMode=trueでhell-kill', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ hellMode: true }), out);
+    expect(ids(out)).toContain('hell-kill');
+  });
+
+  it('超鬼畜5連でhell-5', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) t.onKill(mk({ hellMode: true }), out);
+    expect(ids(out)).toContain('hell-5');
+  });
+
+  it('ultActive=trueでult-kill(overdrive含む)', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ ultActive: true }), out);
+    expect(ids(out)).toContain('ult-kill');
+    expect(ids(out)).toContain('overdrive'); // 既存
+  });
+
+  it('ウルト5連でult-5', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) t.onKill(mk({ ultActive: true }), out);
+    expect(ids(out)).toContain('ult-5');
+  });
+
+  it('chain>=50かつhellMode=trueでchain-god', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    // 50連ローリング窓でchain=50まで積む
+    for (let i = 0; i < 50; i += 1) { t.onKill(mk({ hellMode: true }), out); t.tick(0.1); }
+    expect(ids(out)).toContain('chain-god');
+  });
+});
+
+describe('K: 超難度メダル', () => {
+  it('1ライフ5連無被弾でperfect-life-5', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) t.onKill(mk({ streak: i + 1 }), out);
+    expect(ids(out)).toContain('perfect-life-5');
+  });
+
+  it('onPlayerDamaged後はperfect-life-5が出ない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onPlayerDamaged();
+    for (let i = 0; i < 5; i += 1) t.onKill(mk(), out);
+    expect(ids(out)).not.toContain('perfect-life-5');
+  });
+
+  it('1ライフ10連無被弾でperfect-life-10', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 10; i += 1) t.onKill(mk(), out);
+    expect(ids(out)).toContain('perfect-life-10');
+  });
+
+  it('1ライフ5連全HSでall-hs-life-5', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).toContain('all-hs-life-5');
+  });
+
+  it('1ライフで非HSが混じるとall-hs-life-5が出ない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ headshot: false }), out); // 最初に非HS
+    for (let i = 0; i < 5; i += 1) t.onKill(mk({ headshot: true }), out);
+    expect(ids(out)).not.toContain('all-hs-life-5');
+  });
+
+  it('botKind=masterでboss-slayer', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ botKind: 'master' }), out);
+    expect(ids(out)).toContain('boss-slayer');
+  });
+
+  it('onPlayerDeathで1ライフカウンタリセット', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 4; i += 1) t.onKill(mk(), out);
+    t.onPlayerDeath(null);
+    t.onKill(mk(), out); // 1ライフ1キル→perfect-life-5にはならない
+    expect(ids(out)).not.toContain('perfect-life-5');
+  });
+
+  it('matchKillCount=50でexecutioner-50', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk({ matchKillCount: 50 }), out);
+    expect(ids(out)).toContain('executioner-50');
+  });
+});
+
+describe('L: チェーン拡張', () => {
+  it('chain=10でchain-10', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 10; i += 1) { t.onKill(mk(), out); t.tick(0.1); }
+    expect(ids(out)).toContain('chain-10');
+  });
+
+  it('chain=15でchain-15', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 15; i += 1) { t.onKill(mk(), out); t.tick(0.1); }
+    expect(ids(out)).toContain('chain-15');
+  });
+
+  it('chain=20でchain-20', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 20; i += 1) { t.onKill(mk(), out); t.tick(0.1); }
+    expect(ids(out)).toContain('chain-20');
+  });
+
+  it('chain=50でchain-50', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 50; i += 1) { t.onKill(mk(), out); t.tick(0.05); }
+    expect(ids(out)).toContain('chain-50');
+  });
+
+  it('chain-comeback: 窓切れ後1秒以内の次キルで発火', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk(), out); // chain=1
+    t.tick(6); // 窓切れ → lastChainExpiredTs 設定
+    out.length = 0;
+    t.onKill(mk(), out); // chain=1 再開, justExpired
+    expect(ids(out)).toContain('chain-comeback');
+  });
+
+  it('chain-comeback: 窓切れから1秒超では発火しない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk(), out);
+    t.tick(6);
+    t.tick(2); // さらに2秒経過
+    out.length = 0;
+    t.onKill(mk(), out);
+    expect(ids(out)).not.toContain('chain-comeback');
+  });
+});
+
+describe('コールバック', () => {
+  it('onReloadDoneでmagKillSeqがリセット', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.onKill(mk(), out);
+    t.onKill(mk(), out);
+    t.onReloadDone();
+    // リセット後: magKillSeq=0
+    const out2: MedalEvent[] = [];
+    t.onKill(mk(), out2);
+    t.onKill(mk(), out2);
+    // 2キル後mag-2が出るはず(リセット後の新マガジン)
+    expect(ids(out2)).toContain('mag-2');
+  });
+
+  it('onBlinkでblinkKillExpireが設定される', () => {
+    const t = new MedalTracker(new Set());
+    t.onBlink(); // blinkKillExpire = now + 0.8
+    const out: MedalEvent[] = [];
+    // blinkAgeMs未設定なのでblink-killは出ないが、クラッシュしない
+    t.onKill(mk(), out);
+    // エラーなし確認
+    expect(out).toBeDefined();
+  });
+
+  it('onPlayerDamagedでnoDmgKillStreakがリセット(4キル止まりではno-damage-5不発)', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 3; i += 1) t.onKill(mk(), out);
+    t.onPlayerDamaged();
+    // noDmgKillStreak=0に戻る → 4キルではまだ5に届かない
+    const out2: MedalEvent[] = [];
+    for (let i = 0; i < 4; i += 1) t.onKill(mk(), out2);
+    expect(ids(out2)).not.toContain('no-damage-5');
+  });
+
+  it('onZombieRoundEndで10ラウンド達成時にsurvivor-10', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      t.onZombieRoundStart();
+      t.onZombieRoundEnd(out);
+    }
+    expect(ids(out)).toContain('survivor-10');
+  });
+
+  it('onZombieRoundEndで20ラウンド達成時にsurvivor-20', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      t.onZombieRoundStart();
+      t.onZombieRoundEnd(out);
+    }
+    expect(ids(out)).toContain('survivor-20');
+  });
+
+  it('5ウェーブ全て無被弾でwave-clean-5', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      t.onZombieRoundStart();
+      // 被弾なし
+      t.onZombieRoundEnd(out);
+    }
+    expect(ids(out)).toContain('wave-clean-5');
+  });
+
+  it('波中に被弾するとwave-clean-5カウントが積まれない', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      t.onZombieRoundStart();
+      t.onZombieRoundEnd(out);
+    }
+    // 5波目は被弾あり
+    t.onZombieRoundStart();
+    t.onPlayerDamaged();
+    t.onZombieRoundEnd(out);
+    expect(ids(out)).not.toContain('wave-clean-5');
+  });
+});

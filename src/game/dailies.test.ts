@@ -103,37 +103,37 @@ describe('todayDateSeed / dateStringFromSeed', () => {
 // ── チャレンジプール構造 ─────────────────────────────────────────────
 
 describe('CHALLENGE_POOL 構造', () => {
-  it('POOL_EASY は 5 種類', () => {
-    expect(POOL_EASY).toHaveLength(5);
+  it('POOL_EASY は 6 種類(ガンゲーム勝利追加)', () => {
+    expect(POOL_EASY).toHaveLength(6);
   });
 
-  it('POOL_MEDIUM は 5 種類', () => {
-    expect(POOL_MEDIUM).toHaveLength(5);
+  it('POOL_MEDIUM は 7 種類(特殊兵装キル/KCタグ追加)', () => {
+    expect(POOL_MEDIUM).toHaveLength(7);
   });
 
-  it('POOL_HARD は 5 種類', () => {
-    expect(POOL_HARD).toHaveLength(5);
+  it('POOL_HARD は 7 種類(ハードポイント/ウルトキル追加)', () => {
+    expect(POOL_HARD).toHaveLength(7);
   });
 
-  it('ALL_POOLS は 15 種類', () => {
-    expect(ALL_POOLS).toHaveLength(15);
+  it('ALL_POOLS は 20 種類', () => {
+    expect(ALL_POOLS).toHaveLength(20);
   });
 
-  it('POOL_EASY の rewardXp はすべて 2000', () => {
+  it('POOL_EASY の rewardXp はすべて 20000', () => {
     for (const ch of POOL_EASY) {
-      expect(ch.rewardXp).toBe(2000);
+      expect(ch.rewardXp).toBe(20000);
     }
   });
 
-  it('POOL_MEDIUM の rewardXp はすべて 5000', () => {
+  it('POOL_MEDIUM の rewardXp はすべて 50000', () => {
     for (const ch of POOL_MEDIUM) {
-      expect(ch.rewardXp).toBe(5000);
+      expect(ch.rewardXp).toBe(50000);
     }
   });
 
-  it('POOL_HARD の rewardXp はすべて 10000', () => {
+  it('POOL_HARD の rewardXp はすべて 100000', () => {
     for (const ch of POOL_HARD) {
-      expect(ch.rewardXp).toBe(10000);
+      expect(ch.rewardXp).toBe(100000);
     }
   });
 
@@ -472,8 +472,8 @@ describe('applyDailies', () => {
     );
     if (medium.id === 'daily-zombie-20') {
       // zombie モードのみ進捗が入る
-      expect(zombieEntries.some((e) => e.xp === 5000)).toBe(true);
-      expect(tdmEntries.some((e) => e.xp === 5000)).toBe(false);
+      expect(zombieEntries.some((e) => e.xp === 50000)).toBe(true);
+      expect(tdmEntries.some((e) => e.xp === 50000)).toBe(false);
     }
   });
 
@@ -489,7 +489,7 @@ describe('applyDailies', () => {
     expect(state.claimed[0]).toBe(false);
   });
 
-  it('返り値の xp は xpMul 対象外の固定値(EASY=2000/MED=5000/HARD=10000)', () => {
+  it('返り値の xp は xpMul 対象外の固定値(EASY=20000/MED=50000/HARD=100000)', () => {
     // 大量に達成できる summary でチャレンジをクリア
     const bigSummary = emptySummary({
       won: true,
@@ -510,7 +510,7 @@ describe('applyDailies', () => {
     const state = makeState();
     const entries = applyDailies(state, bigSummary, 'zombie', '20260706', SEED);
     for (const e of entries) {
-      expect([2000, 5000, 10000]).toContain(e.xp);
+      expect([20000, 50000, 100000]).toContain(e.xp);
     }
   });
 });
