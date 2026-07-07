@@ -356,11 +356,11 @@ const FK_TICK_INT     = 3;   // 60 Hz の何 tick おきに記録(→ 20 Hz)
 const FK_WIN_PRE      = 3.5; // キル前の窓 (s) — 3.5s of pre-kill context
 const FK_WIN_POST     = 1.2; // キル後の窓 (s) — 1.2s for death animation
 const FK_MAX_SHOTS    = 48;
-// player slot : eyeX,eyeY,eyeZ, yaw, pitch, alive = 6 floats
-const FK_P            = 6;
+// player slot : eyeX,eyeY,eyeZ, yaw, pitch, alive, adsRatio, adsFov = 8 floats
+const FK_P            = 8;
 // bot slot    : posX,posY,posZ, headY, yaw, alive  = 6 floats
 const FK_B            = 6;
-const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 198
+const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 224
 // shot slot   : from(3) + to(3) + color(1) + time(1) = 8 floats
 const FK_S            = 8;
 // キルカム再生中に死亡演出トランスフォームを巻き戻す/再現するための読み替え型。
@@ -1212,18 +1212,24 @@ export class Match {
   private readonly fkShotBuf = new Float32Array(FK_MAX_SHOTS * FK_S);
   private fkShotHead = 0;
   private fkShotFill = 0;
-  private fkKillerIsPlayer = false;
-  private fkKillerBotIdx   = -1;
-  private fkVictimBotIdx   = -1; // キルカムの被害者BOT index(-1=プレイヤーが被害者)
-  private fkKillElapsed    = -Infinity;
-  private fkPlaying        = false;
-  fkFlash                  = 0;
-  private fkCursor         = 0; // 再生中のゲーム時刻カーソル(startFinalKillcam で窓先頭へ初期化)
-  private fkWinKill        = 0;
-  private fkWinEnd         = 0;
-  private fkPrevCursor     = -Infinity;
-  private readonly _fkEul  = new THREE.Euler(0, 0, 0, 'YXZ');
-  private readonly _fkQ    = new THREE.Quaternion();
+  private fkKillerIsPlayer    = false;
+  private fkKillerBotIdx      = -1;
+  private fkVictimBotIdx      = -1; // キルカムの被害者BOT index(-1=プレイヤーが被害者)
+  private fkKillElapsed       = -Infinity;
+  private fkPlaying           = false;
+  fkFlash                     = 0;
+  private fkCursor            = 0; // 再生中のゲーム時刻カーソル(startFinalKillcam で窓先頭へ初期化)
+  private fkWinKill           = 0;
+  private fkWinEnd            = 0;
+  private fkPrevCursor        = -Infinity;
+  private readonly _fkEul     = new THREE.Euler(0, 0, 0, 'YXZ');
+  private readonly _fkQ       = new THREE.Quaternion();
+  /** キル時に使っていた武器がスコープ持ちか(再生中のスコープオーバーレイ表示用) */
+  private fkKillerScopedWeapon = false;
+  /** 再生フレームから補間したプレイヤーADS率(0..1) — main.ts が HUD へ転送 */
+  fkLiveAdsRatio               = 0;
+  /** 再生フレームから補間した実効FOV(deg) — ADS縮小済み */
+  fkLiveAdsFov                 = 62;
 
   constructor(
     readonly config: MatchConfig,
@@ -5037,10 +5043,11 @@ export class Match {
       this.haptic(150, 0.5, 0.75); // キル確定の手応え
       // ファイナルキルカム: プレイヤーのキルを記録
       if (this.config.mode !== 'zombie') {
-        this.fkKillerIsPlayer = true;
-        this.fkKillerBotIdx   = -1;
-        this.fkVictimBotIdx   = this.bots.indexOf(bot);
-        this.fkKillElapsed    = this.elapsed;
+        this.fkKillerIsPlayer        = true;
+        this.fkKillerBotIdx          = -1;
+        this.fkVictimBotIdx          = this.bots.indexOf(bot);
+        this.fkKillElapsed           = this.elapsed;
+        this.fkKillerScopedWeapon    = this.activeWeapon.def.scope === true;
       }
       this.killSurgeEnv = 1; // R20 rank4: キル確定サージ(PostFXの彩度/コントラスト+白エッジ)を点火
       this.scoreboardDirty = true; // ★6 キル確定は即時反映
@@ -8981,6 +8988,8 @@ export class Match {
     this.fkBuf[off + 3] = this.player.yaw;
     this.fkBuf[off + 4] = this.player.pitch;
     this.fkBuf[off + 5] = this.player.alive ? 1 : 0;
+    this.fkBuf[off + 6] = this.activeWeapon.adsProgress;    // ADS率(0..1)
+    this.fkBuf[off + 7] = this.camera.fov;                  // 実効FOV(ADS縮小を含む)
     const nb = Math.min(this.bots.length, FK_MAX_BOTS);
     this.fkBotCnt[h] = nb;
     for (let i = 0; i < nb; i++) {
@@ -9061,9 +9070,14 @@ export class Match {
     if (oldest > killT - FK_WIN_PRE + 0.5) return false;
     this.fkWinKill    = killT;
     this.fkWinEnd     = killT + FK_WIN_POST;
-    this.fkCursor     = killT - FK_WIN_PRE; // ゲーム時刻カーソルを窓先頭(kill-2.2s)へ初期化
+    // カーソルはバッファの実際の先頭(oldest)と窓先頭の大きい方から開始する。
+    // oldest > killT-FK_WIN_PRE のとき先頭フレームが存在しないため、
+    // fkFindFrames が iA<0 を返して再生が即終了するバグ(kill瞬間カット)の根治。
+    this.fkCursor     = Math.max(oldest, killT - FK_WIN_PRE);
     this.fkPrevCursor = -Infinity;
     this.fkFlash      = 0;
+    this.fkLiveAdsRatio = 0;
+    this.fkLiveAdsFov   = 62;
     this.fkPlaying    = true;
     return true;
   }
@@ -9101,7 +9115,10 @@ export class Match {
       return true;
     }
     const [iA, iB, t] = this.fkFindFrames(cursor);
-    if (iA < 0) { this.fkPlaying = false; return true; }
+    // iA<0 = カーソルがまだ最初の記録フレーム前(バッファ先頭に到達していない)。
+    // 古い実装では即終了していた(kill瞬間カットの旧バグ)が、startFinalKillcam の
+    // cursor=max(oldest,…) クランプで通常は発生しない。防衛的に継続する。
+    if (iA < 0) return false;
     this.fkApplyFrame(iA, iB, t);
     this.fkSetCamera(iA, iB, t);
     // キル瞬間の白フラッシュ(reduceMotion 非依存 — HUD 側で CSS ゲート済み)
@@ -9269,7 +9286,15 @@ export class Match {
       if (yd < -Math.PI) yd += Math.PI * 2;
       yaw   = ya + yd * t;
       pitch = this.fkBuf[offA + 4]! + (this.fkBuf[offB + 4]! - this.fkBuf[offA + 4]!) * t;
+
+      // ADS率とFOVを補間して公開フィールドへ書き込む(HUD のスコープオーバーレイ制御用)。
+      // off+6 = adsRatio, off+7 = adsFov (fkRecordFrame で記録)
+      this.fkLiveAdsRatio = this.fkBuf[offA + 6]! + (this.fkBuf[offB + 6]! - this.fkBuf[offA + 6]!) * t;
+      this.fkLiveAdsFov   = this.fkBuf[offA + 7]! + (this.fkBuf[offB + 7]! - this.fkBuf[offA + 7]!) * t;
     } else {
+      // ボット視点ではスコープ非適用
+      this.fkLiveAdsRatio = 0;
+      this.fkLiveAdsFov   = 62;
       const ki  = this.fkKillerBotIdx;
       const nbA = this.fkBotCnt[iA]!;
       const nbB = this.fkBotCnt[iB]!;
@@ -9290,11 +9315,35 @@ export class Match {
     this._fkEul.set(pitch, yaw, 0);
     this._fkQ.setFromEuler(this._fkEul);
     this.camera.quaternion.copy(this._fkQ);
-    const tgtFov = 62;
-    if (Math.abs(this.camera.fov - tgtFov) > 0.1) {
+
+    // FOV: ADS中ならバッファの実効FOV(スコープ縮小済み)を使う。非ADS時は62へ収束。
+    // スコープ時は即セット(フェード待ちなし)、非ADS時は従来のスムーズ収束を維持。
+    const tgtFov = this.fkKillerIsPlayer && this.fkLiveAdsRatio > 0.5
+      ? this.fkLiveAdsFov
+      : 62;
+    if (this.fkKillerIsPlayer && this.fkLiveAdsRatio > 0.5) {
+      // ADS中は記録値をそのまま適用(補間済み)
+      if (Math.abs(this.camera.fov - tgtFov) > 0.01) {
+        this.camera.fov = tgtFov;
+        this.camera.updateProjectionMatrix();
+      }
+    } else if (Math.abs(this.camera.fov - tgtFov) > 0.1) {
       this.camera.fov += (tgtFov - this.camera.fov) * Math.min(1, 0.08);
       this.camera.updateProjectionMatrix();
     }
+  }
+
+  /**
+   * ファイナルキルカム再生中のスコープ状態を返す。
+   * main.ts が毎フレーム呼んで hud.updateFinalKillcam に渡す。
+   * fkKillerIsPlayer でない場合は常に {adsRatio:0, isScope:false, adsFov:62}。
+   */
+  get fkScopeInfo(): { adsRatio: number; isScope: boolean; adsFov: number } {
+    return {
+      adsRatio: this.fkLiveAdsRatio,
+      isScope:  this.fkKillerScopedWeapon && this.fkKillerIsPlayer,
+      adsFov:   this.fkLiveAdsFov,
+    };
   }
 
   private fkReplayShots(prevCursor: number, cursor: number): void {

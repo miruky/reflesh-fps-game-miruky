@@ -416,7 +416,8 @@ const loop = new GameLoop(
           input.wasPressed('jump') ||
           input.consumePausePressed();
         const done = match.advanceFinalKillcam(dt) || skipPressed;
-        hud.updateFinalKillcam(match.fkFlash);
+        const scope = match.fkScopeInfo;
+        hud.updateFinalKillcam(match.fkFlash, scope.adsRatio, scope.isScope);
         if (done) {
           hud.hideFinalKillcam();
           showResult();

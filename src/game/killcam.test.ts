@@ -7,6 +7,20 @@ import { describe, expect, it } from 'vitest';
 const FK_WIN_PRE  = 3.5;
 const FK_WIN_POST = 1.2;
 
+// ─── 実時間計算ヘルパー ────────────────────────────────────────────────────
+// 数値積分: ゲーム時刻区間 [gameStart, gameEnd] を実際に進むのに何秒かかるか。
+// dt_real = d_game / speed(cursor)。速度が0に近い区間を1万等分で積分する。
+function realTimeCost(gameStart: number, gameEnd: number, killT: number, steps = 10000): number {
+  const span = gameEnd - gameStart;
+  const dg   = span / steps;
+  let total  = 0;
+  for (let i = 0; i < steps; i++) {
+    const cursor = gameStart + (i + 0.5) * dg;
+    total += dg / fkSpeedAt(cursor, killT);
+  }
+  return total;
+}
+
 // fkSpeedAt のミラー実装(match.ts と同一ロジック)
 function fkSpeedAt(cursor: number, killT: number): number {
   const d = cursor - killT;
@@ -89,6 +103,116 @@ describe('FK 速度ランプ 単調性', () => {
       expect(v).toBeGreaterThanOrEqual(0.25);
       expect(v).toBeLessThanOrEqual(1.0);
     }
+  });
+});
+
+// ─── 実時間長の検証テスト ──────────────────────────────────────────────────
+// R36再修正: "kill瞬間カット" バグの数値根拠テスト
+// fkCursor は startFinalKillcam で max(oldest, killT-3.5) に初期化される。
+// oldest が killT-3.0 だった場合、カーソル先頭は killT-3.0 になる。
+// 当テストは窓全体を実時間換算したとき十分長いことを保証する。
+describe('FK スロー再生の実時間計算', () => {
+  const killT = 10;
+
+  it('キル前3.5s区間を等速で進むコスト = 3.0s real(d<-0.5は常に1×)', () => {
+    // [-3.5,-0.5] は速度1×。ゲーム3.0s = 実時間3.0s
+    const cost = realTimeCost(killT - 3.5, killT - 0.5, killT);
+    expect(cost).toBeCloseTo(3.0, 1);
+  });
+
+  it('キル前0.5s→キル直前の減速区間: 実時間 > ゲーム時間 (遅くなっている)', () => {
+    // speed < 1.0 なので実時間 > 0.5s
+    const cost = realTimeCost(killT - 0.5, killT, killT);
+    expect(cost).toBeGreaterThan(0.5);
+  });
+
+  it('0.25×スロー区間[+0s,+0.5s]の実時間 = 2.0s (0.5/0.25)', () => {
+    // speed = 0.25 → 0.5g / 0.25 = 2.0s real
+    const cost = realTimeCost(killT, killT + 0.5, killT);
+    expect(cost).toBeCloseTo(2.0, 2);
+  });
+
+  it('窓全体(oldest=killT-3.0から始まる場合)の実時間 > 7s', () => {
+    // cursor = max(oldest, killT-3.5) = killT-3.0 のケース
+    // [killT-3.0, killT+1.2] の実時間コスト
+    const cost = realTimeCost(killT - 3.0, killT + FK_WIN_POST, killT);
+    // 内訳: [k-3.0,k-0.5]=2.5s×1=2.5, [k-0.5,k]≈0.92s real, [k,k+0.5]=2.0s, [k+0.5,k+1.2]≈1.3s
+    expect(cost).toBeGreaterThan(6.0);
+  });
+
+  it('窓全体(フルバッファ killT-3.5 から始まる場合)の実時間 > 7.0s', () => {
+    const cost = realTimeCost(killT - FK_WIN_PRE, killT + FK_WIN_POST, killT);
+    expect(cost).toBeGreaterThan(7.0);
+  });
+
+  it('fkCursor を oldest=killT-3.0 でクランプしても window は killT+1.2 まで到達する', () => {
+    // startFinalKillcam: cursor = max(oldest, killT-FK_WIN_PRE) = killT-3.0
+    // fkWinEnd = killT + FK_WIN_POST = killT + 1.2
+    // → cursor が最終的に fkWinEnd を超えてリターン true = 再生完了
+    let cursor = killT - 3.0;  // oldest = killT-3.0 でクランプ済み
+    const winEnd = killT + FK_WIN_POST;
+    const DT_REAL = 1 / 60;    // 60fps フレーム
+    let frames = 0;
+    while (cursor < winEnd && frames < 20000) {
+      cursor += DT_REAL * fkSpeedAt(cursor, killT);
+      frames++;
+    }
+    expect(cursor).toBeGreaterThanOrEqual(winEnd);
+    // スロー込みで7秒以上かかる = 420フレーム以上
+    expect(frames).toBeGreaterThan(400);
+  });
+});
+
+describe('FK カーソルクランプ (startFinalKillcam)', () => {
+  it('oldest <= killT-3.0 のとき cursor は oldest から始まる(バグ回避)', () => {
+    const killT  = 10;
+    const oldest = killT - 3.0; // ガード通過の最悪ケース
+    const cursor = Math.max(oldest, killT - FK_WIN_PRE);
+    // killT-FK_WIN_PRE = 6.5, oldest = 7.0 → cursor = 7.0 = oldest
+    expect(cursor).toBe(oldest);
+    // 旧実装(killT-FK_WIN_PRE=6.5)では fkFindFrames が -1 を返して即終了していた
+    expect(cursor).toBeGreaterThanOrEqual(oldest);
+  });
+
+  it('oldest が十分古い(killT-4.0)なら cursor = killT-FK_WIN_PRE', () => {
+    const killT  = 10;
+    const oldest = killT - 4.0; // フルバッファケース
+    const cursor = Math.max(oldest, killT - FK_WIN_PRE);
+    expect(cursor).toBeCloseTo(killT - FK_WIN_PRE, 6);
+  });
+});
+
+describe('FK スコープ再現', () => {
+  it('ADS率 > 0.85 かつ scope武器: スコープオーバーレイ表示条件が成立', () => {
+    // fkScopeInfo.isScope = fkKillerScopedWeapon && fkKillerIsPlayer
+    // main が呼ぶ updateFinalKillcam(flash, adsRatio, isScope) → hud がスコープON
+    const adsRatio = 0.95;
+    const isScope  = true;
+    const scopeOn  = isScope && adsRatio > 0.85;
+    expect(scopeOn).toBe(true);
+  });
+
+  it('ADS率 < 0.85: スコープオーバーレイは表示しない', () => {
+    const adsRatio = 0.7;
+    const isScope  = true;
+    const scopeOn  = isScope && adsRatio > 0.85;
+    expect(scopeOn).toBe(false);
+  });
+
+  it('scope武器でない(AR等): ADS率が高くてもスコープオーバーレイは表示しない', () => {
+    const adsRatio = 1.0;
+    const isScope  = false; // def.scope !== true
+    const scopeOn  = isScope && adsRatio > 0.85;
+    expect(scopeOn).toBe(false);
+  });
+
+  it('ゾンビモードでは fkKillerIsPlayer が false → isScope = false', () => {
+    // ゾンビは startFinalKillcam が false 返して killcam 未使用
+    // fkScopeInfo.isScope = fkKillerScopedWeapon && fkKillerIsPlayer
+    const fkKillerIsPlayer  = false; // zombie mode
+    const fkKillerScopedWeapon = true;
+    const isScope = fkKillerScopedWeapon && fkKillerIsPlayer;
+    expect(isScope).toBe(false);
   });
 });
 

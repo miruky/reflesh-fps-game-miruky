@@ -1766,14 +1766,50 @@ export class Hud {
     this.fkcRoot.classList.add('fkc-active');
   }
 
-  /** ファイナルキルカム終了: オーバーレイを隠す */
+  /** ファイナルキルカム終了: オーバーレイを隠す。スコープが残っていたら消す */
   hideFinalKillcam(): void {
     this.fkcRoot.classList.remove('fkc-active');
+    // キルカム終了時にスコープオーバーレイを確実に閉じる
+    const scope = this.el['scope'];
+    if (scope) {
+      scope.hidden = true;
+      this.scopeOn = false;
+    }
   }
 
-  /** フラッシュ強度(0..1)を毎フレーム更新する */
-  updateFinalKillcam(flash: number): void {
+  /**
+   * フラッシュ強度(0..1)とスコープ状態を毎フレーム更新する。
+   * adsRatio > 0.85 かつ isScope のときスコープオーバーレイを表示する。
+   * viewmodelは非表示のまま、既存の hud-scope 要素をキルカム中も駆動する。
+   */
+  updateFinalKillcam(flash: number, adsRatio = 0, isScope = false): void {
     this.fkcFlashEl.style.opacity = String(flash > 0.001 ? flash : 0);
+
+    const scope = this.el['scope'];
+    if (!scope) return;
+
+    // スコープオーバーレイ: ADS率>0.85 かつ scope武器でのキルの場合のみ表示
+    const scopeOn = isScope && adsRatio > 0.85;
+    scope.hidden = !scopeOn;
+    if (!scopeOn) {
+      this.scopeOn = false;
+      return;
+    }
+    // 既存の data属性と CSS変数を最小限セット(通常プレイの updateScope と同じ仕組み)
+    const t = Math.min(1, (adsRatio - 0.5) / 0.5);
+    scope.style.opacity = String(t);
+    scope.style.setProperty('--in', String(t));
+    scope.style.setProperty('--conv', String(1 - t));
+    // キルカム中: 息揺れなし・glintなし・steady/engaged クラスなし
+    scope.style.setProperty('--breath', '0');
+    scope.style.setProperty('--swx', '0px');
+    scope.style.setProperty('--swy', '0px');
+    scope.classList.remove('steady', 'engaged');
+    // 初回entry でグリント
+    if (!this.scopeOn) {
+      this.restartAnimation('scopeglint', 'show');
+      this.scopeOn = true;
+    }
   }
 
   private updateZombieShopHud(snap: MatchSnapshot): void {
