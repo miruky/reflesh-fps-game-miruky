@@ -551,6 +551,9 @@ export interface MatchResult {
   teamScores: { mine: number; enemy: number } | null;
   // 進行度(XP・チャレンジ)への入力
   summary: MatchSummary;
+  // R45a: ゾンビモード結果
+  zombieRound?: number;
+  zombiePoints?: number;
 }
 
 export interface MatchSnapshot {
@@ -939,6 +942,22 @@ export class Match {
   private kokuraiBlackInTimer = 0;  // 発動黒転ビネットスパイク残り秒(0.6s→0)
   // A4-F08: 雷帝/黒雷帝中の環境雷鳴ハム(3-6s間隔)
   private raiteiHumNextS = 0;
+
+  // ── R44a/R45a 配線タイマー・状態変数 ──
+  private lastBlinkElapsed = -Infinity;  // ブリンク時刻(this.elapsed秒ベース)
+  private reloadKillBit = false;         // リロード完了後1.5s内フラグ
+  private reloadKillTimer = 0;           // 残り秒
+  private prevMagAmmo = 0;              // 前フレームのマガジン残弾
+  private prevSliding = false;           // スライド立ち下がり検出
+  private prevWallRunning = false;       // 壁走り立ち下がり検出
+  private prevGrounded = true;           // 着地検出用
+  private walkKokuraiTimer = 0;          // 黒雷帝歩行ルーンエミット間隔
+  private raiteiFootprintTimer = 0;      // 雷帝足跡エミット間隔
+  private kokuteiSmantleTimer = 0;       // 黒帝スモークマントル間隔
+  private slideSparksTimer = 0;          // スライドスパーク間隔
+  private wallRunSparksTimer = 0;        // 壁走りスパーク間隔
+  private playerFootstepTimer = 0;       // プレイヤー足音間隔
+  private darkVoidPulseTimer = 0;        // 暗黒チャージパルス間隔
 
   // ── 特殊兵装 溜め攻撃 / Mウルト ──
   private exoticHoldFireTimer = 0;
@@ -1745,6 +1764,7 @@ export class Match {
     // 共有unitBoxに焼くので全障害物が無コストで「平面の豆腐」を脱する
     this.bakeVolumetricAO(unitBox);
     const materials = new Map<string, THREE.MeshStandardMaterial>();
+    const propMerge = new Map<string, THREE.BufferGeometry[]>(); // R41a: prop合流バッファ
     // ghost === true のボックスはコライダーのみ生成し描画をスキップ(不可視境界=開放境界対応)。
     // stage.ts/StageDef 側が ghost フラグを追加する。防御的読み取りで型拡張に依存しない。
     for (const spec of boxes) {
@@ -1803,6 +1823,8 @@ export class Match {
 
       // ── 通常ボックス: 共有マテリアル+共有ジオメトリ ──
       if (!isGhost) {
+        const isProp = (spec as { prop?: boolean }).prop === true;
+        const isShadowCaster = (spec as { shadowCaster?: boolean }).shadowCaster === true;
         const key = `${spec.color}:${spec.emissive}`;
         let material = materials.get(key);
         if (!material) {
@@ -1824,12 +1846,25 @@ export class Match {
           this.applyMacroProp(material);
           materials.set(key, material);
         }
-        const mesh = new THREE.Mesh(unitBox, material);
-        mesh.position.set(spec.x, spec.y, spec.z);
-        mesh.scale.set(spec.w, spec.h, spec.d);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        this.scene.add(mesh);
+        // R41a: prop:true の非破壊ボックスはマージ描画(DC削減)。shadowCaster のみ個別メッシュ。
+        if (isProp && !isShadowCaster) {
+          const geo = unitBox.clone();
+          const m4 = new THREE.Matrix4().compose(
+            new THREE.Vector3(spec.x, spec.y, spec.z),
+            new THREE.Quaternion(),
+            new THREE.Vector3(spec.w, spec.h, spec.d),
+          );
+          geo.applyMatrix4(m4);
+          if (!propMerge.has(key)) propMerge.set(key, []);
+          propMerge.get(key)!.push(geo);
+        } else {
+          const mesh = new THREE.Mesh(unitBox, material);
+          mesh.position.set(spec.x, spec.y, spec.z);
+          mesh.scale.set(spec.w, spec.h, spec.d);
+          mesh.castShadow = !isProp || isShadowCaster; // R41a: 通常boxはcastShadow=true, prop非shadowCasterはfalse
+          mesh.receiveShadow = true;
+          this.scene.add(mesh);
+        }
         if (!isDecor) {
           this.minimapBoxData.push({ x: spec.x, z: spec.z, w: spec.w, d: spec.d });
         }
@@ -1845,6 +1880,19 @@ export class Match {
       );
       // ghost 壁は 'boundary' タグ: KCC/ブリンクは物理で止まるが弾/斬撃/視線は素通りする
       this.tags.set(collider.handle, isGhost ? { kind: 'boundary' } : { kind: 'world' });
+    }
+
+    // R41a: prop合流バッファをマージしてシーンへ追加(色キーごとに1メッシュ)
+    for (const [key, parts] of propMerge) {
+      if (parts.length === 0) continue;
+      const merged = mergeGeometries(parts, false);
+      if (!merged) continue;
+      const mat = materials.get(key);
+      if (!mat) { merged.dispose(); continue; }
+      const mergedPropMesh = new THREE.Mesh(merged, mat);
+      mergedPropMesh.castShadow = false;
+      mergedPropMesh.receiveShadow = true;
+      this.scene.add(mergedPropMesh);
     }
 
     // ghost ボックスはビジュアル装飾・アトモスフィア・ミニマップに含めない(描画なし)
@@ -2947,6 +2995,11 @@ export class Match {
     }
     this.meleeCooldown = Math.max(0, this.meleeCooldown - dt);
     this.whiteout = Math.max(0, this.whiteout - dt / 3.2);
+    // R45a: リロードキルビット減衰
+    if (this.reloadKillTimer > 0) {
+      this.reloadKillTimer = Math.max(0, this.reloadKillTimer - dt);
+      if (this.reloadKillTimer <= 0) this.reloadKillBit = false;
+    }
 
     // 瀕死(HP25%未満)で心音が鳴り、HPが低いほど速くなる
     const hpRatio = this.player.hp / this.player.maxHp;
@@ -3000,8 +3053,72 @@ export class Match {
     if (this.player.landImpact > 6) {
       this.addShake(Math.min(0.5, this.player.landImpact * 0.03));
       this.viewModel.applyLandBob(Math.min(1, this.player.landImpact / 18));
+      // R44a: 着地衝撃エフェクト
+      if (!this.killcamCamActive) {
+        this.effects.landingShockwave(
+          new THREE.Vector3(this.player.position.x, this.player.position.y - PLAYER_FEET_OFFSET, this.player.position.z),
+          Math.min(1, this.player.landImpact / 24),
+          this.settings.reduceMotion,
+        );
+      }
     }
     if (this.player.justBoosted) this.addShake(0.12);
+    // ── R44a/R45a: 状態遷移検出 ──
+    {
+      const nowSliding = this.player.sliding;
+      const nowWallRunning = this.player.wallRunning;
+      const nowGrounded = this.player.grounded;
+      if (this.prevSliding && !nowSliding && !this.killcamCamActive) this.tracker.onSlideEnd();
+      if (this.prevWallRunning && !nowWallRunning && !this.killcamCamActive) this.tracker.onWallRunEnd();
+      if (!this.prevGrounded && nowGrounded && !this.killcamCamActive) this.tracker.onLand();
+      this.prevSliding = nowSliding;
+      this.prevWallRunning = nowWallRunning;
+      this.prevGrounded = nowGrounded;
+    }
+    // ── R44a: スライドスパーク(10Hz) ──
+    if (this.player.sliding && this.player.alive && !this.killcamCamActive) {
+      this.slideSparksTimer -= dt;
+      if (this.slideSparksTimer <= 0) {
+        this.slideSparksTimer = 0.10;
+        const slideDir = new THREE.Vector3(-Math.sin(this.player.yaw), 0, -Math.cos(this.player.yaw));
+        this.effects.slideSparks(
+          new THREE.Vector3(this.player.position.x, this.player.position.y - PLAYER_FEET_OFFSET, this.player.position.z),
+          slideDir, this.settings.reduceMotion,
+        );
+      }
+    } else {
+      this.slideSparksTimer = 0;
+    }
+    // ── R44a: 壁走りスパーク(8Hz) ──
+    if (this.player.wallRunning && this.player.alive && !this.killcamCamActive) {
+      this.wallRunSparksTimer -= dt;
+      if (this.wallRunSparksTimer <= 0) {
+        this.wallRunSparksTimer = 0.125;
+        const wallNormal = new THREE.Vector3(Math.cos(this.player.yaw), 0, Math.sin(this.player.yaw));
+        this.effects.wallRunSparks(this.player.position.clone(), wallNormal, this.settings.reduceMotion);
+      }
+    } else {
+      this.wallRunSparksTimer = 0;
+    }
+    // ── R45a: プレイヤー足音 ──
+    if (this.player.alive && this.player.grounded && !this.player.sliding && !this.killcamCamActive) {
+      const pSpeed = this.player.sprinting ? 1.0 : this.player.crouching ? 0.3 : 0.6;
+      const pInterval = this.player.sprinting ? 0.28 : this.player.crouching ? 0.6 : 0.40;
+      const pMoving = Math.abs(moveInput.x) > 0.05 || Math.abs(moveInput.z) > 0.05;
+      if (pMoving) {
+        this.playerFootstepTimer -= dt;
+        if (this.playerFootstepTimer <= 0) {
+          this.playerFootstepTimer = pInterval;
+          const fVariant: 'dark' | 'raitei' | undefined =
+            this.darkEmperorTimer > 0 ? 'dark' : this.raiteiMode ? 'raitei' : undefined;
+          this.sounds.footstep(pSpeed, false, fVariant);
+        }
+      } else {
+        this.playerFootstepTimer = 0;
+      }
+    } else {
+      this.playerFootstepTimer = 0;
+    }
 
     this.handleWeaponSwitch();
     this.handleMelee();
@@ -3038,6 +3155,7 @@ export class Match {
     }
 
     const sprintBlocksFire = this.player.sprinting;
+    this.prevMagAmmo = weapon.magazine.rounds; // R45a: 発射直前残弾キャプチャ
     const events = weapon.update(
       dt * 1000,
       {
@@ -3184,6 +3302,14 @@ export class Match {
         this.bowCharging = false;
         this.bowChargeTimer = 0;
         this.viewModel.setBowCharge(0);
+      } else if (event.type === 'reload-finish') {
+        // R45a: リロード完了
+        this.reloadKillBit = true;
+        this.reloadKillTimer = 1.5;
+        this.tracker.onReloadDone();
+        if (!this.killcamCamActive) {
+          this.effects.reloadCompleteFlash(this.viewModel.muzzleWorldPosition(new THREE.Vector3()));
+        }
       } else if (event.type === 'dryfire') {
         this.sounds.dryfire();
       }
@@ -3200,6 +3326,14 @@ export class Match {
       if (this.bowChargeTickTimer <= 0 && !this.settings.reduceMotion) {
         this.bowChargeTickTimer = 0.18;
         this.sounds.bowStringTension(this.bowChargeTimer / 1.2);
+        // R44a: 月光弓チャージフェーズエフェクト
+        if (!this.killcamCamActive) {
+          this.effects.gekkouMoonPhaseCharge(
+            this.player.eyePosition.clone(),
+            this.bowChargeTimer / 1.2,
+            this.settings.reduceMotion,
+          );
+        }
       }
       if (!this.input.fireDown()) {
         // trigger離し → 発射
@@ -4168,6 +4302,8 @@ export class Match {
         this.addUltCharge(damage * ULT_ON_DAMAGE_PER_HP);
         this.incoming.push(this.incomingAngle(point));
         this.sounds.hurt();
+        this.tracker.onPlayerDamaged();
+        this.sounds.playerBodyHit(Math.sin(this.incomingAngle(point)), Math.min(1, damage / 100));
         if (died) {
           this.feed.push({
             killer: PLAYER_NAME,
@@ -4293,6 +4429,8 @@ export class Match {
           this.addUltCharge(tickDamage * ULT_ON_DAMAGE_PER_HP);
           this.incoming.push(this.incomingAngle(patch.pos));
           this.sounds.hurt();
+          this.tracker.onPlayerDamaged();
+          this.sounds.playerBodyHit(Math.sin(this.incomingAngle(patch.pos)), Math.min(1, tickDamage / 100));
           if (died) {
             this.feed.push({
               killer: PLAYER_NAME,
@@ -4458,6 +4596,8 @@ export class Match {
             this.addUltCharge(selfDmg * ULT_ON_DAMAGE_PER_HP);
             this.incoming.push(this.incomingAngle(point));
             this.sounds.hurt();
+            this.tracker.onPlayerDamaged();
+            this.sounds.playerBodyHit(Math.sin(this.incomingAngle(point)), Math.min(1, selfDmg / 100));
             if (died) {
               this.feed.push({
                 killer: PLAYER_NAME,
@@ -5174,7 +5314,7 @@ export class Match {
       else if (this.player.streak === 15) this.sounds.streakStinger(3);
       else if (this.player.streak === 20) this.sounds.streakStinger(4);
       else if (this.player.streak === 25) this.sounds.streakStinger(5);
-      this.botDeathFx(bot);
+      this.botDeathFx(bot, srcClass ?? undefined);
       // ③ 黒雷帝中のキル演出: 対象位置に黒雷柱+雷鳴小
       // ※ 真の「黒い雷柱」は effects.kokuraiteiKillColumn(pos) として別担当へ依頼
       if (this.kokuraiteiMode) {
@@ -5207,10 +5347,32 @@ export class Match {
         wallRunning: this.player.wallRunning,
         ultActive: this.ultActive > 0,
         streak: this.player.streak,
+        // R45a: 新フィールド
+        crouching: this.player.crouching && !this.player.sliding,
+        sprinting: this.player.sprinting,
+        blinkAgeMs: (this.elapsed - this.lastBlinkElapsed) * 1000,
+        reloadKillBit: this.reloadKillBit,
+        magAmmoBeforeKill: isGun ? this.prevMagAmmo : undefined, // V-FINAL: 近接キルでのlast-bullet誤爆防止
+        darkEmperorActive: this.darkEmperorTimer > 0,
+        raiteiActive: this.raiteiMode,
+        kokuraiteiActive: this.kokuraiteiMode,
+        hellMode: this.config.hellMode ?? false,
+        botKind: bot.kind,
+        matchKillCount: this.player.kills,
+        matchElapsed: this.elapsed,
+        playerHpRatio: this.player.alive ? this.player.hp / this.player.maxHp : 0,
       };
       const out: MedalEvent[] = [];
       this.tracker.onKill(ctx, out);
       this.emitMedals(out);
+      // R44a: 黒雷帝キルで魂吸収ビーム
+      if (this.kokuraiteiMode && !this.killcamCamActive) {
+        this.effects.soulAbsorbBeam(
+          new THREE.Vector3(bot.position.x, bot.position.y + 0.5, bot.position.z),
+          this.player.eyePosition.clone(),
+          this.settings.reduceMotion,
+        );
+      }
     } else {
       this.hits.push(headshot ? 'head' : 'hit');
       const scoped = this.activeWeapon.def.scope === true && this.activeWeapon.adsProgress > 0.5;
@@ -6310,6 +6472,8 @@ export class Match {
         this.addUltCharge(14 * ULT_ON_DAMAGE_PER_HP);
         this.incoming.push(this.incomingAngle(end));
         this.sounds.hurt();
+        this.tracker.onPlayerDamaged();
+        this.sounds.playerBodyHit(Math.sin(this.incomingAngle(end)), Math.min(1, 14 / 100));
         // スプラッシュ死も直撃と同じ死亡処理(キルカメラ/死亡音/フィード/キル加算)
         if (died) {
           bot.kills += 1;
@@ -6333,6 +6497,8 @@ export class Match {
       this.addUltCharge(damage * ULT_ON_DAMAGE_PER_HP);
       this.sounds.hurt();
       this.incoming.push(this.incomingAngle(origin));
+      this.tracker.onPlayerDamaged();
+      this.sounds.playerBodyHit(Math.sin(this.incomingAngle(origin)), Math.min(1, damage / 100));
       // ① 戦闘引力: 被弾イベント記録
       if (this.config.mode !== 'zombie' && !this.mission) this.recordCombatPos(origin);
       if (died) {
@@ -6491,11 +6657,14 @@ export class Match {
   }
 
   // 撃破時のチーム色バースト演出
-  private botDeathFx(bot: Bot): void {
+  private botDeathFx(bot: Bot, weaponClass?: string): void {
     const color = bot.team === PLAYER_TEAM ? this.colors.ally : this.colors.enemy;
-    const point = bot.position;
+    const point = bot.position.clone();
     point.y += 0.4;
     this.effects.deathBurst(point, color);
+    if (!this.killcamCamActive) {
+      this.effects.botDeathFxByClass(point, color, weaponClass ?? 'rifle', this.settings.reduceMotion);
+    }
   }
 
   private addUltCharge(amount: number): void {
@@ -6607,7 +6776,12 @@ export class Match {
     // 3連モーション巡回(右薙ぎ→左薙ぎ→突き)。スライドキックは突き固定
     const motion = this.player.sliding ? 2 : this.punchMotion;
     if (!this.player.sliding) this.punchMotion = (this.punchMotion + 1) % 3;
-    this.sounds.kunaiSlash(motion);
+    // R45a: 黒帝/黒雷帝中は暗黒斬撃音
+    if (this.darkEmperorTimer > 0) {
+      this.sounds.kunaiSlashDark(motion);
+    } else {
+      this.sounds.kunaiSlash(motion);
+    }
     this.viewModel.fire(false, false, motion); // 斬りの振り抜きアニメ(モーション別・マズルフラッシュなし)
     this.addShake(this.punchStep >= 3 ? 0.08 : 0.03);
     // 静かな攻撃: 銃声アラートは出さず、至近の敵だけが気づく
@@ -6708,8 +6882,15 @@ export class Match {
       new THREE.Vector3(end.x, start.y - PLAYER_FEET_OFFSET + 0.05, end.z),
       blinkColor,
     );
-    this.sounds.kunaiSlash(2); // 突き音=ブリンクの刺突
+    // R45a: 黒帝中はブリンク斬撃音も暗黒バリアント
+    if (this.darkEmperorTimer > 0) {
+      this.sounds.kunaiSlashDark(2);
+    } else {
+      this.sounds.kunaiSlash(2); // 突き音=ブリンクの刺突
+    }
     this.sounds.punchHit(3); // A4-F07: ブリンクは常に最終段の重打音
+    this.tracker.onBlink(); // R45a
+    this.lastBlinkElapsed = this.elapsed; // R45a
     // R33 黒雷帝中: 雷転移エフェクト(消失点バースト + 出現点着地ボルト + 移動残光ライン)
     if (this.kokuraiteiMode) {
       const departPos = new THREE.Vector3(start.x, start.y - PLAYER_FEET_OFFSET + 0.05, start.z);
@@ -6804,6 +6985,7 @@ export class Match {
     this.ultCharge = 0;
     this.ultActive = OVERDRIVE_DURATION;
     this.ultReadyNotified = false;
+    this.tracker.onUltActivate('f'); // R45a
     const center = this.player.position;
     // 演出はカメラの内側で生成すると裏面カリングで消えるため、足元の地面で炸裂
     // させて衝撃波・土煙が周囲に広がって見えるようにする。画面側の閃光はHUDが
@@ -6831,6 +7013,7 @@ export class Match {
   private activateNinjaShockwave(): void {
     this.ultCharge = 0;
     this.ultReadyNotified = false;
+    this.tracker.onUltActivate('f'); // R45a
     const center = this.player.position;
     const darkBoost = this.darkEmperorTimer > 0 ? DARK_EMPEROR_MUL_ULTS : 1;
     // 演出はカメラ内側だと裏面カリングで消えるため、足元の地面で炸裂させて衝撃波を広げる
@@ -6869,6 +7052,7 @@ export class Match {
     if (this.windShuriken) return; // 飛行中の二重発動は不可(ゲージも消費しない)
     this.ultCharge = 0;
     this.ultReadyNotified = false;
+    this.tracker.onUltActivate('b'); // R45a
 
     // 発射方向は視線の水平成分(ブリンクと同じ流儀)
     const dir = this.cameraForward().setY(0);
@@ -7074,6 +7258,8 @@ export class Match {
     this.raiteiMode = true;
     this.viewModel.setKunaiLightningMode(true);
     this.sounds.setLightningHum(true);
+    this.sounds.setRaiteiAura(true); // R45a
+    this.tracker.onUltActivate('n'); // R45a
   }
 
   // ── 黒技・シュヴァルツヴァルト(M ウルト: fists装備時のみ) ──
@@ -7092,6 +7278,7 @@ export class Match {
     this.effects.darkNova(ground, 14, this.settings.reduceMotion ? 0.5 : 1);
     this.effects.schwarzwaldAbsorb(ground, this.settings.reduceMotion);
     this.sounds.schwarzwald();
+    this.sounds.setDarkEmperorAura(true); // R45a
     this.addShake(this.settings.reduceMotion ? 0.35 : 1.1);
     this.haptic(400, 1.0, 1.0);
     this.announcements.push('黒帝・シュヴァルツヴァルト');
@@ -7169,8 +7356,8 @@ export class Match {
     // ③ 発動演出: 暗黒ノヴァ + 暗黒逆流 + 超強シェイク
     this.effects.darkNova(ground, 14, this.settings.reduceMotion ? 0.5 : 1);
     this.effects.schwarzwaldAbsorb(ground, this.settings.reduceMotion);
-    this.sounds.schwarzwald();
-    this.sounds.kokuraiActivateThunder(); // R33: 雷鳴3連
+    this.sounds.kokuraiWorldBreathe(); // R45a: 黒雷帝固有降臨サウンド
+    this.sounds.setDarkEmperorAura(true); // R45a
     this.addShake(this.settings.reduceMotion ? 0.6 : 1.8); // 強化: 0.4/1.2 → 0.6/1.8
     this.haptic(600, 1.0, 1.0); // 強振動
     this.announcements.push('黒雷帝、降臨');
@@ -7187,6 +7374,7 @@ export class Match {
   // 月花雷轟: N ウルト(雷帝中)。演出中の再入は不可(ゲージも消費しない)
   private activateGeppaRaigou(): void {
     if (this.geppaRaigouTimer > 0) return;
+    this.tracker.onUltActivate('n'); // R45a
     this.ultCharge = 0;
     this.ultReadyNotified = false;
     this.geppaRaigouTimer = 4.0;
@@ -7271,6 +7459,18 @@ export class Match {
       if (this.chargeTickTimer <= 0) {
         this.chargeTickTimer = 0.15;
         this.sounds.chargeAttackTick(this.chargeTimer / 1.2);
+      }
+      // R44a: 暗黒チャージパルス(黒帝/黒雷帝のみ, 0.1s毎)
+      if (this.darkEmperorTimer > 0 && !this.killcamCamActive) {
+        this.darkVoidPulseTimer -= dt;
+        if (this.darkVoidPulseTimer <= 0) {
+          this.darkVoidPulseTimer = 0.10;
+          this.effects.darkVoidPulse(
+            this.player.position.clone(),
+            Math.min(1, this.chargeTimer / 1.2),
+            this.settings.reduceMotion,
+          );
+        }
       }
     } else {
       // リリース
@@ -7443,6 +7643,14 @@ export class Match {
       }
     }
 
+    // R44a: 黒帝スモークマントル(1-2Hz)
+    if (this.player.alive && !this.killcamCamActive) {
+      this.kokuteiSmantleTimer -= dt;
+      if (this.kokuteiSmantleTimer <= 0) {
+        this.kokuteiSmantleTimer = 0.5 + Math.random() * 0.5;
+        this.effects.kokuteiSmokeMantle(this.player.position.clone(), this.settings.reduceMotion);
+      }
+    }
     if (this.darkEmperorTimer <= 0) this.endDarkEmperor();
   }
 
@@ -7450,6 +7658,7 @@ export class Match {
   private endDarkEmperor(): void {
     this.darkEmperorTimer = 0;
     this.viewModel.setKunaiDarkMode(false);
+    this.sounds.setDarkEmperorAura(false); // R45a
   }
 
   // R33 黒雷帝の毎フレーム演出: 移動トレイル + 遠方落雷スケジューラ
@@ -7460,6 +7669,23 @@ export class Match {
       if (this.raiteiHumNextS <= 0) {
         this.raiteiHumNextS = 3 + Math.random() * 3;
         this.sounds.raiteiHumTick();
+      }
+    }
+
+    // R44a: 雷帝(非黒雷帝)歩行足跡(0.18s毎)
+    if (this.raiteiMode && !this.kokuraiteiMode && this.player.alive && !this.killcamCamActive) {
+      const raiteiMoving = !this.player.sprinting && !this.player.sliding;
+      if (raiteiMoving) {
+        this.raiteiFootprintTimer -= dt;
+        if (this.raiteiFootprintTimer <= 0) {
+          this.raiteiFootprintTimer = 0.18;
+          this.effects.raiteiFootprint(
+            new THREE.Vector3(this.player.position.x, this.player.position.y - PLAYER_FEET_OFFSET, this.player.position.z),
+            this.settings.reduceMotion,
+          );
+        }
+      } else {
+        this.raiteiFootprintTimer = 0;
       }
     }
 
@@ -7482,6 +7708,17 @@ export class Match {
         }
       } else {
         this.kokuraiTrailTimer = 0;
+        // R44a: 歩行中(非スプリント・非スライド)の黒雷帝ルーンエミット
+        if (this.player.alive && !this.killcamCamActive) {
+          this.walkKokuraiTimer -= dt;
+          if (this.walkKokuraiTimer <= 0) {
+            this.walkKokuraiTimer = 0.22;
+            this.effects.walkKokuraiRune(
+              new THREE.Vector3(this.player.position.x, this.player.position.y - PLAYER_FEET_OFFSET, this.player.position.z),
+              this.settings.reduceMotion,
+            );
+          }
+        }
       }
     }
 
@@ -7756,6 +7993,11 @@ export class Match {
       if (w.smokeTimer >= 0.18) {
         w.smokeTimer = 0;
         this.effects.darkSlashSmoke(w.pos.clone());
+        // R44a: 黒雷帝中は後流残光
+        if (this.kokuraiteiMode) {
+          const behind = w.pos.clone().addScaledVector(w.dir, -0.5);
+          this.effects.kokuteiSlashResidual(behind, w.pos.clone());
+        }
       }
 
       // 前方に壁があれば手前で終端
@@ -8211,9 +8453,13 @@ export class Match {
     this.zombieRound = r;
     this.zombieQueue = zombieTotal(r); // 一斉湧き: 次フレームから即バッチ充填開始
     this.announcements.push(`ラウンド ${r}`);
+    this.tracker.onZombieRoundStart(); // R45a
     if (isBossRound(r)) {
       this.spawnBossZombie(r);
+      this.announcements.push('BOSS ROUND');
       this.announcements.push('巨躯来襲');
+      this.addShake(0.4);
+      this.sounds.heartbeat(); // R45a: 咆哮代替SE
       this.addShake(1.5);
       this.sounds.hurt();
       this.zombieBossFlash = 1.0;
@@ -8283,6 +8529,12 @@ export class Match {
     }
     // ラウンドクリア: 湧き残0 && 生存0 → 短ジングル後に即次ラウンド
     if (this.zombieQueue === 0 && aliveZ === 0) {
+      if (this.zombieRoundCooldown <= 0) {
+        // R45a: ラウンドクリアコールバック(遷移初フレームのみ)
+        const roundEndOut: MedalEvent[] = [];
+        this.tracker.onZombieRoundEnd(roundEndOut);
+        this.emitMedals(roundEndOut);
+      }
       this.zombieRoundCooldown = ZOMBIE_ROUND_COOLDOWN;
     }
   }
@@ -8382,6 +8634,8 @@ export class Match {
     this.addUltCharge(dmg * ULT_ON_DAMAGE_PER_HP);
     this.incoming.push(this.incomingAngle(bot.position));
     this.sounds.hurt();
+    this.tracker.onPlayerDamaged();
+    this.sounds.playerBodyHit(Math.sin(this.incomingAngle(bot.position)), Math.min(1, dmg / 100));
     this.zombieMeleeGlobal = now + ZOMBIE_MELEE_GLOBAL_GAP;
     this.zombieMeleeIframe = now + ZOMBIE_IFRAME;
     if (died) {
@@ -9540,6 +9794,9 @@ export class Match {
         medalCounts: { ...this.tracker.counts },
         medalXp: this.medalXpTotal,
       },
+      // R45a: ゾンビモード結果
+      zombieRound: this.config.mode === 'zombie' ? this.zombieRound : undefined,
+      zombiePoints: this.config.mode === 'zombie' ? this.zombiePoints : undefined,
     };
   }
 

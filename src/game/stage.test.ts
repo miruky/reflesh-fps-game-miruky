@@ -249,11 +249,12 @@ describe('generateThemeObjects', () => {
     }
   });
 
-  it('パイロット段階: 全ステージのプロップbox数が40以下', () => {
+  it('パイロット段階: 全ステージのプロップbox数が80以下', () => {
+    // R41a: prop mergeにより実DC=1/ステージのため上限を80(旧40×2)へ緩和
     for (const def of STAGES) {
       const rand = mulberry32(def.seed ^ 0x7e57ab1e);
       const boxes = generateThemeObjects(def, [], rand);
-      expect(boxes.length, `${def.id}: DC budget (${boxes.length} boxes)`).toBeLessThanOrEqual(40);
+      expect(boxes.length, `${def.id}: DC budget (${boxes.length} boxes)`).toBeLessThanOrEqual(80);
     }
   });
 

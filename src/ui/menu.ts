@@ -1344,6 +1344,8 @@ export class Menu {
             <div class="aar-cell"><span class="aar-k">ヘッドショット</span><span class="aar-v"><b data-id="aar-hs">0</b></span></div>
             <div class="aar-cell"><span class="aar-k">キル</span><span class="aar-v"><b data-id="aar-kills">0</b></span></div>
             <div class="aar-cell"><span class="aar-k">最長連鎖</span><span class="aar-v"><b data-id="aar-streak">0</b></span></div>
+            ${result.zombieRound !== undefined ? `<div class="aar-cell"><span class="aar-k">到達ラウンド</span><span class="aar-v"><b>${result.zombieRound}</b></span></div>` : ''}
+            ${result.zombiePoints !== undefined ? `<div class="aar-cell"><span class="aar-k">獲得PTS</span><span class="aar-v"><b>${result.zombiePoints.toLocaleString()}</b></span></div>` : ''}
           </div>
           <table class="result-table">
             <thead><tr><th>名前</th><th>キル</th><th>デス</th></tr></thead>
