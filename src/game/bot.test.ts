@@ -1,7 +1,14 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { Bot, DIFFICULTY } from './bot';
+import {
+  Bot,
+  DIFFICULTY,
+  ZOMBIE_HORDE_THIN_RANK,
+  zombieKccActive,
+  zombieKccSkipFactor,
+  type BotContext,
+} from './bot';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -143,5 +150,130 @@ describe('Bot resetForZombieReuse(ゾンビプール再利用)', () => {
     // moveSpeed は public でないため animHalfLod 同様に black-box: hp だけ検証
     expect(bot.hp).toBe(80);
     expect(botSlow.hp).toBe(80);
+  });
+});
+
+describe('zombieKccActive(★5 群衆ランクKCC LOD)', () => {
+  it('先頭集団(hordeRank<ZOMBIE_HORDE_THIN_RANK)は25m以内で常時フル解決', () => {
+    for (let frame = 0; frame < 4; frame += 1) {
+      expect(zombieKccActive(0, frame, 10, 0)).toBe(true);
+      expect(zombieKccActive(7, frame, 10, ZOMBIE_HORDE_THIN_RANK - 1)).toBe(true);
+    }
+  });
+
+  it('先頭集団外(hordeRank>=ZOMBIE_HORDE_THIN_RANK)は25m以内でもuid%2バケットへ間引かれる', () => {
+    // uid偶数: 偶数フレームのみ担当
+    expect(zombieKccActive(4, 0, 10, ZOMBIE_HORDE_THIN_RANK)).toBe(true);
+    expect(zombieKccActive(4, 1, 10, ZOMBIE_HORDE_THIN_RANK)).toBe(false);
+    expect(zombieKccActive(4, 2, 10, ZOMBIE_HORDE_THIN_RANK)).toBe(true);
+    // uid奇数: 奇数フレームのみ担当
+    expect(zombieKccActive(3, 0, 10, 99)).toBe(false);
+    expect(zombieKccActive(3, 1, 10, 99)).toBe(true);
+  });
+
+  it('hordeRank省略時は既存呼び出し(3引数)と同じ挙動を保つ(後方互換)', () => {
+    for (let frame = 0; frame < 4; frame += 1) {
+      expect(zombieKccActive(0, frame, 0)).toBe(true);
+      expect(zombieKccActive(7, frame, 25)).toBe(true);
+    }
+    expect(zombieKccActive(4, 0, 40)).toBe(true);
+    expect(zombieKccActive(4, 1, 40)).toBe(false);
+  });
+
+  it('25m超はhordeRankに関わらず距離バケットのまま(既存挙動を維持)', () => {
+    expect(zombieKccActive(4, 0, 40, 0)).toBe(true);
+    expect(zombieKccActive(4, 1, 40, 0)).toBe(false);
+    expect(zombieKccActive(0, 0, 80, 0)).toBe(true);
+    expect(zombieKccActive(0, 1, 80, 0)).toBe(false);
+  });
+});
+
+describe('zombieKccSkipFactor(★1/★5 stuckTimer実時間補正用)', () => {
+  it('先頭集団(hordeRank<24)の25m以内は係数1(毎フレーム)', () => {
+    expect(zombieKccSkipFactor(10, 0)).toBe(1);
+  });
+
+  it('先頭集団外の25m以内・25-60mは係数2', () => {
+    expect(zombieKccSkipFactor(10, ZOMBIE_HORDE_THIN_RANK)).toBe(2);
+    expect(zombieKccSkipFactor(40, 0)).toBe(2);
+  });
+
+  it('60m超は係数4', () => {
+    expect(zombieKccSkipFactor(80, 0)).toBe(4);
+  });
+});
+
+describe('Bot ゾンビ respawnAt(prevZombieMoved/prevZombieGroundedのリセット)', () => {
+  it('プール再利用の取りこぼしを防ぐため、respawnAt後に前回移動量/接地フラグがゼロへ戻る', () => {
+    const fixture = makeFixture();
+    const internal = fixture.bot as unknown as {
+      prevZombieMoved: { x: number; y: number; z: number };
+      prevZombieGrounded: boolean;
+    };
+    // プール再利用前の古いゾンビの移動量が残っている状況を再現
+    internal.prevZombieMoved.x = 3;
+    internal.prevZombieMoved.y = -1;
+    internal.prevZombieMoved.z = 5;
+    internal.prevZombieGrounded = true;
+
+    fixture.bot.respawnAt(new THREE.Vector3(1, 0, 1));
+
+    expect(internal.prevZombieMoved.x).toBe(0);
+    expect(internal.prevZombieMoved.y).toBe(0);
+    expect(internal.prevZombieMoved.z).toBe(0);
+    expect(internal.prevZombieGrounded).toBe(false);
+  });
+});
+
+describe('Bot ゾンビ unstuckStrafeOverride(壁詰まりのアンスタック)', () => {
+  it('高い壁に阻まれ続けると0.8s+でunstuckStrafeOverrideが±1で発火する', () => {
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    const floorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(50, 0.5, 50).setTranslation(0, -0.5, 0),
+      floorBody,
+    );
+    // ゾンビの直進経路をふさぐ高い壁(登坂上限2.4mより十分高く、登坂では抜けられない)
+    const wallBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(5, 3, 0.3).setTranslation(0, 3, -1.0),
+      wallBody,
+    );
+
+    const tuning = { ...DIFFICULTY.normal };
+    const zombie = new Bot(
+      world,
+      'ゾンビ',
+      new THREE.Vector3(0, 0, 0),
+      0x39d465,
+      tuning,
+      2,
+      'normal',
+      'zombie',
+    );
+    // 先頭集団扱いでKCCを毎フレームフル解決させ、検知タイミングを決定論的にする
+    zombie.hordeRank = 0;
+    world.step();
+
+    const ctx: BotContext = {
+      targetEye: new THREE.Vector3(0, 1.5, -10),
+      objective: null,
+      tuning,
+      rand: () => 0.5,
+      onShoot: () => {},
+      onMelee: () => {},
+    };
+
+    const dt = 1 / 60;
+    let override: number | null = null;
+    for (let i = 0; i < 180 && override === null; i += 1) {
+      zombie.update(dt, ctx);
+      world.step();
+      override = (zombie as unknown as { unstuckStrafeOverride: number | null })
+        .unstuckStrafeOverride;
+    }
+
+    expect(override).not.toBeNull();
+    expect(Math.abs(override as number)).toBe(1);
   });
 });

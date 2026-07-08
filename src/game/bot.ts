@@ -57,6 +57,13 @@ const AIM_FIRE_COS = Math.cos(0.1);
 // ゾンビ近接。個体クールダウン(match側でグローバルrate-limit + i-frameを重ねる)
 const ZOMBIE_MELEE_RANGE = 2.3;
 const ZOMBIE_MELEE_CD = 1.1;
+// 蛍光グリーン化(視認性向上)。ボスは既存の識別色(赤エンブレム/赤い目)を維持し、通常/精鋭のみ
+// 変更する。体色(albedo)側で鮮やかさを作り発光は控えめに留めるので、bloom閾値0.9は無関係
+// (armorは非発光)。眼の発光(glow)だけがemissiveなので≤0.55に抑えて白飛びを防ぐ
+const ZOMBIE_SKIN_NORMAL = 0x39d465;
+const ZOMBIE_SKIN_ELITE = 0x5cffa8; // 精鋭は明るめの蛍光グリーンで通常との識別を維持
+const ZOMBIE_EYE_COLOR = 0x39ff6a;
+const ZOMBIE_EYE_INTENSITY = 0.5; // ≤0.55目安(bloom閾値0.9未満を大きく下回る)
 // ゾンビボス体格(コライダー×1.8・視覚×2.3)
 const ZOMBIE_BOSS_BODY_HALF = BODY_HALF * 1.8;    // 0.81
 const ZOMBIE_BOSS_BODY_RADIUS = BODY_RADIUS * 1.8; // 0.63
@@ -256,12 +263,33 @@ export function giantKccActive(uid: number, frame: number, distToPlayerM: number
 // ★ ゾンビKCC距離LOD: updateZombieのcomputeColliderMovementを距離バケット化。
 // ≤25m=毎フレーム、25-60m=uid%2(2フレームに1回)、60m超=uid%4(4フレームに1回)。
 // 登坂中(climbing)またはmelee射程内は呼び出し側で常時フルを保証する。
+// ★5 群衆ランクKCC LOD(R100高密度対策): ≤25m圏内でも hordeRank(match側が0.25s毎に
+// 近い順で書き込む。0=最近接)が ZOMBIE_HORDE_THIN_RANK 以上(=先頭集団外)ならuid%2へ
+// 間引く。先頭集団(hordeRank<24)・登坂中・melee交戦中は呼び出し側/この関数で常時フルを維持。
 export const ZOMBIE_KCC_LOD_NEAR_M = 25;
 export const ZOMBIE_KCC_LOD_MID_M = 60;
-export function zombieKccActive(uid: number, frame: number, distToPlayerM: number): boolean {
-  if (distToPlayerM <= ZOMBIE_KCC_LOD_NEAR_M) return true;
+export const ZOMBIE_HORDE_THIN_RANK = 24;
+export function zombieKccActive(
+  uid: number,
+  frame: number,
+  distToPlayerM: number,
+  hordeRank = 0,
+): boolean {
+  if (distToPlayerM <= ZOMBIE_KCC_LOD_NEAR_M) {
+    if (hordeRank >= ZOMBIE_HORDE_THIN_RANK) return (frame & 1) === (uid & 1);
+    return true;
+  }
   if (distToPlayerM <= ZOMBIE_KCC_LOD_MID_M) return (frame & 1) === (uid & 1);
   return (frame & 3) === (uid & 3);
+}
+
+// ★1/★5 アンスタックのstuckTimer実時間補正用: zombieKccActiveと同じバケットから
+// 「何フレームに1回フル解決されるか」を返す。閾値はzombieKccActiveと必ず同期させること
+// (判定がズレるとLODスキップ分のdt補正が実時間からドリフトする)。
+export function zombieKccSkipFactor(distToPlayerM: number, hordeRank = 0): number {
+  if (distToPlayerM <= ZOMBIE_KCC_LOD_NEAR_M) return hordeRank >= ZOMBIE_HORDE_THIN_RANK ? 2 : 1;
+  if (distToPlayerM <= ZOMBIE_KCC_LOD_MID_M) return 2;
+  return 4;
 }
 
 // ★5 ホットパス用スクラッチ(updateGiantの毎フレームnew Vector3を根絶)
@@ -457,6 +485,28 @@ function makeKindMats(color: number, tier: BotTier): KindMats {
   return { armor, dark, glow, gun, tierGlow };
 }
 
+// ★7 軽量化: ゾンビの dark マテリアル(hitFlash等で個体別に変化しない=armor/glowと違い
+// emissiveIntensityを操作しない)をtier×色で共有する。キーは実際に使う最終色(色相/tierから
+// 一意に決まる)。dispose保護: userData.shared=true を立て、Bot#disposeは共有材をdisposeしない
+// (viewmodel.tsの共有マテリアルと同じ userData.shared パターン)。プール再利用
+// (resetForZombieReuse)は色を変えない前提のため、このキャッシュとも整合する。
+const ZOMBIE_DARK_MAT_CACHE = new Map<number, THREE.MeshStandardMaterial>();
+function getSharedZombieDarkMat(darkColor: THREE.Color): THREE.MeshStandardMaterial {
+  const key = darkColor.getHex();
+  let mat = ZOMBIE_DARK_MAT_CACHE.get(key);
+  if (!mat) {
+    mat = new THREE.MeshStandardMaterial({
+      color: darkColor.clone(),
+      roughness: 0.9,
+      metalness: 0.02,
+      vertexColors: true,
+    });
+    mat.userData.shared = true;
+    ZOMBIE_DARK_MAT_CACHE.set(key, mat);
+  }
+  return mat;
+}
+
 let botUidSeq = 0;
 
 export class Bot {
@@ -507,6 +557,11 @@ export class Bot {
 
   // ── R16 ゾンビ ──
   zombieRunMul = 1; // 走行個体のローカル速度倍率(moveSpeedは readonly のため別持ち)
+  // ★5 群衆ランクKCC LOD契約: matchが0.25s毎に近い順ランクを書き込む(0=最近接)。
+  // 既定99=未算出/非上位(zombieKccActive/zombieKccSkipFactorが参照する契約フィールド)
+  hordeRank = 99;
+  // V51: 中心基準の視覚スケール(全巨躯ゾンビ等)で足が沈むのを防ぐ持ち上げ量(見た目のみ)
+  private visualLift = 0;
   private meleeTimer = 0; // 個体の近接クールダウン
   private climbing = false; // 登坂アシスト作動中(前フレームのブロック検知で点火)
   private climbBaseY = 0; // 登坂開始時の足元中心Y。上限高さ判定の起点(青天井防止)
@@ -714,7 +769,14 @@ export class Bot {
     this.reactionJitter = 0.7 + ((phase * 13) % 71) / 71 * 0.7;
     this.fireOnset = ((phase * 7) % 53) / 53 * 0.35;
     // 当たり判定は固定のまま、見た目だけ階層スケール(原則1.0なので無害)
-    if (tuning.scale !== 1) this.group.scale.setScalar(tuning.scale);
+    if (tuning.scale !== 1) {
+      this.group.scale.setScalar(tuning.scale);
+      // V51レビュー: 中心基準スケールは足が (scale-1)*CENTER_TO_FEET 沈む(R11ボスの教訓)。
+      // 通常体格コライダーのまま拡大する全巨躯ゾンビは接地位置へ持ち上げる(見た目のみ・
+      // コライダー不変)。boss ゾンビは rig 側スケール+専用拡大コライダーの別経路、
+      // master(1.15)は出荷済みの既存見た目を維持するため対象外
+      if (kind === 'zombie') this.visualLift = (tuning.scale - 1) * CENTER_TO_FEET;
+    }
   }
 
   // チーム色装甲の八角prism胴・胸甲/パウルドロン・ヘルメット/バイザー・
@@ -876,7 +938,12 @@ export class Bot {
   // 距離LOD/近接影トグル(setCastShadow)が誤って影を点けないようにする。
   private buildZombieMesh(color: number, tier: BotTier = 'normal'): void {
     const isBoss = tier === 'boss';
-    const c = isBoss ? new THREE.Color(color).multiplyScalar(0.7) : new THREE.Color(color);
+    const isElite = tier === 'elite';
+    // 蛍光グリーン化: ボスは既存の識別色(赤エンブレム/赤い目、colorから引き継ぐ)を維持し、
+    // 通常/精鋭は固定の蛍光グリーンへ寄せる(精鋭は明るめの色でtier識別を維持)
+    const c = isBoss
+      ? new THREE.Color(color).multiplyScalar(0.7)
+      : new THREE.Color(isElite ? ZOMBIE_SKIN_ELITE : ZOMBIE_SKIN_NORMAL);
     const armor = new THREE.MeshStandardMaterial({
       color: c,
       roughness: 0.85,
@@ -887,15 +954,12 @@ export class Bot {
     });
     this.armorMat = armor;
     this.tierGlowBase = isBoss ? 0.25 : 0;
-    const dark = new THREE.MeshStandardMaterial({
-      color: c.clone().multiplyScalar(0.4),
-      roughness: 0.9,
-      metalness: 0.02,
-      vertexColors: true,
-    });
+    // ★7 軽量化: hitFlash等で個体別に変化しないdarkマテリアルはtier×色で共有する
+    // (armor/glowはemissiveIntensityを個体ごとに操作するため非共有のまま)
+    const dark = getSharedZombieDarkMat(c.clone().multiplyScalar(0.4));
     // 腐った眼光。ボスは赤い目(0xff2200)。bloomThresholdでおもちゃ化しないよう強度を抑える
-    const eyeColor = isBoss ? 0xff2200 : 0x8fbf4a;
-    const eyeIntensity = isBoss ? 0.9 : 0.42;
+    const eyeColor = isBoss ? 0xff2200 : ZOMBIE_EYE_COLOR;
+    const eyeIntensity = isBoss ? 0.9 : ZOMBIE_EYE_INTENSITY;
     const glow = new THREE.MeshStandardMaterial({
       color: 0x0a0d07,
       emissive: new THREE.Color(eyeColor),
@@ -1732,6 +1796,9 @@ export class Bot {
   // 射程内で個体クールダウンが明けたら match へ近接ヒットを通知する。発砲経路には入らない。
   // ★ KCC距離LOD: 25m超の computeColliderMovement をバケット化(50%〜75%削減)。
   // 登坂中 or melee射程内は常時フル解決で品質を維持する。
+  // ★ アンスタック(humanoidから移植): heading は毎フレーム target 方向へ再計算されて
+  // 上書きされるため、詰まり検知時の是正は heading ではなく wish ベクトルへの横バイアス
+  // 注入(unstuckStrafeOverride)で行う。詳細は wish 計算直後とKCC LODブロック内を参照。
   private updateZombie(dt: number, ctx: BotContext): void {
     const pos = this.position;
     let wishX = 0;
@@ -1752,6 +1819,14 @@ export class Bot {
       const spd = this.moveSpeed * this.zombieRunMul;
       wishX = to.x * spd;
       wishZ = to.z * spd;
+      // ── アンスタック: ラッチ中は横バイアスをwishへ直接注入する(humanoidのunstuckStrafeOverride
+      // をゾンビへ移植)。headingは直後に再びtarget方向へ上書きされるため、heading操作ではwish
+      // に影響を残せない。dist>meleeRangeガード必須: 密着時の意図的低速(*0.15)を詰まりと
+      // 誤判定させないため、近接射程内ではバイアスを注入しない。
+      if (this.unstuckStrafeOverride !== null && dist > meleeRange) {
+        wishX += -to.z * this.unstuckStrafeOverride * this.moveSpeed * 0.8;
+        wishZ += to.x * this.unstuckStrafeOverride * this.moveSpeed * 0.8;
+      }
       if (dist <= meleeRange) {
         wishX *= 0.15; // 密着で押し込みすぎない(重なり回避)
         wishZ *= 0.15;
@@ -1791,10 +1866,9 @@ export class Bot {
     // ── KCC距離LOD: 毎フレームの衝突解決をバケット化して高体数時の負荷を削減 ──
     // 登坂中 or melee射程内は常時フル解決(登坂品質・近接判定の精度を維持)
     this.kccFrame += 1;
+    const forcedFull = this.climbing || distToPlayer <= meleeRange;
     const kccFull =
-      this.climbing ||
-      distToPlayer <= meleeRange ||
-      zombieKccActive(this.uid, this.kccFrame, distToPlayer);
+      forcedFull || zombieKccActive(this.uid, this.kccFrame, distToPlayer, this.hordeRank);
 
     const movement = { x: wishX * dt, y: vertV * dt, z: wishZ * dt };
     let mvX: number;
@@ -1819,6 +1893,30 @@ export class Bot {
       const wishLen = Math.hypot(movement.x, movement.z);
       const movedLen = Math.hypot(moved.x, moved.z);
       blocked = wishLen > 0.001 && movedLen < wishLen * ZOMBIE_CLIMB_BLOCK;
+
+      // ── アンスタック進捗監視(humanoidから移植): kccFullフレームでのみ評価する。
+      // LODで間引かれる分は経過dtをスキップ係数倍し、検知が実時間0.8s前後になるよう補正する
+      // (★3整合)。forcedFull(climbing/melee)は毎フレーム評価済みなので係数1のまま。
+      const skipFactor = forcedFull ? 1 : zombieKccSkipFactor(distToPlayer, this.hordeRank);
+      const effDt = dt * skipFactor;
+      this.unstuckSteerS = Math.max(0, this.unstuckSteerS - effDt);
+      if (this.unstuckSteerS <= 0) this.unstuckStrafeOverride = null;
+      if (this.unstuckSteerS <= 0) {
+        if (blocked) {
+          this.stuckTimer += effDt;
+          if (this.stuckTimer > HUMANOID_STUCK_TH) {
+            const leftBlocked = this.probeDirection(pos, this.heading + Math.PI / 2);
+            const rightBlocked = this.probeDirection(pos, this.heading - Math.PI / 2);
+            if (rightBlocked && !leftBlocked) this.unstuckStrafeOverride = -1;
+            else if (leftBlocked && !rightBlocked) this.unstuckStrafeOverride = 1;
+            else this.unstuckStrafeOverride = ctx.rand() < 0.5 ? 1 : -1;
+            this.unstuckSteerS = HUMANOID_UNSTUCK_S;
+            this.stuckTimer = 0;
+          }
+        } else {
+          this.stuckTimer = Math.max(0, this.stuckTimer - effDt * 2); // 進捗あれば急速リセット
+        }
+      }
     } else {
       // LODフレーム: 前回movedを再利用(1〜3フレーム分の数cm誤差=25m超では視認不能)
       mvX = this.prevZombieMoved.x;
@@ -1871,8 +1969,9 @@ export class Bot {
     this.walkPhase += step * 8;
   }
 
-  // アンスタック用: 指定角度の水平方向へ短いレイを撃ち、障害物があれば true を返す(humanoid専用)。
-  // kinematic を含む全コライダーを対象とし、wallやpropへの引っかかり両方を検出する。
+  // アンスタック用: 指定角度の水平方向へ短いレイを撃ち、障害物があれば true を返す
+  // (humanoid/zombie共用)。kinematic を含む全コライダーを対象とし、wallやpropへの
+  // 引っかかり両方を検出する。
   private probeDirection(pos: THREE.Vector3, angle: number, dist = HUMANOID_PROBE_D): boolean {
     const dx = -Math.sin(angle);
     const dz = -Math.cos(angle);
@@ -2115,7 +2214,7 @@ export class Bot {
 
   syncMesh(): void {
     const t = this.body.translation();
-    this.group.position.set(t.x, t.y, t.z);
+    this.group.position.set(t.x, t.y + this.visualLift, t.z);
     if (!this.alive) return;
     if (this.kind === 'turret') {
       // ベース(三脚)は設置向きのまま固定し、ヘッドだけがheadingへ旋回する
@@ -2266,10 +2365,16 @@ export class Bot {
     this.climbCooldownS = 0;
     this.climbMinS = 0;
     this.climbElapsedS = 0;
-    // humanoidアンスタック状態もリセット
+    // humanoid/zombie共用アンスタック状態もリセット
     this.stuckTimer = 0;
     this.unstuckSteerS = 0;
     this.unstuckStrafeOverride = null;
+    // ゾンビKCC距離LODの前回movedキャッシュもリセット(プール再利用の取りこぼし防止。
+    // 新スポーンの初フレームがLODスキップ側に回っても前個体の移動量を引き継がない)
+    this.prevZombieMoved.x = 0;
+    this.prevZombieMoved.y = 0;
+    this.prevZombieMoved.z = 0;
+    this.prevZombieGrounded = false;
     // horizSpeedMps: スポーン地点を前フレーム位置として初期化(最初のフレームでスパイクしない)
     this._horizSpeed = 0;
     this._prevBodyPos.set(spawn.x, spawn.y + this.feetOffset, spawn.z);
@@ -2349,6 +2454,8 @@ export class Bot {
   // 単体除去(ゾンビ死体の解放)。RigidBody除去で付随colliderも自動解放され、
   // group配下の(merge済み一意)geometry/materialを解放する。共有寸法キャッシュは
   // mergeByMaterialがcloneして焼くのでここには含まれず、破棄対象にならない。
+  // ★7 userData.shared=true(getSharedZombieDarkMat等の共有材)はここでdisposeしない
+  // (viewmodel.tsの共有マテリアルと同じ保護パターン。他個体がまだ参照している)。
   dispose(): void {
     // R16修正: KinematicCharacterController も解放(無限ゾンビモードでの青天井リーク防止)
     this.world.removeCharacterController(this.controller);
@@ -2357,8 +2464,11 @@ export class Bot {
       if (obj instanceof THREE.Mesh) {
         obj.geometry.dispose();
         const mat = obj.material;
-        if (Array.isArray(mat)) for (const m of mat) m.dispose();
-        else mat.dispose();
+        if (Array.isArray(mat)) {
+          for (const m of mat) if (m.userData.shared !== true) m.dispose();
+        } else if (mat.userData.shared !== true) {
+          mat.dispose();
+        }
       }
     });
   }

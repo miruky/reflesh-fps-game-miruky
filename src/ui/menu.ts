@@ -845,8 +845,8 @@ export class Menu {
                   </section>
                   <section class="menu-section">
                     <h2>特殊オプション</h2>
-                    <label class="menu-toggle"><input type="checkbox" data-id="hellMode"><span>超鬼畜モード<small class="toggle-desc"> — 全敵HP/速度2倍。達人向け高難度</small></span></label>
-                    <label class="menu-toggle"><input type="checkbox" data-id="allGiantMode"><span>全巨躯モード<small class="toggle-desc"> — 全敵がエリートサイズ。視認困難+追尾射撃</small></span></label>
+                    <label class="menu-toggle"><input type="checkbox" data-id="hellMode"><span>超鬼畜モード<small class="toggle-desc"> — 全敵HP/攻撃力/速度が大幅強化。達人向け高難度(ゾンビにも適用)</small></span></label>
+                    <label class="menu-toggle"><input type="checkbox" data-id="allGiantMode"><span>全巨躯モード<small class="toggle-desc"> — 全敵がエリートサイズ。視認困難+追尾射撃(ゾンビにも適用)</small></span></label>
                   </section>
                 </div>
               </section>

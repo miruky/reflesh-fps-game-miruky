@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Bot, DIFFICULTY, KIND_TUNING, tuningFor } from './bot';
-import { applyHellTuning } from './match';
+import { applyHellTuning, resolveNaturalBotKind } from './match';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -100,5 +100,36 @@ describe('超鬼畜 (hell) チューニング倍率', () => {
     const merged = { ...tuningFor('normal', 'normal'), moveSpeedMul: 0.9 };
     const hell = applyHellTuning(merged);
     expect(hell.moveSpeedMul).toBeCloseTo(0.9 * 1.3); // 1.17 < 1.75
+  });
+});
+
+describe('resolveNaturalBotKind (R51 ユーザー⑥: 個人戦の達人/巨躯自然湧き除外)', () => {
+  it('allGiantMode ON: teamBased/hellMode/rand を問わず常に giant', () => {
+    expect(resolveNaturalBotKind(() => 0.99, false, false, true)).toBe('giant');
+    expect(resolveNaturalBotKind(() => 0.99, true, true, true)).toBe('giant');
+  });
+
+  it('hellMode ON かつ個人戦(teamBased=false): 30%/35%の自然湧きが従来どおり作動する', () => {
+    expect(resolveNaturalBotKind(() => 0.1, false, true, false)).toBe('master'); // <0.30
+    expect(resolveNaturalBotKind(() => 0.32, false, true, false)).toBe('giant'); // <0.35
+    expect(resolveNaturalBotKind(() => 0.9, false, true, false)).toBe('humanoid');
+  });
+
+  it('hellMode ON かつチーム戦(teamBased=true): 同じ30%/35%(teamBasedでレート変化なし)', () => {
+    expect(resolveNaturalBotKind(() => 0.1, true, true, false)).toBe('master');
+    expect(resolveNaturalBotKind(() => 0.32, true, true, false)).toBe('giant');
+  });
+
+  it('トグルOFF(hell/allGiantとも false) かつ個人戦: randを消費せず常に humanoid(自然湧きゼロ)', () => {
+    let calls = 0;
+    const rand = () => { calls += 1; return 0.01; }; // 0.01 は本来 master 判定に入る値
+    expect(resolveNaturalBotKind(rand, false, false, false)).toBe('humanoid');
+    expect(calls).toBe(0); // 個人戦はrandを呼ばずゼロ確定(監査で数値レートを追跡不要にする意図)
+  });
+
+  it('トグルOFF かつチーム戦: 8%/13%の自然湧きが従来どおり作動する', () => {
+    expect(resolveNaturalBotKind(() => 0.05, true, false, false)).toBe('master'); // <0.08
+    expect(resolveNaturalBotKind(() => 0.10, true, false, false)).toBe('giant'); // <0.13
+    expect(resolveNaturalBotKind(() => 0.5, true, false, false)).toBe('humanoid');
   });
 });

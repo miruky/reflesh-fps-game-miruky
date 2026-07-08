@@ -7,14 +7,26 @@ interface Timed<T> {
 }
 
 const MAX_DECALS = 80;
+// R48-V監査: hitPuff同時アクティブ上限(Material再利用プール)。全滅ウルト等の同時大量ヒットでも
+// 頭打ちにするだけで発火自体は間引かない(上限到達時は最古を強制リサイクル)。
+const HITPUFF_MAX = 128;
+// R48-V監査: deathBurst「インスタンス」(flash1+shard10)の同時アクティブ上限。
+// 320本(=32インスタンス×10)目安のshard総数上限に相当。1キル=1発火は必ず維持。
+const DEATH_BURST_MAX = 32;
 
 // トレーサー・弾痕・爆発・スモークなど、寿命つき演出のプール管理。
 // ステージ切替時はclearで全て破棄する。
 export class Effects {
   private tracers: Timed<THREE.Line>[] = [];
   private puffs: Timed<THREE.Mesh>[] = [];
+  private puffsFree: THREE.Mesh[] = []; // hitPuff Mesh+Material 再利用プール(inactive)
   private decals: Timed<THREE.Mesh>[] = [];
   private blasts: Timed<THREE.Mesh>[] = [];
+  // deathBurst 専用プール(shared blasts/sparksとは別管理。多用途な共有プールを複雑化させないため分離)
+  private deathFlashActive: Timed<THREE.Mesh>[] = [];   // 撃破コアフラッシュ(アクティブ)
+  private deathFlashFree: THREE.Mesh[] = [];            // 同、再利用待ち(inactive)
+  private deathSparkActive: Timed<THREE.Group>[] = [];  // 撃破破片10本グループ(アクティブ)
+  private deathSparkFree: THREE.Group[] = [];           // 同、再利用待ち(inactive)
   private clouds: Timed<THREE.Group>[] = [];
   private flames: Timed<THREE.Group>[] = [];
   private sparks: Timed<THREE.Group>[] = [];
@@ -100,15 +112,35 @@ export class Effects {
   }
 
   hitPuff(point: THREE.Vector3): void {
+    const puff = this.acquirePuff();
+    const material = puff.material as THREE.MeshBasicMaterial;
+    material.color.setHex(0xff6b5a);
+    material.opacity = 0.9;
+    puff.position.copy(point);
+    puff.scale.setScalar(1);
+    this.puffs.push({ obj: puff, life: 0.16, maxLife: 0.16 });
+  }
+
+  // hitPuff用Mesh+Materialプール取得。free優先→上限未満ならnew→上限到達時は
+  // 最古のactiveを強制リサイクル(MAX_DECALSと同じ流儀)。新規alloc0で同時大量ヒットのGC負荷を抑える。
+  private acquirePuff(): THREE.Mesh {
+    const free = this.puffsFree.pop();
+    if (free) {
+      this.scene.add(free);
+      return free;
+    }
+    if (this.puffs.length >= HITPUFF_MAX) {
+      const oldest = this.puffs.shift();
+      if (oldest) return oldest.obj; // 既にscene上。呼び出し元が全パラメタを上書きする
+    }
     const material = new THREE.MeshBasicMaterial({
       color: 0xff6b5a,
       transparent: true,
       opacity: 0.9,
     });
-    const puff = new THREE.Mesh(this.puffGeometry, material);
-    puff.position.copy(point);
-    this.scene.add(puff);
-    this.puffs.push({ obj: puff, life: 0.16, maxLife: 0.16 });
+    const mesh = new THREE.Mesh(this.puffGeometry, material);
+    this.scene.add(mesh);
+    return mesh;
   }
 
   // ヘッドショット専用の金色フレア。通常ヒットの赤パフと差別化した「決まった」手応え
@@ -285,40 +317,82 @@ export class Effects {
     }
   }
 
-  // 撃破時の発光バーストと飛散する破片(チーム色)
+  // 撃破時の発光バーストと飛散する破片(チーム色)。
+  // R48-V監査: 全滅ウルト(108体同時死亡)対策でflash/shardをプール化(見た目は不変)。
   deathBurst(point: THREE.Vector3, color: number): void {
-    const flash = new THREE.Mesh(
-      this.blastGeometry,
-      new THREE.MeshBasicMaterial({
-        color,
-        transparent: true,
-        opacity: 0.9,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      }),
-    );
+    const flash = this.acquireDeathFlash();
+    const flashMat = flash.material as THREE.MeshBasicMaterial;
+    flashMat.color.setHex(color);
+    flashMat.opacity = 0.9;
     flash.position.copy(point);
     flash.scale.setScalar(0.3);
     flash.userData.targetScale = 1.5;
-    this.scene.add(flash);
-    this.blasts.push({ obj: flash, life: 0.4, maxLife: 0.4 });
+    this.deathFlashActive.push({ obj: flash, life: 0.4, maxLife: 0.4 });
 
-    const group = new THREE.Group();
+    const group = this.acquireDeathSparkGroup();
     group.position.copy(point);
-    for (let i = 0; i < 10; i += 1) {
-      const shard = new THREE.Mesh(
-        this.sparkGeometry,
-        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1 }),
-      );
-      shard.userData.vel = new THREE.Vector3(
+    for (const child of group.children) {
+      const shard = child as THREE.Mesh;
+      const mat = shard.material as THREE.MeshBasicMaterial;
+      mat.color.setHex(color);
+      mat.opacity = 1;
+      shard.position.set(0, 0, 0); // 前回燃焼で移動した位置をリセット(newなら元々(0,0,0))
+      const vel = shard.userData.vel as THREE.Vector3;
+      vel.set(
         (Math.random() - 0.5) * 6,
         Math.random() * 5 + 1.5,
         (Math.random() - 0.5) * 6,
       );
+    }
+    this.deathSparkActive.push({ obj: group, life: 0.7, maxLife: 0.7 });
+  }
+
+  // deathBurstコアフラッシュ用Meshプール取得。hitPuff用acquirePuffと同じ流儀
+  private acquireDeathFlash(): THREE.Mesh {
+    const free = this.deathFlashFree.pop();
+    if (free) {
+      this.scene.add(free);
+      return free;
+    }
+    if (this.deathFlashActive.length >= DEATH_BURST_MAX) {
+      const oldest = this.deathFlashActive.shift();
+      if (oldest) return oldest.obj;
+    }
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(this.blastGeometry, material);
+    this.scene.add(mesh);
+    return mesh;
+  }
+
+  // deathBurst破片10本グループ用プール取得。同じインスタンスを使い回すことで
+  // shard Mesh10 + Material10 + Vector3(vel)10 の新規allocを避ける
+  private acquireDeathSparkGroup(): THREE.Group {
+    const free = this.deathSparkFree.pop();
+    if (free) {
+      this.scene.add(free);
+      return free;
+    }
+    if (this.deathSparkActive.length >= DEATH_BURST_MAX) {
+      const oldest = this.deathSparkActive.shift();
+      if (oldest) return oldest.obj;
+    }
+    const group = new THREE.Group();
+    for (let i = 0; i < 10; i += 1) {
+      const shard = new THREE.Mesh(
+        this.sparkGeometry,
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 }),
+      );
+      shard.userData.vel = new THREE.Vector3();
       group.add(shard);
     }
     this.scene.add(group);
-    this.sparks.push({ obj: group, life: 0.7, maxLife: 0.7 });
+    return group;
   }
 
   // 素手ウルト(残刃・大破斬)専用の衝撃波演出。center は足元(地面高さ)を渡す。
@@ -2916,7 +2990,8 @@ export class Effects {
         break;
       }
       case 'exotic': {
-        this.deathBurst(point, teamColor);
+        // V48監査: 呼び出し元(match.ts botDeathFx)が deathBurst を必ず1回発火済み。
+        // ここで再度呼ぶと同一座標で完全重複(Mesh12+Material11+Vector3 10 が倍)するため削除。
         const accentGeo = new THREE.RingGeometry(0.82, 1.0, 36);
         const accentMat = new THREE.MeshBasicMaterial({
           color: teamColor, transparent: true, opacity: 0.70,
@@ -2933,7 +3008,8 @@ export class Effects {
         break;
       }
       default: {
-        this.deathBurst(point, teamColor);
+        // V48監査: rifle/smg/pistol/lmg/marksman等は base deathBurst のみで十分
+        // (呼び出し元 botDeathFx が既に1回発火済み。旧実装はここでもう1回呼び二重発火していた)。
         break;
       }
     }
@@ -3121,10 +3197,9 @@ export class Effects {
       (line.material as THREE.LineBasicMaterial).opacity =
         ((line.userData.baseOpacity as number) ?? 0.85) * ratio;
     });
-    this.puffs = this.tick(this.puffs, dt, (puff, ratio) => {
-      (puff.material as THREE.MeshBasicMaterial).opacity = 0.9 * ratio;
-      puff.scale.setScalar(1 + (1 - ratio) * 2.5);
-    });
+    this.tickPuffPool(dt);
+    this.tickDeathFlash(dt);
+    this.tickDeathSparks(dt);
     this.decals = this.tick(this.decals, dt, (decal, ratio) => {
       // 寿命の最後の四分の一だけフェードする
       (decal.material as THREE.MeshBasicMaterial).opacity = 0.7 * Math.min(1, ratio * 4);
@@ -3809,6 +3884,18 @@ export class Effects {
       for (const item of list) this.disposeObject(item.obj);
       list.length = 0;
     }
+    // R48-V監査: hitPuff/deathBurst 再利用プール — inactive(free)分もここで全解放(リーク禁止)。
+    // this.puffs のactive分は上の第一ループで既にdisposeObject済み。
+    for (const mesh of this.puffsFree) this.disposeObject(mesh);
+    this.puffsFree.length = 0;
+    for (const item of this.deathFlashActive) this.disposeObject(item.obj);
+    this.deathFlashActive.length = 0;
+    for (const mesh of this.deathFlashFree) this.disposeObject(mesh);
+    this.deathFlashFree.length = 0;
+    for (const item of this.deathSparkActive) this.disposeObject(item.obj);
+    this.deathSparkActive.length = 0;
+    for (const group of this.deathSparkFree) this.disposeObject(group);
+    this.deathSparkFree.length = 0;
   }
 
   // 試合破棄時に呼ぶ。プール共有ジオメトリも含めて解放する
@@ -3841,6 +3928,69 @@ export class Effects {
       kept.push(item);
     }
     return kept;
+  }
+
+  // hitPuffプール専用tick: 汎用tick()と異なり寿命切れでdisposeせず、scene離脱の上
+  // puffsFreeへ回収して次回acquirePuffで再利用する(Mesh/Material新規allocを避ける)。
+  // フェード式は既存 puffs tick と完全同一(見た目不変)。
+  private tickPuffPool(dt: number): void {
+    const kept: Timed<THREE.Mesh>[] = [];
+    for (const item of this.puffs) {
+      item.life -= dt;
+      if (item.life <= 0) {
+        this.scene.remove(item.obj);
+        this.puffsFree.push(item.obj);
+        continue;
+      }
+      const ratio = item.life / item.maxLife;
+      (item.obj.material as THREE.MeshBasicMaterial).opacity = 0.9 * ratio;
+      item.obj.scale.setScalar(1 + (1 - ratio) * 2.5);
+      kept.push(item);
+    }
+    this.puffs = kept;
+  }
+
+  // deathBurstコアフラッシュ専用tick。フェード式は既存 blasts tick の velY=undefined 分岐と完全同一。
+  private tickDeathFlash(dt: number): void {
+    const kept: Timed<THREE.Mesh>[] = [];
+    for (const item of this.deathFlashActive) {
+      item.life -= dt;
+      if (item.life <= 0) {
+        this.scene.remove(item.obj);
+        this.deathFlashFree.push(item.obj);
+        continue;
+      }
+      const ratio = item.life / item.maxLife;
+      const target = (item.obj.userData.targetScale as number) ?? 1;
+      const grown = target * (1 - ratio * ratio);
+      item.obj.scale.setScalar(Math.max(item.obj.scale.x, grown));
+      (item.obj.material as THREE.MeshBasicMaterial).opacity = 0.95 * ratio;
+      kept.push(item);
+    }
+    this.deathFlashActive = kept;
+  }
+
+  // deathBurst破片10本グループ専用tick。フェード式は既存 sparks tick と完全同一。
+  private tickDeathSparks(dt: number): void {
+    const kept: Timed<THREE.Group>[] = [];
+    for (const item of this.deathSparkActive) {
+      item.life -= dt;
+      if (item.life <= 0) {
+        this.scene.remove(item.obj);
+        this.deathSparkFree.push(item.obj);
+        continue;
+      }
+      const ratio = item.life / item.maxLife;
+      for (const child of item.obj.children) {
+        const mesh = child as THREE.Mesh;
+        const vel = mesh.userData.vel as THREE.Vector3;
+        vel.y -= 14 * dt;
+        mesh.position.addScaledVector(vel, dt);
+        (mesh.material as THREE.MeshBasicMaterial).opacity = ratio;
+      }
+      kept.push(item);
+    }
+    this.deathSparkActive = kept;
   }
 
   private disposeObject(obj: THREE.Object3D): void {

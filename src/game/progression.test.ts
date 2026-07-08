@@ -58,13 +58,14 @@ describe('levelFromXp', () => {
     expect(state.intoLevel).toBe(0);
   });
 
-  it('レベル上限で頭打ちになる', () => {
-    // XP_FOR_L99999 ≈ 70_774_851_550。80Bは確実にL99999超え
+  it('R49: レベルは無限化されており頭打ちにならない', () => {
+    // XP_FOR_L99999 ≈ 70_774_851_550。80Bは確実に旧上限L99999を超える
     const state = levelFromXp(80_000_000_000);
-    expect(state.level).toBe(MAX_LEVEL);
-    expect(state.toNext).toBe(0);
-    // 更にXPを積んでも99999を超えない
-    expect(levelFromXp(80_000_000_000 + 10_000_000).level).toBe(MAX_LEVEL);
+    expect(state.level).toBeGreaterThan(99999);
+    expect(state.toNext).toBeGreaterThan(0);
+    // 更にXPを積むと、旧上限に縛られずさらにレベルが上がる
+    const more = levelFromXp(80_000_000_000 + 10_000_000_000);
+    expect(more.level).toBeGreaterThan(state.level);
   });
 });
 
@@ -510,7 +511,7 @@ describe('CHALLENGES定義', () => {
   });
 });
 
-// ── MAX_LEVEL=99999 曲線テスト ────────────────────────────────────────────────────
+// ── レベル曲線テスト(旧上限99999まわり・R49以降は無限に継続) ──────────────────────
 // 累積XP定数(テスト内でも同一ロジックで導出できるが、固定値で回帰テストとして保持する)
 // sum(xpToNext(1..99))    = 99*750 + 250*(98*99/2) = 1_287_000
 // sum(xpToNext(100..499)) = 400*25_500 + 100*(399*400/2) = 18_180_000
@@ -532,7 +533,7 @@ const XP_FOR_L10000 = 1_885_117_000; // XP_FOR_L9999 + xpToNext(9999)=315_450
 const XP_FOR_L50000 = 22_503_317_000; // XP_FOR_L10000 + 20_618_200_000
 const XP_FOR_L99999 = 70_774_851_550; // XP_FOR_L10000 + 68_889_734_550
 
-describe('MAX_LEVEL=99999 進行曲線', () => {
+describe('無限レベル進行曲線(旧上限99999を含む)', () => {
   it('L1-99 の xpToNext は旧曲線と同一(後方互換)', () => {
     expect(xpToNext(1)).toBe(750);
     expect(xpToNext(50)).toBe(750 + 49 * 250);  // 13_000
@@ -597,22 +598,77 @@ describe('MAX_LEVEL=99999 進行曲線', () => {
     expect(state.toNext).toBe(xpToNext(50000));
   });
 
-  it('L99999(新上限)で toNext=0 かつ level=MAX_LEVEL', () => {
+  it('L99999(旧上限)ちょうどで level=99999・toNext>0(R49: 頭打ちしない)', () => {
     const state = levelFromXp(XP_FOR_L99999);
-    expect(state.level).toBe(MAX_LEVEL);  // = 99999
-    expect(state.toNext).toBe(0);
-    // 更に XP を積んでも 99999 を超えない
-    expect(levelFromXp(XP_FOR_L99999 + 10_000_000).level).toBe(MAX_LEVEL);
+    expect(state.level).toBe(99999);
+    expect(state.intoLevel).toBe(0);
+    expect(state.toNext).toBe(xpToNext(99999)); // = 1_215_450(旧実装ではここが0だった)
+    expect(state.toNext).toBeGreaterThan(0);
+  });
+
+  it('L99999→L100000: xpToNext(99999)分積むと旧上限を超えて超越階級L100000に上がる(R49)', () => {
+    // xpToNext は L10000 以降 +10/レベルの等差数列のまま自然延長される(区分の追加なし)
+    expect(xpToNext(99999)).toBe(xpToNext(99998) + 10);
+    const beyond = levelFromXp(XP_FOR_L99999 + xpToNext(99999));
+    expect(beyond.level).toBe(100000);
+    expect(beyond.intoLevel).toBe(0);
+    expect(beyond.toNext).toBe(xpToNext(100000));
+    expect(beyond.toNext).toBeGreaterThan(0);
+  });
+
+  it('L99999周辺・L100000周辺でも xpToNext は単調増加し続ける(区分境界の不連続なし)', () => {
+    for (let l = 99990; l < 100010; l += 1) {
+      expect(xpToNext(l + 1)).toBeGreaterThan(xpToNext(l));
+    }
   });
 
   it('XP_FOR_L99999 は Number.MAX_SAFE_INTEGER 以内', () => {
     expect(XP_FOR_L99999).toBeLessThan(Number.MAX_SAFE_INTEGER);
   });
 
-  it('xpToNext は L1〜L(MAX_LEVEL-1) の全域で単調増加', () => {
-    for (let l = 1; l < MAX_LEVEL - 1; l += 1) {
+  it('xpToNext は L1〜L250000 の全域で単調増加(旧上限99999をまたいでも連続)', () => {
+    for (let l = 1; l < 250_000; l += 1) {
       expect(xpToNext(l + 1)).toBeGreaterThan(xpToNext(l));
     }
+  });
+
+  it('巨大XP(1e15)でも levelFromXp が有限時間・単調に解け、level/toNextが正しい状態を保つ', () => {
+    const xp = 1e15;
+    const state = levelFromXp(xp);
+    expect(Number.isFinite(state.level)).toBe(true);
+    expect(state.level).toBeGreaterThan(100000); // 旧上限・超越階級の初段をはるかに超える
+    expect(state.intoLevel).toBeGreaterThanOrEqual(0);
+    expect(state.toNext).toBeGreaterThan(0);
+    expect(state.intoLevel).toBeLessThan(state.toNext);
+    // 閉形式の解が正しいことをxpToNextとの整合で検算する:
+    // (xp - intoLevel) 分でちょうど level に到達し、そこから toNext 未満しか進んでいない
+    expect(xp - state.intoLevel).toBeGreaterThanOrEqual(0);
+
+    // 単調性: XPを増やすとレベルは減らない(頭打ちなし)
+    const more = levelFromXp(xp + 1_000_000_000);
+    expect(more.level).toBeGreaterThanOrEqual(state.level);
+  });
+
+  it('Number.MAX_SAFE_INTEGER 付近の巨大XPでも levelFromXp が壊れない(有限・単調・非負)', () => {
+    const state = levelFromXp(Number.MAX_SAFE_INTEGER);
+    expect(Number.isFinite(state.level)).toBe(true);
+    expect(state.level).toBeGreaterThan(0);
+    expect(Number.isFinite(state.intoLevel)).toBe(true);
+    expect(state.intoLevel).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(state.toNext)).toBe(true);
+    expect(state.toNext).toBeGreaterThan(0);
+    expect(state.intoLevel).toBeLessThan(state.toNext);
+
+    // 単調性を隣接XPでも確認(頭打ち・逆転が起きない)
+    const slightlyLess = levelFromXp(Number.MAX_SAFE_INTEGER - 1_000_000_000);
+    expect(slightlyLess.level).toBeLessThanOrEqual(state.level);
+  });
+
+  it('非有限・負のXPでも levelFromXp が例外を投げず安全に処理する', () => {
+    expect(() => levelFromXp(Number.NaN)).not.toThrow();
+    expect(() => levelFromXp(Number.POSITIVE_INFINITY)).not.toThrow();
+    expect(levelFromXp(-100).level).toBe(1);
+    expect(levelFromXp(Number.NaN).level).toBe(1);
   });
 });
 
@@ -662,8 +718,75 @@ describe('rankNameFor', () => {
     expect(rankNameFor(90000)).toEqual({ name: '天地開闢', tier: 28 });
   });
 
-  it('L99999 ちょうどで森羅万象(tier 29) — 新上限', () => {
+  it('L99999 ちょうどで森羅万象(tier 29) — 旧上限、超越階級(L100000)開始直前', () => {
     expect(rankNameFor(99999)).toEqual({ name: '森羅万象', tier: 29 });
+  });
+
+  // ── R49: 超越階級(L100000以降、10万レベルごと・無限に続く) ─────────────────────
+  describe('超越階級(R49レベル無限化)', () => {
+    it('L100000ちょうどで宇宙開闢(tier 30) — 超越階級の開始', () => {
+      expect(rankNameFor(100000)).toEqual({ name: '宇宙開闢', tier: 30 });
+    });
+
+    it('L100000未満は超越階級に入らない(森羅万象のまま)', () => {
+      expect(rankNameFor(99999)).toEqual({ name: '森羅万象', tier: 29 });
+      // 整数レベルのみが有効値だが、念のため直前の値も確認
+      expect(rankNameFor(100000 - 1)).toEqual({ name: '森羅万象', tier: 29 });
+    });
+
+    it('L250000で銀河創世(tier 31) — idx=floor(level/100000)で判定', () => {
+      expect(rankNameFor(250000)).toEqual({ name: '銀河創世', tier: 31 });
+    });
+
+    it('凍結ラダー24段(idx1-24)が仕様どおりの名称・tierで並ぶ', () => {
+      const ladder: Array<[number, string]> = [
+        [100000, '宇宙開闢'], [200000, '銀河創世'], [300000, '時空超越'], [400000, '次元崩壊'],
+        [500000, '多元宇宙'], [600000, '平行世界の王'], [700000, '因果律の支配者'], [800000, '概念超越'],
+        [900000, '無限回帰'], [1000000, '永劫不滅'], [1100000, '天元突破'], [1200000, '星海の帝'],
+        [1300000, '万象の祖'], [1400000, '理の外'], [1500000, '混沌の主宰'], [1600000, '秩序の根源'],
+        [1700000, '世界改変'], [1800000, '創造と終焉'], [1900000, '全知全能'], [2000000, '絶対存在'],
+        [2100000, '唯一絶対'], [2200000, '根源意志'], [2300000, '万物の彼方'], [2400000, '無限の無限'],
+      ];
+      for (const [lvl, name] of ladder) {
+        expect(rankNameFor(lvl).name).toBe(name);
+      }
+      // tierは29+idxで単調増加(idx1→30 ... idx24→53)
+      expect(ladder.map(([lvl]) => rankNameFor(lvl).tier)).toEqual(
+        Array.from({ length: 24 }, (_, i) => 30 + i),
+      );
+    });
+
+    it('L2400000で無限の無限(tier 53) — 凍結ラダーの最終段', () => {
+      expect(rankNameFor(2_400_000)).toEqual({ name: '無限の無限', tier: 53 });
+    });
+
+    it('L2500000で無限の無限・2乗(tier 54) — 凍結ラダーを超えた先の生成規則', () => {
+      expect(rankNameFor(2_500_000)).toEqual({ name: '無限の無限・2乗', tier: 54 });
+    });
+
+    it('無限の無限・n乗が idx に応じて無限に生成される', () => {
+      expect(rankNameFor(2_600_000)).toEqual({ name: '無限の無限・3乗', tier: 55 });
+      expect(rankNameFor(3_000_000)).toEqual({ name: '無限の無限・7乗', tier: 59 });
+      expect(rankNameFor(10_000_000)).toEqual({ name: '無限の無限・77乗', tier: 129 });
+    });
+
+    it('tierはレベルが上がるほど厳密に単調増加し続ける(L1〜超越階級を横断)', () => {
+      const samples = [1, 100, 999, 1000, 9999, 10000, 99999, 100000, 250000, 2_400_000, 2_500_000, 10_000_000];
+      let prevTier = -1;
+      for (const lvl of samples) {
+        const tier = rankNameFor(lvl).tier;
+        expect(tier).toBeGreaterThan(prevTier);
+        prevTier = tier;
+      }
+    });
+
+    it('levelRankUpgradeは超越階級の境界でも新ランクを検出する', () => {
+      const lv = (level: number) => ({ level, intoLevel: 0, toNext: xpToNext(level) });
+      const upgrade = levelRankUpgrade(lv(99999), lv(100000));
+      expect(upgrade).toEqual({ name: '宇宙開闢', tier: 30 });
+      const noUpgrade = levelRankUpgrade(lv(100000), lv(150000));
+      expect(noUpgrade).toBeNull();
+    });
   });
 
   it('全30段の名称が揃っている', () => {

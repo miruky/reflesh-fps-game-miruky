@@ -15,7 +15,63 @@ function reticleColorValue(id: string): string {
   return RETICLE_COLORS.find((c) => c.id === id)?.value ?? 'var(--accent)';
 }
 
+// ゾンビモード中は同じ実績を何度も再達成するため、目立つバッジ通知(中央カード)が煩わしくなる。
+// 再達成(firstUnlock=false)のみ抑止し、左フィード(pushMedalText)の軽量表示は残す。
+// 初取得(firstUnlock=true)は非ゾンビと同じフル演出のまま。非ゾンビモード(inZombieMode=false)は常にfalseで既存挙動を変えない。
+export function isZombieRepeatBadgeMuted(firstUnlock: boolean, inZombieMode: boolean): boolean {
+  return inZombieMode && !firstUnlock;
+}
+
+// 軽量化監査#8: 1フレームに生成するダメージ数値DOMノードの上限。
+// 全滅ウルト等で100体超同時キル→同数のspan+rAF+setTimeoutが同一フレームに積まれ、
+// 死亡FXスパイクと重なって重量化するのを防ぐ。超過分は個別ノードを作らず、
+// 1個の集約バッジ(「+N KILLS」or「+合計ダメージ」)にまとめる(情報は消さず集約する)。
+export const DAMAGE_NUMBER_FRAME_CAP = 24;
+
+export interface DamageNumberOverflow<T> {
+  /** 上限を超えて集約された件数 */
+  count: number;
+  /** 集約対象の合計ダメージ量 */
+  totalAmount: number;
+  /** 集約対象にキル種別が1件でも含まれるか(バッジ文言の切り替えに使う) */
+  hasKill: boolean;
+  /** 集約バッジの投影位置に使う代表エントリ(新規Vector3を作らず既存の1件を再利用する) */
+  anchor: T;
+}
+
+export interface DamageNumberSplit<T> {
+  /** 個別ノードとして表示する分(上限まで。上限以下なら元配列そのまま) */
+  shown: T[];
+  /** 上限を超えた分の集約情報。超過が無ければ null(≤24件時の挙動をビット単位で変えない) */
+  overflow: DamageNumberOverflow<T> | null;
+}
+
+// 1フレーム分の damageNumbers を「個別表示分」と「集約分」に分割する純関数。
+// DOM/THREE非依存でユニットテストしやすい形にしてある(pushDamageNumbers から呼ばれる)。
+export function splitDamageNumbersForFrame<T extends { amount: number; kind: string }>(
+  list: readonly T[],
+  cap: number = DAMAGE_NUMBER_FRAME_CAP,
+): DamageNumberSplit<T> {
+  // ≤cap は参照をそのまま返す(毎描画フレーム呼ばれるためコピーのアロケーションを避ける。読み取り専用利用)
+  if (list.length <= cap) return { shown: list as T[], overflow: null };
+  const shown = list.slice(0, cap);
+  const rest = list.slice(cap);
+  const totalAmount = rest.reduce((sum, dn) => sum + dn.amount, 0);
+  const hasKill = rest.some((dn) => dn.kind === 'kill');
+  // rest は list.length > cap の分岐にのみ入るため必ず1件以上ある(non-null安全)
+  return { shown, overflow: { count: rest.length, totalAmount, hasKill, anchor: rest[0]! } };
+}
+
 type Project = (world: THREE.Vector3) => { x: number; y: number; behind: boolean };
+
+// ダメージ数値ノードのクラス名(kind別の色/サイズ段階)。個別ノード・集約ノード両方で共有する
+function dmgNumClass(kind: string): string {
+  return kind === 'kill'
+    ? 'hud-dmg-num hud-dmg-num--kill'
+    : kind === 'head'
+      ? 'hud-dmg-num hud-dmg-num--head'
+      : 'hud-dmg-num';
+}
 
 // 正多角形(頂点を真上に向ける)のSVG points文字列。バッジの六角/八角に使う
 function ngonPoints(cx: number, cy: number, n: number, r: number): string {
@@ -1347,22 +1403,40 @@ export class Hud {
   private pushDamageNumbers(snap: MatchSnapshot, project: Project): void {
     const layer = this.el['dmg'];
     if (!layer) return;
-    for (const dn of snap.damageNumbers) {
-      const point = project(dn.world);
-      if (point.behind) continue;
+    // ノード生成の唯一の入口。個別分・集約分どちらもここを通す(寿命管理を一本化しリーク差異を無くす)
+    const spawnAt = (x: number, y: number, className: string, text: string): void => {
       const node = document.createElement('span');
-      node.className =
-        dn.kind === 'kill'
-          ? 'hud-dmg-num hud-dmg-num--kill'
-          : dn.kind === 'head'
-            ? 'hud-dmg-num hud-dmg-num--head'
-            : 'hud-dmg-num';
-      node.textContent = String(dn.amount);
-      node.style.left = `${point.x}px`;
-      node.style.top = `${point.y}px`;
+      node.className = className;
+      node.textContent = text;
+      node.style.left = `${x}px`;
+      node.style.top = `${y}px`;
       layer.appendChild(node);
       requestAnimationFrame(() => node.classList.add('rise'));
       window.setTimeout(() => node.remove(), 750);
+    };
+    const spawn = (world: THREE.Vector3, className: string, text: string): void => {
+      const point = project(world);
+      if (point.behind) return;
+      spawnAt(point.x, point.y, className, text);
+    };
+    // 軽量化監査#8: 1フレームに生成するノード数を DAMAGE_NUMBER_FRAME_CAP に頭打ちし、
+    // 超過分は1個の集約バッジへまとめる(≤上限時は従来どおり全件個別表示・挙動不変)
+    const { shown, overflow } = splitDamageNumbersForFrame(snap.damageNumbers);
+    for (const dn of shown) {
+      spawn(dn.world, dmgNumClass(dn.kind), String(dn.amount));
+    }
+    if (overflow) {
+      // キルを1件でも含む超過分は件数を強調(「+N KILLS」)、それ以外は合計ダメージ量を表示。
+      // 既存のダメージ数値クラスを流用するため見た目は浮かない。
+      // V51-B: 代表点がカメラ後方でもバッジ自体は消さない(画面中央下へフォールバック表示)
+      const label = overflow.hasKill ? `+${overflow.count} KILLS` : `+${overflow.totalAmount}`;
+      const cls = dmgNumClass(overflow.hasKill ? 'kill' : 'body');
+      const point = project(overflow.anchor.world);
+      if (point.behind) {
+        spawnAt(layer.clientWidth / 2, layer.clientHeight * 0.62, cls, label);
+      } else {
+        spawnAt(point.x, point.y, cls, label);
+      }
     }
   }
 
@@ -1372,6 +1446,7 @@ export class Hud {
   private pushMedals(snap: MatchSnapshot): void {
     // medalRank降順にソートして最上位バッジを即時に出す
     const sorted = [...snap.medals].sort((a, b) => medalRank(b.id) - medalRank(a.id));
+    const inZombieMode = snap.zombieRound !== undefined;
     let topBadgeFired = false;
     for (const m of sorted) {
       if (SUPPRESS_BADGE.has(m.id)) {
@@ -1381,6 +1456,11 @@ export class Hud {
       }
       if (MULTI_KILL_IDS.has(m.id)) {
         this.pushMultiKillBanner(m, snap.reduceMotion);
+        continue;
+      }
+      if (isZombieRepeatBadgeMuted(m.firstUnlock, inZombieMode)) {
+        // ゾンビモードの再達成: バッジ/キューを一切使わず、左フィードの軽量表示のみ残す
+        this.pushMedalText(m);
         continue;
       }
       if (m.firstUnlock || ALWAYS_BADGE.has(m.id)) {

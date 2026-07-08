@@ -462,6 +462,31 @@ export function applyHellTuning(t: BotTuning): BotTuning {
   };
 }
 
+// R51 ユーザー⑥: 初期スポーンの敵種(達人/巨躯)選択(純関数)。
+// - allGiantMode(トグル明示ON): 個人戦/チーム戦を問わず全員巨躯(従来どおり)
+// - hellMode(トグル明示ON): 個人戦/チーム戦を問わず高確率(30%/35%)で自然湧き(従来どおり)
+// - トグルOFFのデフォルト: チーム系モード(teamBased)でのみ低確率(8%/13%)の自然湧きを許可。
+//   個人戦(FFA/ガンゲーム等)はデフォルトで達人/巨躯ゼロ(ユーザー要望)
+export function resolveNaturalBotKind(
+  rand: () => number,
+  teamBased: boolean,
+  hellMode: boolean,
+  allGiantMode: boolean,
+): BotKind {
+  if (allGiantMode) return 'giant';
+  if (hellMode) {
+    const r = rand();
+    if (r < 0.30) return 'master';
+    if (r < 0.35) return 'giant';
+    return 'humanoid';
+  }
+  if (!teamBased) return 'humanoid';
+  const r = rand();
+  if (r < 0.08) return 'master';
+  if (r < 0.13) return 'giant';
+  return 'humanoid';
+}
+
 // ★1 影LODバケット(純関数): 距離二乗の配列から「近い順にcap体だけtrue」のフラグ配列を返す。
 // 同距離は先着(index昇順)で安定。cap以下なら全true
 export function shadowLodFlags(d2: readonly number[], cap: number): boolean[] {
@@ -470,6 +495,16 @@ export function shadowLodFlags(d2: readonly number[], cap: number): boolean[] {
   const flags = new Array<boolean>(d2.length).fill(false);
   for (let i = 0; i < cap; i += 1) flags[order[i]!] = true;
   return flags;
+}
+
+// ★5 群衆ランク(純関数、R51-4e): 距離二乗の配列から「近い順の順位」を返す(0=最近接)。
+// 同距離はindex昇順で安定。bot.ts の zombieKccSkipFactor が hordeRank>=ZOMBIE_HORDE_THIN_RANK
+// (先頭集団の外)のKCC解決を間引くLODに使う
+export function zombieHordeRanks(d2: readonly number[]): number[] {
+  const order = d2.map((_, i) => i).sort((a, b) => d2[a]! - d2[b]! || a - b);
+  const ranks = new Array<number>(d2.length);
+  for (let i = 0; i < order.length; i += 1) ranks[order[i]!] = i;
+  return ranks;
 }
 
 // F2 修羅スピンアップ(純関数): 発射しなかったfireイベントの弾をマガジンへ安全に返す
@@ -491,6 +526,10 @@ const ANIM_LOD_DIST_M = 50;
 const ZOMBIE_POOL_MAX = ZOMBIE_MAX_ALIVE.high;
 // F8 手裏剣discの飛行速度(m/s)。fireShurikenDiscのvelと寿命クランプの単一の真実
 const SHURIKEN_DISC_SPEED = 60;
+// ★4a aimAssistTarget粗ゲート用: AIM_PARTS/DRONE/TANK/TURRET全kindのdy絶対値の最大
+// (TANK_AIM_PARTSのhead dy=1.0)。中心(bot.position)基準のレンジ/コーン判定にこの分だけ
+// マージンを持たせ、部位オフセットで本来ヒットし得た候補を誤って弾かないことを保証する。
+const AIM_PART_DY_MARGIN_M = 1.0;
 // ★5 ホットパス用スクラッチ(bot.getPositionInto の受け皿。逐次利用のみ=エイリアス無し)
 const BOT_POS_SCRATCH = new THREE.Vector3();
 
@@ -1488,16 +1527,16 @@ export class Match {
         }
         placed.push(botSpawn.clone());
         // hellMode/allGiantMode: kind selection for enemy humanoid slots
-        let botKind: BotKind = 'humanoid';
-        if (!isAlly) {
-          if (config.allGiantMode) {
-            botKind = 'giant';
-          } else {
-            const r = this.rand();
-            if (r < (config.hellMode ? 0.30 : 0.08)) botKind = 'master';
-            else if (r < (config.hellMode ? 0.35 : 0.13)) botKind = 'giant';
-          }
-        }
+        // R51: デフォルト(トグルOFF)の自然湧きはチーム系モードのみ(個人戦はゼロ)。
+        // トグルON(allGiant/hell)は個人戦でも従来どおり作動(明示的オプトインのため)
+        const botKind: BotKind = isAlly
+          ? 'humanoid'
+          : resolveNaturalBotKind(
+              () => this.rand(),
+              this.modeDef.teamBased,
+              config.hellMode ?? false,
+              config.allGiantMode ?? false,
+            );
         // 超鬼畜倍率は spawnBot 内(KIND_TUNING合成後)で一元適用する(二重掛け防止)
         // キルフィード/スコアボードで一目で分かるよう、達人/巨躯は種名を表示名にする
         const displayName = botKind === 'master' ? '達人' : botKind === 'giant' ? '巨躯' : name;
@@ -1770,7 +1809,11 @@ export class Match {
     //   VRAM 約64MB(4096×4096×4byte)= high tier のみ許容。medium は1024²(約4MB)のまま。
     // ★3 hell/全巨躯モードは巨躯54体で影パス負荷が最大化するため、highでも2048²へ抑える
     // (VRAM 64MB→16MB・影フラグメント1/4。±70m追従ボックスで14.6px/m=中距離でも輪郭維持)
-    const heavyHorde = (this.config.hellMode ?? false) || (this.config.allGiantMode ?? false);
+    // R51-4b: ゾンビモードも同種の高密度群像(108体規模)のため heavyHorde 扱いに含める
+    const heavyHorde =
+      (this.config.hellMode ?? false) ||
+      (this.config.allGiantMode ?? false) ||
+      this.config.mode === 'zombie';
     const shadowRes = tier === 'high' ? (heavyHorde ? 2048 : 4096) : 1024;
     sun.shadow.mapSize.set(shadowRes, shadowRes);
     sun.shadow.bias = -0.0005; // シャドウアクネ除去
@@ -3543,6 +3586,8 @@ export class Match {
     this.botShadowLodTimer -= dt;
     if (this.botShadowLodTimer <= 0) {
       this.updateBotShadowLOD();
+      // R51-4e: 群衆ランクも同じ0.25s周期に相乗り(ゾンビモードのみ意味を持つ)
+      if (this.config.mode === 'zombie') this.updateZombieHordeRank();
       this.botShadowLodTimer = 0.25;
     }
     if (this.config.mode === 'zombie') this.updateZombieDirector(dt);
@@ -5459,9 +5504,12 @@ export class Match {
     }
     if (top) {
       const vol = this.settings.announcerVolume;
-      // 初解放はファンファーレ+読み上げ、以降はWebAudioスティングのみ(announceStreakと非衝突)
+      // 初解放はファンファーレ+読み上げ、以降はWebAudioスティングのみ(announceStreakと非衝突)。
+      // R51-3: ゾンビは無限ラウンドで同じ実績を再達成し続けるため、非firstUnlockのスティングは
+      // ゾンビモード中のみ抑制する(HUD側もバッジ非表示・左フィードのみに揃えてある)。
+      // firstUnlockのファンファーレ+読み上げは非ゾンビと同じく常に鳴らす
       if (top.firstUnlock) this.sounds.announceUnlock(top.name, vol);
-      else this.sounds.announceMedal(tierLevel[top.tier], vol);
+      else if (this.config.mode !== 'zombie') this.sounds.announceMedal(tierLevel[top.tier], vol);
     }
   }
 
@@ -6265,6 +6313,25 @@ export class Match {
     for (const bot of this.bots) {
       if (!bot.alive || bot.team === PLAYER_TEAM) continue;
       const base = bot.position; // カプセル中心(新規ベクトル)
+      // ★4a 軽量化: rankAimPoints(候補配列を新規生成)を呼ぶ前の粗ゲート。新規オブジェクト生成
+      // ゼロで「レンジ外」「コーン外」を即skipする。AIM_PARTS系のdy最大絶対値(TANK head dy=1.0)を
+      // 安全マージンとして両判定に加算し、部位オフセットぶんで本来ヒットし得た候補を誤って
+      // 弾かないことを保証する(挙動不変)。コーン側は近距離ほどマージン角が発散して自然に
+      // ノーガード化する(asinで距離依存の安全角を厳密に算出)ため近接での取りこぼしも無い。
+      const gdx = base.x - eye.x;
+      const gdy = base.y - eye.y;
+      const gdz = base.z - eye.z;
+      const gDistSq = gdx * gdx + gdy * gdy + gdz * gdz;
+      const gEffRange = maxRange + AIM_PART_DY_MARGIN_M;
+      if (gDistSq > gEffRange * gEffRange) continue; // レンジ外
+      const gDist = Math.sqrt(gDistSq);
+      if (gDist > 1e-3) {
+        const marginDenom = Math.max(gDist - AIM_PART_DY_MARGIN_M, 0.05);
+        const marginRad = Math.min(Math.PI / 2, Math.asin(Math.min(1, AIM_PART_DY_MARGIN_M / marginDenom)));
+        const coneCos = Math.cos(bestAngle + marginRad);
+        const dot = forward.x * gdx + forward.y * gdy + forward.z * gdz;
+        if (dot < gDist * coneCos) continue; // コーン外(bestAngleは走査中に狭まるので毎回再評価)
+      }
       // 機体種に合った部位候補で、角度の近い順に可視が取れるまで走査=最近接の可視部位
       const parts =
         bot.kind === 'drone'
@@ -8205,10 +8272,18 @@ export class Match {
     // reserved: このフレームで確保済みのスポーン位置。同フレーム複数リスポーンで
     // 同一地点を選ばないよう pickSpawn へ渡し、occupancy チェックの起点にする。
     const reserved: THREE.Vector3[] = [];
-    // 生存中の全キャラ位置(チーム不問。ally/enemyとも近くに湧かない)
-    const allAlive: THREE.Vector3[] = [];
-    if (this.player.alive) allAlive.push(this.player.position);
-    for (const b of this.bots) if (b.alive) allAlive.push(b.position);
+    // R51-4d: 生存中の全キャラ位置(チーム不問)は実際にpickSpawnが必要になった時だけ構築する。
+    // VOID_Y発火も死亡リスポーンも無い通常フレーム(ゾンビ大群でも大半のフレームがこれ)では
+    // .position(新規Vector3)を全alive分呼ぶだけ無駄だったため、遅延構築+メモ化にする。
+    let allAliveCache: THREE.Vector3[] | null = null;
+    const allAlive = (): THREE.Vector3[] => {
+      if (!allAliveCache) {
+        allAliveCache = [];
+        if (this.player.alive) allAliveCache.push(this.player.position);
+        for (const b of this.bots) if (b.alive) allAliveCache.push(b.position);
+      }
+      return allAliveCache;
+    };
 
     // ── 奈落セーフティネット(無限落下の構造的封じ込め)──
     // 床抜けはレベル設計でなくエンジン由来のアーティファクトなので、K/D・ストリークを
@@ -8217,7 +8292,7 @@ export class Match {
       const sp = this.pickSpawn(
         this.playerSpawns,
         this.hostilesOf(PLAYER_TEAM),
-        [...allAlive, ...reserved],
+        [...allAlive(), ...reserved],
       );
       this.player.respawnAt(sp);
       reserved.push(sp);
@@ -8230,7 +8305,7 @@ export class Match {
         const sp = this.pickSpawn(
           spawns,
           this.hostilesOf(bot.team),
-          [...allAlive, ...reserved],
+          [...allAlive(), ...reserved],
         );
         bot.respawnAt(sp);
         reserved.push(sp);
@@ -8246,7 +8321,7 @@ export class Match {
         const sp = this.pickSpawn(
           this.playerSpawns,
           this.hostilesOf(PLAYER_TEAM),
-          [...allAlive, ...reserved],
+          [...allAlive(), ...reserved],
         );
         this.player.respawnAt(sp);
         reserved.push(sp);
@@ -8268,7 +8343,7 @@ export class Match {
           const sp = this.pickSpawn(
             spawns,
             this.hostilesOf(bot.team),
-            [...allAlive, ...reserved],
+            [...allAlive(), ...reserved],
           );
           bot.respawnAt(sp);
           reserved.push(sp);
@@ -8541,7 +8616,9 @@ export class Match {
       moveSpeedMul: ZOMBIE_MOVE_MUL * speedMul,
     };
     const bot = this.spawnBot('巨躯', spawn, 0x3a1a0d, ENEMY_TEAM, tuning, 'boss', 'zombie');
-    bot.tuning.damage = dmg;
+    // R51バグ根治: spawnBot 内で hellMode 補正済みの damage を、この直後の代入が生値 dmg で
+    // 無条件上書きしていた(hellMode でもボスの攻撃力×2.5が一切効かない状態だった)
+    bot.tuning.damage = this.config.hellMode ? Math.round(dmg * 2.5) : dmg;
     bot.zombieRunMul = speedMul;
     this.zombieBossBot = bot;
   }
@@ -8580,8 +8657,13 @@ export class Match {
     if (this.zombieQueue > 0 && aliveZ < this.zombieTierCap) {
       const batchMax = 8;
       let batched = 0;
+      // ★4c: 生存ゾンビ位置配列をバッチ開始時に1回だけ構築(毎spawnOneZombie呼び出しでの
+      // bots.filter().map()再構築を排除。最大8回/フレームの重複走査を1回へ)
+      const aliveZombiePos = this.bots
+        .filter((b) => b.kind === 'zombie' && b.alive)
+        .map((b) => b.position);
       while (this.zombieQueue > 0 && aliveZ + batched < this.zombieTierCap && batched < batchMax) {
-        if (this.spawnOneZombie()) {
+        if (this.spawnOneZombie(aliveZombiePos)) {
           this.zombieQueue -= 1;
           batched += 1;
         } else {
@@ -8604,17 +8686,24 @@ export class Match {
   // 湧きリング(プレイヤーの18〜32m外周・フラスタム外)へ1体。HP/速度は tuning に載せて渡す
   // (KIND_TUNING.zombieに maxHp/moveSpeedMul を入れると spawnBot merge で後勝ち上書きされる致命バグ回避)
   // ★ 通常tierはプール優先: resetForZombieReuse で再利用し buildZombieMesh コストをゼロにする。
-  private spawnOneZombie(): boolean {
-    const spawn = this.zombieSpawnPoint();
+  // R51: allGiantMode は視覚 scale ×1.35(HP×1.5含む)。collider/meleeReachの拡大はbot.ts側の
+  // コンストラクタ時決定が必要なため今回は対象外(master同様、視覚のみ拡大する既存パターンに準拠)。
+  // R51-4c: aliveZombiePos はバッチ呼び出し元(updateZombieDirector)が1回だけ構築して渡す
+  // 生存ゾンビ位置の共有配列。zombieSpawnPoint内で新規スポーン点をpushし、同一バッチ内の
+  // 後続呼び出しからも重なり回避対象として見える(挙動維持)
+  private spawnOneZombie(aliveZombiePos: THREE.Vector3[]): boolean {
+    const spawn = this.zombieSpawnPoint(aliveZombiePos);
     if (!spawn) return false; // 有効な湧き点が無ければ次フレーム再試行(queueは減らさない)
     const r = this.zombieRound;
     const elite = this.rand() < zombieEliteRate(r);
     const run = this.rand() < zombieRunRate(r);
+    const giant = this.config.allGiantMode ?? false;
     const base = tuningFor('normal', this.config.difficulty);
     const tuning: BotTuning = {
       ...base,
-      maxHp: zombieHp(r) * (elite ? 1.6 : 1),
+      maxHp: zombieHp(r) * (elite ? 1.6 : 1) * (giant ? 1.5 : 1),
       moveSpeedMul: ZOMBIE_MOVE_MUL * (elite ? 1.15 : 1),
+      scale: giant ? 1.35 : 1,
     };
     const color = elite ? 0x6d7d3a : this.zombieSpawnColor;
     const name = BOT_NAMES[Math.floor(this.rand() * BOT_NAMES.length)] ?? 'ゾンビ';
@@ -8622,7 +8711,12 @@ export class Match {
     // ★ メッシュプール: 通常tier(=elite でない)かつプールに再利用可能インスタンスがあれば流用
     if (!elite && this.zombiePool.length > 0) {
       const bot = this.zombiePool.pop()!;
-      bot.resetForZombieReuse(tuning, spawn);
+      // R51バグ根治: プール再利用は spawnBot の合成漏斗(KIND_TUNING+hellMode)を経由しないため、
+      // 従来はプール個体に KIND_TUNING.zombie.damage(22) も hellMode 倍率も一切効いていなかった
+      // (常に難度基礎damage=11のまま)。ここで spawnBot と同じ合成を明示的に再現する。
+      const merged: BotTuning = { ...tuning, ...KIND_TUNING.zombie };
+      const poolTuning = this.config.hellMode ? applyHellTuning(merged) : merged;
+      bot.resetForZombieReuse(poolTuning, spawn);
       bot.zombieRunMul = run ? 1.6 : 1;
       // tags 再登録(cleanupDeadZombies で削除済み → 新しいcollider handleで再登録)
       this.tags.set(bot.bodyCollider.handle, { kind: 'bot', bot, part: 'body' });
@@ -8639,15 +8733,18 @@ export class Match {
 
   // 地面Yを下向きレイで確定し、フラスタム外の湧き点を返す(目前でのポップインを避ける)。
   // R21修正: 生存中ゾンビとの最小間隔(1.2m)も確保し、リング湧きでの重なりスタックを防ぐ。
-  private zombieSpawnPoint(): THREE.Vector3 | null {
+  // R51-4c: aliveZombiePos省略時(ボス湧き等の非バッチ経路)は従来どおり内部で1回構築する。
+  // バッチ経路(spawnOneZombie)は呼び出し元が共有配列を渡し、採用したスポーン点をここでpushして
+  // 同一バッチ内の以降の試行からも重なり回避対象として見えるようにする(挙動維持)
+  private zombieSpawnPoint(aliveZombiePos?: THREE.Vector3[]): THREE.Vector3 | null {
     const size = this.config.stage.size;
     const bound = size / 2 - 2;
     const around = this.player.alive ? this.player.position : new THREE.Vector3();
     const down = new THREE.Vector3(0, -1, 0);
     // 生存中ゾンビの現在位置(近接スポーンで重なるのを防ぐ)
-    const aliveZombiePos = this.bots
-      .filter((b) => b.kind === 'zombie' && b.alive)
-      .map((b) => b.position);
+    const positions =
+      aliveZombiePos ??
+      this.bots.filter((b) => b.kind === 'zombie' && b.alive).map((b) => b.position);
     const MIN_ZOMBIE_GAP = 1.2;
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const ang = this.rand() * Math.PI * 2;
@@ -8664,8 +8761,9 @@ export class Match {
         // フラスタム内(=プレイヤーの目前)はポップインになるので避ける
         if (this.isInView(p)) continue;
         // 直近スポーンゾンビとの重なりを避ける(最終2試行は妥協)
-        if (aliveZombiePos.some((zp) => zp.distanceTo(p) < MIN_ZOMBIE_GAP)) continue;
+        if (positions.some((zp) => zp.distanceTo(p) < MIN_ZOMBIE_GAP)) continue;
       }
+      positions.push(p); // 同一バッチ内の後続呼び出しへ即反映(呼び出し元が共有配列を渡した場合)
       return p;
     }
     return null;
@@ -8764,6 +8862,25 @@ export class Match {
     }
     const flags = shadowLodFlags(d2, SHADOW_CASTER_CAP);
     for (let i = 0; i < alive.length; i += 1) alive[i]!.setCastShadow(flags[i]!);
+  }
+
+  // ★5 群衆ランク書き込み(R100高密度対策・R51-4e): ★1影LODと同じ0.25s周期で、生存ゾンビを
+  // プレイヤー距離の近い順に bot.hordeRank へ書き込む(0=最近接)。死亡/非ゾンビは99固定。
+  // distToPlayer は updateBots と同型のアロケーション最小パターン(BOT_POS_SCRATCH再利用)を踏襲
+  private updateZombieHordeRank(): void {
+    const playerPos = this.player.position;
+    const zAlive: Bot[] = [];
+    const d2: number[] = [];
+    for (const b of this.bots) {
+      if (b.kind !== 'zombie' || !b.alive) {
+        b.hordeRank = 99;
+        continue;
+      }
+      zAlive.push(b);
+      d2.push(b.getPositionInto(BOT_POS_SCRATCH).distanceToSquared(playerPos)); // ★5 割り当てゼロ
+    }
+    const ranks = zombieHordeRanks(d2);
+    for (let i = 0; i < zAlive.length; i += 1) zAlive[i]!.hordeRank = ranks[i]!;
   }
 
   // ミッション開始時の準備: 濃霧・脱出地点・第1波

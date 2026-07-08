@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Effects } from './effects';
 
 // ── R34 特殊武器溜め/ウルト VFX API テスト ────────────────────────────────
@@ -544,5 +544,118 @@ describe('R35 Effects – ライフサイクル管理', () => {
     const { fx } = makeEffects();
     fx.gokuraiZetsumetsuEffect(ORIGIN);
     expect(() => fx.clear()).not.toThrow();
+  });
+});
+
+// ── R48-V監査対応: 死亡FX二重発火除去 + hitPuff/deathBurstプール化 ─────────────
+describe('R48-V Effects – botDeathFxByClass 二重発火除去', () => {
+  const CLASSES = ['sniper', 'shotgun', 'launcher', 'melee', 'exotic', 'rifle', 'smg', 'pistol', 'lmg', 'marksman', 'assault'];
+
+  it('全クラスで botDeathFxByClass が内部で deathBurst を呼ばない(呼び出し元が既に1回発火済みの契約)', () => {
+    const { fx } = makeEffects();
+    const spy = vi.spyOn(fx, 'deathBurst');
+    for (const cls of CLASSES) {
+      fx.botDeathFxByClass(ORIGIN, 0xff0000, cls);
+    }
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('botDeathFxByClass exotic: deathBurst除去後はaccentRingのみ(1個)追加', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    fx.botDeathFxByClass(ORIGIN, 0xffd700, 'exotic');
+    expect(scene.children.length - before).toBe(1);
+  });
+
+  it('botDeathFxByClass default(未分類クラス): deathBurst除去後は何も追加しない(呼び出し元契約)', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    fx.botDeathFxByClass(ORIGIN, 0xffffff, 'assault');
+    expect(scene.children.length - before).toBe(0);
+  });
+});
+
+describe('R48-V Effects – hitPuff/deathBurst オブジェクトプール化', () => {
+  it('hitPuff: HITPUFF_MAX(128)を超えて連続発火してもscene上のアクティブ数が頭打ちになる', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    for (let i = 0; i < 200; i += 1) fx.hitPuff(ORIGIN);
+    expect(scene.children.length - before).toBe(128);
+  });
+
+  it('deathBurst: 108体同時死亡(全滅ウルト相当)でもDEATH_BURST_MAX(32)で頭打ちになる(flash32+shard32=64)', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    for (let i = 0; i < 108; i += 1) fx.deathBurst(new THREE.Vector3(i, 0, 0), 0xff0000);
+    expect(scene.children.length - before).toBe(64);
+  });
+
+  it('deathBurst: 発火→life経過→再発火を繰り返してもscene.children総数は増え続けない(プール再利用の検証)', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    // 1巡目: 10発火(flash10+shardGroup10=20児童)
+    for (let i = 0; i < 10; i += 1) fx.deathBurst(ORIGIN, 0xff0000);
+    expect(scene.children.length - before).toBe(20);
+    // flash life=0.4 / shardGroup life=0.7。1.0秒進めれば両方期限切れ→sceneから離脱してfreeプールへ
+    for (let i = 0; i < 100; i += 1) fx.update(0.01);
+    expect(scene.children.length - before).toBe(0);
+    // 2巡目: 再度10発火 → freeプールから再利用されるため、やはり20のまま(無限増殖しない)
+    for (let i = 0; i < 10; i += 1) fx.deathBurst(ORIGIN, 0xff0000);
+    expect(scene.children.length - before).toBe(20);
+  });
+
+  it('1キル=1エフェクト維持: 上限到達後も新しいkillはFXを受け取る(最古を強制リサイクルして必ず表示)', () => {
+    const { fx, scene } = makeEffects();
+    for (let i = 0; i < 40; i += 1) fx.deathBurst(new THREE.Vector3(i, 0, 0), 0xff0000);
+    // 41回目もエラーなく発火し、位置が最新のpointへ更新されている(=表示される)ことを検証
+    const latest = new THREE.Vector3(999, 0, 0);
+    expect(() => fx.deathBurst(latest, 0x00ff00)).not.toThrow();
+    let found = false;
+    scene.traverse((child) => {
+      if (child instanceof THREE.Group && child.position.distanceTo(latest) < 1e-6) found = true;
+    });
+    expect(found).toBe(true);
+  });
+
+  it('dispose: 期限切れによる回収(free化)ではMaterialをdisposeしない(プール再利用が効いている証拠)', () => {
+    const { fx } = makeEffects();
+    const disposeSpy = vi.spyOn(THREE.Material.prototype, 'dispose');
+    disposeSpy.mockClear();
+    for (let i = 0; i < 5; i += 1) fx.hitPuff(ORIGIN);
+    fx.update(1.0); // hitPuff life=0.16 なので確実に期限切れ→free化
+    expect(disposeSpy).not.toHaveBeenCalled();
+    disposeSpy.mockRestore();
+  });
+
+  it('dispose: 再利用プール(inactive/free分含む)の全Materialが解放される(リーク禁止)', () => {
+    const { fx } = makeEffects();
+    const disposeSpy = vi.spyOn(THREE.Material.prototype, 'dispose');
+    disposeSpy.mockClear();
+
+    // hitPuff: 5回発火→期限切れさせてfreeプールへ回収(Material5個がinactiveのまま残る)
+    for (let i = 0; i < 5; i += 1) fx.hitPuff(ORIGIN);
+    fx.update(1.0);
+    expect(disposeSpy).not.toHaveBeenCalled();
+
+    // deathBurst: 3回発火(flashMaterial3 + shardMaterial3×10=30 が active のまま dispose を迎える)
+    for (let i = 0; i < 3; i += 1) fx.deathBurst(ORIGIN, 0xff0000);
+
+    fx.dispose();
+    // 5(hitPuff free分) + 3(deathBurst flash active分) + 30(deathBurst shard active分) = 38
+    expect(disposeSpy.mock.calls.length).toBe(38);
+
+    disposeSpy.mockRestore();
+  });
+
+  it('clear 後に再度 hitPuff/deathBurst を呼んでも例外なし(active/freeプール双方がリセットされ、共有geometryはclear()で破棄されない)', () => {
+    const { fx } = makeEffects();
+    fx.hitPuff(ORIGIN);
+    fx.deathBurst(ORIGIN, 0xff0000);
+    fx.clear();
+    expect(() => {
+      fx.hitPuff(ORIGIN);
+      fx.deathBurst(ORIGIN, 0xff0000);
+    }).not.toThrow();
   });
 });

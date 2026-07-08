@@ -153,8 +153,9 @@ export const XP_MUL_ZOMBIE =  25; // ゾンビモード — 試合XP全体に掛
 // L100-499: +100/レベルで緩やかに成長(高原フェーズ1)。
 // L500-999: +50/レベルでさらに緩やかに成長(高原フェーズ2)。
 // L1000-9999: +25/レベルでさらに高原化(L999=90_450 との連続性を維持)。
-// L10000-99998: +10/レベルで究極高原化(L9999=315_450 との連続性を維持)。
-// 単調増加・オーバーフロー無し・最大値は xpToNext(99998)=1_215_440 で Number.MAX_SAFE_INTEGER と十分離れている。
+// L10000以降: +10/レベルで究極高原化(L9999=315_450 との連続性を維持)。
+// R49でレベルを無限化したため、この区分に上限は無く無限に延長される(等差数列のまま)。
+// 単調増加・オーバーフロー無し(levelFromXp側はL10000以降を閉形式で解くため巨大XPでも軽量)。
 export function xpToNext(level: number): number {
   if (level < 100) {
     // L1-99 は旧曲線と同一(後方互換)
@@ -172,11 +173,16 @@ export function xpToNext(level: number): number {
     // L1000-9999: さらに高原化(+25/レベル)。xpToNext(999)=90_450 との連続性を維持。
     return 90_450 + (level - 999) * 25;
   }
-  // L10000-99998: 究極高原化(+10/レベル)。xpToNext(9999)=315_450 との連続性を維持。
+  // L10000以降: 究極高原化(+10/レベル)。xpToNext(9999)=315_450 との連続性を維持し、
+  // 上限なく無限に続く(R49レベル無限化)。
   return 315_450 + (level - 9999) * 10;
 }
 
-export const MAX_LEVEL = 99999;
+// R49でレベル無限化する前は「レベル上限(頭打ち)」を表す定数だった。
+// 現在は頭打ちが無いため levelFromXp では使用しない。定数自体は外部互換のため残し、
+// 「事実上の上限なし」を表す Number.MAX_SAFE_INTEGER を割り当てる
+// (progression.ts / progression.test.ts 以外からこの定数を参照している箇所は無いことを確認済み)。
+export const MAX_LEVEL = Number.MAX_SAFE_INTEGER;
 
 export interface LevelState {
   level: number;
@@ -184,14 +190,49 @@ export interface LevelState {
   toNext: number;
 }
 
+// L10000以降、xpToNext(level) は初項 A=xpToNext(LINEAR_TAIL_START)・公差10の等差数列のまま
+// 無限に続く。levelFromXp はこの区間を「1レベルずつ引き算」せず、m段先まで進める閉形式
+// (二次方程式)で直接解くため、巨大XP(1e15超など)でも定数時間に近い計算量で済む。
+const LINEAR_TAIL_START = 10_000;
+
+// L10000から m 段先までの必要XP合計(等差数列の部分和): m*A + D*m*(m-1)/2
+function linearTailPartialSum(m: number, first: number, diff: number): number {
+  return m * first + (diff * m * (m - 1)) / 2;
+}
+
+// linearTailPartialSum(m) <= rest を満たす最大の m(m>=0)を二次方程式の根から直接求める。
+// 5m^2 + (A - D/2)m - rest = 0 (D=10 なので D/2=5) を m について解き、非負根を採用する。
+// 浮動小数点の丸め誤差は僅かにズレ得るため、実測の部分和との突き合わせで±1補正する
+// (partialSumは単調増加なので補正ループは必ず有限回で収束する)。
+function solveLinearTailLevels(rest: number, first: number, diff: number): number {
+  const half = diff / 2;
+  const b = first - half;
+  const disc = b * b + 4 * half * rest;
+  let m = Math.floor((-b + Math.sqrt(disc)) / (2 * half));
+  if (!Number.isFinite(m) || m < 0) m = 0;
+  while (m > 0 && linearTailPartialSum(m, first, diff) > rest) m -= 1;
+  while (linearTailPartialSum(m + 1, first, diff) <= rest) m += 1;
+  return m;
+}
+
 export function levelFromXp(xp: number): LevelState {
   let level = 1;
-  let rest = Math.max(0, xp);
-  while (level < MAX_LEVEL && rest >= xpToNext(level)) {
+  // 非有限値(NaN/Infinity)は0扱いにして、以降の計算が壊れないようにする
+  let rest = Math.max(0, Number.isFinite(xp) ? xp : 0);
+  // L1-9999は区分が細かく切り替わるため、そのまま線形スキャンする(最大9999回・軽量)
+  while (level < LINEAR_TAIL_START && rest >= xpToNext(level)) {
     rest -= xpToNext(level);
     level += 1;
   }
-  return { level, intoLevel: rest, toNext: level >= MAX_LEVEL ? 0 : xpToNext(level) };
+  // L10000へ到達した場合のみ、そこから先は無限に続く等差数列を閉形式で一気に解く
+  if (level === LINEAR_TAIL_START) {
+    const first = xpToNext(LINEAR_TAIL_START);
+    const diff = 10;
+    const m = solveLinearTailLevels(rest, first, diff);
+    level += m;
+    rest -= linearTailPartialSum(m, first, diff);
+  }
+  return { level, intoLevel: rest, toNext: xpToNext(level) };
 }
 
 // アンロック対象。武器とアタッチメントをレベルで開放する
@@ -385,10 +426,12 @@ export function rankFromRating(rating: number): RankDef {
 
 // ── レベル帯ランク名(レーティングとは独立した、累積レベルによる階位) ────────────────
 // L1-999: 100刻み10段 / L1000-9999: 1000刻み10段(L9999のみ単独「創世神」)
-// L10000-99999: 10000刻み10段(超越階級・日本神話)
+// L10000-99999: 10000刻み10段(超越階級・日本神話、L99999=森羅万象で一旦の頂点)
+// L100000以降: 10万刻みで「森羅万象」を超える超越階級が無限に続く(R49レベル無限化)。
+// tierはR49以降も単調増加し続けるため上限は無い。
 export interface RankName {
   name: string;
-  tier: number; // 0(新兵) 〜 29(森羅万象)
+  tier: number; // 0(新兵) 〜 29(森羅万象) 〜 無限(森羅万象超の超越階級)
 }
 
 // 降順に並べ、初めて level >= minLevel となるエントリを返す
@@ -428,7 +471,34 @@ const LEVEL_RANK_TABLE: ReadonlyArray<{ minLevel: number; name: string; tier: nu
   { minLevel:     1, name: '新兵',     tier:  0 },
 ];
 
+// ── 超越階級(L100000以降・森羅万象を超えて更に進化する階位) ─────────────────────
+// idx = floor(level / TRANSCEND_STEP)。idx 1-24 は固定の凍結ラダー、tier = 29 + idx で
+// 既存の tier(0-29)から単調に続く。idx 25以降は「無限の無限・n乗」を文字列生成で無限に
+// 続ける(idx=24の「無限の無限」を基準に、idx-23 乗という体で表す)。
+const TRANSCEND_STEP = 100_000;
+
+const TRANSCEND_RANK_NAMES: readonly string[] = [
+  '宇宙開闢', '銀河創世', '時空超越', '次元崩壊', '多元宇宙',
+  '平行世界の王', '因果律の支配者', '概念超越', '無限回帰', '永劫不滅',
+  '天元突破', '星海の帝', '万象の祖', '理の外', '混沌の主宰',
+  '秩序の根源', '世界改変', '創造と終焉', '全知全能', '絶対存在',
+  '唯一絶対', '根源意志', '万物の彼方', '無限の無限',
+];
+
+function transcendRankFor(idx: number): RankName {
+  const tier = 29 + idx;
+  if (idx <= TRANSCEND_RANK_NAMES.length) {
+    return { name: TRANSCEND_RANK_NAMES[idx - 1]!, tier };
+  }
+  // idx=25→「無限の無限・2乗」、idx=26→「・3乗」…と無限に続く命名
+  const power = idx - (TRANSCEND_RANK_NAMES.length - 1);
+  return { name: `無限の無限・${power}乗`, tier };
+}
+
 export function rankNameFor(level: number): RankName {
+  if (level >= TRANSCEND_STEP) {
+    return transcendRankFor(Math.floor(level / TRANSCEND_STEP));
+  }
   for (const r of LEVEL_RANK_TABLE) {
     if (level >= r.minLevel) return { name: r.name, tier: r.tier };
   }
