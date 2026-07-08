@@ -67,6 +67,14 @@ const MANTLE_MAX_CLIMB = 1.55;
 const MANTLE_MIN_CLIMB = 0.45;
 const MANTLE_DURATION = 0.34;
 
+// Rapier KCC 退化ケース対策(dimforge/rapier#485、OPEN): 水平成分が厳密に 0 の純垂直
+// computeColliderMovement は、床と隙間 0 の「面一」接触では接地解決が退化し、キャラが床へ
+// 沈み込む。スポーン地点は全て床天面(y=0)と面一に配置されるため「開始直後に静止したままだと
+// 床抜けする」の根本原因。静止フレームのみ±この値の交互ジッタをクエリの x に注入して回避する
+// (符号を毎フレーム反転させるので正味ドリフトは実測 60 秒で 0.1mm 未満。実移動入力がある
+// フレームは一切触らない)。
+export const KCC_IDLE_JITTER_M = 1e-4;
+
 // match / HUD から参照する移動速度の代表値
 export const MOVE_SPEEDS = {
   walk: WALK_SPEED,
@@ -144,6 +152,7 @@ export class Player {
   private readonly mantleTo = new THREE.Vector3();
   private diving = false; // ダイブスラム降下中(ジャンプで解除=スラム不発)
   private diveLanded = false; // ダイブのまま着地した(matchが消費してスラム発火)
+  private kccJitterSign = 1; // 静止時KCCジッタの交互符号(KCC_IDLE_JITTER_M 参照)
   // ミッション・モディファイアで上書きする個体設定(既定は従来定数)
   private readonly regenDelay: number;
   private readonly regenPerS: number;
@@ -425,12 +434,17 @@ export class Player {
     const hx = this.vel.x * dt;
     const hz = this.vel.z * dt;
     const vy = this.velY * dt;
+    // 完全静止(水平成分が厳密に 0)の純垂直クエリは面一接触で退化し床へ沈む(rapier#485)。
+    // 静止フレームのみ交互符号の極小ジッタを x に注入して回避(KCC_IDLE_JITTER_M のコメント参照)
+    const idle = hx === 0 && hz === 0;
+    if (idle) this.kccJitterSign = -this.kccJitterSign;
+    const qx = idle ? this.kccJitterSign * KCC_IDLE_JITTER_M : hx;
     const hDist = Math.hypot(hx, hz);
     const substeps = hDist > 0.5 ? Math.min(4, Math.ceil(hDist / 0.5)) : 1;
     const moved = new THREE.Vector3();
     for (let si = 0; si < substeps; si++) {
       this.controller.computeColliderMovement(this.collider, {
-        x: hx / substeps,
+        x: qx / substeps,
         y: si === 0 ? vy : 0, // 垂直は最初のサブステップのみ(接地判定・天井検知のため)
         z: hz / substeps,
       });
@@ -488,7 +502,8 @@ export class Player {
     }
     this.body.setNextKinematicTranslation({ x: nx, y: ny, z: nz });
 
-    if (this.grounded && !this.sliding) {
+    // idle 中の moved.x はジッタ由来のため足音距離には混ぜない
+    if (this.grounded && !this.sliding && !idle) {
       this.stepDistance += Math.hypot(moved.x, moved.z);
       const stride = this.sprinting ? 2.9 : 2.3;
       if (this.stepDistance >= stride) {
