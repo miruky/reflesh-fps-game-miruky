@@ -1492,16 +1492,17 @@ export function buildGunBody(
     acbm.position.set(0, 0.0, 0.06);
     gun.add(acbm);
     // ビード照準: bead Y = BARREL_Y + 0.020*0.6 = 0.024(resolveSightY 契約)
+    // R49: BO3スタイルの浮遊マイクロドット+極薄ベゼルリングへ統一(旧brassビード球+太い琥珀点を置換)
     const beadY = BARREL_Y_M + 0.020 * 0.6;
-    const beadGeo = new THREE.SphereGeometry(0.006, 10, 8);
-    setColor(beadGeo, col(C_BRASS), 'flat');
-    const beadm = new THREE.Mesh(beadGeo, polishVC);
-    beadm.position.set(0, beadY, -0.16);
-    gun.add(beadm);
-    const amberMusket = getAccent(0xffab1e);
-    const amberM = new THREE.Mesh(new THREE.SphereGeometry(0.0026, 8, 6), amberMusket);
-    amberM.position.set(0, beadY, -0.156);
-    gun.add(amberM);
+    const ringGeoM = new THREE.RingGeometry(0.011, 0.0125, 24);
+    setColor(ringGeoM, col(0x6a7e9a), 'flat');
+    const ringMuskM = new THREE.Mesh(ringGeoM, polishVC);
+    ringMuskM.position.set(0, beadY, -0.16);
+    gun.add(ringMuskM);
+    const microMusket = getAccent(0xff3b1a);
+    const microM = new THREE.Mesh(new THREE.SphereGeometry(0.0019, 8, 6), microMusket);
+    microM.position.set(0, beadY, -0.156);
+    gun.add(microM);
     // カモ適用
     const musketCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
@@ -2013,18 +2014,25 @@ export function buildGunBody(
   }
 
   // ── アイアンサイト(scope機は省略=光学優先) ──
-  // R15: 参考画像のスタイルへ統一 — 後照星は外・上へ角度をつけた「耳」2本(基部に琥珀アクセント)、
-  // 前照星は小さな琥珀の発光ビード。暗所でも消えず、耳の間に小さな琥珀点を合わせて狙う。
+  // R49: BO3参考画像スタイルへ統一 — 「極小浮遊ドット+極薄ベゼルリング」。旧・前照星の黒ポスト箱+
+  // 太い琥珀ビードは視界を塞ぐ主因だったため撤去し、支柱なしで浮かぶマイクロドット(赤橙)へ置換。
+  // 後照星は引き続き外・上へ角度をつけた「耳」2本(基部+先端に琥珀アクセント2点)を残す。
   if (!sil.scope) {
-    const amberMat = getAccent(0xffab1e); // 琥珀ファイバ(shared+disposeSharedで解放)
+    const amberMat = getAccent(0xffab1e); // 琥珀ファイバ(耳のアクセント。shared+disposeSharedで解放)
+    const microMat = getAccent(0xff3b1a); // BO3風・浮遊マイクロドット(赤橙、照準点=着弾点)
     const amberDot = (x: number, y: number, z: number, r: number): void => {
       const d = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), amberMat);
       d.position.set(x, y, z);
       gun.add(d);
     };
-    // 後照星の「耳」2本(黒ポストを外へロール)+ 基部の琥珀点(参考画像の耳の付け根の光)。
-    // ①R16: 枠を広めに開き超見やすく — 耳を左右へ広げ(X 0.028)・強くロール(0.34)・大きく(h0.04/w0.010)、
-    // 基部の琥珀点も外・上へ(x0.022/y0.060/r0.003)。bead機(ショットガン)は前ビードがバレル上(高い)で
+    const microDot = (x: number, y: number, z: number, r: number): void => {
+      const d = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), microMat);
+      d.position.set(x, y, z);
+      gun.add(d);
+    };
+    // 後照星の「耳」2本(黒ポストを外へロール)+ 基部/先端の琥珀点(参考画像の耳の付け根+先端の光)。
+    // ①R16: 枠を広めに開き超見やすく — 耳を左右へ広げ(X 0.028)・強くロール(0.34)・大きく(h0.04)、
+    // R49: 視界確保のため幅 0.01→0.008 に細く。bead機(ショットガン)は前ビードがバレル上(高い)で
     // 耳と挟まないため耳を出さず単ビード構成に。
     if (det.iron !== 'bead') {
       // full-rail機は耳を少し上げて上端レール線に枠を揃える。0.078まで上げると前ビード(y=0.062)が
@@ -2032,42 +2040,46 @@ export function buildGunBody(
       const earPy = det.railTop === 'full' ? 0.072 : 0.066;
       for (const sx of [-1, 1] as const) {
         // Fix-1: 後照星耳を明るいミリタリーグレー(0x6a7e9a)へ。暗ステージで照門が消える問題の根治
-        boxP(metalParts, 0x6a7e9a, 0.01, 0.04, 0.01, sx * 0.028, earPy, -recD - 0.006, 0, 0, sx * 0.34);
-        amberDot(sx * 0.022, 0.06, -recD - 0.009, 0.003);
+        boxP(metalParts, 0x6a7e9a, 0.008, 0.04, 0.01, sx * 0.028, earPy, -recD - 0.006, 0, 0, sx * 0.34);
+        amberDot(sx * 0.022, 0.06, -recD - 0.009, 0.0024);
+        amberDot(sx * 0.034, earPy + 0.018, -recD - 0.009, 0.0024);
       }
     }
     if (det.iron === 'bead') {
       if (def.shape === 'launcher') {
-        // ランチャー: ゴーストリングサイト(レシーバ天板上にポスト+アパーチャリング+琥珀センタードット)。
+        // ランチャー: ゴーストリングサイト(レシーバ天板上にポスト+極薄ベゼルリング+浮遊マイクロドット)。
         // ADS時にリング中心(y=0.088)が射線へ来る — resolveSightY 0.088 と一致させること。
         // これにより太い発射筒がカメラより下に逃げ、リング+ドット越しに視界が通る。
         const RING_Y = 0.088;
         const RING_Z = -recHalf * 0.35; // レシーバ前方寄りの位置
         // マウンティングポスト(レシーバ天板 r.h/2 〜 リング中心 RING_Y)
         boxP(metalParts, C_DARK, 0.009, RING_Y - r.h / 2, 0.009, 0, (r.h / 2 + RING_Y) / 2, RING_Z);
-        // アパーチャリング(ゴーストリング) Fix-9: 外径 0.017→0.028(視認面積3倍化)
-        const ringGeo = new THREE.RingGeometry(0.012, 0.028, 22);
-        bakeAt(polishParts, ringGeo, C_POLISH_HI, 0, RING_Y, RING_Z, 0, 0, 0, 'flat');
-        // センター琥珀ドット(着弾点の直感的な目安)
-        amberDot(0, RING_Y, RING_Z - 0.005, 0.003);
+        // アパーチャリング(ゴーストリング): R49 BO3スタイルの極薄ベゼル化(0.012-0.028→0.019-0.021)
+        const ringGeo = new THREE.RingGeometry(0.019, 0.021, 22);
+        bakeAt(polishParts, ringGeo, 0x6a7e9a, 0, RING_Y, RING_Z, 0, 0, 0, 'flat');
+        // センターの浮遊マイクロドット(着弾点の直感的な目安)
+        microDot(0, RING_Y, RING_Z - 0.005, 0.0021);
       } else {
-        // ショットガン等: バレル上の前照星ビード(brassはresolveSightY契約=polish top cluster)
+        // ショットガン等: バレル上の前照星(R49: 浮遊マイクロドット+極薄ベゼルリング。resolveSightY契約は
+        // 個別Meshのマイクロドット中心Yで満たす — bakeAtで焼くリングは走査対象にしない)。
         // Fix-7: SG3種(shotgun-pump/double)の bead Y を +0.016 引き上げ(レシーバ上端突出を解消)
         const isSgBead = def.shape === 'shotgun-pump' || def.shape === 'shotgun-double'
           || (!def.shape && def.class === 'shotgun');
         const beadY = BARREL_Y + gauge * 0.6 + (isSgBead ? 0.016 : 0);
         const beadZ = barFrontZ + 0.02;
         const amberZ = barFrontZ + 0.024;
-        const bead = new THREE.SphereGeometry(0.006, 10, 8);
-        bakeAt(polishParts, bead, C_BRASS, 0, beadY, beadZ, 0, 0, 0, 'flat');
-        amberDot(0, beadY, amberZ, 0.0026);
+        // バレルへの食い込みを避けるため post機よりリング径を小さく(耳は構図破綻のため付けない)
+        const beadRing = new THREE.RingGeometry(0.013, 0.015, 24);
+        bakeAt(polishParts, beadRing, 0x6a7e9a, 0, beadY, beadZ, 0, 0, 0, 'flat');
+        microDot(0, beadY, amberZ, 0.0021);
       }
     } else if (det.iron !== 'none') {
-      // 前照星の小ポスト(黒・やや太く0.006)+ 目立つ琥珀ビード。狙点=resolveSightY 0.062 に一致・
-      // 凍結(x0/y0.062/z0.14 は不変)。広げた耳の間に中央で載る。
-      // Fix-仕上げ: amberDot r 0.0032→0.0045(全アイアン武器の照星を視認しやすく)
-      boxP(metalParts, C_DARK, 0.006, 0.018, 0.007, 0, 0.056, 0.14);
-      amberDot(0, 0.062, 0.14, 0.0045);
+      // R49: 前照星の黒ポスト箱+太い琥珀ビードを撤去し、支柱なしで浮かぶマイクロドット+極薄ベゼル
+      // リングへ統一(BO3参考画像スタイル)。狙点=resolveSightY 0.062 に一致・凍結
+      // (x0/y0.062/z0.14 は不変)。広げた耳の間に中央で浮かぶ。
+      microDot(0, 0.062, 0.14, 0.0021);
+      // ベゼルは polishParts へ(カモは metalParts のみに適用 — bead/launcher のリングと同じくカモ不変のグレーを保つ)
+      bakeAt(polishParts, new THREE.RingGeometry(0.0205, 0.0225, 24), 0x6a7e9a, 0, 0.062, 0.14, 0, 0, 0, 'flat');
     }
   }
 

@@ -296,36 +296,33 @@ describe('resolveSightY', () => {
     }
   });
 
-  it('アイアンビード球の実Yと一致する(ドリフト検出)', () => {
-    // class を shotgun に合わせる(base の 'ar' のままだと AR 用リアチャージングハンドルが
-    // polish 系に載り、ビードより高い頂点が混ざって最上クラスタ判定を汚すため)。
-    const def: WeaponDef = { ...base, shape: 'shotgun-pump', class: 'shotgun', attachmentIds: [] };
-    const { gun } = buildGunBody(def);
-    // 研磨(polish)系メッシュ = vertexColors かつ metalness≈0.9。ビードは polish の最上クラスタ。
-    const pts: THREE.Vector3[] = [];
+  // R49: アイアンサイトをBO3参考画像スタイル「極小浮遊ドット+極薄ベゼルリング」へ統一。
+  // ドット=着弾点の狙点契約: SphereGeometry r≤0.0022 の個別Mesh(支柱なしで浮くマイクロドット)が
+  // 存在し、その中心Yが resolveSightY(def) と一致すること(耳の琥珀アクセント点は r0.0024>0.0022で除外)。
+  // bakeAt でマージされるベゼルリングは個別メッシュとして走査できないため、ドットのみ検証する。
+  function findMicroDot(gun: THREE.Object3D, maxR = 0.0022): THREE.Mesh | undefined {
+    let found: THREE.Mesh | undefined;
     gun.traverse((o) => {
-      if (!(o instanceof THREE.Mesh)) return;
-      const mat = o.material;
-      if (!(mat instanceof THREE.MeshStandardMaterial) || !mat.vertexColors || mat.metalness < 0.85) {
-        return;
+      if (found) return;
+      if (o instanceof THREE.Mesh && o.geometry instanceof THREE.SphereGeometry && o.geometry.parameters.radius <= maxR) {
+        found = o;
       }
-      const p = o.geometry.attributes.position as THREE.BufferAttribute;
-      for (let i = 0; i < p.count; i += 1) pts.push(new THREE.Vector3(p.getX(i), p.getY(i), p.getZ(i)));
     });
-    expect(pts.length).toBeGreaterThan(0);
-    // 最上頂点の近傍(半径0.013>ビード直径0.012)クラスタ=ビード球のみ。bbox中点=球中心Y。
-    let top = pts[0];
-    if (!top) throw new Error('no polish vertices');
-    for (const v of pts) if (v.y > top.y) top = v;
-    const anchor = top;
-    const near = pts.filter((v) => v.distanceTo(anchor) < 0.013);
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const v of near) {
-      if (v.y < minY) minY = v.y;
-      if (v.y > maxY) maxY = v.y;
+    return found;
+  }
+
+  it('浮遊マイクロドット(r≤0.0022)の実Yが resolveSightY と一致する(ドリフト検出): iron post/bead/launcher', () => {
+    const cases: WeaponDef[] = [
+      withShape('rifle'), // iron post機
+      { ...base, shape: 'shotgun-pump', class: 'shotgun', attachmentIds: [] }, // bead機
+      withShape('launcher'), // ゴーストリング機
+    ];
+    for (const def of cases) {
+      const { gun } = buildGunBody(def);
+      const dot = findMicroDot(gun);
+      expect(dot, def.shape).toBeDefined();
+      expect(dot!.position.y, def.shape).toBeCloseTo(resolveSightY(def), 6);
     }
-    expect((minY + maxY) / 2).toBeCloseTo(resolveSightY(def), 3);
   });
 });
 
