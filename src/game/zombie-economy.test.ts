@@ -8,6 +8,7 @@ import {
   PERKS,
   POINTS,
   WALL_BUYS,
+  applyExtMagCapacity,
   buyResult,
   canBuy,
   generateShopLayout,
@@ -69,8 +70,46 @@ describe('PERKS', () => {
     expect(p.effect.selfReviveCharges).toBe(1);
   });
 
+  it('ext-mag: 価格1000・magCapacityBonusPerStack=0.5', () => {
+    const p = PERKS['ext-mag'];
+    expect(p.price).toBe(1000);
+    expect(p.effect.magCapacityBonusPerStack).toBe(0.5);
+  });
+
   it('PERK_LIMIT は 4', () => {
     expect(PERK_LIMIT).toBe(4);
+  });
+});
+
+// ─── applyExtMagCapacity ────────────────────────────────────────────────────
+
+describe('applyExtMagCapacity', () => {
+  it('基礎容量×(1+0.5×スタック数)で線形にスタックする(切り上げ)', () => {
+    expect(applyExtMagCapacity(30, 1)).toBe(45);  // ×1.5
+    expect(applyExtMagCapacity(30, 2)).toBe(60);  // ×2.0
+    expect(applyExtMagCapacity(30, 3)).toBe(75);  // ×2.5
+  });
+
+  it('切り上げが効く(奇数マガジンの端数ケース)', () => {
+    expect(applyExtMagCapacity(7, 1)).toBe(11); // ceil(10.5)
+    expect(applyExtMagCapacity(7, 2)).toBe(14); // ceil(14.0)
+    expect(applyExtMagCapacity(7, 3)).toBe(18); // ceil(17.5)
+  });
+
+  it('複利ではなく毎回ベース容量からの再計算である(speed-colaと異なる)', () => {
+    // 2スタック目の結果を「1スタック目の結果に再度掛ける」のではなく、
+    // 常に元の基礎容量から計算し直すことを保証する
+    const base = 30;
+    const stack1 = applyExtMagCapacity(base, 1); // 45
+    const stack2FromBase = applyExtMagCapacity(base, 2); // 60
+    const stack2FromCompound = Math.ceil(stack1 * 1.5); // 68 (複利なら誤ってこうなる)
+    expect(stack2FromBase).toBe(60);
+    expect(stack2FromBase).not.toBe(stack2FromCompound);
+  });
+
+  it('stackCount<=0 は基礎容量のまま', () => {
+    expect(applyExtMagCapacity(30, 0)).toBe(30);
+    expect(applyExtMagCapacity(30, -1)).toBe(30);
   });
 });
 
@@ -312,6 +351,22 @@ describe('purchasePerk', () => {
     purchasePerk(stacks, 'juggernog', 9999);
     expect(Object.keys(stacks)).toHaveLength(0); // stacks は変更されていない
   });
+
+  it('ext-mag は無限スタック購入可能: 1000ptで1回目 stackCount=1', () => {
+    const stacks: Partial<Record<ZombiePerkId, number>> = {};
+    const res = purchasePerk(stacks, 'ext-mag', 1000);
+    expect(res.ok).toBe(true);
+    expect(res.remainingPoints).toBe(0);
+    expect(res.stackCount).toBe(1);
+  });
+
+  it('ext-mag は既存スタックから+1でstackCount=3', () => {
+    const stacks: Partial<Record<ZombiePerkId, number>> = { 'ext-mag': 2 };
+    const res = purchasePerk(stacks, 'ext-mag', 9999);
+    expect(res.ok).toBe(true);
+    expect(res.stackCount).toBe(3);
+    expect(res.remainingPoints).toBe(9999 - 1000);
+  });
 });
 
 // ─── generateShopLayout ───────────────────────────────────────────────────────
@@ -422,5 +477,16 @@ describe('generateShopLayout', () => {
       const unique = new Set(perkIds);
       expect(unique.size).toBe(perkIds.length);
     }
+  });
+
+  it('ext-mag(拡張マガジン)も選出対象に含まれる(十分な数のseedを走査すれば出現する)', () => {
+    let seen = false;
+    for (let seed = 0; seed < 200; seed += 1) {
+      const perkIds = generateShopLayout(seed).slots
+        .filter((s) => s.kind === 'perk-machine')
+        .map((s) => s.perkId);
+      if (perkIds.includes('ext-mag')) { seen = true; break; }
+    }
+    expect(seen).toBe(true);
   });
 });

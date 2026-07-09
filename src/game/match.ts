@@ -125,6 +125,7 @@ import {
   buyResult,
   rollMysteryBox,
   canBuy,
+  applyExtMagCapacity,
   PERKS,
   POINTS,
   MYSTERY_BOX_COST,
@@ -249,6 +250,10 @@ const MACRO_NOISE_GLSL = /* glsl */ `
 
 const DEG = Math.PI / 180;
 const EXOTIC_HOLD_FIRE_IDS = new Set(['banjin-smg', 'fujin-fan', 'gouen-musket', 'shinkirou-sniper']);
+// 拡張マガジン(ext-mag)対象外の武器ID。fists(クナイ)は magazine.fire() を経由しない素手格闘で
+// 弾薬概念自体が無い(999は「表示上の∞」を示すダミー値)ため、容量パークを適用する意味がない。
+// テストから直接除外判定を検証できるよう export する。
+export const EXT_MAG_EXCLUDED_IDS = new Set(['fists']);
 const LOOK_BASE = 0.0022;
 // ゲームパッドのヒップファイア時アシストゲート(マウスはADS時のみ、パッドは常時BO3準拠)
 const HIP_GATE = 0.4;
@@ -10257,6 +10262,7 @@ export class Match {
         'double-tap': 0xff8822,
         'stamin-up': 0xffee22,
         'quick-revive': 0x2244ff,
+        'ext-mag': 0x88ff44,
       };
       const col = perkColors[slot.perkId as ZombiePerkId] ?? 0xffffff;
       const bodyGeo = new THREE.BoxGeometry(0.65, 1.9, 0.55);
@@ -10514,6 +10520,16 @@ export class Match {
       this.zombiePerkMoveMul = Math.min(1.5, this.zombiePerkMoveMul * 1.05);
     } else if (perkId === 'quick-revive') {
       this.zombieQuickReviveCharges += 1;
+    } else if (perkId === 'ext-mag') {
+      // 拡張マガジン: 基礎容量(WEAPON_DEFS由来)×(1+0.5×総スタック数)、切り上げ。
+      // speed-cola と異なり線形加算のため、現在値からの複利ではなく毎回ベースから再計算する。
+      for (const w of this.weapons) {
+        if (EXT_MAG_EXCLUDED_IDS.has(w.def.id)) continue;
+        const baseCap = WEAPON_DEFS[w.def.id]?.magazineSize ?? w.def.magazineSize;
+        const newCap = applyExtMagCapacity(baseCap, stackCount);
+        w.def.magazineSize = newCap;
+        w.magazine.setCapacity(newCap, true); // 即リフィル: リロード不要で恩恵を体感させる
+      }
     }
   }
 
@@ -10524,6 +10540,10 @@ export class Match {
     if (this.zombiePerkReloadMul !== 1) {
       newDef.reloadTacticalMs = Math.round(newDef.reloadTacticalMs * this.zombiePerkReloadMul);
       newDef.reloadEmptyMs = Math.round(newDef.reloadEmptyMs * this.zombiePerkReloadMul);
+    }
+    const extMagStacks = this.zombiePerkStacks.get('ext-mag') ?? 0;
+    if (extMagStacks > 0 && !EXT_MAG_EXCLUDED_IDS.has(newDef.id)) {
+      newDef.magazineSize = applyExtMagCapacity(newDef.magazineSize, extMagStacks);
     }
     const newWeapon = new Weapon(newDef);
     newWeapon.raise();

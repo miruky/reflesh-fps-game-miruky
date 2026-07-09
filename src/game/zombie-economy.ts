@@ -37,7 +37,8 @@ export type ZombiePerkId =
   | 'speed-cola'
   | 'double-tap'
   | 'stamin-up'
-  | 'quick-revive';
+  | 'quick-revive'
+  | 'ext-mag';
 
 /** パーク適用時の効果値。未指定フィールドはデフォルト値から変更しない */
 export interface PerkEffect {
@@ -53,6 +54,8 @@ export interface PerkEffect {
   moveMultiplier?: number;
   /** 自己復活チャージ数。quick-revive: 1 */
   selfReviveCharges?: number;
+  /** マガジン容量の加算率/スタック。ext-mag: 0.5(容量=基礎×(1+0.5×スタック数)、切り上げ) */
+  magCapacityBonusPerStack?: number;
 }
 
 export interface PerkDef {
@@ -98,6 +101,13 @@ export const PERKS: Record<ZombiePerkId, PerkDef> = {
     price: 500,
     description: '自己復活1回（ダウン後3秒で復活、所持消費）',
     effect: { selfReviveCharges: 1 },
+  },
+  'ext-mag': {
+    id: 'ext-mag',
+    name: '拡張マガジン',
+    price: 1000,
+    description: 'マガジン容量 +50%/スタック(切り上げ、無限スタック)',
+    effect: { magCapacityBonusPerStack: 0.5 },
   },
 };
 
@@ -194,6 +204,17 @@ export function getPerkEffect(perkId: ZombiePerkId): PerkEffect {
   return PERKS[perkId].effect;
 }
 
+/**
+ * 拡張マガジン(ext-mag)適用後の装弾数を返す。
+ * 基礎容量(WEAPON_DEFS由来、未改変値) × (1 + 0.5×スタック数) を切り上げる。
+ * speed-cola(複利0.85^n)と異なり線形加算のため、呼び出し側は毎回このベース値から
+ * 再計算すること(現在値からの複利ではない)。stackCount<=0 は基礎容量のまま。
+ */
+export function applyExtMagCapacity(baseCapacity: number, stackCount: number): number {
+  if (stackCount <= 0) return baseCapacity;
+  return Math.ceil(baseCapacity * (1 + 0.5 * stackCount));
+}
+
 export type PurchaseError =
   | 'insufficient-points'
   | 'quick-revive-charged';
@@ -287,6 +308,7 @@ const ALL_PERK_IDS: ZombiePerkId[] = [
   'double-tap',
   'stamin-up',
   'quick-revive',
+  'ext-mag',
 ];
 
 /**
@@ -329,7 +351,7 @@ export function generateShopLayout(seed: number): ShopLayout {
   }
 
   // パーク自販機: shuffle して先頭 perkCount 個を採用(重複なし)
-  // perkCount(3〜4) < ALL_PERK_IDS.length(5) なので範囲内アクセスが保証される
+  // perkCount(3〜4) < ALL_PERK_IDS.length(6) なので範囲内アクセスが保証される
   const perkPool = shuffle([...ALL_PERK_IDS], rand);
   for (let i = 0; i < perkCount; i += 1) {
     const pid = perkPool[i]!;

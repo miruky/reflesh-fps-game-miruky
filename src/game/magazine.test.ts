@@ -41,4 +41,39 @@ describe('Magazine', () => {
     const mag = new Magazine(30, 90);
     expect(mag.canReload).toBe(false);
   });
+
+  // ─── setCapacity(拡張マガジンパーク用) ────────────────────────────────────
+
+  it('setCapacity(refill=true): 容量を増やし差分を即座にreserveから補充する', () => {
+    const mag = new Magazine(30, Infinity);
+    mag.fire();
+    mag.fire(); // rounds=28
+    mag.setCapacity(45, true);
+    expect(mag.capacity).toBe(45);
+    expect(mag.rounds).toBe(45); // 満タンまで即補充(気持ちよさ要件)
+  });
+
+  it('setCapacity(refill=true): reserveが有限で不足していれば埋まる分だけ補充する', () => {
+    const mag = new Magazine(30, 5);
+    for (let i = 0; i < 30; i += 1) mag.fire(); // rounds=0
+    mag.setCapacity(45, true);
+    expect(mag.capacity).toBe(45);
+    expect(mag.rounds).toBe(5); // reserveの5発しか補充できない
+    expect(mag.reserve).toBe(5); // finishReloadと異なりreserveは消費しない(拡張自体は無償)
+  });
+
+  it('setCapacity(refill=false): roundsは変更せず容量だけ増える', () => {
+    const mag = new Magazine(30, Infinity);
+    mag.fire(); // rounds=29
+    mag.setCapacity(45, false);
+    expect(mag.capacity).toBe(45);
+    expect(mag.rounds).toBe(29);
+  });
+
+  it('setCapacity(refill=false): 容量を下げた場合roundsを新容量までclampする', () => {
+    const mag = new Magazine(30, Infinity);
+    mag.setCapacity(10, false);
+    expect(mag.capacity).toBe(10);
+    expect(mag.rounds).toBe(10);
+  });
 });

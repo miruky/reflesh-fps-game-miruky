@@ -19,6 +19,13 @@ const ADS_Z = -0.42;
 const LOWERED_OFFSET = -0.35;
 // 銃身・マズルの基準高さ(全シルエット共通)。トレーサー原点もこの高さに乗る
 const BARREL_Y = 0.012;
+// R51: アイアンサイト微調整(ユーザー要望「ドットをもう少し浮かせて」)。
+// IRON_POST_Y = post機(fixed/flip/ghost)の狙点Y(旧0.062→新0.075)。
+// BEAD_FLOAT = bead機(SG/musket)の狙点Y上乗せ量(旧beadY式に一律加算)。
+// 両定数は buildGunBody(実ジオメトリ)と resolveSightY(契約値)の双方で参照し、
+// ドリフトを構造的に防ぐ(どちらか片方だけ変更すると照準がズレるため)。
+const IRON_POST_Y = 0.075;
+const BEAD_FLOAT = 0.008;
 
 // 頂点カラーの陰影モード。flat=均一、gradY=下暗上明の擬似AO、
 // machined=削り出し鋼(急勾配+稜線ベベル)、edgeHi=研磨リム(上端を二次で光らせる)。
@@ -1398,7 +1405,8 @@ export function buildGunBody(
   }
 
   // ── musket: 木製銃床(カルカ溝)+火挟(サーペンタイン)+火皿+帯金3本の火縄銃 ─────
-  // 早期分岐で火縄銃固有ジオメトリを組む。bead sightY=BARREL_Y+0.020*0.6=0.024維持。
+  // 早期分岐で火縄銃固有ジオメトリを組む。
+  // R51: bead sightY=BARREL_Y+0.020*0.6+BEAD_FLOAT=0.032(旧0.024からドットを浮かせる)。
   if (def.shape === 'musket') {
     const { metalVC, polishVC, polyVC } = getShared();
     const accent = getAccent(def.tracerColor);
@@ -1491,10 +1499,11 @@ export function buildGunBody(
     const acbm = new THREE.Mesh(accentBand, accent);
     acbm.position.set(0, 0.0, 0.06);
     gun.add(acbm);
-    // ビード照準: bead Y = BARREL_Y + 0.020*0.6 = 0.024(resolveSightY 契約)
+    // ビード照準: bead Y = BARREL_Y + 0.020*0.6 + BEAD_FLOAT = 0.032(resolveSightY 契約)
     // R49: BO3スタイルの浮遊マイクロドットへ統一(旧brassビード球+太い琥珀点を置換)。
     // R50: ベゼルリングはユーザー要望で撤去(円形不要、ドットのみ)。
-    const beadY = BARREL_Y_M + 0.020 * 0.6;
+    // R51: BEAD_FLOAT を加算しドットを浮かせる(視界改善)。
+    const beadY = BARREL_Y_M + 0.020 * 0.6 + BEAD_FLOAT;
     const microMusket = getAccent(0xff3b1a);
     const microM = new THREE.Mesh(new THREE.SphereGeometry(0.0019, 8, 6), microMusket);
     microM.position.set(0, beadY, -0.156);
@@ -2029,17 +2038,20 @@ export function buildGunBody(
     };
     // 後照星の「耳」2本(参考画像のクワガタ型フレーム)+ 基部/先端の琥珀点。
     // R50: 画像に寄せて長く(h 0.04→0.065)・細く(w 0.008→0.005/d 0.01→0.008)、
-    // ロール 0.34→0.18(画像の耳はほぼ垂直で先端がわずかに開く)。先端琥珀点は新しい耳先端へ追従
-    // (x = 0.028 + sin0.18*h/2 ≈ 0.034, y = earPy + cos0.18*h/2 ≈ earPy+0.03)。
+    // ロール 0.34→0.18(画像の耳はほぼ垂直で先端がわずかに開く)。
+    // R51: ユーザー要望「ベゼル(クワガタ耳)を横に広く」— 耳X ±0.028→±0.038(寸法h/w/d/rollは不変、
+    // 新規リング/ベゼル形状は追加しない)。ドット上昇(IRON_POST_Y)に合わせ枠も追従させる:
+    // earPy 0.066→0.070 / full-rail 0.072→0.076。先端琥珀点は新しい耳先端へ追従
+    // (x = 0.038 + sin0.18*h/2 ≈ 0.044, y = earPy + cos0.18*h/2 ≈ earPy+0.03)。
     // bead機(ショットガン)は前ビードがバレル上(高い)で耳と挟まないため耳を出さず単ドット構成に。
     if (det.iron !== 'bead') {
-      // full-rail機は耳を少し上げて上端レール線に枠を揃える(0.072)。他機は 0.066。
-      const earPy = det.railTop === 'full' ? 0.072 : 0.066;
+      // full-rail機は耳を少し上げて上端レール線に枠を揃える(0.076)。他機は 0.070。
+      const earPy = det.railTop === 'full' ? 0.076 : 0.070;
       for (const sx of [-1, 1] as const) {
         // Fix-1: 後照星耳を明るいミリタリーグレー(0x6a7e9a)へ。暗ステージで照門が消える問題の根治
-        boxP(metalParts, 0x6a7e9a, 0.005, 0.065, 0.008, sx * 0.028, earPy, -recD - 0.006, 0, 0, sx * 0.18);
-        amberDot(sx * 0.022, 0.06, -recD - 0.009, 0.0024);
-        amberDot(sx * 0.034, earPy + 0.03, -recD - 0.009, 0.0024);
+        boxP(metalParts, 0x6a7e9a, 0.005, 0.065, 0.008, sx * 0.038, earPy, -recD - 0.006, 0, 0, sx * 0.18);
+        amberDot(sx * 0.031, 0.064, -recD - 0.009, 0.0024);
+        amberDot(sx * 0.044, earPy + 0.03, -recD - 0.009, 0.0024);
       }
     }
     if (det.iron === 'bead') {
@@ -2057,17 +2069,19 @@ export function buildGunBody(
         // ショットガン等: バレル上の前照星(R49: 浮遊マイクロドット。resolveSightY契約は
         // 個別Meshのマイクロドット中心Yで満たす)。R50: リング撤去(円形不要、ドットのみ)。
         // Fix-7: SG3種(shotgun-pump/double)の bead Y を +0.016 引き上げ(レシーバ上端突出を解消)
+        // R51: BEAD_FLOAT を加算しドットを浮かせる(視界改善。musket早期分岐と同一定数)。
         const isSgBead = def.shape === 'shotgun-pump' || def.shape === 'shotgun-double'
           || (!def.shape && def.class === 'shotgun');
-        const beadY = BARREL_Y + gauge * 0.6 + (isSgBead ? 0.016 : 0);
+        const beadY = BARREL_Y + gauge * 0.6 + (isSgBead ? 0.016 : 0) + BEAD_FLOAT;
         const amberZ = barFrontZ + 0.024;
         microDot(0, beadY, amberZ, 0.0021);
       }
     } else if (det.iron !== 'none') {
       // R49: 前照星の黒ポスト箱+太い琥珀ビードを撤去し、支柱なしで浮かぶマイクロドットへ統一
-      // (BO3参考画像スタイル)。狙点=resolveSightY 0.062 に一致・凍結(x0/y0.062/z0.14 は不変)。
+      // (BO3参考画像スタイル)。狙点=resolveSightY IRON_POST_Y に一致・凍結(x0/z0.14 は不変)。
       // R50: ベゼルリング撤去 — 長く細くした耳の間に中央で浮かぶ。
-      microDot(0, 0.062, 0.14, 0.0021);
+      // R51: ユーザー要望「ドットをもう少し浮かせて」— 0.062→IRON_POST_Y(0.075)。
+      microDot(0, IRON_POST_Y, 0.14, 0.0021);
     }
   }
 
@@ -2561,9 +2575,9 @@ export function buildGunBody(
 //   built-in scope           → sil.scope.y          (buildGunBody 「一体型光学」 tubeZ(…, s.y, …))
 //   reflex 着脱               → 0.08                 (buildGunBody 着脱 reflex dot.position.set(0, 0.08, …))
 //   telescopic 着脱(scope無)  → 0.08                (buildGunBody 着脱 telescopic tubeZ(…, 0.08, …))
-//   iron bead                → BARREL_Y + gauge*0.6  (buildGunBody アイアンサイト bead bakeAt(…, BARREL_Y+gauge*0.6, …))
-//   iron post(fixed/flip/ghost)→ 0.062              (R15: 狙点は前照星の琥珀ビード amberDot(0, 0.062, 0.14, …)。前ポスト箱は y=0.056 に降下)
-//   launcher ghost-ring        → 0.088               (buildGunBody launcher: amberDot(0, 0.088, …) ゴーストリング中心)
+//   iron bead                → BARREL_Y + gauge*0.6 + BEAD_FLOAT (buildGunBody アイアンサイト bead microDot(…, beadY, …). R51でBEAD_FLOAT(+0.008)を加算)
+//   iron post(fixed/flip/ghost)→ IRON_POST_Y(0.075)  (buildGunBody 前照星 microDot(0, IRON_POST_Y, 0.14, …)。R51でユーザー要望によりドットを浮かせる(旧0.062))
+//   launcher ghost-ring        → 0.088               (buildGunBody launcher: amberDot(0, 0.088, …) ゴーストリング中心。R51では変更なし)
 export function resolveSightY(def: WeaponDef): number {
   if (def.shape === 'fists') return 0;
   // ランチャー: ゴーストリングサイト中心(0.088)。ADS時に筒/レシーバを射線より下へ逃がして視界を通す。
@@ -2589,11 +2603,13 @@ export function resolveSightY(def: WeaponDef): number {
   const det = resolveDetail(sil, def);
   if (det.iron === 'bead') {
     // Fix-7: SG3種(shotgun-pump/double) の bead sightY を +0.016 引き上げ(0.036→0.052)
+    // R51: BEAD_FLOAT(+0.008) を加算しドットを浮かせる(buildGunBody bead分岐/musket早期分岐と同一定数)
     const resolvedShape = def.shape ?? classDefault(def.class);
     const isSgShape = resolvedShape === 'shotgun-pump' || resolvedShape === 'shotgun-double';
-    return BARREL_Y + sil.barrelGauge * 0.6 + (isSgShape ? 0.016 : 0);
+    return BARREL_Y + sil.barrelGauge * 0.6 + (isSgShape ? 0.016 : 0) + BEAD_FLOAT;
   }
-  return 0.062;
+  // R51: iron post(fixed/flip/ghost)機の狙点。ユーザー要望「もう少しドットを浮かせて」で 0.062→IRON_POST_Y。
+  return IRON_POST_Y;
 }
 
 // 可動ノード(buildGunBody が name='vm:*' の Group として分離)の参照束。
@@ -2744,8 +2760,12 @@ export class ViewModel {
   private _kokuraiteiMode = false; // dark + lightning combined
   private _arcFlickerTimer = 0;    // blade arc flicker cycle
   private _lightningOverlayMeshes: THREE.Object3D[] = [];
-  // TubeGeometry ベースの電気アーク(3本)。雷帝発動中に可視, darkMode 優先で非表示。
+  // TubeGeometry ベースの電気アーク(5本)。雷帝発動中に可視, darkMode 優先で非表示。
   private _lightningArcMeshes: THREE.Mesh[] = [];
+  // R51: 各アークを個別に(8-15Hz感で)明滅させるための残タイマー。_lightningArcMeshes と
+  // インデックス対応(_buildLightningArcMeshes で同じ長さへリセット)。ジオメトリ再構築なし
+  // = opacity/visible の変調のみで「静止した線」に見えないようにする(アロケーション無し)。
+  private _lightningArcFlickerT: number[] = [];
   // ── RE-1 雷帝常時スパーク雨プール ────────────────────────────────────────────
   private readonly _lightningSparkPool: Array<{
     mesh: THREE.Mesh;
@@ -3582,12 +3602,23 @@ export class ViewModel {
         }
       }
     }
-    // 雷帝: 電気アークのランダムフリッカー(毎フレーム)
+    // 雷帝: 電気アークの個別フリッカー(R51: ジオメトリ再構築なし。各アークが独立タイマーで
+    // 8-15Hz感の周期(1/(8+rand*7)秒)ごとに visible/opacity をトグルし、5本が同期点滅する
+    // 「静止した線」に見えないようにする)。
     if (this._lightningMode && !this._darkMode && this._lightningArcMeshes.length > 0) {
-      for (const arc of this._lightningArcMeshes) {
-        if (arc.material instanceof THREE.MeshBasicMaterial) {
-          arc.material.opacity = 0.4 + Math.random() * 0.6;
+      for (let i = 0; i < this._lightningArcMeshes.length; i += 1) {
+        const arc = this._lightningArcMeshes[i];
+        if (!arc) continue;
+        let t = this._lightningArcFlickerT[i] ?? 0;
+        t -= dt;
+        if (t <= 0) {
+          t = 1 / (8 + Math.random() * 7); // 周期: 8-15Hz相当
+          arc.visible = Math.random() < 0.82; // まれに完全消灯(電光の途切れ感)
+          if (arc.material instanceof THREE.MeshBasicMaterial) {
+            arc.material.opacity = 0.35 + Math.random() * 0.65;
+          }
         }
+        this._lightningArcFlickerT[i] = t;
       }
     }
   }
@@ -3887,9 +3918,23 @@ export class ViewModel {
     this._lightningOverlayMeshes.push(group);
   }
 
-  // 刃に沿って3本の TubeGeometry 電気アークを追加する。
+  // 刃(APEX WRAITHクナイ)に沿って5本の TubeGeometry 電気アーク(稲妻ジグザグ)を追加する。
   // _applyLightningModeVisuals から呼ばれる(雷帝発動時・武器再装備時)。
   // 既存アークを解放してから再構築し、kunai の子として追加。
+  //
+  // R51根治(ユーザー報告「剣から出るださい謎の二本線」):
+  //  1) z範囲を刃の実寸(ローカルZ: 鍔前端≈-0.175〜切先≈-0.504。1042-1066行の
+  //     APEX WRAITHクナイ実ジオメトリ実測値)に収めるよう BLADE_Z_NEAR/FAR でクランプ。
+  //     旧実装は zEnd が最大 -0.83 まで伸び、刃の実寸(切先-0.504)を大きく超えて
+  //     空中に突き出していた。
+  //  2) 5本を刃の断面上の異なるレーン(上縁/下縁/峰/側面)へ分散し、かつ各アークが
+  //     覆う区間(spanRatio)もランダム化 — 旧実装は5本が3種類のzStartしか持たず
+  //     xOffも{-1,0,+1}の3値のみだったため、2本が同一zStart・同一xOffで重なり
+  //     「まっすぐな細線2本」に見えていた。
+  //  3) セグメント数8→12-14、直線(LineCurve3)を連結した CurvePath で TubeGeometry を
+  //     生成し、CatmullRomの滑らかな補間ではなく折れの効いた稲妻ジグザグにする。
+  //     振幅はアーク長の8-15%に比例させ、端(付け根/切先)ではテーパーで振れを抑え
+  //     「刃に付いている」感を保つ。
   private _buildLightningArcMeshes(kunai: THREE.Object3D): void {
     // 既存アーク解放
     this._lightningArcMeshes.forEach(m => {
@@ -3898,26 +3943,59 @@ export class ViewModel {
       (m.material as THREE.Material).dispose();
     });
     this._lightningArcMeshes = [];
+    this._lightningArcFlickerT = [];
 
-    // 刃に沿って5本の電気アーク(細い発光ライン)を追加
     const arcColor = this._kokuraiteiMode ? 0x8800ff : 0x88ddff;
     const arcCount = 5;
-    for (let i = 0; i < arcCount; i++) {
+    // 刃の実測ローカルZ範囲。多少の余白(≤0.02)は許容しつつ、これを超えて突き出さないよう
+    // 全アークをこの範囲内(startOffset/spanRatioの構成上、常に範囲内に収まる)にクランプする。
+    const BLADE_Z_NEAR = -0.17; // 鍔前端(-0.175)のわずかに内側
+    const BLADE_Z_FAR = -0.51;  // 切先(-0.504)からわずかに外側(≤0.02の許容内)
+    const bladeLen = BLADE_Z_NEAR - BLADE_Z_FAR; // 0.34
+    // 5本を刃の断面上の異なるレーン(上縁/下縁/峰/側面)へ分散配置し、
+    // 「2本の平行な棒」に見えないようにする(刃に巻き付く/走るような分布)。
+    const LANES: ReadonlyArray<{ x: number; y: number }> = [
+      { x: -0.013, y: -0.006 }, // 左側面
+      { x: 0.013, y: 0.018 },   // 右・上縁寄り
+      { x: -0.009, y: 0.030 },  // 左・峰寄り(セグメント1上縁)
+      { x: 0.010, y: -0.035 },  // 右・セグメント2下縁寄り
+      { x: 0.000, y: 0.006 },   // 中央・峰
+    ];
+    for (let i = 0; i < arcCount; i += 1) {
+      const lane = LANES[i % LANES.length];
+      if (!lane) continue;
+      // 各アークが覆う長さの割合をランダム化(刃全長の50-95%)し、
+      // 5本が刃の異なる区間を走るようにする(起点/終点ともに常に刃の実寸内)。
+      const spanRatio = 0.5 + Math.random() * 0.45;
+      const maxOffset = bladeLen * (1 - spanRatio);
+      const startOffset = Math.random() * maxOffset;
+      const zStart = BLADE_Z_NEAR - startOffset;
+      const zEnd = zStart - bladeLen * spanRatio;
+      const segLen = zStart - zEnd;
+      const amp = segLen * (0.08 + Math.random() * 0.07); // 振幅=アーク長の8-15%
+
+      const segs = 12 + Math.floor(Math.random() * 3); // 12-14分割の折れ線(稲妻ジグザグ)
       const pts: THREE.Vector3[] = [];
-      const segs = 8;
-      const zStart = -0.10 - (i % 3) * 0.18;
-      const zEnd = zStart - 0.22 - Math.random() * 0.15;
-      const xOff = (i < 2 ? -1 : i < 4 ? 1 : 0) * 0.012;
-      for (let s = 0; s <= segs; s++) {
+      for (let s = 0; s <= segs; s += 1) {
         const t = s / segs;
+        // 端(刃の付け根/切先)ではブレを抑え、「刃に付いている」感を保つ
+        const edgeTaper = 0.3 + 0.7 * Math.sin(Math.PI * t);
+        const zig = (s % 2 === 0 ? 1 : -1) * amp * (0.5 + Math.random() * 0.5) * edgeTaper;
         pts.push(new THREE.Vector3(
-          xOff + (Math.random() - 0.5) * 0.014,
-          THREE.MathUtils.lerp(-0.05, 0.04, t) + (Math.random() - 0.5) * 0.01,
-          THREE.MathUtils.lerp(zStart, zEnd, t) + (Math.random() - 0.5) * 0.014,
+          lane.x + zig * 0.7 + (Math.random() - 0.5) * amp * 0.25,
+          lane.y + zig + (Math.random() - 0.5) * amp * 0.3,
+          THREE.MathUtils.lerp(zStart, zEnd, t),
         ));
       }
-      const curve = new THREE.CatmullRomCurve3(pts);
-      const geo = new THREE.TubeGeometry(curve, segs, 0.0006, 3, false);
+      // 直線セグメント(LineCurve3)を連結した CurvePath で TubeGeometry を生成する。
+      // CatmullRomの滑らかな補間ではなく、折れの効いた稲妻らしい鋭角パスにするため。
+      const path = new THREE.CurvePath<THREE.Vector3>();
+      for (let s = 0; s < segs; s += 1) {
+        const a = pts[s];
+        const b = pts[s + 1];
+        if (a && b) path.add(new THREE.LineCurve3(a, b));
+      }
+      const geo = new THREE.TubeGeometry(path, segs, 0.0006, 3, false);
       const mat = new THREE.MeshBasicMaterial({
         color: arcColor,
         transparent: true,
@@ -3930,6 +4008,7 @@ export class ViewModel {
       mesh.visible = false;
       kunai.add(mesh);
       this._lightningArcMeshes.push(mesh);
+      this._lightningArcFlickerT.push(0);
     }
   }
 
@@ -3951,6 +4030,7 @@ export class ViewModel {
       (m.material as THREE.Material).dispose();
     });
     this._lightningArcMeshes = [];
+    this._lightningArcFlickerT = []; // R51: 個別フリッカータイマーも解放(配列インデックス対応の解消)
   }
 
   // 雷モード刃紋 material を通常へ戻す + トレイルカラー復帰。

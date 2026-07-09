@@ -192,11 +192,13 @@ describe('resolveSightY', () => {
 
   it('形状別のサイト高さ(契約値)を返す', () => {
     expect(resolveSightY(withShape('fists'))).toBe(0);
-    expect(resolveSightY(withShape('rifle'))).toBeCloseTo(0.062, 6); // アイアン前ポスト
-    expect(resolveSightY(withShape('pistol'))).toBeCloseTo(0.062, 6);
+    // R51: ユーザー要望「もう少しドットを浮かせて」で post機 0.062→0.075(IRON_POST_Y)
+    expect(resolveSightY(withShape('rifle'))).toBeCloseTo(0.075, 6); // アイアン前ポスト
+    expect(resolveSightY(withShape('pistol'))).toBeCloseTo(0.075, 6);
     // Fix-7: SG3種 bead sightY +0.016(0.036→0.052 レシーバ上端突出解消)
-    expect(resolveSightY(withShape('shotgun-pump'))).toBeCloseTo(0.052, 6); // 0.012+0.04*0.6+0.016
-    expect(resolveSightY(withShape('shotgun-double'))).toBeCloseTo(0.012 + 0.038 * 0.6 + 0.016, 6);
+    // R51: BEAD_FLOAT(+0.008) を加算しドットを浮かせる(0.052→0.060)
+    expect(resolveSightY(withShape('shotgun-pump'))).toBeCloseTo(0.060, 6); // 0.012+0.04*0.6+0.016+0.008
+    expect(resolveSightY(withShape('shotgun-double'))).toBeCloseTo(0.012 + 0.038 * 0.6 + 0.016 + 0.008, 6);
     expect(resolveSightY(withShape('dmr'))).toBeCloseTo(0.085, 6); // 一体型スコープ
     expect(resolveSightY(withShape('sniper-bolt'))).toBeCloseTo(0.08, 6);
     expect(resolveSightY(withShape('dsr-bp'))).toBeCloseTo(0.092, 6);

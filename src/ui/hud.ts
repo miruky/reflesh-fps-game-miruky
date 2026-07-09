@@ -1960,6 +1960,7 @@ export class Hud {
           'double-tap': '#ff9933',
           'stamin-up': '#ffee33',
           'quick-revive': '#3355ff',
+          'ext-mag': '#88ff44',
         };
         const PERK_LABELS: Record<string, string> = {
           juggernog: 'JUG',
@@ -1967,6 +1968,7 @@ export class Hud {
           'double-tap': 'DBL',
           'stamin-up': 'STM',
           'quick-revive': 'REV',
+          'ext-mag': 'MAG',
         };
         const PERK_ARIA: Record<string, string> = {
           juggernog: 'ジャガーノグ: 最大HP増加',
@@ -1974,6 +1976,7 @@ export class Hud {
           'double-tap': 'ダブルタップ: 射速2倍',
           'stamin-up': 'スタミンアップ: 移動速度上昇',
           'quick-revive': 'クイックリバイブ: 高速復活',
+          'ext-mag': '拡張マガジン: 装弾数増加',
         };
         for (const pid of snap.zombiePerks ?? []) {
           const chip = document.createElement('div');
