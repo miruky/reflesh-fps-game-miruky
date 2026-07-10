@@ -981,7 +981,7 @@
 }
 
 /* ════ 帝王状態バー(顕現バナー=明朝、mock実測) ════ */
-#hud.u2-hud .hud-state-bar {
+#hud.u2-hud .u2h-statebar {
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -1234,7 +1234,7 @@ body.killcam-active #hud.u2-hud .u2h-zperks,
 body.killcam-active #hud.u2-hud .u2h-scorepops,
 body.killcam-active #hud.u2-hud .u2h-announce,
 body.killcam-active #hud.u2-hud .u2h-zbuy,
-body.killcam-active #hud.u2-hud .hud-state-bar {
+body.killcam-active #hud.u2-hud .u2h-statebar {
   opacity: 0;
   transition: opacity 0.25s ease;
 }

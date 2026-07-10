@@ -68,3 +68,19 @@ button.u2h-card:focus-visible {
     transform: none;
   }
 }
+
+/* ── 省モーション(メディアクエリ+アプリ設定の両輪。他画面と同型) ── */
+@media (prefers-reduced-motion: reduce) {
+  [data-id='hub-root'] *,
+  [data-id='hub-root'] *::before,
+  [data-id='hub-root'] *::after {
+    animation: none !important;
+    transition-duration: 0.15s !important;
+  }
+}
+.u2h-reduce *,
+.u2h-reduce *::before,
+.u2h-reduce *::after {
+  animation: none !important;
+  transition-duration: 0.15s !important;
+}

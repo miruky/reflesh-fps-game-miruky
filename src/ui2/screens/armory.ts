@@ -328,7 +328,7 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
             </div>
           </div>
         </div>
-        <div class="u2a-tabs" data-id="tabs"></div>
+        <div class="u2a-tabs" data-id="tabs" role="tablist" aria-label="武器カテゴリ"></div>
         <div class="u2a-list">
           <div class="u2a-rows" data-id="weapon-list"></div>
           <div class="u2a-exnote" data-id="exnote" hidden>
@@ -441,6 +441,14 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
       closePop();
   };
   document.addEventListener('pointerdown', onDocDown, true);
+  // A4: ポップ表示中のEscapeはポップだけ閉じる(menu2側のグローバルEscapeでhubへ全画面バックさせない)
+  const onDocKeydown = (e: KeyboardEvent): void => {
+    if (openPop && e.key === 'Escape') {
+      closePop();
+      e.preventDefault();
+    }
+  };
+  document.addEventListener('keydown', onDocKeydown, true);
 
   // ── カモ実績ヘルパ(実データ) ────────────────────────────────────────
   const camoUnlockedCount = (weaponId: string): number =>
@@ -488,9 +496,15 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
           (c === 'exotic' ? '<span class="u2a-dia"></span>' : '') +
           `${TAB_LABELS[c]}<span class="u2a-tab-n">${n}</span>`;
         b.addEventListener('click', () => {
+          // A3: タブ再構築でフォーカスが失われるため、選択前にフォーカスがあれば選択後の.onへ戻す
+          const hadFocus = q('tabs').contains(document.activeElement);
           cls = c;
           renderTabs();
           renderList();
+          if (hadFocus)
+            q('tabs')
+              .querySelector<HTMLElement>('.u2a-tab.on')
+              ?.focus({ preventScroll: true });
         });
         tabs.appendChild(b);
       }
@@ -547,6 +561,8 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
       return row;
     }
     row.addEventListener('click', () => {
+      // A3: リスト再構築でフォーカスが失われるため、選択前にフォーカスがあれば選択後の.onへ戻す
+      const hadFocus = q('weapon-list').contains(document.activeElement);
       if (slot === 'primary') {
         loadout.primaryId = id;
         ensureAttachmentGates();
@@ -557,6 +573,10 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
       host.previewWeaponId(id);
       renderList();
       renderDetail();
+      if (hadFocus)
+        q('weapon-list')
+          .querySelector<HTMLElement>('.u2a-row.on')
+          ?.focus({ preventScroll: true });
     });
     return row;
   };
@@ -572,10 +592,16 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
       `<span class="u2a-wtext"><span class="u2a-wname">${spec.name} ×${spec.carry}</span>` +
       `<span class="u2a-wsub">${GRENADE_DESCS[kind]}</span></span>`;
     row.addEventListener('click', () => {
+      // A3: リスト再構築でフォーカスが失われるため、選択前にフォーカスがあれば選択後の.onへ戻す
+      const hadFocus = q('weapon-list').contains(document.activeElement);
       loadout.grenade = kind;
       host.saveLoadout();
       renderList();
       renderDetail();
+      if (hadFocus)
+        q('weapon-list')
+          .querySelector<HTMLElement>('.u2a-row.on')
+          ?.focus({ preventScroll: true });
     });
     return row;
   };
@@ -629,11 +655,17 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
   };
 
   const equip = (def: WeaponDef, camoId: CamoId | null): void => {
+    // A3: カモ欄再構築でフォーカスが失われるため、選択前にフォーカスがあれば選択後の.onへ戻す
+    const hadFocus = q('camo').contains(document.activeElement);
     if (camoId === null) delete profile.selectedCamos[def.id];
     else profile.selectedCamos[def.id] = camoId;
     saveProfile(profile);
     host.previewWeaponId(view === 'secondary' ? loadout.secondaryId : loadout.primaryId);
     renderDetail();
+    if (hadFocus)
+      q('camo')
+        .querySelector<HTMLElement>('.u2a-swatch.on')
+        ?.focus({ preventScroll: true });
   };
 
   const camoSwatch = (
@@ -723,6 +755,7 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
       for (const { slot, label } of ATTACHMENT_SLOTS) {
         const wrap = document.createElement('div');
         wrap.className = 'u2a-slotwrap';
+        wrap.dataset.slot = slot; // A3: 選択後のフォーカス復元先を特定するための目印
         const sel = m[slot];
         const selDef = sel ? ATTACHMENT_DEFS[sel] : undefined;
         const btn = document.createElement('button');
@@ -761,6 +794,8 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
             }</span>`;
             if (!c.locked) {
               ob.addEventListener('click', () => {
+                // A3: ポップ選択でスロット欄が再構築されフォーカスが失われるため、元スロットへ戻す
+                const hadFocus = q('slots').contains(document.activeElement);
                 const next = slotMap();
                 next[slot] = c.id;
                 writeSlots(next);
@@ -768,6 +803,10 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
                 host.previewWeaponId(loadout.primaryId);
                 closePop();
                 renderDetail();
+                if (hadFocus)
+                  q('slots')
+                    .querySelector<HTMLElement>(`[data-slot="${slot}"] .u2a-slot`)
+                    ?.focus({ preventScroll: true });
               });
             }
             pop.appendChild(ob);
@@ -786,6 +825,8 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
     cta.className = 'u2a-cta';
     cta.innerHTML = `この兵装で出撃<span class="u2a-glyph">A</span>`;
     cta.addEventListener('click', () => {
+      // A2: 出撃直前にも不適合/ロック済みアタッチメントを再ゲート
+      ensureAttachmentGates();
       loadout.carriedPerk = resolveCarriedPerk(loadout.charm, readLastZombiePerk());
       host.saveLoadout();
       host.callbacks.onStart(loadout);
@@ -874,6 +915,8 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
     ?.addEventListener('click', () => host.back());
 
   // 初期描画+3Dプレビュー(canvasは[data-id="weapon-canvas"]、hostが生成/破棄を管理)
+  // A2: 保存済みアタッチメントが不適合/ロック済みのまま試合開始できないよう初回にもゲートする
+  ensureAttachmentGates();
   renderTabs();
   renderList();
   renderDetail();
@@ -885,11 +928,17 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
     dispose(): void {
       closePop();
       document.removeEventListener('pointerdown', onDocDown, true);
+      document.removeEventListener('keydown', onDocKeydown, true);
       ro.disconnect();
       host.teardownWeaponPreview();
       root.replaceChildren();
     },
     onGamepad(nav: UiNav): boolean {
+      // A4: ポップ表示中は○/Escでポップだけ閉じる(menu2側の全画面バックへ誤爆させない)
+      if (openPop && nav.back) {
+        closePop();
+        return true;
+      }
       if (view === 'primary' && (nav.tabPrev || nav.tabNext)) {
         const classes = CLASS_ORDER.filter((c) =>
           PRIMARY_IDS.some((id) => WEAPON_DEFS[id]?.class === c),
@@ -898,9 +947,21 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
         if (i >= 0 && classes.length > 0) {
           const next = classes[(i + (nav.tabNext ? 1 : classes.length - 1)) % classes.length];
           if (next) {
+            // A3: LB/RBでのタブ送りもフォーカスを持っていた要素の論理対象へ戻す
+            const tabsHadFocus = q('tabs').contains(document.activeElement);
+            const rowsHadFocus = q('weapon-list').contains(document.activeElement);
             cls = next;
             renderTabs();
             renderList();
+            if (tabsHadFocus) {
+              q('tabs')
+                .querySelector<HTMLElement>('.u2a-tab.on')
+                ?.focus({ preventScroll: true });
+            } else if (rowsHadFocus) {
+              q('weapon-list')
+                .querySelector<HTMLElement>('.u2a-row.on')
+                ?.focus({ preventScroll: true });
+            }
           }
         }
         return true;

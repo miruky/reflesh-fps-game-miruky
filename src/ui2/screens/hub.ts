@@ -240,6 +240,7 @@ function earthSvg(): string {
 
 export const mountHub: ScreenMount = (host, root) => {
   root.setAttribute('data-id', 'hub-root');
+  if (host.reducedMotion()) root.classList.add('u2h-reduce');
   const p = host.profile;
   const lv = levelFromXp(p.xp);
   const rank = rankNameFor(lv.level).name;
@@ -415,11 +416,11 @@ export const mountHub: ScreenMount = (host, root) => {
       <span style="display:flex;flex-direction:column;gap:5px;flex:1;">
         <span style="display:flex;align-items:baseline;gap:14px;">
           <span style="font-weight:800;font-size:27px;line-height:1;letter-spacing:0.06em;text-shadow:0 2px 12px rgba(0,0,0,0.8);">ゾンビ</span>
-          <span style="${COND}font-weight:700;font-size:11px;letter-spacing:0.26em;color:#8A5560;">UNDEAD</span>
+          <span style="${COND}font-weight:700;font-size:11px;letter-spacing:0.26em;color:#8F8778;">UNDEAD</span>
         </span>
         <span style="font-size:12.5px;color:#8F8778;">${sub.zombie}</span>
       </span>
-      <span style="${MONO}font-size:10.5px;color:#D98A96;margin-right:6px;">${sub.zombieBest}</span>
+      <span style="${MONO}font-size:10.5px;color:#C9865C;margin-right:6px;">${sub.zombieBest}</span>
       <span style="${COND}font-weight:700;font-size:14px;color:#5E594F;letter-spacing:0.1em;">05</span>
     </button>
     <button class="u2h-row u2h-row--sys" data-nav="options" data-id="hub-nav-options" style="display:flex;align-items:center;gap:20px;padding:15px 20px 15px 4px;">
@@ -483,7 +484,6 @@ export const mountHub: ScreenMount = (host, root) => {
     <div style="display:flex;gap:30px;font-size:13px;color:#A79F90;flex:none;white-space:nowrap;">
       <span style="display:flex;align-items:center;gap:7px;"><span style="color:#77705F;">▲▼</span> 選択</span>
       <span style="display:flex;align-items:center;gap:7px;"><span style="width:22px;height:22px;border-radius:50%;border:1.5px solid #FF6B2B;color:#FFB98A;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;">A</span> 決定</span>
-      <span style="display:flex;align-items:center;gap:7px;"><span style="width:22px;height:22px;border-radius:50%;border:1.5px solid rgba(232,227,216,0.4);color:#B9B1A0;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;">B</span> 戻る</span>
     </div>
   </div>`;
 

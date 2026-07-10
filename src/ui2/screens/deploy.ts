@@ -13,6 +13,7 @@ import { CHARM_IDS, levelFromXp, rankNameFor, type CharmId } from '../../game/pr
 import { CHARMS } from '../../game/zombie-economy';
 import { MODE_DEFS, MODE_IDS } from '../../game/modes';
 import { STAGES, stagesForMode } from '../../game/stages';
+import { ZOMBIE_MAX_ALIVE, zombieTotal } from '../../game/zombie';
 import { requestStageThumb } from '../../render/stage-thumbs';
 import { readLastZombiePerk, resolveCarriedPerk } from '../../ui/menu';
 import type { Difficulty, GameMode, ScreenMount, Ui2Host } from '../types';
@@ -279,9 +280,19 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     const level = levelFromXp(host.profile.xp).level;
     const rank = rankNameFor(level).name;
     const title = latestTitle(host.profile.titles);
+    const isZombie = sel.mode === 'zombie';
+    // ゾンビ時はstageDef.botCount(通常対戦用BOT数)を流用せず、zombie.tsの実数値を使う。
+    // 同時生存上限は描画tier依存(deploy画面ではtier未知)のため、確実な範囲(低〜高)で表示。
+    const capLabel = isZombie
+      ? `同時生存上限 ${ZOMBIE_MAX_ALIVE.low}\u301c${ZOMBIE_MAX_ALIVE.high}体`
+      : `最大${stageDef.botCount + 1}人`;
+    const zRound = sel.zombieStartRound ?? 1;
+    const row3 = isZombie
+      ? `ゾンビ ${zombieTotal(zRound)}体/R${zRound}\u3000—\u3000参戦準備完了`
+      : `AIボット ${stageDef.botCount}体\u3000—\u3000参戦準備完了`;
     q('lobby-card').innerHTML = `
       <div class="u2d-lobby-row1">
-        <span class="u2d-lobby-count">1人\u3000<small>(最大${stageDef.botCount + 1}人)</small></span>
+        <span class="u2d-lobby-count">1人\u3000<small>(${capLabel})</small></span>
         <span class="u2d-lobby-net">ローカル実行 · 60Hz</span>
       </div>
       <div class="u2d-lobby-row2">
@@ -291,7 +302,7 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
         ${title ? `<span class="u2d-lobby-sub">${esc(title)}</span>` : ''}
         <span class="u2d-lobby-role">分隊長</span>
       </div>
-      <div class="u2d-lobby-row3">AIボット ${stageDef.botCount}体\u3000—\u3000参戦準備完了</div>
+      <div class="u2d-lobby-row3">${row3}</div>
     `;
     q('squad-note').innerHTML =
       '<span>あなたが分隊長です</span>' +

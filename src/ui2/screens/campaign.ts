@@ -142,12 +142,15 @@ export const mountCampaign: ScreenMount = (host, root) => {
   const cleared = camp.clearedMissions.length;
   const { missions: totalMissions, starsMax } = campaignTotals(CAMPAIGN);
 
-  // 次の任務 = 解放済みの最初の未制圧ミッション
+  // 次の任務 = 解放済みの最初の未制圧ミッション(所属章も併せて記憶し、右レールの
+  // 「作戦概要」に進行中の章loreを表示する — 常に第1章loreが出る不具合の修正)
   let nextMission: MissionDef | null = null;
+  let nextChapter: (typeof CAMPAIGN)[number] | null = null;
   for (const ch of CAMPAIGN) {
     for (const m of ch.missions) {
       if (!camp.clearedMissions.includes(m.id) && isMissionUnlocked(host.profile, m.id)) {
         nextMission = m;
+        nextChapter = ch;
         break;
       }
     }
@@ -164,6 +167,8 @@ export const mountCampaign: ScreenMount = (host, root) => {
             const best = camp.missionBests[mission.id];
             const stars = best ? best.stars : 0;
             const reward = missionRewardLabel(mission.rewardId);
+            // 報酬バッジ有無でbuttonの子要素数が3/4にブレるとGrid暗黙配置で★列がズレるため、
+            // 常に単一のtail要素へ包んでbuttonの子を3つ(code/name/tail)に固定する
             const tail = mUnlocked
               ? `${reward ? `<span class="u2c-mission-reward">特別報酬 ${esc(reward)}</span>` : ''}${starsHtml(stars, false)}`
               : '<span class="u2c-mission-lock">LOCKED</span>';
@@ -171,7 +176,7 @@ export const mountCampaign: ScreenMount = (host, root) => {
               <button type="button" class="u2c-mission" data-mission="${esc(mission.id)}" ${mUnlocked ? '' : 'disabled'}>
                 <span class="u2c-mission-code">${missionCode(mission)}</span>
                 <span class="u2c-mission-name">${esc(mission.title)}<small>${esc(mission.subtitle)}</small></span>
-                ${tail}
+                <span class="u2c-mission-tail">${tail}</span>
               </button>`;
           })
           .join('')
@@ -209,7 +214,7 @@ export const mountCampaign: ScreenMount = (host, root) => {
       }
       <div class="u2c-plate">
         <span class="u2c-plate-kicker">作戦概要\u3000OPERATION</span>
-        <p>${esc(CAMPAIGN[0]?.lore ?? '')}</p>
+        <p>${esc((nextChapter ?? CAMPAIGN[CAMPAIGN.length - 1])?.lore ?? '')}</p>
       </div>
     </div>`;
 
@@ -451,7 +456,7 @@ export const mountMissionResult: ScreenMount = (host, root, opts) => {
     <div class="u2c-statcards">
       <div class="u2c-statcard${won ? ' ember' : ''}">
         <span class="label">記録</span>
-        <span class="value">${Math.floor(progress.missionBest?.bestTimeS ?? 0)}s</span>
+        <span class="value">${progress.missionBest ? `${Math.floor(progress.missionBest.bestTimeS)}s` : '—'}</span>
         <span class="sub">BEST TIME · 規定 ${mission ? fmtPar(mission.parTimeS) : '—'}</span>
       </div>
       <div class="u2c-statcard">

@@ -185,7 +185,7 @@
 /* ミッション行(mock03ナビ行の文法: hoverで橙+右スライド) */
 .u2c-mission {
   display: grid;
-  grid-template-columns: 74px 1fr auto auto;
+  grid-template-columns: 74px 1fr auto;
   align-items: center;
   gap: 14px;
   padding: 9px 12px 9px 8px;
@@ -238,6 +238,13 @@
   font-size: 10px;
   letter-spacing: 0.2em;
   color: #77705f;
+}
+/* 報酬バッジ+★を単一Grid列にまとめる箱(子要素数のブレによる★列ズレ防止) */
+.u2c-mission-tail {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  justify-self: end;
 }
 
 /* 菱スター(◆=獲得) */
@@ -322,6 +329,10 @@
     inset 0 1px 0 rgba(255, 220, 190, 0.55);
   width: max-content;
   overflow: visible;
+  /* u2c-shineは40%幅+translateX(-120%〜420%)で自走するため、overflow:visibleのまま
+     だと左側(-120%地点)がボタン外の余白(章リストと右レールの間)に灰色矩形として漏れる。
+     右のスパー菱形(-8px)とシャインの右超過分は許容しつつ、左/上/下は箱の内側でクリップする */
+  clip-path: inset(0 -22px 0 0);
 }
 .u2c-cta:hover {
   background: linear-gradient(180deg, #ff9861, #f26722 60%, #dd5a1e);

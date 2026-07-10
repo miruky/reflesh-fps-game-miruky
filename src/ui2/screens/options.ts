@@ -617,6 +617,7 @@ function mountOptionsImpl(
   back.type = 'button';
   back.dataset.id = 'back-to-hub';
   back.title = '戻る';
+  back.setAttribute('aria-label', '戻る');
   back.innerHTML = BACK_SVG;
   back.addEventListener('click', () => {
     if (init.onBack) init.onBack();
@@ -746,6 +747,7 @@ function mountOptionsImpl(
     if (spec.kind === 'action') {
       const btn = el('button', 'u2o-action', spec.button);
       btn.type = 'button';
+      btn.setAttribute('aria-label', spec.label);
       btn.addEventListener('click', () => {
         endCapture();
         bindNote = '';
@@ -876,6 +878,10 @@ function mountOptionsImpl(
       return i < 0 ? 0 : i;
     };
     const table = el('div', 'u2o-rebind');
+    // O3: リバインド完了/取消のたびtable.innerHTMLが全消去され、フォーカスが失われて
+    // ▲▼移動が先頭行へ巻き戻る。直近に触れたアクションを覚えておき、再描画後に同じ
+    // ボタンへフォーカスを戻す(capturingActionが優先=取込中の表示ボタン)。
+    let lastRebindAction: PadAction | null = null;
 
     const renderBindings = (): void => {
       table.innerHTML = '';
@@ -889,6 +895,8 @@ function mountOptionsImpl(
           capturingAction === action ? '…ボタンを押す(Escで取消)' : '変更',
         );
         btn.type = 'button';
+        btn.dataset.action = action;
+        btn.setAttribute('aria-label', `${label}を変更`);
         if (capturingAction === action) btn.classList.add('capturing');
         btn.addEventListener('click', () => startCapture(action));
         btn.addEventListener('focus', () => selectRow(presetWrap, spec));
@@ -900,6 +908,13 @@ function mountOptionsImpl(
         table.appendChild(row);
       }
       if (bindNote) table.appendChild(el('p', 'u2o-note', bindNote));
+      // 配置プリセット(cycle)を▲▼/クリックで操作中はそちらのフォーカスを奪わない
+      const focusAction = capturingAction ?? lastRebindAction;
+      if (focusAction && document.activeElement !== cycle) {
+        table
+          .querySelector<HTMLElement>(`[data-action="${focusAction}"]`)
+          ?.focus({ preventScroll: true });
+      }
     };
     const updatePreset = (): void => {
       optLabel.textContent = layouts[current()]?.label ?? '';
@@ -945,6 +960,7 @@ function mountOptionsImpl(
         updatePreset();
       }
       capturingAction = action;
+      lastRebindAction = action;
       bindNote = '';
       const onKey = (e: KeyboardEvent): void => {
         if (e.key !== 'Escape') return;
@@ -1091,10 +1107,18 @@ export const mountPause: ScreenMount = (host, root) => {
     optLayer?.remove();
     optHandle = null;
     optLayer = null;
+    // 背後ナビ/ヒントを操作可能へ復元(O1: Esc/Ⓑがoptions越しにresumeを誤爆する不具合の対)
+    wrap.hidden = false;
+    hints.hidden = false;
     buttons.get('options')?.focus({ preventScroll: true });
   };
   const openOptions = (): void => {
     if (optLayer) return;
+    // O1: backAction()は[data-id="resume"]の可視性(offsetParent)だけでEsc/Ⓑの宛先を決める。
+    // options表示中も背後のresumeボタンが可視のままだと、Escが試合再開へ横取りされてしまう。
+    // wrap/hintsを非表示にしてoffsetParentをnullへ落とし、backAction()の対象からresumeを除外する。
+    wrap.hidden = true;
+    hints.hidden = true;
     optLayer = el('div', 'u2p-options-layer');
     root.appendChild(optLayer);
     optHandle = mountOptionsImpl(host, optLayer, { onBack: closeOptions });

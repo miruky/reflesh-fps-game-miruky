@@ -172,9 +172,6 @@ const MK_CFG: Partial<Record<MedalId, MkCfg>> = {
 // stroke-dasharray '159.17 238.76' と対で使い、offset=ARC*(1-hp比) で満欠を描く。
 // (旧HPリング弧長 159.17 はセグメントバー化で撤去 — mock05)
 
-// スコアストリーク3段の到達キル数(updateBanner の TRIPLE/RAMPAGE/UNSTOPPABLE と対応)。
-const SS_TIERS: readonly number[] = [3, 5, 7];
-
 // ══════════════════════════════════════════════════════════════════════════
 // R53-W2: match.ts(M2a/M2b)が今後供給する拡張スナップショットフィールド(契約凍結済み)。
 // hud.ts は match.ts を編集しないため、ローカルの交差型で先行実装する。全フィールドoptionalで、
@@ -499,7 +496,6 @@ export class Hud2 {
   private lastHpOff = ''; // HPリングの stroke-dashoffset 直近書込み値(無変化フレームの書込み抑止)
   private lastPipMag = -1; // 弾ピップの生成済み本数(=装弾数)。変化時のみ作り直す
   private lastPipAmmo = -1; // 弾ピップの点灯本数(=残弾)。変化時のみ点灯を更新
-  private lastSsStreak = -1; // スコアストリーク段の直近キル数(変化時のみ更新)
   private lastZombiePerks: string = '';
   // ── R21 マルチキルバナー ──
   private mkBannerMs = 0;   // Date.now() at last multi-kill banner show(upgrade window 判定用)
@@ -789,137 +785,6 @@ export class Hud2 {
           <circle class="sc-lock" r="5"></circle>
         </svg>
       </div>
-      <!-- R53-W3 MK.III: チャージ弧(クロスヘア直下90°。旧hud-charge-gauge棒と同一データの新表示。
-           照準補助の一部として聖域内に置くが r=56px の細線のみ=クロスヘアを塞がない) -->
-      <div class="mk3-charge-arc" data-id="mk3arc" hidden aria-hidden="true">
-        <svg viewBox="-64 -64 128 128" aria-hidden="true">
-          <path class="mk3-arc-track" d="M -39.6 39.6 A 56 56 0 0 0 39.6 39.6"></path>
-          <path class="mk3-arc-fill" data-id="mk3arcfill" d="M -39.6 39.6 A 56 56 0 0 0 39.6 39.6"></path>
-        </svg>
-      </div>
-      <div class="mk3-moment" data-id="mk3moment" hidden data-tone="ember">
-        <span class="mk3-moment-mark" data-id="mk3momentmark" aria-hidden="true"></span>
-        <div class="mk3-moment-title" data-id="mk3momenttitle"></div>
-        <div class="mk3-moment-sub" data-id="mk3momentsub" hidden></div>
-      </div>
-      <div class="hud-scope" data-id="scope" hidden>
-        <div class="sc-back"></div>
-        <div class="sc-mask"></div>
-        <div class="sc-frame">
-          <div class="sc-glass"><i class="sc-grid"></i></div>
-          <svg class="sc-frame-svg" viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-            <circle class="sc-ring" r="95"></circle>
-            <circle class="sc-chroma sc-c" r="95"></circle>
-            <circle class="sc-chroma sc-m" r="95"></circle>
-            <g class="sc-brackets">
-              <polyline points="-40,-26 -40,-40 -26,-40"></polyline>
-              <polyline points="40,-26 40,-40 26,-40"></polyline>
-              <polyline points="-40,26 -40,40 -26,40"></polyline>
-              <polyline points="40,26 40,40 26,40"></polyline>
-            </g>
-            <g class="sc-cardinals">
-              <line x1="0" y1="-95" x2="0" y2="-88"></line>
-              <line x1="0" y1="95" x2="0" y2="88"></line>
-              <line x1="-95" y1="0" x2="-88" y2="0"></line>
-              <line x1="95" y1="0" x2="88" y2="0"></line>
-            </g>
-          </svg>
-          <div class="sc-glint" data-id="scopeglint"></div>
-          <div class="sc-readout"><span data-id="scoperange">0</span><i>M</i> · <span data-id="scopezoom">3.1</span><i>X</i></div>
-          <div class="sc-breath"><i data-id="scopebreath"></i></div>
-        </div>
-        <svg class="sc-cross" viewBox="-100 -100 200 200" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-          <defs>
-            <g id="sc-marks">
-              <line x1="-92" y1="0" x2="-2.5" y2="0"></line>
-              <line x1="2.5" y1="0" x2="92" y2="0"></line>
-              <line x1="0" y1="-92" x2="0" y2="-2.5"></line>
-              <line x1="0" y1="2.5" x2="0" y2="92"></line>
-              <line x1="-3" y1="20" x2="3" y2="20"></line>
-              <line x1="-5" y1="34" x2="5" y2="34"></line>
-              <line x1="-7" y1="48" x2="7" y2="48"></line>
-            </g>
-          </defs>
-          <!-- R13: レティクルは data-reticle で厳密に1種のみ可視。既存ミルドット十字を rk-mildot に内包 -->
-          <g class="rk rk-mildot">
-            <circle class="sc-refring-halo" r="60"></circle>
-            <circle class="sc-refring" r="60"></circle>
-            <use href="#sc-marks" class="sc-halo"></use>
-            <use href="#sc-marks" class="sc-core"></use>
-            <circle class="sc-dot-halo" r="1.6"></circle>
-            <circle class="sc-dot" r="0.7"></circle>
-          </g>
-          <!-- ACOG: 中央シェブロン(▲)+下方スタジア線 -->
-          <g class="rk rk-chevron">
-            <path class="sc-halo" d="M0,-2 L7,10 L0,6 L-7,10 Z"></path>
-            <path class="sc-core" d="M0,-2 L7,10 L0,6 L-7,10 Z"></path>
-            <line class="sc-core" x1="0" y1="22" x2="0" y2="30"></line>
-            <line class="sc-core" x1="0" y1="40" x2="0" y2="46"></line>
-          </g>
-          <!-- ハイブリッド: 外リング+中央ドット(CQB) -->
-          <g class="rk rk-circle-dot">
-            <circle class="sc-refring-halo" r="34" fill="none"></circle>
-            <circle class="sc-refring" r="34" fill="none"></circle>
-            <line class="sc-core" x1="-46" y1="0" x2="-40" y2="0"></line>
-            <line class="sc-core" x1="46" y1="0" x2="40" y2="0"></line>
-            <line class="sc-core" x1="0" y1="-46" x2="0" y2="-40"></line>
-            <line class="sc-core" x1="0" y1="46" x2="0" y2="40"></line>
-            <circle class="sc-dot-halo" r="1.8"></circle>
-            <circle class="sc-dot" r="0.9"></circle>
-          </g>
-          <!-- サーマル: 琥珀十字+アパーチャ(色はCSSの data-reticle='thermal' で暖色化) -->
-          <g class="rk rk-thermal">
-            <line class="sc-halo" x1="-30" y1="0" x2="-6" y2="0"></line>
-            <line class="sc-halo" x1="6" y1="0" x2="30" y2="0"></line>
-            <line class="sc-halo" x1="0" y1="-30" x2="0" y2="-6"></line>
-            <line class="sc-halo" x1="0" y1="6" x2="0" y2="30"></line>
-            <line class="sc-core" x1="-30" y1="0" x2="-6" y2="0"></line>
-            <line class="sc-core" x1="6" y1="0" x2="30" y2="0"></line>
-            <line class="sc-core" x1="0" y1="-30" x2="0" y2="-6"></line>
-            <line class="sc-core" x1="0" y1="6" x2="0" y2="30"></line>
-            <circle class="sc-dot" r="0.9"></circle>
-          </g>
-          <!-- DSR精密レティクル: BO2 DSR-50風極細十字(native スナイパー専用) -->
-          <g class="rk rk-dsr">
-            <!-- メイン十字アーム(ハロー/薄影) -->
-            <line class="sc-dsr-halo" x1="-92" y1="0" x2="-4" y2="0"></line>
-            <line class="sc-dsr-halo" x1="4" y1="0" x2="92" y2="0"></line>
-            <line class="sc-dsr-halo" x1="0" y1="-92" x2="0" y2="-4"></line>
-            <line class="sc-dsr-halo" x1="0" y1="4" x2="0" y2="92"></line>
-            <!-- メイン十字アーム(白0.85) -->
-            <line class="sc-dsr-line" x1="-92" y1="0" x2="-4" y2="0"></line>
-            <line class="sc-dsr-line" x1="4" y1="0" x2="92" y2="0"></line>
-            <line class="sc-dsr-line" x1="0" y1="-92" x2="0" y2="-4"></line>
-            <line class="sc-dsr-line" x1="0" y1="4" x2="0" y2="92"></line>
-            <!-- ミル目盛り 水平左: マイナー(±10,30,50,70)・メジャー(±20,40,60) -->
-            <line class="sc-dsr-tick" x1="-10" y1="-1.5" x2="-10" y2="1.5"></line>
-            <line class="sc-dsr-tick" x1="-20" y1="-3" x2="-20" y2="3"></line>
-            <line class="sc-dsr-tick" x1="-30" y1="-1.5" x2="-30" y2="1.5"></line>
-            <line class="sc-dsr-tick" x1="-40" y1="-3" x2="-40" y2="3"></line>
-            <line class="sc-dsr-tick" x1="-50" y1="-1.5" x2="-50" y2="1.5"></line>
-            <line class="sc-dsr-tick" x1="-60" y1="-3" x2="-60" y2="3"></line>
-            <line class="sc-dsr-tick" x1="-70" y1="-1.5" x2="-70" y2="1.5"></line>
-            <line class="sc-dsr-tick" x1="-80" y1="-2" x2="-80" y2="2"></line>
-            <!-- ミル目盛り 水平右(左の鏡) -->
-            <line class="sc-dsr-tick" x1="10" y1="-1.5" x2="10" y2="1.5"></line>
-            <line class="sc-dsr-tick" x1="20" y1="-3" x2="20" y2="3"></line>
-            <line class="sc-dsr-tick" x1="30" y1="-1.5" x2="30" y2="1.5"></line>
-            <line class="sc-dsr-tick" x1="40" y1="-3" x2="40" y2="3"></line>
-            <line class="sc-dsr-tick" x1="50" y1="-1.5" x2="50" y2="1.5"></line>
-            <line class="sc-dsr-tick" x1="60" y1="-3" x2="60" y2="3"></line>
-            <line class="sc-dsr-tick" x1="70" y1="-1.5" x2="70" y2="1.5"></line>
-            <line class="sc-dsr-tick" x1="80" y1="-2" x2="80" y2="2"></line>
-            <!-- ホールドオーバーマーク(垂直下方・距離推定) -->
-            <line class="sc-dsr-hold" x1="-4" y1="20" x2="4" y2="20"></line>
-            <line class="sc-dsr-hold" x1="-6" y1="34" x2="6" y2="34"></line>
-            <line class="sc-dsr-hold" x1="-8" y1="48" x2="8" y2="48"></line>
-            <!-- 中央アンバー照準点(ハロー+コア) -->
-            <circle class="sc-dsr-center-halo" r="2"></circle>
-            <circle class="sc-dsr-center" r="1"></circle>
-          </g>
-          <circle class="sc-lock" r="5"></circle>
-        </svg>
-      </div>
       <div class="hud-hitmarker" data-id="hitmarker"><span></span><span></span><span></span><span></span><span class="hm-diamond"></span></div>
       <div class="hud-reload" data-id="reload" hidden>
         <div class="hud-reload-bar"><div data-id="reloadfill"></div></div>
@@ -944,7 +809,7 @@ export class Hud2 {
       <!-- 右下: 兵装カード -->
       <div class="u2h-weapon">
         <div class="u2h-w-title">
-          <span class="u2h-w-kicker" data-id="weaponslot">PRIMARY</span>
+          <span class="u2h-w-kicker" data-id="weaponslot">主武装</span>
           <strong class="u2h-w-name" data-id="weapon"></strong>
           <span class="w2-pap-pips" data-id="pappips" aria-hidden="true"></span>
         </div>
@@ -1192,7 +1057,6 @@ export class Hud2 {
     this.lastUltActive = false;
     this.scopeOn = false;
     this.wasSteady = false;
-    this.lastSsStreak = -1; // 段の再描画を次フレームで強制(前試合の残値を持ち越さない)
     this.lastZombiePerks = '';
     // ★W4C C-1: MK.III状態の完全リセット。前試合の終了間際に発行されたモーメント
     // (キュー上限4件)が次試合の開幕へ流出するのを根治する
@@ -1377,7 +1241,6 @@ export class Hud2 {
     this.updateMovement(snap);
     this.updateBanner(snap);
     this.updateUlt(snap);
-    this.updateScorestreak(snap);
     this.updateBO2Streaks(snap);
     this.updateZombieShopHud(snap);
     this.pushZombiePointFloats(snap, project);
@@ -1568,7 +1431,9 @@ export class Hud2 {
 
   private updateAmmo(snap: MatchSnapshot): void {
     this.text('weapon', snap.weaponName);
-    this.text('weaponslot', snap.weaponSlot);
+    // W-ENZA2 U3: match.ts(共有)は 'PRIMARY'/'SECONDARY' のまま(変更不可)。
+    // 表示直前にHud2側だけ明朝儀式命名へ置換する
+    this.text('weaponslot', snap.weaponSlot === 'PRIMARY' ? '主武装' : '副武装');
     this.text('ammo', String(snap.ammo));
     // リザーブ弾は無限。有限値が来た場合のみ数値を表示する
     this.text('reserve', Number.isFinite(snap.reserve) ? `/ ${snap.reserve}` : '/ ∞');
@@ -1622,20 +1487,6 @@ export class Hud2 {
     }
   }
 
-  // BO3起点の縦3段スコアストリーク計器。専用スナップショットは持たないため、
-  // 既存のキルストリーク(TRIPLE/RAMPAGE/UNSTOPPABLE の到達点)への進捗を可視化する。
-  private updateScorestreak(snap: MatchSnapshot): void {
-    if (snap.streak === this.lastSsStreak) return;
-    this.lastSsStreak = snap.streak;
-    for (let i = 0; i < SS_TIERS.length; i += 1) {
-      const at = SS_TIERS[i] ?? 1;
-      const fill = this.el[`ss${i}f`];
-      if (fill) fill.style.transform = `scaleY(${clampN(snap.streak / at, 0, 1)})`;
-      const slot = this.el[`ss${i}`];
-      if (slot) slot.classList.toggle('ss-ready', snap.streak >= at);
-    }
-  }
-
   // ── BO2 スコアストリークパネル ────────────────────────────────────────────────────────
   // 7スロット縦積みパネル。バンク済み=lit、非バンク=dim。次のストリークまでの残pts上部表示。
   // idx:  0=RC-XD / 1=UAV / 2=HK / 3=CarePackage / 4=CounterUAV / 5=Lightning / 6=SensorTurret
@@ -1656,7 +1507,10 @@ export class Hud2 {
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="7" y="14" width="10" height="6" rx="1"/><rect x="9" y="10" width="6" height="4"/><line x1="12" y1="10" x2="12" y2="4"/><line x1="12" y1="4" x2="17" y2="7"/></svg>`,
   ];
 
-  private readonly BO2_NAMES = ['RC-XD', 'UAV', 'HK MISSILE', 'CARE PKG', 'C-UAV', 'LIGHTNING', 'SENTRY'];
+  // W-ENZA2 U3: 英語ゲーム用語を明朝儀式命名へローカライズ(表示はHud2内で完結、match.ts非変更)
+  // 火車=RC-XD(遣いの業火車) / 天眼=UAV(千里の眼) / 羅刹=HKミサイル(誅殺の魔) / 天賜=補給箱(降臨の匣)
+  // 結界=カウンターUAV(隠形の術) / 雷撃=雷撃ストライク / 番人=センサー砲台
+  private readonly BO2_NAMES = ['火車', '天眼', '羅刹', '天賜', '結界', '雷撃', '番人'];
   private readonly BO2_COSTS = [325, 425, 525, 550, 600, 750, 800];
   private readonly BO2_SLOT_COUNT = 7;
 
@@ -1695,7 +1549,7 @@ export class Hud2 {
         if (!(snap.streakBanked[i] ?? false)) {
           const cost = this.BO2_COSTS[i] ?? 0;
           const rem = Math.max(0, cost - snap.streakProgress);
-          nextLabel = rem === 0 ? '' : `${rem} PTS`;
+          nextLabel = rem === 0 ? '' : `${rem} 点`;
           break;
         }
       }

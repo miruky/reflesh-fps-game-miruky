@@ -256,6 +256,9 @@ export function mountTitle(host: TitleHost, root: HTMLElement, onStart: () => vo
   };
 
   const activate = (action: TitleAction): void => {
+    // W-ENZA2 T1: クレジットモーダル表示中はTab到達した背後ナビの
+    // ネイティブclick(Enter/Space)による無条件遷移を遮断(モーダル迂回防止)
+    if (creditsOpen()) return;
     if (action === 'start') onStart();
     else if (action === 'options') host.openScreen?.('options');
     else if (action === 'guide') host.openScreen?.('options', { section: 'controls' });

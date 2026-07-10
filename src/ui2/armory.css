@@ -519,11 +519,15 @@
   height: 34px;
   background: radial-gradient(50% 50% at 50% 50%, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 74%);
 }
+/* A1: 右端は .u2a-camo(カモ装備中ラベル)が占有域を伸ばすため、ヒントは中央下帯へ逃がす。
+   左は .u2a-stats、右は .u2a-camo が占めるので衝突しない中央のみ空いている。 */
 .u2a-hint {
   pointer-events: none;
   position: absolute;
-  right: 6px;
+  left: 50%;
+  right: auto;
   bottom: 2px;
+  transform: translateX(-50%);
   font-family: ui-monospace, Consolas, monospace;
   font-size: 10px;
   letter-spacing: 0.2em;
