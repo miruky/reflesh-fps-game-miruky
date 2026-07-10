@@ -160,6 +160,8 @@ const SNAPSHOT_KEYS: Record<keyof MatchSnapshot, true> = {
   activePowerUps: true,
   specialRound: true,
   poison01: true,
+  // R54-F5: 輪廻(ローグラン)snapshot契約の意図的追加(供給=ZombieDirector.rogueSnap())
+  rogue: true,
   radioLine: true,
   detect01: true,
   bossPhase: true,
@@ -221,7 +223,7 @@ const SNAPSHOT_KEYS: Record<keyof MatchSnapshot, true> = {
 
 describe('MatchSnapshot構造ゴールデン', () => {
   it('フィールド数が固定値と一致する(143フィールド、main=9ccd851時点)', () => {
-    expect(Object.keys(SNAPSHOT_KEYS).length).toBe(143);
+    expect(Object.keys(SNAPSHOT_KEYS).length).toBe(144); // R54-F5: +rogue
   });
 });
 

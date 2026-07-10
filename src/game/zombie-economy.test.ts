@@ -24,6 +24,8 @@ import {
   PAP_COST,
   PAP_REFILL_COST,
   rollPowerUp,
+  rollPowerUpAt,
+  POWERUP_DROP_CHANCE,
   POWERUP_DESPAWN_S,
   POWERUP_ROUND_CAP,
   POWERUP_DURATION_S,
@@ -935,3 +937,78 @@ describe('rollZombieVariant', () => {
     expect(call).toBe(3);
   });
 });
+
+// ─── R54-F5 輪廻(ローグラン): compose の rogue 漏斗+汎用パワーアップ抽選 ──────
+
+describe('composeZombieWeaponDef × rogue(輪廻カードの単一漏斗)', () => {
+  const base = WEAPON_DEFS['kaede-ar']!; // damage40/mag30/reloadTac1700/reloadEmpty2300
+  const zeroOpts = { extMagStacks: 0, doubleTapStacks: 0, speedColaStacks: 0 } as const;
+
+  it('rogue未指定(undefined)は完全に無効=基礎値のまま', () => {
+    const plain = composeZombieWeaponDef(base, { papTier: 0, ...zeroOpts });
+    const off = composeZombieWeaponDef(base, { papTier: 0, ...zeroOpts, rogue: undefined });
+    expect(off).toEqual(plain);
+  });
+
+  it('dmgMulはPAP/double-tapと基礎値から一括合成される(複利なし)', () => {
+    const rogue = { dmgMul: 1.15, magMul: 1, reloadMul: 1 };
+    expect(composeZombieWeaponDef(base, { papTier: 0, ...zeroOpts, rogue }).damage).toBe(Math.round(40 * 1.15));
+    expect(composeZombieWeaponDef(base, { papTier: 1, ...zeroOpts, rogue }).damage).toBe(Math.round(40 * 2.5 * 1.15));
+    expect(
+      composeZombieWeaponDef(base, { papTier: 1, extMagStacks: 0, doubleTapStacks: 1, speedColaStacks: 0, rogue })
+        .damage,
+    ).toBe(Math.round(40 * 2.5 * 1.3 * 1.15));
+  });
+
+  it('magMulはPAP1.5×/ext-magと乗算合成される', () => {
+    const rogue = { dmgMul: 1, magMul: 1.25, reloadMul: 1 };
+    expect(composeZombieWeaponDef(base, { papTier: 0, ...zeroOpts, rogue }).magazineSize).toBe(Math.ceil(30 * 1.25));
+    expect(composeZombieWeaponDef(base, { papTier: 1, ...zeroOpts, rogue }).magazineSize).toBe(
+      Math.ceil(30 * 1.5 * 1.25),
+    );
+  });
+
+  it('reloadMulはspeed-colaと合算後も床0.25を維持する', () => {
+    const rogue = { dmgMul: 1, magMul: 1, reloadMul: 0.5 };
+    const light = composeZombieWeaponDef(base, { papTier: 0, ...zeroOpts, rogue });
+    expect(light.reloadTacticalMs).toBe(Math.round(1700 * 0.5));
+    // speed-cola 8スタック(0.85^8≈0.272)×0.5=0.136 → 床0.25でクランプ
+    const heavy = composeZombieWeaponDef(base, {
+      papTier: 0, extMagStacks: 0, doubleTapStacks: 0, speedColaStacks: 8, rogue,
+    });
+    expect(heavy.reloadTacticalMs).toBe(Math.round(1700 * 0.25));
+    expect(heavy.reloadEmptyMs).toBe(Math.round(2300 * 0.25));
+  });
+
+  it('再計算は常に基礎値から=同じoptsを何度composeしても同値(複利が構造的に不可能)', () => {
+    const rogue = { dmgMul: 1.45, magMul: 1.5, reloadMul: 0.7 };
+    const opts = { papTier: 2 as PapTier, extMagStacks: 1, doubleTapStacks: 1, speedColaStacks: 2, rogue };
+    const a = composeZombieWeaponDef(base, opts);
+    const b = composeZombieWeaponDef(base, opts);
+    expect(b).toEqual(a);
+  });
+});
+
+describe('rollPowerUpAt(汎用確率のパワーアップ抽選=輪廻「幸運」の補充漏斗)', () => {
+  it('chance<=0は常にnull(randも消費しない)', () => {
+    let calls = 0;
+    expect(rollPowerUpAt(() => { calls += 1; return 0; }, 0)).toBeNull();
+    expect(calls).toBe(0);
+  });
+
+  it('rand>=chanceはnull、rand<chanceでkindを返す', () => {
+    expect(rollPowerUpAt(seqRand([0.5, 0]), 0.5)).toBeNull();
+    expect(rollPowerUpAt(seqRand([0.49, 0]), 0.5)).not.toBeNull();
+  });
+
+  it('基本チャンス(POWERUP_DROP_CHANCE)×倍率でrollPowerUpと同じ判定線になる', () => {
+    const chance = POWERUP_DROP_CHANCE * 1.5;
+    expect(rollPowerUpAt(seqRand([chance - 0.001, 0.9]), chance)).not.toBeNull();
+    expect(rollPowerUpAt(seqRand([chance + 0.001, 0.9]), chance)).toBeNull();
+  });
+});
+
+function seqRand(values: number[]): () => number {
+  let i = 0;
+  return () => values[Math.min(i++, values.length - 1)]!;
+}

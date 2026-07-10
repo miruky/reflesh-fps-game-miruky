@@ -74,6 +74,25 @@ export interface BossPhase {
   blink?: boolean;
   pillars?: boolean;
 }
+// ── R54-W2: 3つ目の★をモディファイア有無(誰でも達成できる作業ゲート)から、
+// ミッション内容に合わせた「腕前チャレンジ」へ置き換える(P0-A: 19ミッションで3★が
+// 構造的に到達不能だった欠陥の根治)。判定純関数 evalMissionChallenge は progression.ts 側。
+// value の意味はkindごとに異なる:
+//   'no-death'     : ミッション中デス0(value未使用)
+//   'hs-count'     : ヘッドショット累計ヒット数(キル限定ではない)が value 以上
+//   'accuracy'     : 命中率(%)が value 以上(shotsFired が一定数以上ある試合のみ判定。詳細はprogression.ts)
+//   'no-reload'    : ミッション中リロード回数0(value未使用。判定にはMissionSummary.reloadsの
+//                     供給が別途必要 — story-engine側の後続作業。未供給時は安全側でfalse)
+//   'weapon-class' : 近接(格闘/クナイ系)キル数が value 以上。c10m6(拳限定の最終決戦)のように
+//                     ヘッドショット判定が原理的に成立しない近接オンリーミッションで使う
+//                     (near/melee attack は headshot フラグが常にfalseのため、hs-countを
+//                     割り当てると3★が再び到達不能になる — 実装時に発見・回避した罠)
+export type MissionChallengeKind = 'no-death' | 'hs-count' | 'accuracy' | 'no-reload' | 'weapon-class';
+export interface MissionChallengeDef {
+  kind: MissionChallengeKind;
+  value?: number;
+  label: string;
+}
 export interface MissionDef {
   id: string;
   chapterId: string;
@@ -97,6 +116,9 @@ export interface MissionDef {
   bossPhases?: BossPhase[];
   // 報酬id(任意)。称号/迷彩など実配線はprogressionオーナー側。ch10 最終決戦のみ 'shinrai' を設定。
   rewardId?: string;
+  // R54-W2: 3つ目の★条件(全60ミッションに1個ずつ付与)。省略時は3★到達不能(旧仕様に戻る)
+  // なので、必ず1個は設定する契約(campaign.test.ts で全件検証)。
+  challenge?: MissionChallengeDef;
 }
 export interface ChapterDef {
   id: string;
@@ -161,6 +183,7 @@ export const CAMPAIGN: ChapterDef[] = [
     [
       {
         id: 'c1m1-cold-boot',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で施設を制圧' },
         index: 0,
         title: 'コールドブート',
         subtitle: '凍結区画の解放',
@@ -195,6 +218,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c1m2-zero-in',
+        challenge: { kind: 'hs-count', value: 3, label: '頭部撃ち3回で照準を仕上げる' },
         index: 1,
         title: 'ゼロイン',
         subtitle: '照準較正',
@@ -221,6 +245,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c1m3-wall-trial',
+        challenge: { kind: 'no-death', label: '被弾ゼロで気取られず制圧' },
         index: 2,
         title: 'ウォールトライアル',
         subtitle: '機動教習',
@@ -246,6 +271,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c1m4-armory-hold',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で武器庫を守る' },
         index: 3,
         title: 'アーマリーホールド',
         subtitle: '武器庫防衛',
@@ -277,6 +303,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c1m5-swarm-trial',
+        challenge: { kind: 'no-reload', label: 'リロード無しで演習を完走' },
         index: 4,
         title: 'スウォームトライアル',
         subtitle: '群体演習',
@@ -305,6 +332,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c1m6-instructor-prime',
+        challenge: { kind: 'hs-count', value: 5, label: '頭部撃ち5回で教官を沈黙させる' },
         index: 5,
         title: 'インストラクター・プライム',
         subtitle: '教官との対峙',
@@ -353,6 +381,7 @@ export const CAMPAIGN: ChapterDef[] = [
     [
       {
         id: 'c2m1-dockfall',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で埠頭を制圧' },
         index: 0,
         title: 'ドックフォール',
         subtitle: '埠頭強襲',
@@ -380,6 +409,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c2m2-crane-overwatch',
+        challenge: { kind: 'hs-count', value: 4, label: '頭部撃ち4回で高所を制す' },
         index: 1,
         title: 'クレーン・オーバーウォッチ',
         subtitle: '狙撃線排除',
@@ -406,6 +436,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c2m3-cargo-breach',
+        challenge: { kind: 'weapon-class', value: 3, label: '近接キル3回で倉庫を制圧' },
         index: 2,
         title: 'カーゴブリーチ',
         subtitle: '倉庫制圧',
@@ -433,6 +464,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c2m4-fuel-line',
+        challenge: { kind: 'no-reload', label: 'リロード無しで脱出地点へ' },
         index: 3,
         title: 'フューエルライン',
         subtitle: '燃料線突破',
@@ -462,6 +494,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c2m5-tide-survival',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で波を凌ぐ' },
         index: 4,
         title: 'タイド・サバイバル',
         subtitle: '潮位防戦',
@@ -490,6 +523,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c2m6-harbor-hammer',
+        challenge: { kind: 'hs-count', value: 5, label: '頭部撃ち5回で鎚を沈黙させる' },
         index: 5,
         title: 'ハーバー・ハンマー',
         subtitle: '港湾の鎚',
@@ -534,6 +568,7 @@ export const CAMPAIGN: ChapterDef[] = [
     [
       {
         id: 'c3m1-neon-ingress',
+        challenge: { kind: 'no-death', label: '被弾ゼロで夜市に潜入' },
         index: 0,
         title: 'ネオン・イングレス',
         subtitle: '夜市潜入',
@@ -560,6 +595,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c3m2-rooftop-run',
+        challenge: { kind: 'weapon-class', value: 4, label: '近接キル4回で屋上を踏破' },
         index: 1,
         title: 'ルーフトップ・ラン',
         subtitle: '屋上踏破',
@@ -585,6 +621,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c3m3-market-hold',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で市場を守る' },
         index: 2,
         title: 'マーケットホールド',
         subtitle: '市場防衛',
@@ -616,6 +653,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c3m4-blackout-stealth',
+        challenge: { kind: 'no-death', label: '被弾ゼロで暗殺潜行' },
         index: 3,
         title: 'ブラックアウト',
         subtitle: '暗殺潜行',
@@ -642,6 +680,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c3m5-arcade-survival',
+        challenge: { kind: 'hs-count', value: 5, label: '頭部撃ち5回で電脳街を凌ぐ' },
         index: 4,
         title: 'アーケード・サバイバル',
         subtitle: '電脳街防戦',
@@ -670,6 +709,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c3m6-night-wraith',
+        challenge: { kind: 'hs-count', value: 6, label: '頭部撃ち6回で亡霊を撃破' },
         index: 5,
         title: 'ナイト・レイス',
         subtitle: '夜市の亡霊',
@@ -713,6 +753,7 @@ export const CAMPAIGN: ChapterDef[] = [
     [
       {
         id: 'c4m1-ridge-assault',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で稜線を制圧' },
         index: 0,
         title: 'リッジ・アサルト',
         subtitle: '稜線強襲',
@@ -739,6 +780,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c4m2-marksman-duel',
+        challenge: { kind: 'hs-count', value: 5, label: '頭部撃ち5回で決闘を制す' },
         index: 1,
         title: 'マークスマン・デュエル',
         subtitle: '射手の決闘',
@@ -765,6 +807,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c4m3-cliff-escort',
+        challenge: { kind: 'no-reload', label: 'リロード無しで崖道を踏破' },
         index: 2,
         title: 'クリフ・エスコート',
         subtitle: '崖道護送',
@@ -790,6 +833,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c4m4-array-breach',
+        challenge: { kind: 'no-death', label: '被弾ゼロでアレイを突破' },
         index: 3,
         title: 'アレイ・ブリーチ',
         subtitle: '索敵塔突入',
@@ -817,6 +861,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c4m5-summit-survival',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で山頂を凌ぐ' },
         index: 4,
         title: 'サミット・サバイバル',
         subtitle: '山頂防戦',
@@ -844,6 +889,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c4m6-peak-gunner',
+        challenge: { kind: 'hs-count', value: 6, label: '頭部撃ち6回で砲主を沈黙させる' },
         index: 5,
         title: 'ピーク・ガンナー',
         subtitle: '高台の砲主',
@@ -887,6 +933,7 @@ export const CAMPAIGN: ChapterDef[] = [
     [
       {
         id: 'c5m1-dune-drive',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で砂丘を突破' },
         index: 0,
         title: 'デューン・ドライブ',
         subtitle: '砂丘突破',
@@ -913,6 +960,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c5m2-nest-hunt',
+        challenge: { kind: 'hs-count', value: 5, label: '頭部撃ち5回で巣穴を掃討' },
         index: 1,
         title: 'ネスト・ハント',
         subtitle: '巣穴掃討',
@@ -938,6 +986,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c5m3-sandstorm-stealth',
+        challenge: { kind: 'no-death', label: '被弾ゼロで砂嵐を潜行' },
         index: 2,
         title: 'サンドストーム・ステルス',
         subtitle: '砂嵐潜行',
@@ -964,6 +1013,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c5m4-oasis-hold',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で泉源を守る' },
         index: 3,
         title: 'オアシス・ホールド',
         subtitle: '泉源防衛',
@@ -991,6 +1041,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c5m5-buried-survival',
+        challenge: { kind: 'no-reload', label: 'リロード無しで埋没区を凌ぐ' },
         index: 4,
         title: 'ベリード・サバイバル',
         subtitle: '埋没防戦',
@@ -1020,6 +1071,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c5m6-sand-broodmaker',
+        challenge: { kind: 'hs-count', value: 6, label: '頭部撃ち6回で母体を撃破' },
         index: 5,
         title: 'サンド・ブルードメーカー',
         subtitle: '砂嵐の生成者',
@@ -1067,6 +1119,7 @@ export const CAMPAIGN: ChapterDef[] = [
     [
       {
         id: 'c6m1-whiteout-assault',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で前線を制圧' },
         index: 0,
         title: 'ホワイトアウト・アサルト',
         subtitle: '雪原強襲',
@@ -1097,6 +1150,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c6m2-icewall-hunt',
+        challenge: { kind: 'no-reload', label: 'リロード無しで氷壁を掃討' },
         index: 1,
         title: 'アイスウォール・ハント',
         subtitle: '氷壁掃討',
@@ -1122,6 +1176,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c6m3-convoy-escort',
+        challenge: { kind: 'hs-count', value: 4, label: '頭部撃ち4回で輸送路を守る' },
         index: 2,
         title: 'コンボイ・エスコート',
         subtitle: '輸送護衛',
@@ -1147,6 +1202,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c6m4-bunker-breach',
+        challenge: { kind: 'no-death', label: '被弾ゼロで掩蔽壕を制圧' },
         index: 3,
         title: 'バンカー・ブリーチ',
         subtitle: '掩蔽壕突入',
@@ -1174,6 +1230,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c6m5-blizzard-survival',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で吹雪を凌ぐ' },
         index: 4,
         title: 'ブリザード・サバイバル',
         subtitle: '吹雪防戦',
@@ -1202,6 +1259,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c6m6-frost-bulwark',
+        challenge: { kind: 'hs-count', value: 6, label: '頭部撃ち6回で盾将を撃破' },
         index: 5,
         title: 'フロスト・バルワーク',
         subtitle: '氷壁の盾将',
@@ -1249,6 +1307,7 @@ export const CAMPAIGN: ChapterDef[] = [
     [
       {
         id: 'c7m1-foundry-descent',
+        challenge: { kind: 'no-death', label: '被弾ゼロで工廠に降下' },
         index: 0,
         title: 'ファウンドリ・ディセント',
         subtitle: '工廠降下',
@@ -1277,6 +1336,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c7m2-line-shutdown',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上でラインを止める' },
         index: 1,
         title: 'ライン・シャットダウン',
         subtitle: '生産停止',
@@ -1302,6 +1362,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c7m3-press-stealth',
+        challenge: { kind: 'no-death', label: '被弾ゼロで鍛圧区を潜行' },
         index: 2,
         title: 'プレス・ステルス',
         subtitle: '鍛圧潜行',
@@ -1328,6 +1389,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c7m4-core-hold',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で炉心を守る' },
         index: 3,
         title: 'コア・ホールド',
         subtitle: '炉心制圧',
@@ -1355,6 +1417,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c7m5-furnace-survival',
+        challenge: { kind: 'no-reload', label: 'リロード無しで溶鉱炉を凌ぐ' },
         index: 4,
         title: 'ファーネス・サバイバル',
         subtitle: '溶鉱炉防戦',
@@ -1384,6 +1447,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c7m6-foundry-matron',
+        challenge: { kind: 'hs-count', value: 7, label: '頭部撃ち7回で母機を撃破' },
         index: 5,
         title: 'ファウンドリ・マトロン',
         subtitle: '工廠の母機',
@@ -1431,6 +1495,7 @@ export const CAMPAIGN: ChapterDef[] = [
     [
       {
         id: 'c8m1-low-g-breach',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で外殻を制圧' },
         index: 0,
         title: 'ロウG・ブリーチ',
         subtitle: '軌道侵入',
@@ -1463,6 +1528,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c8m2-solar-array-hunt',
+        challenge: { kind: 'hs-count', value: 5, label: '頭部撃ち5回で太陽帆を掃討' },
         index: 1,
         title: 'ソーラーアレイ・ハント',
         subtitle: '太陽帆掃討',
@@ -1488,6 +1554,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c8m3-airlock-escort',
+        challenge: { kind: 'no-reload', label: 'リロード無しで隔壁を突破' },
         index: 2,
         title: 'エアロック・エスコート',
         subtitle: '隔壁突破',
@@ -1513,6 +1580,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c8m4-reactor-hold',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で炉室を守る' },
         index: 3,
         title: 'リアクター・ホールド',
         subtitle: '炉室防衛',
@@ -1540,6 +1608,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c8m5-gauntlet-survival',
+        challenge: { kind: 'weapon-class', value: 4, label: '近接キル4回で回廊を凌ぐ' },
         index: 4,
         title: 'ガントレット・サバイバル',
         subtitle: '最終回廊',
@@ -1569,6 +1638,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c8m6-cinder-core',
+        challenge: { kind: 'hs-count', value: 7, label: '頭部撃ち7回でコアを撃破' },
         index: 5,
         title: 'シンダー・コア',
         subtitle: '燼/CINDERコア',
@@ -1622,6 +1692,7 @@ export const CAMPAIGN: ChapterDef[] = [
     [
       {
         id: 'c9m1-ashfall-return',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で落着地点を制圧' },
         index: 0,
         title: 'アッシュフォール',
         subtitle: '灰塵の帰還',
@@ -1656,6 +1727,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c9m2-silent-approach',
+        challenge: { kind: 'no-death', label: '被弾ゼロで汚染域に潜入' },
         index: 1,
         title: 'サイレント・アプローチ',
         subtitle: '汚染域潜入',
@@ -1682,6 +1754,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c9m3-relic-salvage',
+        challenge: { kind: 'no-reload', label: 'リロード無しでシャードを回収' },
         index: 2,
         title: 'レリック・サルベージ',
         subtitle: '残骸回収',
@@ -1708,6 +1781,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c9m4-ash-escort',
+        challenge: { kind: 'no-reload', label: 'リロード無しで車列を護衛' },
         index: 3,
         title: 'アッシュ・エスコート',
         subtitle: '解析車列護衛',
@@ -1739,6 +1813,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c9m5-jingai-night',
+        challenge: { kind: 'hs-count', value: 5, label: '頭部撃ち5回で群体を退ける' },
         index: 4,
         title: 'ジンガイの夜',
         subtitle: '群体来襲',
@@ -1767,6 +1842,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c9m6-ash-swordsman',
+        challenge: { kind: 'hs-count', value: 7, label: '頭部撃ち7回で剣士を撃破' },
         index: 5,
         title: '灰塵の剣',
         subtitle: '灰の剣士',
@@ -1823,6 +1899,7 @@ export const CAMPAIGN: ChapterDef[] = [
     [
       {
         id: 'c10m1-throne-approach',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で前哨を制圧' },
         index: 0,
         title: 'スロウン・アプローチ',
         subtitle: '玉座前哨',
@@ -1854,6 +1931,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c10m2-signal-severance',
+        challenge: { kind: 'no-death', label: '被弾ゼロで中継塔を遮断' },
         index: 1,
         title: 'シグナル・セブランス',
         subtitle: '中継塔遮断',
@@ -1880,6 +1958,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c10m3-echo-retrieval',
+        challenge: { kind: 'no-reload', label: 'リロード無しでデータを回収' },
         index: 2,
         title: 'エコー・リトリーバル',
         subtitle: '奪還データ回収',
@@ -1906,6 +1985,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c10m4-command-hold',
+        challenge: { kind: 'accuracy', value: 40, label: '命中率40%以上で拠点を死守' },
         index: 3,
         title: 'コマンド・ホールド',
         subtitle: '前線指揮防衛',
@@ -1933,6 +2013,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c10m5-guardian-gauntlet',
+        challenge: { kind: 'hs-count', value: 6, label: '頭部撃ち6回で守護機を退ける' },
         index: 4,
         title: 'ガーディアン・ガントレット',
         subtitle: 'ボスラッシュ',
@@ -1995,6 +2076,7 @@ export const CAMPAIGN: ChapterDef[] = [
       },
       {
         id: 'c10m6-kurogane-throne',
+        challenge: { kind: 'weapon-class', value: 4, label: '近接キル4回で黒雷帝を打ち倒す' },
         index: 5,
         title: '黒雷帝クロガネ',
         subtitle: '玉座決戦',

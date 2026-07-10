@@ -252,6 +252,10 @@ export interface ComposeZombieWeaponOpts {
   extMagStacks: number;
   doubleTapStacks: number;
   speedColaStacks: number;
+  // R54-F5 輪廻(ローグラン)のカード強化。RogueMods から導出した乗数を単一漏斗の
+  // ここで合成する(基礎値からの再計算=複利構造的に不可能、というR53契約を維持)。
+  // reloadMul は呼び出し側で床(0.25相当)を掛けた最終値を渡す。
+  rogue?: { dmgMul: number; magMul: number; reloadMul: number };
 }
 
 /**
@@ -272,15 +276,20 @@ export function composeZombieWeaponDef(base: WeaponDef, opts: ComposeZombieWeapo
   if (base.id === 'fists') return base;
   const { papTier, extMagStacks, doubleTapStacks, speedColaStacks } = opts;
 
-  const dmgMul = PAP_DMG_MUL[papTier];
-  const damage = Math.round(base.damage * dmgMul * (1 + 0.3 * doubleTapStacks));
+  const rogueDmg = opts.rogue?.dmgMul ?? 1;
+  const rogueMag = opts.rogue?.magMul ?? 1;
+  const rogueReload = opts.rogue?.reloadMul ?? 1;
 
-  const magMul = (papTier >= 1 ? 1.5 : 1) * (1 + 0.5 * extMagStacks);
+  const dmgMul = PAP_DMG_MUL[papTier];
+  const damage = Math.round(base.damage * dmgMul * (1 + 0.3 * doubleTapStacks) * rogueDmg);
+
+  const magMul = (papTier >= 1 ? 1.5 : 1) * (1 + 0.5 * extMagStacks) * rogueMag;
   const magazineSize = Math.ceil(base.magazineSize * magMul);
 
   const rpm = Math.round(base.rpm * (doubleTapStacks > 0 ? 1.33 : 1));
 
-  const reloadMul = Math.max(0.25, Math.pow(0.85, speedColaStacks));
+  // 輪廻の早込めはリロード「時間」倍率として合成し、speed-cola と合算後も床0.25を維持
+  const reloadMul = Math.max(0.25, Math.pow(0.85, speedColaStacks) * rogueReload);
   const reloadTacticalMs = Math.round(base.reloadTacticalMs * reloadMul);
   const reloadEmptyMs = Math.round(base.reloadEmptyMs * reloadMul);
 
@@ -346,7 +355,7 @@ export const NUKE_BONUS_PT = 400;
 export const CARPENTER_BONUS_PT = 200;
 
 /** キル時にパワーアップがドロップする確率 */
-const POWERUP_DROP_CHANCE = 0.025;
+export const POWERUP_DROP_CHANCE = 0.025;
 const POWERUP_KINDS: readonly PowerUpKind[] = ['insta', 'double', 'nuke', 'maxammo', 'carpenter'];
 
 /**
@@ -356,6 +365,17 @@ const POWERUP_KINDS: readonly PowerUpKind[] = ['insta', 'double', 'nuke', 'maxam
  */
 export function rollPowerUp(rand: () => number): PowerUpKind | null {
   if (rand() >= POWERUP_DROP_CHANCE) return null;
+  const idx = Math.floor(rand() * POWERUP_KINDS.length);
+  return POWERUP_KINDS[idx] ?? POWERUP_KINDS[0]!;
+}
+
+/**
+ * R54-F5 輪廻「幸運」用の汎用確率版。chance を外から与える以外は rollPowerUp と同一。
+ * (幸運カードの補充抽選: 基本2.5%×powerUpAdd を cleanupDeadZombies 側で渡す —
+ *  キル時の基本抽選は match.ts 側にあり不可侵のため、期待値の加算分を死体解放時に補う)
+ */
+export function rollPowerUpAt(rand: () => number, chance: number): PowerUpKind | null {
+  if (chance <= 0 || rand() >= chance) return null;
   const idx = Math.floor(rand() * POWERUP_KINDS.length);
   return POWERUP_KINDS[idx] ?? POWERUP_KINDS[0]!;
 }

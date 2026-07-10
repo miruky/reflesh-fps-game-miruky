@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAMPAIGN } from './campaign';
+import { CAMPAIGN, allMissions, type MissionChallengeDef } from './campaign';
 import { WEAPON_DEFS } from './weapons';
 import { ATTACHMENT_DEFS } from './attachments';
 import { CAMO_WEAPON_IDS } from './camo';
@@ -13,6 +13,7 @@ import {
   CHALLENGES,
   CHARM_IDS,
   emptyProfile,
+  evalMissionChallenge,
   isCharmId,
   isMissionUnlocked,
   isUnlocked,
@@ -238,13 +239,96 @@ function missionSummary(
   };
 }
 
-describe('starRate', () => {
-  it('勝利=1★、par以内で+1★、モディファイア有りで+1★(最大3)', () => {
-    expect(starRate(50, 100, 1)).toBe(3);
-    expect(starRate(50, 100, 0)).toBe(2);
-    expect(starRate(150, 100, 0)).toBe(1);
-    expect(starRate(150, 100, 2)).toBe(2);
-    expect(starRate(50, 100, 5)).toBe(3); // 上限3
+describe('starRate(R54-W2: 第3引数がmodCount:number→challengeMet:booleanへ意味変更)', () => {
+  it('勝利=1★、par以内で+1★、チャレンジ達成で+1★(最大3)', () => {
+    expect(starRate(50, 100, true)).toBe(3); // 勝利+par内+チャレンジ達成
+    expect(starRate(50, 100, false)).toBe(2); // 勝利+par内、チャレンジ未達成
+    expect(starRate(150, 100, false)).toBe(1); // 勝利のみ(par超過・チャレンジ未達成)
+    expect(starRate(150, 100, true)).toBe(2); // par超過でもチャレンジ達成で2★
+  });
+
+  it('par内+チャレンジ達成の組み合わせのみが3★になる(旧仕様のmodCount>0だけでは3★にならない)', () => {
+    // 新仕様: challengeMet=false の限り、timeSがどれだけ短くても3★の天井は2★
+    expect(starRate(1, 100, false)).toBe(2);
+    // par超過でもchallengeMet=trueなら2★までは必ず取れる
+    expect(starRate(999, 100, true)).toBe(2);
+  });
+});
+
+// R54-W2: evalMissionChallenge の全kind網羅テスト。challenge型はcampaign.tsで定義される
+// MissionChallengeDef({ kind, value?, label })。summaryは既存のMissionSummaryフィールド
+// (deaths/headshots/shotsFired/shotsHit/weaponKills/reloads)のみから判定する純関数。
+describe('evalMissionChallenge(全kind網羅)', () => {
+  const chalOf = (over: Partial<MissionSummary> = {}): MissionSummary =>
+    missionSummary('dummy-id', 'ch1', true, 30, over);
+
+  it('challenge未設定(旧データ相当)は常にfalse(3★は2★止まりで安全)', () => {
+    expect(evalMissionChallenge(undefined, chalOf())).toBe(false);
+  });
+
+  describe("kind: 'no-death'", () => {
+    const c: MissionChallengeDef = { kind: 'no-death', label: 'x' };
+    it('deaths=0でtrue', () => {
+      expect(evalMissionChallenge(c, chalOf({ deaths: 0 }))).toBe(true);
+    });
+    it('deaths>=1でfalse', () => {
+      expect(evalMissionChallenge(c, chalOf({ deaths: 1 }))).toBe(false);
+    });
+  });
+
+  describe("kind: 'hs-count'", () => {
+    it('headshots>=valueでtrue、未満でfalse', () => {
+      const c: MissionChallengeDef = { kind: 'hs-count', value: 5, label: 'x' };
+      expect(evalMissionChallenge(c, chalOf({ headshots: 5 }))).toBe(true);
+      expect(evalMissionChallenge(c, chalOf({ headshots: 4 }))).toBe(false);
+      expect(evalMissionChallenge(c, chalOf({ headshots: 99 }))).toBe(true);
+    });
+    it('value省略時は1以上で達成', () => {
+      const c: MissionChallengeDef = { kind: 'hs-count', label: 'x' };
+      expect(evalMissionChallenge(c, chalOf({ headshots: 0 }))).toBe(false);
+      expect(evalMissionChallenge(c, chalOf({ headshots: 1 }))).toBe(true);
+    });
+  });
+
+  describe("kind: 'accuracy'", () => {
+    const c: MissionChallengeDef = { kind: 'accuracy', value: 40, label: 'x' };
+    it('shotsFired不足(10未満)は命中率に関わらずfalse', () => {
+      expect(evalMissionChallenge(c, chalOf({ shotsFired: 9, shotsHit: 9 }))).toBe(false);
+    });
+    it('shotsFired>=10かつ命中率>=valueでtrue', () => {
+      expect(evalMissionChallenge(c, chalOf({ shotsFired: 10, shotsHit: 4 }))).toBe(true); // 40%
+      expect(evalMissionChallenge(c, chalOf({ shotsFired: 100, shotsHit: 39 }))).toBe(false); // 39%
+      expect(evalMissionChallenge(c, chalOf({ shotsFired: 100, shotsHit: 100 }))).toBe(true); // 100%
+    });
+  });
+
+  describe("kind: 'no-reload'", () => {
+    const c: MissionChallengeDef = { kind: 'no-reload', label: 'x' };
+    it('reloads未供給(undefined)は安全側でfalse(story-engine側の後続作業待ち)', () => {
+      expect(evalMissionChallenge(c, chalOf({ reloads: undefined }))).toBe(false);
+    });
+    it('reloads=0でtrue、1以上でfalse', () => {
+      expect(evalMissionChallenge(c, chalOf({ reloads: 0 }))).toBe(true);
+      expect(evalMissionChallenge(c, chalOf({ reloads: 1 }))).toBe(false);
+    });
+  });
+
+  describe("kind: 'weapon-class'", () => {
+    it('近接系weaponKills(近接/ダイブスラム/黒帝斬撃/ブリンク斬撃/雷帝斬撃)を合算してvalue以上でtrue', () => {
+      const c: MissionChallengeDef = { kind: 'weapon-class', value: 4, label: 'x' };
+      expect(evalMissionChallenge(c, chalOf({ weaponKills: { 近接: 3 } }))).toBe(false);
+      expect(evalMissionChallenge(c, chalOf({ weaponKills: { 近接: 2, ダイブスラム: 2 } }))).toBe(true);
+      expect(
+        evalMissionChallenge(
+          c,
+          chalOf({ weaponKills: { 黒帝斬撃: 1, ブリンク斬撃: 1, 雷帝斬撃: 2 } }),
+        ),
+      ).toBe(true);
+    });
+    it('銃火器のweaponKillsは合算対象外(近接キルとしてカウントしない)', () => {
+      const c: MissionChallengeDef = { kind: 'weapon-class', value: 1, label: 'x' };
+      expect(evalMissionChallenge(c, chalOf({ weaponKills: { カエデAR: 99 } }))).toBe(false);
+    });
   });
 });
 
@@ -328,6 +412,144 @@ describe('キャンペーン進行', () => {
       }),
     );
     expect(r.stars).toBeGreaterThanOrEqual(2);
+  });
+
+  it('missionBests.stars は既存どおり最大値マージ、bestTimeS は最小値マージ(非回帰)', () => {
+    const p = emptyProfile();
+    // 1回目: par内だがチャレンジ未達成(deaths/headshots等すべて既定の0) → 2★
+    const first = applyCampaignMission(p, missionSummary(m1.id, ch1.id, true, 40, { modifiers: [] }));
+    expect(first.stars).toBe(2);
+    expect(p.campaign.missionBests[m1.id]?.stars).toBe(2);
+    // 2回目: 同じ par内・チャレンジ達成(accuracy40%) → 3★。より高い方(3)へ更新される
+    const second = applyCampaignMission(
+      p,
+      missionSummary(m1.id, ch1.id, true, 60, {
+        modifiers: [],
+        shotsFired: 20,
+        shotsHit: 20,
+      }),
+    );
+    expect(second.stars).toBe(3);
+    expect(p.campaign.missionBests[m1.id]?.stars).toBe(3);
+    expect(p.campaign.missionBests[m1.id]?.bestTimeS).toBe(40); // 最速タイムは維持(最小値マージ)
+    // 3回目: 星が低い再クリア(チャレンジ未達成)をしても、既存の3★は下がらない
+    const third = applyCampaignMission(p, missionSummary(m1.id, ch1.id, true, 80, { modifiers: [] }));
+    expect(third.stars).toBe(2);
+    expect(p.campaign.missionBests[m1.id]?.stars).toBe(3); // 3★のまま(非回帰)
+  });
+});
+
+// R54-W2: モディファイアはXPボーナス(モディファイア数×15%、勝利時のみ加算)へ役割変更した。
+// firstClearボーナス(定額+800×xpMul)との相互作用を避けるため、比較は「2回目以降のクリア」
+// (firstClear=false)同士で行う — 初回ボーナスの有無で xpTotal の基準がずれるのを防ぐため。
+describe('モディファイアXPボーナス(星から切り離し・R54-W2)', () => {
+  it('モディファイア保有ミッションはXP+15%/個、非保有ミッションは付与されない', () => {
+    const m = allMissions().find((mm) => mm.modifiers.length > 0);
+    expect(m).toBeTruthy();
+    if (!m) return;
+    const pNoMod = emptyProfile();
+    const pWithMod = emptyProfile();
+    // 1回目(初制圧ボーナスを消費させておく。以降の比較対象から除外するため)
+    applyCampaignMission(pNoMod, missionSummary(m.id, m.chapterId, true, m.parTimeS, { modifiers: [] }));
+    applyCampaignMission(
+      pWithMod,
+      missionSummary(m.id, m.chapterId, true, m.parTimeS, { modifiers: m.modifiers }),
+    );
+
+    // 2回目(firstClear=false同士で比較)
+    const base = applyCampaignMission(pNoMod, missionSummary(m.id, m.chapterId, true, m.parTimeS, { modifiers: [] }));
+    const withMod = applyCampaignMission(
+      pWithMod,
+      missionSummary(m.id, m.chapterId, true, m.parTimeS, { modifiers: m.modifiers }),
+    );
+    expect(base.firstClear).toBe(false);
+    expect(withMod.firstClear).toBe(false);
+
+    const expectedBonus = Math.round(base.xpTotal * m.modifiers.length * 0.15);
+    expect(withMod.xpTotal).toBe(base.xpTotal + expectedBonus);
+    expect(withMod.xpBreakdown.some((e) => e.label === `モディファイア報酬 x${m.modifiers.length}`)).toBe(
+      true,
+    );
+    expect(base.xpBreakdown.some((e) => e.label.startsWith('モディファイア報酬'))).toBe(false);
+  });
+
+  it('敗北時はモディファイア報酬XPが付与されない(勝利時のみ)', () => {
+    const m = allMissions().find((mm) => mm.modifiers.length > 0);
+    expect(m).toBeTruthy();
+    if (!m) return;
+    const p = emptyProfile();
+    const r = applyCampaignMission(
+      p,
+      missionSummary(m.id, m.chapterId, false, m.parTimeS + 999, { modifiers: m.modifiers }),
+    );
+    expect(r.xpBreakdown.some((e) => e.label.startsWith('モディファイア報酬'))).toBe(false);
+  });
+
+  it('モディファイア0件のミッションはボーナス行が出ない', () => {
+    const m = allMissions().find((mm) => mm.modifiers.length === 0);
+    expect(m).toBeTruthy();
+    if (!m) return;
+    const p = emptyProfile();
+    const r = applyCampaignMission(p, missionSummary(m.id, m.chapterId, true, m.parTimeS, { modifiers: [] }));
+    expect(r.xpBreakdown.some((e) => e.label.startsWith('モディファイア報酬'))).toBe(false);
+  });
+});
+
+// R54-W2 P0-A: 「19ミッションで3★が構造的に到達不能」の根治確認。旧仕様はモディファイア
+// 個数(誰でも選べるフラグ)で3★目を配っており、モディファイアを持たないミッションでは
+// 3★に絶対到達できなかった。新仕様は全60ミッションが1個ずつ持つ MissionDef.challenge の
+// 達成可否で判定するため、全ミッションが原理的に3★到達可能であることをここで保証する。
+describe('R54-W2 P0-A: 全60ミッションで3★が構造的に到達可能(根治確認)', () => {
+  it('各ミッションのchallengeを満たす統計を与えると必ずstars=3・challengeMet=trueになる', () => {
+    for (const m of allMissions()) {
+      const c = m.challenge;
+      expect(c, `${m.id} に challenge が設定されていない`).toBeDefined();
+      if (!c) continue;
+      const overrides: Partial<MissionSummary> = { modifiers: [] };
+      switch (c.kind) {
+        case 'no-death':
+          overrides.deaths = 0;
+          break;
+        case 'hs-count':
+          overrides.headshots = (c.value ?? 1) + 2;
+          break;
+        case 'accuracy':
+          overrides.shotsFired = 20;
+          overrides.shotsHit = 20; // 100%命中で value(<=100) を必ず満たす
+          break;
+        case 'no-reload':
+          overrides.reloads = 0;
+          break;
+        case 'weapon-class':
+          overrides.weaponKills = { 近接: (c.value ?? 1) + 2 };
+          break;
+        default:
+          break;
+      }
+      const timeS = Math.max(1, m.parTimeS - 5); // par内クリア
+      const p = emptyProfile();
+      const r = applyCampaignMission(p, missionSummary(m.id, m.chapterId, true, timeS, overrides));
+      expect(r.stars, `${m.id}(${c.kind}) が3★に到達できない`).toBe(3);
+      expect(r.challengeMet, `${m.id}(${c.kind}) の challengeMet が true にならない`).toBe(true);
+    }
+  });
+
+  it('チャレンジ未達成のまま(既定値=全て0)par内クリアしても2★が上限', () => {
+    for (const m of allMissions()) {
+      const p = emptyProfile();
+      const r = applyCampaignMission(
+        p,
+        missionSummary(m.id, m.chapterId, true, Math.max(1, m.parTimeS - 5), { modifiers: [] }),
+      );
+      // c1m3/c3m1/...等のno-deathはdeaths既定0で自動達成(3★)になり得るため、
+      // ここでは「3★を超えない」ではなく「stars<=3の範囲内」の安全確認に留め、
+      // no-death以外(既定値では絶対に満たせないkind)のみ2★上限を厳密に検証する。
+      if (m.challenge?.kind === 'no-death') {
+        expect(r.stars).toBeLessThanOrEqual(3);
+      } else {
+        expect(r.stars, `${m.id}(${m.challenge?.kind}) が既定値なのに3★になった`).toBeLessThanOrEqual(2);
+      }
+    }
   });
 });
 

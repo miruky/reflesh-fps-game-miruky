@@ -7,6 +7,7 @@ import {
   firstMissionId,
   missionById,
   nextMissionId,
+  type MissionChallengeKind,
   type MissionDef,
   type ModifierId,
   type RadioSpeaker,
@@ -19,6 +20,13 @@ const VALID_MODIFIERS: readonly ModifierId[] = [
   'no-regen',
   'dense-fog',
   'elite-swarm',
+];
+const VALID_CHALLENGE_KINDS: readonly MissionChallengeKind[] = [
+  'no-death',
+  'hs-count',
+  'accuracy',
+  'no-reload',
+  'weapon-class',
 ];
 const VALID_RADIO_SPEAKERS: readonly RadioSpeaker[] = ['kagerou', 'homura', 'hibana', 'kurogane'];
 const VALID_RADIO_EVENTS = ['start', 'boss-hp50', 'wave-clear', 'objective-done'] as const;
@@ -608,5 +616,176 @@ describe('クエリ関数(60ミッション)', () => {
     }
     expect(order).toEqual(allMissions().map((m) => m.id));
     expect(order[order.length - 1]).toBe('c10m6-kurogane-throne');
+  });
+});
+
+// ── R54-W2 P0-A: MissionDef.challenge(3つ目の★条件)。60ミッションで3★が
+// 構造的に到達不能だった欠陥(旧仕様=モディファイア有無だけで無条件に3★目を配る/
+// 配らない設計だった)の根治。判定純関数 evalMissionChallenge は progression.ts 側
+// (このファイルはデータ形状/割り当ての妥当性のみを検証する)。
+describe('MissionDef.challenge(3つ目の★条件・R54-W2 P0-A)', () => {
+  it('全60ミッションが1個ずつ challenge を持つ(3★到達不能の根治)', () => {
+    for (const m of allMissions()) {
+      expect(m.challenge, `${m.id} に challenge が無い`).toBeDefined();
+    }
+  });
+
+  it('challenge.kind は既知の5種のみ', () => {
+    for (const m of allMissions()) {
+      expect(VALID_CHALLENGE_KINDS).toContain(m.challenge?.kind);
+    }
+  });
+
+  it('challenge.label は非空の日本語文字列', () => {
+    for (const m of allMissions()) {
+      expect(m.challenge?.label.length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it("kind別のvalue: 'hs-count'/'accuracy'/'weapon-class' は正の数値を持つ(未定義=事実上1扱いも許容)", () => {
+    for (const m of allMissions()) {
+      const c = m.challenge;
+      if (!c) continue;
+      if (c.kind === 'hs-count' || c.kind === 'accuracy' || c.kind === 'weapon-class') {
+        if (c.value !== undefined) {
+          expect(c.value, `${m.id}`).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it("kind: 'accuracy' の value は 0-100 の範囲(パーセンテージ)", () => {
+    for (const m of allMissions()) {
+      const c = m.challenge;
+      if (c?.kind !== 'accuracy') continue;
+      expect(c.value).toBeDefined();
+      expect(c.value!).toBeGreaterThan(0);
+      expect(c.value!).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("kind: 'no-death'/'no-reload' は value を持たない(真偽判定のみのため不要)", () => {
+    for (const m of allMissions()) {
+      const c = m.challenge;
+      if (c?.kind === 'no-death' || c?.kind === 'no-reload') {
+        expect(c.value).toBeUndefined();
+      }
+    }
+  });
+
+  it('ミッション特性に沿った割り当て: 潜入(infiltrate)は全件no-death', () => {
+    for (const m of allMissions()) {
+      if (m.objective.kind === 'infiltrate') {
+        expect(m.challenge?.kind, m.id).toBe('no-death');
+      }
+    }
+  });
+
+  it('ミッション特性に沿った割り当て: 防衛(defend)は全件accuracy', () => {
+    for (const m of allMissions()) {
+      if (m.objective.kind === 'defend') {
+        expect(m.challenge?.kind, m.id).toBe('accuracy');
+      }
+    }
+  });
+
+  it('ミッション特性に沿った割り当て: 収集(collect)は全件no-reload', () => {
+    for (const m of allMissions()) {
+      if (m.objective.kind === 'collect') {
+        expect(m.challenge?.kind, m.id).toBe('no-reload');
+      }
+    }
+  });
+
+  it('ミッション特性に沿った割り当て: 暗殺(assassinate/章末ボス)は全件hs-countかweapon-class', () => {
+    // c10m6(黒雷帝クロガネ)のみ拳限定(primaryId:'fists')の近接オンリー最終決戦であり、
+    // 近接攻撃はheadshotフラグが常にfalse(match.tsのhandleMelee/kunaiスラッシュ経路)なため、
+    // hs-countを割り当てると3★が再び構造的に到達不能になる。weapon-classへ意図的に回避した
+    // (この罠は実装中に発見し、報告で申し送り済み)。
+    for (const m of allMissions()) {
+      if (m.objective.kind !== 'assassinate') continue;
+      expect(['hs-count', 'weapon-class']).toContain(m.challenge?.kind);
+    }
+    expect(missionById('c10m6-kurogane-throne')?.challenge?.kind).toBe('weapon-class');
+  });
+
+  it('全kindが少なくとも1回は使われている(バリエーションの確認)', () => {
+    const kinds = new Set(allMissions().map((m) => m.challenge?.kind));
+    for (const k of VALID_CHALLENGE_KINDS) {
+      expect(kinds.has(k), k).toBe(true);
+    }
+  });
+
+  it('60ミッションの challenge 一覧表(id×kind×valueの回帰スナップショット)', () => {
+    // 表の全件を手打ちで固定し、以後の変更を検知できるようにする(意図しない上書き防止)。
+    const expected: Record<string, { kind: MissionChallengeKind; value?: number }> = {
+      'c1m1-cold-boot': { kind: 'accuracy', value: 40 },
+      'c1m2-zero-in': { kind: 'hs-count', value: 3 },
+      'c1m3-wall-trial': { kind: 'no-death' },
+      'c1m4-armory-hold': { kind: 'accuracy', value: 40 },
+      'c1m5-swarm-trial': { kind: 'no-reload' },
+      'c1m6-instructor-prime': { kind: 'hs-count', value: 5 },
+      'c2m1-dockfall': { kind: 'accuracy', value: 40 },
+      'c2m2-crane-overwatch': { kind: 'hs-count', value: 4 },
+      'c2m3-cargo-breach': { kind: 'weapon-class', value: 3 },
+      'c2m4-fuel-line': { kind: 'no-reload' },
+      'c2m5-tide-survival': { kind: 'accuracy', value: 40 },
+      'c2m6-harbor-hammer': { kind: 'hs-count', value: 5 },
+      'c3m1-neon-ingress': { kind: 'no-death' },
+      'c3m2-rooftop-run': { kind: 'weapon-class', value: 4 },
+      'c3m3-market-hold': { kind: 'accuracy', value: 40 },
+      'c3m4-blackout-stealth': { kind: 'no-death' },
+      'c3m5-arcade-survival': { kind: 'hs-count', value: 5 },
+      'c3m6-night-wraith': { kind: 'hs-count', value: 6 },
+      'c4m1-ridge-assault': { kind: 'accuracy', value: 40 },
+      'c4m2-marksman-duel': { kind: 'hs-count', value: 5 },
+      'c4m3-cliff-escort': { kind: 'no-reload' },
+      'c4m4-array-breach': { kind: 'no-death' },
+      'c4m5-summit-survival': { kind: 'accuracy', value: 40 },
+      'c4m6-peak-gunner': { kind: 'hs-count', value: 6 },
+      'c5m1-dune-drive': { kind: 'accuracy', value: 40 },
+      'c5m2-nest-hunt': { kind: 'hs-count', value: 5 },
+      'c5m3-sandstorm-stealth': { kind: 'no-death' },
+      'c5m4-oasis-hold': { kind: 'accuracy', value: 40 },
+      'c5m5-buried-survival': { kind: 'no-reload' },
+      'c5m6-sand-broodmaker': { kind: 'hs-count', value: 6 },
+      'c6m1-whiteout-assault': { kind: 'accuracy', value: 40 },
+      'c6m2-icewall-hunt': { kind: 'no-reload' },
+      'c6m3-convoy-escort': { kind: 'hs-count', value: 4 },
+      'c6m4-bunker-breach': { kind: 'no-death' },
+      'c6m5-blizzard-survival': { kind: 'accuracy', value: 40 },
+      'c6m6-frost-bulwark': { kind: 'hs-count', value: 6 },
+      'c7m1-foundry-descent': { kind: 'no-death' },
+      'c7m2-line-shutdown': { kind: 'accuracy', value: 40 },
+      'c7m3-press-stealth': { kind: 'no-death' },
+      'c7m4-core-hold': { kind: 'accuracy', value: 40 },
+      'c7m5-furnace-survival': { kind: 'no-reload' },
+      'c7m6-foundry-matron': { kind: 'hs-count', value: 7 },
+      'c8m1-low-g-breach': { kind: 'accuracy', value: 40 },
+      'c8m2-solar-array-hunt': { kind: 'hs-count', value: 5 },
+      'c8m3-airlock-escort': { kind: 'no-reload' },
+      'c8m4-reactor-hold': { kind: 'accuracy', value: 40 },
+      'c8m5-gauntlet-survival': { kind: 'weapon-class', value: 4 },
+      'c8m6-cinder-core': { kind: 'hs-count', value: 7 },
+      'c9m1-ashfall-return': { kind: 'accuracy', value: 40 },
+      'c9m2-silent-approach': { kind: 'no-death' },
+      'c9m3-relic-salvage': { kind: 'no-reload' },
+      'c9m4-ash-escort': { kind: 'no-reload' },
+      'c9m5-jingai-night': { kind: 'hs-count', value: 5 },
+      'c9m6-ash-swordsman': { kind: 'hs-count', value: 7 },
+      'c10m1-throne-approach': { kind: 'accuracy', value: 40 },
+      'c10m2-signal-severance': { kind: 'no-death' },
+      'c10m3-echo-retrieval': { kind: 'no-reload' },
+      'c10m4-command-hold': { kind: 'accuracy', value: 40 },
+      'c10m5-guardian-gauntlet': { kind: 'hs-count', value: 6 },
+      'c10m6-kurogane-throne': { kind: 'weapon-class', value: 4 },
+    };
+    expect(Object.keys(expected)).toHaveLength(60);
+    for (const m of allMissions()) {
+      const exp = expected[m.id];
+      expect(exp, `${m.id} が期待表に無い`).toBeDefined();
+      expect(m.challenge?.kind, m.id).toBe(exp!.kind);
+      expect(m.challenge?.value, m.id).toBe(exp!.value);
+    }
   });
 });

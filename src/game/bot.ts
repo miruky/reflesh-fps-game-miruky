@@ -734,6 +734,197 @@ export interface ZombieCrowdPose {
   elite: boolean;
 }
 
+// ═══ R54-W1(F4): humanoid群InstancedMesh化 — 単一定義部位 ═══════════════════
+// buildMesh(個体Object3D経路)と buildHumanoidCrowdGeometries(群レンダラの正準
+// ジオメトリ)の両方が下の humanoid*Root を通る=単一定義。boss専用の肥大化
+// (chestW/pauldron/クレスト)は boss 引数で表現し、群レンダラは boss=false のみ使う
+// (boss/master/giant/機械系は常にObject3D経路 — dissolve/黒赤override/専用装飾のため)。
+
+// 変形ノードの静止オフセット(buildMeshと群レンダラの行列合成が共有する唯一の値)
+export const HUMANOID_NODE_REST = {
+  armRigY: 0.42,
+  legX: 0.12,
+  legY: -0.16,
+  kneeY: -0.3,
+} as const;
+
+// 群レンダラの正準マテリアル生成に必要なスタイル値(buildMeshの実値の鏡写し)。
+// armor系は tier で roughness/metalness/常時発光が変わるため tier 別に分割する。
+// emissive はチーム色×係数のため、シェーダ側で instanceColor×aGlow を加算する
+// (humanoid-crowd.ts の onBeforeCompile パッチ)。
+export const HUMANOID_CROWD_STYLE = {
+  armorRoughnessNormal: 0.55,
+  armorMetalnessNormal: 0.14,
+  armorRoughnessElite: 0.42,
+  armorMetalnessElite: 0.34,
+  tierGlowNormal: 0,
+  tierGlowElite: 0.28,
+  darkMul: 0.34, // dark系の色 = チーム色×0.34(buildMeshの実値)
+  darkRoughness: 0.62,
+  darkMetalness: 0.2,
+  gunColor: 0x202227,
+  gunRoughness: 0.5,
+  gunMetalness: 0.45,
+  glowColor: 0x0d0f13,
+  glowRoughness: 0.3,
+  visorGlow: 0.9, // バイザー/胸帯の emissiveIntensity(個体経路の実値)
+  hitFlashDur: 0.12,
+  hitFlashAmp: 0.7,
+} as const;
+
+interface HumanoidPartMats {
+  armor: THREE.Material;
+  dark: THREE.Material;
+  gun: THREE.Material;
+  glow: THREE.Material;
+}
+
+// ── 胴・頭(armor=影を落とすシルエット / dark・glow=no-shadowディテール)──
+function humanoidBodyRoot(m: HumanoidPartMats, boss: boolean): THREE.Group {
+  const root = new THREE.Group();
+  const chestW = boss ? 0.5 : 0.42;
+  const pauldX = boss ? 0.33 : 0.3;
+  const pauldW = boss ? 0.24 : 0.2;
+  zPart(root, taperPrism(0.3, 0.22, 0.6, 8, 0.62), m.armor, 0, 0.15, 0, true); // 八角胴
+  zPart(root, taperPrism(0.2, 0.31, 0.14, 8, 0.7), m.armor, 0, 0.44, 0, true); // 肩ヨーク(上広がり)
+  zPart(root, chamferBox(chestW, 0.3, 0.14, 0.04), m.armor, 0, 0.28, -0.09, true); // 胸甲
+  zPart(root, chamferBox(0.28, 0.09, 0.24, 0.03), m.armor, 0, 0.5, 0, true); // ゴルゲット
+  zPart(root, chamferBox(pauldW, 0.15, 0.24, 0.04), m.armor, -pauldX, 0.45, 0, true); // 左パウルドロン
+  zPart(root, chamferBox(pauldW, 0.15, 0.24, 0.04), m.armor, pauldX, 0.45, 0, true); // 右パウルドロン
+  zPart(root, new THREE.SphereGeometry(0.2, 16, 12), m.armor, 0, 0.9, 0.01, true); // ヘルメットドーム
+  zPart(root, chamferBox(0.3, 0.1, 0.3, 0.03), m.armor, 0, 0.97, 0.0, true); // ヘルメット冠
+  if (boss) zPart(root, chamferBox(0.05, 0.15, 0.26, 0.02), m.armor, 0, 1.03, 0.02, true); // クレスト
+  zPart(root, taperPrism(0.24, 0.18, 0.2, 8, 0.66), m.dark, 0, -0.22, 0, false); // 腰
+  zPart(root, new THREE.CylinderGeometry(0.07, 0.09, 0.12, 10), m.dark, 0, 0.6, 0, false); // 首
+  zPart(root, new THREE.SphereGeometry(0.17, 16, 12), m.dark, 0, 0.86, 0, false); // 頭
+  zPart(root, chamferBox(0.3, 0.34, 0.14, 0.03), m.dark, 0, 0.28, 0.19, false); // バックパック
+  zPart(root, chamferBox(0.36, 0.07, 0.3, 0.02), m.dark, 0, -0.03, 0, false); // ベルト
+  zPart(root, chamferBox(0.12, 0.13, 0.09, 0.02), m.dark, -0.17, -0.1, -0.13, false); // 左ポーチ(大)
+  zPart(root, chamferBox(0.09, 0.1, 0.08, 0.02), m.dark, 0.19, -0.05, -0.12, false); // 右ポーチ(小)
+  zPart(root, new THREE.CylinderGeometry(0.012, 0.012, 0.3, 6), m.dark, 0.13, 0.66, 0.15, false, 0.25, 0, 0.15); // アンテナ
+  zPart(root, chamferBox(0.24, 0.06, 0.05, 0.02), m.glow, 0, 0.85, -0.155, false); // 発光バイザー
+  zPart(root, new THREE.BoxGeometry(0.3, 0.045, 0.02), m.glow, 0, 0.2, -0.175, false); // 胸の発光帯
+  return root;
+}
+
+// ── 両腕+構えたライフル(armRigローカル)──
+function humanoidArmRoot(m: HumanoidPartMats): THREE.Group {
+  const root = new THREE.Group();
+  const buildArm = (sx: number): void => {
+    const g = new THREE.Group();
+    g.position.set(sx * 0.28, 0.06, 0.0);
+    g.rotation.x = -1.15;
+    g.rotation.z = -sx * 0.35;
+    zPart(g, chamferBox(0.11, 0.28, 0.11, 0.03), m.armor, 0, -0.13, 0, false); // 上腕(armor)
+    zPart(g, chamferBox(0.095, 0.26, 0.095, 0.03), m.armor, 0, -0.34, 0.02, false); // 前腕(armor)
+    zPart(g, chamferBox(0.08, 0.09, 0.11, 0.02), m.dark, 0, -0.47, 0.03, false); // グローブ(dark)
+    root.add(g);
+  };
+  buildArm(-1);
+  buildArm(1);
+  const rifle = new THREE.Group();
+  rifle.position.set(0.02, -0.08, -0.36);
+  zPart(rifle, chamferBox(0.07, 0.09, 0.42, 0.02), m.gun, 0, 0, 0, false); // レシーバ
+  zPart(rifle, new THREE.CylinderGeometry(0.02, 0.02, 0.34, 8), m.gun, 0, 0.01, -0.34, false, Math.PI / 2, 0, 0); // 銃身
+  zPart(rifle, chamferBox(0.05, 0.16, 0.08, 0.02), m.gun, 0, -0.12, 0.04, false); // マガジン
+  zPart(rifle, chamferBox(0.05, 0.08, 0.14, 0.02), m.gun, 0, -0.02, 0.26, false); // ストック
+  zPart(rifle, new THREE.BoxGeometry(0.03, 0.05, 0.06), m.gun, 0, 0.08, -0.04, false); // サイト
+  root.add(rifle);
+  return root;
+}
+
+// ── 腿(股関節ピボットローカル。影シルエット)──
+function humanoidThighRoot(m: HumanoidPartMats): THREE.Group {
+  const root = new THREE.Group();
+  zPart(root, chamferBox(0.15, 0.32, 0.16, 0.03), m.armor, 0, -0.15, 0, true); // 腿(影)
+  return root;
+}
+
+// ── 膝ガード+脛+ブーツ(膝ピボットローカル)──
+function humanoidShinRoot(m: HumanoidPartMats): THREE.Group {
+  const root = new THREE.Group();
+  zPart(root, chamferBox(0.13, 0.1, 0.15, 0.03), m.dark, 0, 0.0, 0.01, false); // 膝ガード
+  zPart(root, chamferBox(0.12, 0.3, 0.13, 0.03), m.dark, 0, -0.15, 0, false); // 脛
+  zPart(root, chamferBox(0.14, 0.09, 0.27, 0.03), m.dark, 0, -0.3, -0.045, false); // ブーツ(底≈-0.80)
+  return root;
+}
+
+// 群レンダラ(InstancedMesh 11本)の正準ジオメトリ(8家族。armor系はtier別マテリアルで
+// 同一ジオメトリを使い回す)。モジュール1回だけ呼び全個体で共有(humanoid-crowd.tsがキャッシュ)。
+export interface HumanoidCrowdGeometries {
+  bodyArmor: THREE.BufferGeometry;
+  bodyDark: THREE.BufferGeometry;
+  bodyGlow: THREE.BufferGeometry;
+  armArmor: THREE.BufferGeometry;
+  armDark: THREE.BufferGeometry;
+  armGun: THREE.BufferGeometry;
+  thigh: THREE.BufferGeometry;
+  shin: THREE.BufferGeometry;
+}
+
+export function buildHumanoidCrowdGeometries(): HumanoidCrowdGeometries {
+  const armor = new THREE.MeshBasicMaterial();
+  const dark = new THREE.MeshBasicMaterial();
+  const gun = new THREE.MeshBasicMaterial();
+  const glow = new THREE.MeshBasicMaterial();
+  const mats: HumanoidPartMats = { armor, dark, gun, glow };
+  // buildMesh の finalize と同一のAO引数(humanoidはAO強度0.6 — zombieの0.55と異なる)
+  const pick = (root: THREE.Group, restY: number): Map<THREE.Material, THREE.BufferGeometry> => {
+    const out = new Map<THREE.Material, THREE.BufferGeometry>();
+    for (const mesh of mergeByMaterial(root)) {
+      applyAO(mesh.geometry, -0.85 - restY, 1.1 - restY, 0.6);
+      out.set(mesh.material as THREE.Material, mesh.geometry);
+    }
+    return out;
+  };
+  const body = pick(humanoidBodyRoot(mats, false), 0);
+  const arm = pick(humanoidArmRoot(mats), HUMANOID_NODE_REST.armRigY);
+  const thigh = pick(humanoidThighRoot(mats), HUMANOID_NODE_REST.legY);
+  const shin = pick(humanoidShinRoot(mats), HUMANOID_NODE_REST.legY + HUMANOID_NODE_REST.kneeY);
+  armor.dispose();
+  dark.dispose();
+  gun.dispose();
+  glow.dispose();
+  const need = (
+    map: Map<THREE.Material, THREE.BufferGeometry>,
+    mat: THREE.Material,
+    label: string,
+  ): THREE.BufferGeometry => {
+    const g = map.get(mat);
+    if (!g) throw new Error(`buildHumanoidCrowdGeometries: ${label} 家族が空`);
+    return g;
+  };
+  return {
+    bodyArmor: need(body, armor, 'bodyArmor'),
+    bodyDark: need(body, dark, 'bodyDark'),
+    bodyGlow: need(body, glow, 'bodyGlow'),
+    armArmor: need(arm, armor, 'armArmor'),
+    armDark: need(arm, dark, 'armDark'),
+    armGun: need(arm, gun, 'armGun'),
+    thigh: need(thigh, armor, 'thigh'),
+    shin: need(shin, dark, 'shin'),
+  };
+}
+
+// 群レンダラへ毎フレーム渡す姿勢パラメタ(Bot.getHumanoidCrowdPoseが埋める)。
+// syncMesh(humanoid生存分岐)の式の入力そのもの — 合成式は humanoid-crowd.ts 側。
+// 死亡はslot解放→Object3D経路へスワップバックするため dying 系は持たない。
+export interface HumanoidCrowdPose {
+  x: number;
+  y: number;
+  z: number;
+  rigLiftY: number;
+  heading: number;
+  walkPhase: number;
+  walkAmp: number;
+  anim: number;
+  flinch: number; // 被弾のけぞりの残り秒(0.14基準。式は compose 側)
+  glow: number; // armor発光係数 = tierGlowBase + (hitFlash/0.12)*0.7(個体経路と同式)
+  elite: boolean;
+  colorHex: number; // チーム色(instanceColor/emissiveの源)
+  visible: boolean;
+}
+
 let botUidSeq = 0;
 
 export class Bot {
@@ -792,6 +983,11 @@ export class Bot {
   // (ZombieCrowdRenderer.acquire/release → setCrowdSlot)が行う。対象は
   // kind==='zombie' && tier!=='boss' && zombieVariant===null のみ(ハイブリッド協定)。
   crowdSlot = -1;
+  // R54-W1(F4): humanoid群レンダラ用 — チーム色(instanceColor/emissiveの源)
+  humanoidColorHex = 0xffffff;
+  // 影LOD(最近接8体)の現在状態。true=castShadow中 → humanoid群の対象外
+  // (群メッシュはcastShadow=falseのため、実articulated影は個体経路が担う)
+  shadowCasting = false;
   // ── R53-W2 特殊ゾンビ変種(zombie-economy.ts ZombieVariant契約) ──
   // spawn/プール再利用時にmatchが設定する。挙動(前面軽減/死亡時効果)はmatch側が
   // facingDot()/この値を見て発火するため、Bot自身は保持と見た目適用のみ担う。
@@ -1114,25 +1310,6 @@ export class Bot {
       roughness: 0.3,
     });
 
-    // root配下へメッシュ片を積むだけの薄いヘルパ(mergeByMaterialが後で畳む)
-    const P = (
-      root: THREE.Object3D,
-      geo: THREE.BufferGeometry,
-      mat: THREE.Material,
-      x: number,
-      y: number,
-      z: number,
-      cast: boolean,
-      rx = 0,
-      ry = 0,
-      rz = 0,
-    ): void => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, z);
-      if (rx !== 0 || ry !== 0 || rz !== 0) m.rotation.set(rx, ry, rz);
-      m.castShadow = cast;
-      root.add(m);
-    };
     // ルートを畳んで対象へ追加し、pivot静止Yを織り込んだ縦AOを焼く
     const finalize = (root: THREE.Object3D, target: THREE.Object3D, restY: number): void => {
       const meshes = mergeByMaterial(root);
@@ -1140,83 +1317,29 @@ export class Bot {
       for (const mesh of meshes) target.add(mesh);
     };
 
-    // bossは胸甲/パウルドロンを肥大させ独自クレストを足す(コライダーは据置)
-    const chestW = boss ? 0.5 : 0.42;
-    const pauldX = boss ? 0.33 : 0.3;
-    const pauldW = boss ? 0.24 : 0.2;
+    // R54-W1(F4): 部位構成はモジュールの humanoid*Root(単一定義)へ抽出済み。
+    // 個体経路(ここ)と群レンダラの正準ジオメトリ(buildHumanoidCrowdGeometries)が
+    // 同じ定義を通るため、両経路の見た目乖離は構造的に起きない。
+    const partMats: HumanoidPartMats = { armor, dark, gun, glow };
+    this.humanoidColorHex = color;
+    finalize(humanoidBodyRoot(partMats, boss), this.rig, 0);
 
-    // ── 胴・頭(静止・影を落とすシルエット群 + no-shadowディテール)──
-    const bodyRoot = new THREE.Group();
-    // armor(cast): 八角prism胴・肩ヨーク・胸甲・ゴルゲット・パウルドロン・ヘルメット
-    P(bodyRoot, taperPrism(0.3, 0.22, 0.6, 8, 0.62), armor, 0, 0.15, 0, true); // 八角胴
-    P(bodyRoot, taperPrism(0.2, 0.31, 0.14, 8, 0.7), armor, 0, 0.44, 0, true); // 肩ヨーク(上広がり)
-    P(bodyRoot, chamferBox(chestW, 0.3, 0.14, 0.04), armor, 0, 0.28, -0.09, true); // 胸甲
-    P(bodyRoot, chamferBox(0.28, 0.09, 0.24, 0.03), armor, 0, 0.5, 0, true); // ゴルゲット
-    P(bodyRoot, chamferBox(pauldW, 0.15, 0.24, 0.04), armor, -pauldX, 0.45, 0, true); // 左パウルドロン
-    P(bodyRoot, chamferBox(pauldW, 0.15, 0.24, 0.04), armor, pauldX, 0.45, 0, true); // 右パウルドロン
-    P(bodyRoot, new THREE.SphereGeometry(0.2, 16, 12), armor, 0, 0.9, 0.01, true); // ヘルメットドーム
-    P(bodyRoot, chamferBox(0.3, 0.1, 0.3, 0.03), armor, 0, 0.97, 0.0, true); // ヘルメット冠
-    if (boss) P(bodyRoot, chamferBox(0.05, 0.15, 0.26, 0.02), armor, 0, 1.03, 0.02, true); // クレスト
-    // dark(no-shadow): 腰・首・頭・バックパック・ベルト・非対称ポーチ・アンテナ
-    P(bodyRoot, taperPrism(0.24, 0.18, 0.2, 8, 0.66), dark, 0, -0.22, 0, false); // 腰
-    P(bodyRoot, new THREE.CylinderGeometry(0.07, 0.09, 0.12, 10), dark, 0, 0.6, 0, false); // 首
-    P(bodyRoot, new THREE.SphereGeometry(0.17, 16, 12), dark, 0, 0.86, 0, false); // 頭
-    P(bodyRoot, chamferBox(0.3, 0.34, 0.14, 0.03), dark, 0, 0.28, 0.19, false); // バックパック
-    P(bodyRoot, chamferBox(0.36, 0.07, 0.3, 0.02), dark, 0, -0.03, 0, false); // ベルト
-    P(bodyRoot, chamferBox(0.12, 0.13, 0.09, 0.02), dark, -0.17, -0.1, -0.13, false); // 左ポーチ(大)
-    P(bodyRoot, chamferBox(0.09, 0.1, 0.08, 0.02), dark, 0.19, -0.05, -0.12, false); // 右ポーチ(小)
-    P(bodyRoot, new THREE.CylinderGeometry(0.012, 0.012, 0.3, 6), dark, 0.13, 0.66, 0.15, false, 0.25, 0, 0.15); // アンテナ
-    // glow(no-shadow): バイザー・胸発光帯
-    P(bodyRoot, chamferBox(0.24, 0.06, 0.05, 0.02), glow, 0, 0.85, -0.155, false); // 発光バイザー
-    P(bodyRoot, new THREE.BoxGeometry(0.3, 0.045, 0.02), glow, 0, 0.2, -0.175, false); // 胸の発光帯
-    finalize(bodyRoot, this.rig, 0);
-
-    // ── 腕(両腕+ライフル一体のarmRig。微スウェイの土台)──
     const armRig = new THREE.Group();
-    armRig.position.set(0, 0.42, 0);
+    armRig.position.set(0, HUMANOID_NODE_REST.armRigY, 0);
     this.armRig = armRig;
-    const armRoot = new THREE.Group();
-    const buildArm = (sx: number): void => {
-      const g = new THREE.Group();
-      g.position.set(sx * 0.28, 0.06, 0.0);
-      g.rotation.x = -1.15;
-      g.rotation.z = -sx * 0.35;
-      P(g, chamferBox(0.11, 0.28, 0.11, 0.03), armor, 0, -0.13, 0, false); // 上腕(armor)
-      P(g, chamferBox(0.095, 0.26, 0.095, 0.03), armor, 0, -0.34, 0.02, false); // 前腕(armor)
-      P(g, chamferBox(0.08, 0.09, 0.11, 0.02), dark, 0, -0.47, 0.03, false); // グローブ(dark)
-      armRoot.add(g);
-    };
-    buildArm(-1);
-    buildArm(1);
-    // 構えるライフル(gun)
-    const rifle = new THREE.Group();
-    rifle.position.set(0.02, -0.08, -0.36);
-    P(rifle, chamferBox(0.07, 0.09, 0.42, 0.02), gun, 0, 0, 0, false); // レシーバ
-    P(rifle, new THREE.CylinderGeometry(0.02, 0.02, 0.34, 8), gun, 0, 0.01, -0.34, false, Math.PI / 2, 0, 0); // 銃身
-    P(rifle, chamferBox(0.05, 0.16, 0.08, 0.02), gun, 0, -0.12, 0.04, false); // マガジン
-    P(rifle, chamferBox(0.05, 0.08, 0.14, 0.02), gun, 0, -0.02, 0.26, false); // ストック
-    P(rifle, new THREE.BoxGeometry(0.03, 0.05, 0.06), gun, 0, 0.08, -0.04, false); // サイト
-    armRoot.add(rifle);
-    finalize(armRoot, armRig, armRig.position.y);
+    finalize(humanoidArmRoot(partMats), armRig, armRig.position.y);
     this.rig.add(armRig);
 
-    // ── 脚(股関節ピボット + 膝ピボット)。歩行で前後にスイングする ──
     const buildLeg = (pivot: THREE.Group, knee: THREE.Group, sx: number): void => {
-      pivot.position.set(sx, -0.16, 0);
-      knee.position.set(0, -0.3, 0);
-      const thighRoot = new THREE.Group();
-      P(thighRoot, chamferBox(0.15, 0.32, 0.16, 0.03), armor, 0, -0.15, 0, true); // 腿(影を落とす)
-      finalize(thighRoot, pivot, pivot.position.y);
-      const shinRoot = new THREE.Group();
-      P(shinRoot, chamferBox(0.13, 0.1, 0.15, 0.03), dark, 0, 0.0, 0.01, false); // 膝ガード
-      P(shinRoot, chamferBox(0.12, 0.3, 0.13, 0.03), dark, 0, -0.15, 0, false); // 脛
-      P(shinRoot, chamferBox(0.14, 0.09, 0.27, 0.03), dark, 0, -0.3, -0.045, false); // ブーツ(底≈-0.80)
-      finalize(shinRoot, knee, pivot.position.y + knee.position.y);
+      pivot.position.set(sx, HUMANOID_NODE_REST.legY, 0);
+      knee.position.set(0, HUMANOID_NODE_REST.kneeY, 0);
+      finalize(humanoidThighRoot(partMats), pivot, pivot.position.y);
+      finalize(humanoidShinRoot(partMats), knee, pivot.position.y + knee.position.y);
       pivot.add(knee);
       this.rig.add(pivot);
     };
-    buildLeg(this.legL, this.kneeL, -0.12);
-    buildLeg(this.legR, this.kneeR, 0.12);
+    buildLeg(this.legL, this.kneeL, -HUMANOID_NODE_REST.legX);
+    buildLeg(this.legR, this.kneeR, HUMANOID_NODE_REST.legX);
 
     if (boss) {
       // 視覚のみ拡大(コライダー不変)。rig原点(=剛体中心)基準の等比拡大だと
@@ -2765,6 +2888,28 @@ export class Bot {
     out.elite = this.tier === 'elite';
   }
 
+  // R54-W1(F4): humanoid群レンダラへの姿勢書き出し(アロケゼロ)。
+  // syncMesh(humanoid生存分岐)の式の入力をそのまま渡す — 合成式は
+  // humanoid-crowd.ts の composeHumanoidCrowdMatrices が持ち、等価性は
+  // humanoid-crowd.test.ts が実Botとの行列比較で固定する。
+  // 死亡時はmatch側がslotを解放してObject3D経路へ戻す(dissolve/updateDyingは従来のまま)。
+  getHumanoidCrowdPose(out: HumanoidCrowdPose): void {
+    const t = this.body.translation();
+    out.x = t.x;
+    out.y = t.y;
+    out.z = t.z;
+    out.rigLiftY = this.rigLiftY;
+    out.heading = this.heading;
+    out.walkPhase = this.walkPhase;
+    out.walkAmp = this.walkAmp;
+    out.anim = this.anim;
+    out.flinch = this.flinch;
+    out.glow = this.tierGlowBase + (this.hitFlash / 0.12) * 0.7; // update()の実式と同じ
+    out.elite = this.tier === 'elite';
+    out.colorHex = this.humanoidColorHex;
+    out.visible = this.alive && this.group.visible;
+  }
+
   // ── R53-T3: ファイナルキルカム公開API(契約凍結) ──────────────────────────
   // match.ts はこれまで FkBotRig という duck-typing 構造型で bot 内部の private
   // フィールド(rig/legL/legR/kneeL/kneeR/turretGroup/tankBarrel/turretHead/turretLegs/
@@ -3025,6 +3170,7 @@ export class Bot {
   // 近接影LOD: 遠いゾンビの castShadow を止める(mapSize churnを避け周期トグルされる)。
   // 元々no-shadowだったディテール(userData.noShadow)は点け直さない。
   setCastShadow(on: boolean): void {
+    this.shadowCasting = on; // R54-W1(F4): humanoid群の対象判定(feedHumanoidCrowd)が読む
     this.rig.traverse((obj) => {
       if (obj instanceof THREE.Mesh) obj.castShadow = on && obj.userData.noShadow !== true;
     });

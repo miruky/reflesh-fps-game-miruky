@@ -1,6 +1,6 @@
 // XP・レベル・アンロック・チャレンジ・ランクの計算。保存形式はprofile.tsが扱う
 
-import { CAMPAIGN, missionById, type ModifierId } from './campaign';
+import { CAMPAIGN, missionById, type ModifierId, type MissionChallengeDef } from './campaign';
 import type { Difficulty } from './bot';
 import type { GameMode } from './modes';
 import {
@@ -864,12 +864,24 @@ export interface MissionSummary extends MatchSummary {
   timeS: number;
   objectiveMet: boolean;
   modifiers: ModifierId[];
+  // ── R54-W2: 3つ目の★条件(MissionDef.challenge)の判定入力(P0-A修正) ──
+  // 'no-reload' チャレンジ専用。ミッション中のリロード回数。省略時はevalMissionChallengeが
+  // 安全側(challengeMet=false)にフォールバックする。供給はstory-engine側の後続作業(申し送り)。
+  reloads?: number;
+  // 呼び出し側が試合中に自前でチャレンジ達成を判定できた場合の直接上書き値(将来の拡張点)。
+  // 省略時は applyCampaignMission が evalMissionChallenge(mission.challenge, summary) で
+  // MissionSummary の既存フィールド(deaths/headshots/shotsFired/shotsHit/weaponKills/reloads)
+  // から自動算出する。現時点でこのフィールドを供給する呼び出し元は無い(常にundefined)。
+  challengeMet?: boolean;
 }
 
 export interface CampaignProgress extends MatchProgress {
   missionId: string;
   firstClear: boolean;
   stars: number;
+  // R54-W2: このミッションで3つ目の★チャレンジ(MissionDef.challenge)を満たしたか。
+  // menu.ts側の結果画面「チャレンジ達成!」表示にそのまま使える(申し送り: 表示配線は未着手)。
+  challengeMet: boolean;
   chapterUnlocked: string | null;
   missionBest: MissionBest | null;
   // R53-W2: この試合(ミッションクリア)で新規解放した報酬カモ(camo.ts REWARD_CAMO_IDS)/称号
@@ -930,11 +942,63 @@ export function applyChapterRewards(
   return { newRewardCamos, newTitles };
 }
 
-// 星評価: 勝利=1★、par以内で+1★、モディファイア有りで+1★(最大3)。敗北は0。
-export function starRate(timeS: number, parTimeS: number, modCount: number): number {
+// R54-W2: 近接(格闘/クナイ系)キル数の集計。match.ts の isMeleeKill 判定(該当箇所の
+// weaponName 列挙)と揃えてある — '近接'(基本の格闘/ナイフ)に加え、黒帝/雷帝キットの
+// 派生斬撃もすべて「近接」として数える(MissionChallengeKind='weapon-class' の判定基盤)。
+const MELEE_WEAPON_NAMES: readonly string[] = [
+  '近接',
+  'ダイブスラム',
+  '黒帝斬撃',
+  'ブリンク斬撃',
+  '雷帝斬撃',
+];
+function meleeKillsOf(weaponKills: Record<string, number>): number {
+  return MELEE_WEAPON_NAMES.reduce((sum, name) => sum + (weaponKills[name] ?? 0), 0);
+}
+
+// R54-W2: accuracy チャレンジの最低試投数(1発だけ命中して100%…のような自明達成を防ぐ)。
+// 既存の CHALLENGES 'sharpshooter'(shotsFired>=10 かつ 50%以上)と揃えた基準値。
+const ACCURACY_CHALLENGE_MIN_SHOTS = 10;
+
+// R54-W2 P0-A: MissionDef.challenge(3つ目の★条件)の判定純関数。
+// challenge が未設定(旧データ相当)なら false を返す(3★は par+勝利の2★止まりで安全)。
+// no-reload は summary.reloads が未供給(undefined)の間は常に false(story-engineの後続作業待ち)。
+export function evalMissionChallenge(
+  challenge: MissionChallengeDef | undefined,
+  summary: MissionSummary,
+): boolean {
+  if (!challenge) return false;
+  switch (challenge.kind) {
+    case 'no-death':
+      return summary.deaths === 0;
+    case 'hs-count':
+      return summary.headshots >= (challenge.value ?? 1);
+    case 'accuracy': {
+      if (summary.shotsFired < ACCURACY_CHALLENGE_MIN_SHOTS) return false;
+      const pct = (summary.shotsHit / summary.shotsFired) * 100;
+      return pct >= (challenge.value ?? 0);
+    }
+    case 'no-reload':
+      return summary.reloads !== undefined && summary.reloads === 0;
+    case 'weapon-class':
+      return meleeKillsOf(summary.weaponKills) >= (challenge.value ?? 1);
+    default: {
+      // 網羅性チェック: MissionChallengeKind に新種を足したらここでコンパイルエラーになる
+      const exhaustive: never = challenge.kind;
+      return exhaustive;
+    }
+  }
+}
+
+// 星評価: 勝利=1★、par以内で+1★、ミッション固有チャレンジ達成で+1★(最大3)。敗北は0。
+// R54-W2: 旧shape(modCount: number)からの意味変更。誰でも選べる「モディファイア有無」は
+// 単なる難易度自己申告で3★を無条件に配っていた(P0-A: 19ミッションで実質3★固定/到達不能の
+// 温床)。腕前チャレンジ(evalMissionChallenge)の合否に置き換えることで、3★を「うまくやった」
+// 証明に戻す。モディファイア自体はXPボーナスへ役割を移した(applyCampaignMission参照)。
+export function starRate(timeS: number, parTimeS: number, challengeMet: boolean): number {
   let s = 1;
   if (timeS <= parTimeS) s += 1;
-  if (modCount > 0) s += 1;
+  if (challengeMet) s += 1;
   return Math.min(3, s);
 }
 
@@ -988,6 +1052,33 @@ export function applyScoreRecord(profile: Profile, key: string, kills: number): 
 // xpMul: ゾンビ以外の全モード同様に ×10 を推奨。
 export function applyCampaignMission(profile: Profile, summary: MissionSummary, xpMul = 1): CampaignProgress {
   const base = accumulateMatch(profile, summary, { rated: false, trackWinStreak: false, xpMul, mode: 'story' });
+
+  // R54-W2: モディファイアは星評価から切り離し、XPボーナス(モディファイア数×15%、加算)へ
+  // 役割変更した。旧仕様(modCount>0で無条件に3★目)は「モディファイアを選ぶだけで誰でも
+  // 3★になる」抜け穴で、P0-A(19ミッションで3★が構造的に到達不能)の裏側の原因でもあった
+  // (腕前を問わない3★経路が既に存在するのに、大半のミッションではそれすら選べなかった)。
+  // 難易度を上げた分の見返りはXPで受け取る形にする。実装位置はここ1箇所のみ(base.xpTotal/
+  // profile.xp/base.levelAfter/base.newUnlocks を一貫して更新する必要があるため)。
+  // 勝利時のみ加算(旧仕様でも modCount による★ボーナスは missionWon 分岐の内側でのみ
+  // 効いていたため、報酬の対象範囲はそのまま踏襲する)。
+  if (summary.missionWon && summary.modifiers.length > 0) {
+    const modBonusXp = Math.round(base.xpTotal * summary.modifiers.length * 0.15);
+    if (modBonusXp > 0) {
+      base.xpBreakdown.push({
+        label: `モディファイア報酬 x${summary.modifiers.length}`,
+        xp: modBonusXp,
+      });
+      profile.xp += modBonusXp;
+      base.xpTotal += modBonusXp;
+      base.levelAfter = levelFromXp(profile.xp);
+      // ボーナスでレベルが上がった分の解放も結果画面に出す(取りこぼし防止。下の初制圧
+      // ボーナスと同じ流儀)
+      base.newUnlocks = UNLOCKS.filter(
+        (u) => u.level > base.levelBefore.level && u.level <= base.levelAfter.level,
+      );
+    }
+  }
+
   const camp = profile.campaign;
   const mission = missionById(summary.missionId);
   const firstClear = summary.missionWon && !camp.clearedMissions.includes(summary.missionId);
@@ -997,7 +1088,11 @@ export function applyCampaignMission(profile: Profile, summary: MissionSummary, 
   const kind = mission?.objective.kind;
   const survival = kind === 'survive' || kind === 'defend';
   const effTime = survival ? Math.min(summary.timeS, par) : summary.timeS;
-  const stars = summary.missionWon ? starRate(effTime, par, summary.modifiers.length) : 0;
+  // R54-W2 P0-A: 3つ目の★はミッション固有チャレンジ(MissionDef.challenge)の達成可否で
+  // 決める。summary.challengeMet が明示供給されていればそれを優先し(将来の直接供給用の
+  // 拡張点)、無ければ純関数 evalMissionChallenge で自動算出する。
+  const challengeMet = summary.challengeMet ?? evalMissionChallenge(mission?.challenge, summary);
+  const stars = summary.missionWon ? starRate(effTime, par, challengeMet) : 0;
 
   if (summary.missionWon && !camp.clearedMissions.includes(summary.missionId)) {
     camp.clearedMissions.push(summary.missionId);
@@ -1053,6 +1148,7 @@ export function applyCampaignMission(profile: Profile, summary: MissionSummary, 
     missionId: summary.missionId,
     firstClear,
     stars,
+    challengeMet,
     chapterUnlocked,
     missionBest,
     newRewardCamos,

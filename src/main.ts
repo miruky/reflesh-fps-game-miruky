@@ -199,22 +199,26 @@ function startMatch(selection: MenuSelection): void {
   activeMissionId = null;
   // gen-* のプロシージャルIDも解決できるようフォールバックさせる
   const stage = stageDefFromId(selection.stageId) ?? stageById(selection.stageId);
+  // R54-F5 輪廻(ローグラン): ミサゴ拳銃のみ・R1固定・救済系オプション無効(純度優先v1)。
+  // 排他はUI(menu)でも無効化するが、転記段階でも構造的に落とす(二重の安全)
+  const rogue = selection.mode === 'zombie' && selection.rogueRun === true;
   launch({
     stage,
     mode: selection.mode,
-    primaryId: selection.primaryId,
-    attachments: selection.attachments,
+    primaryId: rogue ? 'misago-pistol' : selection.primaryId,
+    attachments: rogue ? [] : selection.attachments,
     grenade: selection.grenade,
     difficulty: selection.difficulty,
     durationS: settings.matchLengthS,
     scoreAttack: selection.mode === 'score',
-    secondaryId: selection.secondaryId,
-    zombieStartRound: selection.zombieStartRound,
-    hellMode: selection.hellMode ?? false,
-    allGiantMode: selection.allGiantMode ?? false,
+    secondaryId: rogue ? 'misago-pistol' : selection.secondaryId,
+    rogueRun: rogue,
+    zombieStartRound: rogue ? undefined : selection.zombieStartRound,
+    hellMode: rogue ? false : (selection.hellMode ?? false),
+    allGiantMode: rogue ? false : (selection.allGiantMode ?? false),
     // R53-W2 M2b: MN2凍結契約の転記(お守り/継承パーク。ゾンビモードのみ効果)
-    charm: selection.charm,
-    carriedPerk: selection.carriedPerk,
+    charm: rogue ? undefined : selection.charm,
+    carriedPerk: rogue ? undefined : selection.carriedPerk,
     // ★V-D HIGH修正: medalCounts['kokurai-kill']は「初キルメダルの発火回数≒試合数」で
     // キル数ではない。刀身雷脈(黒雷百殺=100キル)の基底は生涯キル累計を使う
     kokuraiKillsBase: profile.kokuraiKillsTotal ?? 0,

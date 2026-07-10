@@ -62,8 +62,9 @@ import {
   type BotKind,
   type BotTier,
   type BotTuning,
-  
+  type HumanoidCrowdPose,
 } from './bot';
+import { HumanoidCrowdRenderer, HUMANOID_CROWD_INSTANCED } from '../render/humanoid-crowd';
 import type { MissionDef } from './campaign';
 import { deriveSurfaceMaterials } from './materials';
 import { closestApproach } from './whizz';
@@ -1029,6 +1030,10 @@ export class Match {
   private trainingTargets: TrainingTarget[] = [];
   private trainingStats: TrainingStats | null = null;
 
+  // R54-W1 F4: humanoid群InstancedMesh(normal/elite humanoidの遠景描画を11DCへ畳む)。
+  // zombieモードではnull(そちらはzombie-director所有のZombieCrowdRendererが担当)
+  private humanoidCrowd: HumanoidCrowdRenderer | null = null;
+
   // ── ファイナルキルカム: 実装は killcam.ts KillcamController(R54-W1 F1分割)。
   // Match は所有+委譲のみ。deps は全て遅延クロージャ=フィールド初期化順に依存しない
   private readonly killcam = new KillcamController({
@@ -1310,6 +1315,12 @@ export class Match {
     }
     // R30 天候適用(ロールはコンストラクタ冒頭で確定済み。zombieは常に'clear'=no-op)
     this.applyWeather();
+
+    // R54-W1 F4: humanoid群InstancedMesh。renderer.compile より先に生成し、
+    // aGlowパッチ入りシェーダも下のprewarmで一緒にコンパイルさせる(初回スタッター防止)
+    if (HUMANOID_CROWD_INSTANCED && this.config.mode !== 'zombie') {
+      this.humanoidCrowd = new HumanoidCrowdRenderer(this.scene);
+    }
 
     // シェーダ事前コンパイル(初フレーム/初撃破のスタッター防止)。ディゾルブ変種(dissolve1)は
     // defineを一時点火してcompile→消灯の順で両プログラムをキャッシュへ載せる
@@ -3456,8 +3467,60 @@ export class Match {
     this.sounds.setCombatHeat(this.uiHeat);
     // R53-W3 M3: ゾンビ群InstancedMeshへ姿勢を反映(tick末尾=全bot更新後に1回)
     this.zombie.feedZombieCrowd();
+    // R54-W1 F4: humanoid群InstancedMeshも同タイミングで自己修復+姿勢反映
+    this.feedHumanoidCrowd();
     // 瀕死の聴覚こもり(差分ガードはSoundKit側。死亡中は解除して観戦を明瞭に)
     this.sounds.setHealthState(this.player.alive ? this.player.hp / this.player.maxHp : 1);
+  }
+
+  // R54-W1 F4: humanoid群InstancedMeshの自己修復ループ+姿勢feed(tick末尾に1回)。
+  // eligible = 生存 && humanoid && normal/elite && 影キャスター(最近接8体)でない
+  // && FKキルカム非再生。死亡/FK開始/影昇格のどの遷移でも同フレームでObject3D経路へ
+  // 収束する(死亡FX・FkPose API・articulated影は全て個体rig前提のまま無改修)。
+  private readonly humanoidPoseScratch: HumanoidCrowdPose = {
+    x: 0, y: 0, z: 0, rigLiftY: 0, heading: 0, walkPhase: 0, walkAmp: 0,
+    anim: 0, flinch: 0, glow: 0, elite: false, colorHex: 0xffffff, visible: false,
+  };
+  private feedHumanoidCrowd(): void {
+    const crowd = this.humanoidCrowd;
+    if (!crowd) return;
+    const swapOutAll = this.killcam.playing || this.over;
+    for (const b of this.bots) {
+      const eligible =
+        !swapOutAll &&
+        b.alive &&
+        b.kind === 'humanoid' &&
+        (b.tier === 'normal' || b.tier === 'elite') &&
+        b.tuning.scale === 1 && // 巨躯(group.scale拡大)はcompose式がscale非対応=個体経路
+        !b.shadowCasting;
+      if (b.crowdSlot >= 0 && !eligible) {
+        crowd.release(b.crowdSlot);
+        b.setCrowdSlot(-1);
+      } else if (b.crowdSlot < 0 && eligible) {
+        b.setCrowdSlot(crowd.acquire()); // 満杯なら-1=個体経路のまま(次tickで再試行)
+      }
+      if (b.crowdSlot >= 0) {
+        b.getHumanoidCrowdPose(this.humanoidPoseScratch);
+        crowd.pose(b.crowdSlot, this.humanoidPoseScratch);
+      }
+    }
+    crowd.commit();
+  }
+
+  // R54-W1 F4: over遷移(タイムアップ経路はupdate()が早期returnしfeedが走らない)と
+  // FKキルカム再生開始を確実に拾うための全解放。idempotent(全slot=-1なら何もしない)
+  private releaseHumanoidCrowdAll(): void {
+    const crowd = this.humanoidCrowd;
+    if (!crowd) return;
+    let changed = false;
+    for (const b of this.bots) {
+      if (b.crowdSlot >= 0) {
+        crowd.release(b.crowdSlot);
+        b.setCrowdSlot(-1);
+        changed = true;
+      }
+    }
+    if (changed) crowd.commit();
   }
 
   // 描画フレームごとの処理。視点操作はフレームレートに追従させる
@@ -3475,6 +3538,11 @@ export class Match {
       if (this.kokuraiteiMode) this.sounds.resumeKokuraiThunder();
     }
     this._prevFramePlaying = playing;
+
+    // R54-W1 F4: over中はupdate()が早期returnしfeedが走らないため、ここで群slotを
+    // 全解放して個体rig(Object3D)へ戻す。FKキルカムのFkPose適用/記録リプレイは
+    // 個体rig前提なので、この解放が無いと群像が凍結表示+killerが不可視になる
+    if (this.over) this.releaseHumanoidCrowdAll();
 
     if (playing && !this.over) {
       const weapon = this.activeWeapon;
@@ -9008,6 +9076,8 @@ export class Match {
       activePowerUps: this.config.mode === 'zombie' ? this.zombie.zombieActivePowerUpsSnap() : undefined,
       specialRound: this.config.mode === 'zombie' ? this.zombie.zombieSpecialRound : undefined,
       poison01: this.config.mode === 'zombie' ? this.zombie.zombiePoison01 : undefined,
+      // R54-F5 輪廻: 供給はZombieDirector(非rogue時undefined=HUD不活性)
+      rogue: this.config.mode === 'zombie' ? this.zombie.rogueSnap() : undefined,
       darkEmperorS: this.isNinja && this.darkEmperorTimer > 0 && isFinite(this.darkEmperorTimer) ? Math.ceil(this.darkEmperorTimer) : (this.isNinja && this.darkEmperorTimer > 0 ? 1 : undefined),
       darkEmperorPermanent: this.isNinja && !isFinite(this.darkEmperorTimer) ? true : undefined,
       raiteiMode: this.isNinja && this.raiteiMode ? true : undefined,
@@ -9374,6 +9444,8 @@ export class Match {
           ? Math.max(...this.zombie.zombiePapTiers.values())
           : undefined,
       specialZombieKills: this.config.mode === 'zombie' ? this.zombie.zombieVariantKillCount : undefined,
+      // R54-F5 輪廻: リザルト(到達R/取得カード列)。非rogue時undefined
+      rogue: this.config.mode === 'zombie' ? this.zombie.rogueResult() : undefined,
       sndScore: this.story.sndMatch
         ? [this.story.sndMatch.scoreOf(PLAYER_TEAM), this.story.sndMatch.scoreOf(ENEMY_TEAM)]
         : undefined,
@@ -9431,6 +9503,8 @@ export class Match {
     this.sounds.setEmperorBgm(null);    // R53-W3 M3: 帝王BGM層を通常へ復帰(試合終了/quit)
     this.zombie.dispose(); // R54-F2: ゾンビ系リソース解放(crowd/ショップ/ドア/毒霧/ドロップ/プール/箱演出)
     this.zombie.zombieCrowd = null;
+    this.humanoidCrowd?.dispose(this.scene); // R54-W1 F4: humanoid群InstancedMeshの解放
+    this.humanoidCrowd = null;
     this.kokuraiTrailTimer = 0;         // R33
     this.kokuraiThunderTimer = 0;       // R33
     this.kokuraiBlackInTimer = 0;       // R33

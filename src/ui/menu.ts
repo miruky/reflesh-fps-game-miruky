@@ -104,6 +104,9 @@ export interface MenuSelection {
   zombieStartRound?: number;
   hellMode?: boolean;
   allGiantMode?: boolean;
+  // R54-F5 ゾンビ・ローグラン「輪廻」。ゾンビ選択時のみ有効。
+  // 排他: charm/carriedPerk/zombieStartRound/hellMode/allGiantMode(純度優先v1)
+  rogueRun?: boolean;
   // ── R53-W2: MatchConfigへ名前凍結で受け渡す拡張フィールド(match.ts側の消費はM2a/M2b) ──
   // ストーリーミッションの難易度上書き(ブリーフィング画面で選択)。既定=normal
   missionDifficulty?: Difficulty;
@@ -765,6 +768,7 @@ export class Menu {
     secondaryId: 'suzume',
     hellMode: false,
     allGiantMode: false,
+    rogueRun: false,
     missionDifficulty: 'normal',
   };
   private weaponPreview: WeaponPreview | null = null; // ARMORYの3Dプレビュー(遅延生成)
@@ -832,6 +836,7 @@ export class Menu {
       }
       if (typeof saved.hellMode === 'boolean') this.selection.hellMode = saved.hellMode;
       if (typeof saved.allGiantMode === 'boolean') this.selection.allGiantMode = saved.allGiantMode;
+      if (typeof saved.rogueRun === 'boolean') this.selection.rogueRun = saved.rogueRun;
       for (const id of saved.attachments ?? []) {
         const def = ATTACHMENT_DEFS[id];
         if (def) this.attachmentBySlot[def.slot] = id;
@@ -1068,6 +1073,10 @@ export class Menu {
                     <h2>交戦規定</h2>
                     <div class="mode-list" data-id="modes"></div>
                   </section>
+                  <section class="menu-section zombie-round-section" data-id="rogue-wrap" hidden>
+                    <h2>輪廻(ローグラン)</h2>
+                    <label class="menu-toggle"><input type="checkbox" data-id="rogueRun"><span>輪廻で出撃<small class="toggle-desc"> — ミサゴ拳銃のみ・R1固定で開始し、ラウンドクリアごとに供物カードで強化を積む。累計到達で恒久の加護が解放。お守り/開始ラウンド/超鬼畜/全巨躯とは排他</small></span></label>
+                  </section>
                   <section class="menu-section zombie-round-section" data-id="zombie-round-wrap" hidden>
                     <h2>開始ラウンド</h2>
                     <div class="zombie-round-selector" data-id="zombie-round-selector"></div>
@@ -1160,6 +1169,7 @@ export class Menu {
     this.renderModes();
     this.renderZombieRoundSelector();
     this.renderCharmSelector();
+    this.renderRogueToggle();
     this.renderWeapons();
     this.renderSecondaries();
     this.renderAttachments();
@@ -1696,7 +1706,9 @@ export class Menu {
             ${result.zombiePoints !== undefined ? `<div class="aar-cell"><span class="aar-k">獲得PTS</span><span class="aar-v"><b>${result.zombiePoints.toLocaleString()}</b></span></div>` : ''}
             ${result.papTierMax !== undefined && result.papTierMax > 0 ? `<div class="aar-cell"><span class="aar-k">鍛神改造</span><span class="aar-v"><b>${['-', '改', '改二', '改三'][result.papTierMax] ?? `改${result.papTierMax}`}</b></span></div>` : ''}
             ${result.specialZombieKills !== undefined ? `<div class="aar-cell"><span class="aar-k">特異体討伐</span><span class="aar-v"><b>${result.specialZombieKills}</b></span></div>` : ''}
+            ${result.rogue !== undefined ? `<div class="aar-cell"><span class="aar-k">輪廻・供物</span><span class="aar-v"><b>${result.rogue.cards.length}</b><em>枚</em></span></div>` : ''}
           </div>
+          ${result.rogue !== undefined && result.rogue.cards.length > 0 ? `<div class="rogue-aar-cards">${result.rogue.cards.map((c) => `<span class="rogue-chip">${c}</span>`).join('')}</div>` : ''}
           ${this.matchStoryHtml(result, progress)}
           <table class="result-table">
             <thead><tr><th>名前</th><th>キル</th><th>デス</th></tr></thead>
@@ -2421,6 +2433,7 @@ export class Menu {
         this.renderStages();
         this.renderZombieRoundSelector();
         this.renderCharmSelector();
+        this.renderRogueToggle();
         this.renderBriefing();
       });
       list.appendChild(card);
@@ -2561,6 +2574,38 @@ export class Menu {
     };
     wire('hellMode', 'hellMode');
     wire('allGiantMode', 'allGiantMode');
+  }
+
+  // ── R54-F5 輪廻(ローグラン)トグル。ゾンビ選択時のみ表示 ────────────────────
+  // ON中は排他対象(超鬼畜/全巨躯/開始ラウンド/お守り)をUIでも無効化する
+  // (main.tsの転記段階でも構造的に落とすため二重の安全)
+  private renderRogueToggle(): void {
+    const wrap = this.root.querySelector<HTMLElement>('[data-id="rogue-wrap"]');
+    if (!wrap) return;
+    const isZombie = this.selection.mode === 'zombie';
+    wrap.hidden = !isZombie;
+    const el = wrap.querySelector<HTMLInputElement>('input[data-id="rogueRun"]');
+    if (!el) return;
+    el.checked = this.selection.rogueRun ?? false;
+    if (!el.dataset.wired) {
+      el.dataset.wired = '1';
+      el.addEventListener('change', () => {
+        this.selection.rogueRun = el.checked;
+        this.applyRogueExclusivity();
+      });
+    }
+    this.applyRogueExclusivity();
+  }
+
+  private applyRogueExclusivity(): void {
+    const locked = this.selection.mode === 'zombie' && this.selection.rogueRun === true;
+    for (const id of ['hellMode', 'allGiantMode']) {
+      const input = this.root.querySelector<HTMLInputElement>(`input[data-id="${id}"]`);
+      if (input) input.disabled = locked;
+    }
+    for (const wrapId of ['zombie-round-wrap', 'charm-wrap']) {
+      this.root.querySelector<HTMLElement>(`[data-id="${wrapId}"]`)?.classList.toggle('rogue-locked', locked);
+    }
   }
 
   // ── ゾンビモード専用: 開始ラウンドセレクタ ──────────────────────────

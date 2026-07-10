@@ -26,12 +26,17 @@ import {
 import {
   generateShopLayout, purchasePerk, buyResult, rollMysteryBox, canBuy, composeZombieWeaponDef,
   PERKS, MYSTERY_BOX_COST, PAP_COST, PAP_REFILL_COST, DOOR_COST,
-  POWERUP_DURATION_S, POWERUP_DESPAWN_S,
+  POWERUP_DURATION_S, POWERUP_DESPAWN_S, POWERUP_ROUND_CAP, rollPowerUpAt, POWERUP_DROP_CHANCE,
   NUKE_BONUS_PT, CARPENTER_BONUS_PT, rollZombieVariant, BLAST_RADIUS_M, BLAST_DMG,
   MIASMA_RADIUS_M, MIASMA_DURATION_S, MIASMA_DPS, getCharmEffect, LAST_ZOMBIE_PERK_KEY,
   type ShopLayout, type ShopSlot, type ZombiePerkId, type PapTier, type PowerUpKind, type CharmEffect,
 } from './zombie-economy';
 import { papInteractSealed, papTierAfterWallBuy, isCrowdEligible, crowdSlotAction, EXT_MAG_EXCLUDED_IDS, PAP_CAMO_BY_TIER, applyHellTuning, zombieHordeRanks } from './match-helpers';
+import {
+  emptyRogueMods, applyCardToMods, rollRogueOfferWithTier, rogueTierFor,
+  readRogueMeta, writeRogueMeta, accumulateRogueMeta,
+  type RogueMods, type RogueCard,
+} from './roguerun';
 import type { MatchConfig, FeedEntry, MomentEvent } from './match-types';
 import { ENEMY_TEAM } from './modes';
 import { PLAYER_FEET_OFFSET, PLAYER_NAME, ULT_ON_DAMAGE_PER_HP, hitToi, type ColliderTag, type RayHitLike } from './match';
@@ -122,7 +127,7 @@ export class ZombieDirector {
   zombieBoxCurrentIdx = 0;
   zombieBoxGroupIdx = -1; // ミステリーボックスのzombieShopGroups内index(R53-W2: 末尾決め打ちバグの根治)
   zombiePerkStacks = new Map<ZombiePerkId, number>();
-  zombiePerkMoveMul = 1;
+  private zombiePerkMoveMulBase = 1; // R54-F5: 実体。公開値は zombiePerkMoveMul ゲッター(輪廻の移速加算を合成)
   zombieQuickReviveCharges = 0;
   zombieBossBot: Bot | null = null;
   zombieBossFlash = 0;
@@ -177,6 +182,21 @@ export class ZombieDirector {
   zombieCharmEffect: CharmEffect | null = null;
   zombieCharmReviveAvailable = false;
 
+  // ── R54-F5 輪廻(ローグラン)。強化は rogueMods 単一集約 — 適用点は既存漏斗のみ ──
+  rogueMods: RogueMods = emptyRogueMods();
+  readonly rogueCardNames: string[] = []; // 取得カード名(表示順。snapshot/result供給)
+  roguePickPending = false; // 供物の台座 選択待ち(ディレクタ凍結)
+  roguePickRemain = 0; // 自動スキップまでの残秒(30s)
+  rogueMetaTier = 0; // 恒久メタ境地(0-5。localStorage v1から)
+  private rogueMetaDone = false; // dispose時のメタ加算の単発ガード
+  readonly roguePedestals: Array<{
+    card: RogueCard;
+    group: THREE.Group;
+    card3d: THREE.Mesh;
+    geos: THREE.BufferGeometry[];
+    mats: THREE.Material[];
+  }> = [];
+
   constructor(private readonly h: ZombieHost) {
     // R53-W3 M3: ゾンビ群InstancedMesh(972DC→79の軽量化本命。kill-switchはzombie-crowd.ts)
     if (h.config.mode === 'zombie' && ZOMBIE_CROWD_INSTANCED) {
@@ -186,6 +206,18 @@ export class ZombieDirector {
 
   // 試合終了時のゾンビ系リソース解放(旧Match.dispose内の該当ブロックを原順序で移動)
   dispose(): void {
+    // R54-F5 輪廻: 恒久メタ加算(quit/全滅/再戦すべてdispose経由=一元化)。単発ガード付き
+    if (this.rogueActive && !this.rogueMetaDone && this.zombieRound > 0) {
+      this.rogueMetaDone = true;
+      try {
+        if (typeof localStorage !== 'undefined') {
+          writeRogueMeta(localStorage, accumulateRogueMeta(readRogueMeta(localStorage), this.zombieRound));
+        }
+      } catch {
+        /* localStorage不可は静かに無視 */
+      }
+    }
+    this.clearRoguePedestals();
     this.zombieCrowd?.dispose(this.h.scene); // R53-W3 M3: ゾンビ群InstancedMeshの解放
     // ゾンビショップオブジェクトを解放
     for (const grp of this.zombieShopGroups) {
@@ -232,7 +264,9 @@ export class ZombieDirector {
     // ★V-A修正: ヌーク中のキルはノーポイント(BO2準拠 — 100体×満額60ptで6000pt超の
     // 過剰供給を防ぐ。定額 NUKE_BONUS_PT のみ zombieNuke() が抑制フラグの外で付与する)
     if (this.zombieNukeSuppressPoints) return;
-    const mul = this.zombieDoublePointsTimer > 0 ? 2 : 1;
+    // R54-F5: double(×2)×商才(1+pointsAdd)の合成は×3で頭打ち(将来の重複ボーナス対策)
+    const rogueMul = this.rogueActive ? 1 + this.rogueMods.pointsAdd : 1;
+    const mul = Math.min(3, (this.zombieDoublePointsTimer > 0 ? 2 : 1) * rogueMul);
     this.zombiePoints += Math.round(amount * mul);
   }
 
@@ -249,6 +283,7 @@ export class ZombieDirector {
       extMagStacks: this.zombiePerkStacks.get('ext-mag') ?? 0,
       doubleTapStacks: this.zombiePerkStacks.get('double-tap') ?? 0,
       speedColaStacks: this.zombiePerkStacks.get('speed-cola') ?? 0,
+      rogue: this.rogueWeaponOpts(),
     });
     w.def.damage = composed.damage;
     w.def.rpm = composed.rpm;
@@ -271,8 +306,8 @@ export class ZombieDirector {
     const weapon = this.h.activeWeapon;
     if (EXT_MAG_EXCLUDED_IDS.has(weapon.def.id)) return Infinity;
     const curTier = (this.zombiePapTiers.get(weapon.def.id) ?? 0) as PapTier;
-    if (curTier >= 3) return PAP_REFILL_COST;
-    return PAP_COST[(curTier + 1) as PapTier];
+    if (curTier >= 3) return this.roguePapCost(PAP_REFILL_COST);
+    return this.roguePapCost(PAP_COST[(curTier + 1) as PapTier]);
   }
 
   // ショッププロンプト用: pack-a-punchのみ動的コストへ差し替え、他は素通し
@@ -295,7 +330,7 @@ export class ZombieDirector {
       const d = this.h.player.position.distanceTo(pos);
       if (d < BLAST_RADIUS_M) {
         const falloff = 1 - d / BLAST_RADIUS_M;
-        const dmg = Math.round(BLAST_DMG * Math.max(0.3, falloff));
+        const dmg = this.rogueDamageIn(Math.round(BLAST_DMG * Math.max(0.3, falloff)));
         const died = this.h.player.takeDamage(dmg);
         this.h.setTookDamage(true);
         this.h.addShake(0.3);
@@ -345,7 +380,7 @@ export class ZombieDirector {
         cloud.tickIn = MIASMA_TICK_S;
         // このメソッドはmode==='zombie'時のみ呼ばれる(update()側のガード)ためtraining除外は不要
         if (inside) {
-          const tickDamage = MIASMA_DPS * MIASMA_TICK_S;
+          const tickDamage = this.rogueDamageIn(MIASMA_DPS * MIASMA_TICK_S);
           const died = this.h.player.takeDamage(tickDamage);
           this.h.setTookDamage(true);
           this.h.addShake(0.04);
@@ -519,6 +554,31 @@ export class ZombieDirector {
       this.zombiePerkStacks.set(this.h.config.carriedPerk, 1);
       this.applyZombiePerk(this.h.config.carriedPerk, 1);
     }
+
+    // R54-F5 輪廻: 恒久メタ(localStorage v1)を読み、境地の開始特典を適用。
+    // charm/carriedPerk/hell/allGiant/startRound は main.ts が転記段階で落とす(純度優先)
+    if (this.rogueActive) {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          this.rogueMetaTier = rogueTierFor(readRogueMeta(localStorage).totalRounds);
+        }
+      } catch {
+        this.rogueMetaTier = 0;
+      }
+      if (this.rogueMetaTier >= 1) this.addZombiePoints(500); // T1: 開始+500pt
+      if (this.rogueMetaTier >= 2) this.zombieQuickReviveCharges += 1; // T2: 自己復活1
+      if (this.rogueMetaTier >= 4) {
+        // T4: 開始武器がPaP1(クナイ等の除外武器はスキップ)
+        const pid = this.h.weapons[0].def.id;
+        if (!EXT_MAG_EXCLUDED_IDS.has(pid)) {
+          this.zombiePapTiers.set(pid, 1);
+          this.recomposeAllWeapons();
+        }
+      }
+      this.h.announcements.push(
+        this.rogueMetaTier > 0 ? `輪廻 — 境地${this.rogueMetaTier}の加護` : '輪廻 — 供物を集め、深淵を目指せ',
+      );
+    }
   }
 
   aliveZombieCount(): number {
@@ -584,6 +644,12 @@ export class ZombieDirector {
     // (影LODは★1で全モード共通化し update() 側で駆動。ここでの個別運用は廃止)
     if (this.h.over) return;
 
+    // R54-F5 輪廻: 供物選択中はラウンド進行を完全凍結(台座の演出/タイマーのみ進む)
+    if (this.roguePickPending) {
+      this.updateRoguePick(dt);
+      return;
+    }
+
     if (this.zombieRoundCooldown > 0) {
       this.zombieRoundCooldown -= dt;
       if (this.zombieRoundCooldown <= 0) this.startZombieRound(this.zombieRound + 1);
@@ -634,6 +700,12 @@ export class ZombieDirector {
           for (const w of this.h.weapons) w.resupply();
           this.h.sounds.specialRoundClear();
           this.h.announcements.push('大群を殲滅！');
+        }
+        // R54-F5 輪廻: 報酬処理の後に供物の台座を出し、選択が済むまで次ラウンドを凍結
+        // (クールダウンは resolveRoguePick が設定する)。R1開始前(zombieRound=0)は対象外
+        if (this.rogueActive && this.zombieRound > 0) {
+          this.spawnRoguePedestals();
+          return;
         }
       }
       this.zombieRoundCooldown = ZOMBIE_ROUND_COOLDOWN;
@@ -764,7 +836,7 @@ export class ZombieDirector {
         if (tag === undefined || tag.kind === 'world' || tag.kind === 'boundary') return;
       }
     }
-    const dmg = bot.tuning.damage;
+    const dmg = this.rogueDamageIn(bot.tuning.damage);
     if (this.h.config.mode === 'training') return;
     const died = this.h.player.takeDamage(dmg);
     this.h.setTookDamage(true);
@@ -796,6 +868,15 @@ export class ZombieDirector {
       this.h.tags.delete(b.bodyCollider.handle);
       this.h.tags.delete(b.headCollider.handle);
       for (const c of b.extraColliders) this.h.tags.delete(c.handle);
+      // R54-F5 輪廻「幸運」: 加算分(基本2.5%×powerUpAdd)を死体解放時に補充抽選する
+      // (キル時の基本抽選は match.ts 側=不可侵のため、こちらで独立に補う。ラウンド上限は共有)
+      if (this.rogueActive && this.rogueMods.powerUpAdd > 0 && this.zombiePowerUpRoundCount < POWERUP_ROUND_CAP) {
+        const luckKind = rollPowerUpAt(Math.random, POWERUP_DROP_CHANCE * this.rogueMods.powerUpAdd);
+        if (luckKind) {
+          this.zombiePowerUpRoundCount += 1;
+          this.spawnZombiePowerUp(luckKind, b.position.clone());
+        }
+      }
       // R53-W3 M3: InstancedMeshスロットを先に返却(協定: release→setCrowdSlot(-1)の順)
       if (b.crowdSlot >= 0 && this.zombieCrowd) {
         this.zombieCrowd.release(b.crowdSlot);
@@ -1091,7 +1172,198 @@ export class ZombieDirector {
     return group;
   }
 
+  // ══ R54-F5 輪廻(ローグラン) ════════════════════════════════════════════════
+  // 強化は rogueMods 単一集約。適用点(漏斗)は: compose(rogue opts)/addZombiePoints/
+  // 被弾3点(rogueDamageIn)/zombiePerkMoveMulゲッター/PaPコスト(roguePapCost)/幸運補充抽選。
+
+  get rogueActive(): boolean {
+    return this.h.config.rogueRun === true;
+  }
+
+  /** match.ts が読む公開移速倍率(パーク実体 × 輪廻の移速加算)。match側は無改修 */
+  get zombiePerkMoveMul(): number {
+    return this.zombiePerkMoveMulBase * (this.rogueActive ? 1 + this.rogueMods.moveAdd : 1);
+  }
+
+  /** compose用の武器系乗数(単一漏斗)。非アクティブ時はundefined=完全無効 */
+  rogueWeaponOpts(): { dmgMul: number; magMul: number; reloadMul: number } | undefined {
+    if (!this.rogueActive) return undefined;
+    return {
+      dmgMul: 1 + this.rogueMods.dmgAdd,
+      magMul: 1 + this.rogueMods.magAdd,
+      reloadMul: Math.max(0.25, 1 - this.rogueMods.reloadAdd),
+    };
+  }
+
+  /** 鍛冶割引: 下限×0.4、50pt単位へ丸め(表示と請求が同関数=ズレなし) */
+  roguePapCost(cost: number): number {
+    if (!this.rogueActive || this.rogueMods.papDiscount <= 0) return cost;
+    return Math.max(50, Math.round((cost * Math.max(0.4, 1 - this.rogueMods.papDiscount)) / 50) * 50);
+  }
+
+  /** 被ダメージ倍率(守りの札/血の契約)。下限×0.4、最低1ダメージ保証 */
+  rogueDamageIn(dmg: number): number {
+    if (!this.rogueActive) return dmg;
+    return Math.max(1, dmg * Math.max(0.4, 1 + this.rogueMods.dmgTakenAdd));
+  }
+
+  /** ラウンドクリア時: プレイヤー前方4mに供物の台座を並べ、選択までディレクタを凍結 */
+  spawnRoguePedestals(): void {
+    this.clearRoguePedestals();
+    const offer = rollRogueOfferWithTier(this.h.rand, isBossRound(this.zombieRound), this.rogueMetaTier);
+    if (offer.length === 0) {
+      this.zombieRoundCooldown = ZOMBIE_ROUND_COOLDOWN;
+      return;
+    }
+    const p = this.h.player;
+    const fx = -Math.sin(p.yaw);
+    const fz = -Math.cos(p.yaw);
+    const half = this.h.config.stage.size / 2 - 4; // 境界壁の内側へクランプ
+    const mid = (offer.length - 1) / 2;
+    for (let i = 0; i < offer.length; i += 1) {
+      const card = offer[i]!;
+      const px = THREE.MathUtils.clamp(p.position.x + fx * 4 - fz * (i - mid) * 1.8, -half, half);
+      const pz = THREE.MathUtils.clamp(p.position.z + fz * 4 + fx * (i - mid) * 1.8, -half, half);
+      const pos = new THREE.Vector3(px, 0, pz);
+      pos.y = this.h.snapToGround(pos);
+      const geos: THREE.BufferGeometry[] = [];
+      const mats: THREE.Material[] = [];
+      const group = new THREE.Group();
+      // 台座(石柱)+浮遊カード+レア度リング。発光はbloom閾値内(白飛び禁止)
+      const color = card.rarity === 'epic' ? 0xb07cff : card.rarity === 'rare' ? 0x19e6ff : 0x9fb8c9;
+      const baseGeo = new THREE.BoxGeometry(0.5, 0.9, 0.5);
+      const baseMat = new THREE.MeshStandardMaterial({ color: 0x1c1f26, roughness: 0.85, metalness: 0.1 });
+      const base = new THREE.Mesh(baseGeo, baseMat);
+      base.position.y = 0.45;
+      group.add(base); geos.push(baseGeo); mats.push(baseMat);
+      const cardGeo = new THREE.PlaneGeometry(0.55, 0.8);
+      const cardMat = new THREE.MeshStandardMaterial({
+        color: 0x0a0c10, emissive: new THREE.Color(color), emissiveIntensity: 0.45,
+        side: THREE.DoubleSide, transparent: true, opacity: 0.92,
+      });
+      const card3d = new THREE.Mesh(cardGeo, cardMat);
+      card3d.position.y = 1.55;
+      group.add(card3d); geos.push(cardGeo); mats.push(cardMat);
+      const ringGeo = new THREE.RingGeometry(0.5, 0.62, 24);
+      const ringMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.03;
+      group.add(ring); geos.push(ringGeo); mats.push(ringMat);
+      group.position.copy(pos);
+      this.h.scene.add(group);
+      this.roguePedestals.push({ card, group, card3d, geos, mats });
+    }
+    this.roguePickPending = true;
+    this.roguePickRemain = 30;
+    this.h.announcements.push('供物の台座が現れた — Eで選択(30秒で見送り)');
+    this.h.sounds.uiClick();
+  }
+
+  /** 凍結中の毎フレーム: カード演出+自動スキップタイマー */
+  updateRoguePick(dt: number): void {
+    if (!this.h.settings.reduceMotion) {
+      for (const ped of this.roguePedestals) {
+        ped.card3d.rotation.y += dt * 1.4;
+        ped.card3d.position.y = 1.55 + Math.sin(this.h.elapsed * 2 + ped.group.position.x) * 0.06;
+      }
+    }
+    this.roguePickRemain -= dt;
+    if (this.roguePickRemain <= 0) this.resolveRoguePick(null);
+  }
+
+  /** 供物の確定(null=見送り)。カード適用→台座撤去→凍結解除→クールダウン設定 */
+  resolveRoguePick(card: RogueCard | null): void {
+    if (!this.roguePickPending) return;
+    if (card) {
+      if (card.instant === 'free-perk') {
+        this.grantFreeRoguePerk();
+      } else if (card.instant === 'revive') {
+        this.zombieQuickReviveCharges += 1;
+      } else {
+        this.rogueMods = applyCardToMods(this.rogueMods, card.id);
+        this.recomposeAllWeapons(); // 武器系は基礎から再計算(複利なし)
+      }
+      this.rogueCardNames.push(card.name);
+      this.h.moments.push({ kind: 'perk', title: card.name, sub: '輪廻の供物' });
+      this.h.announcements.push(`供物『${card.name}』 — ${card.desc}`);
+      this.h.sounds.uiClick();
+    } else {
+      this.h.announcements.push('供物を見送った');
+    }
+    this.clearRoguePedestals();
+    this.roguePickPending = false;
+    this.roguePickRemain = 0;
+    this.zombieRoundCooldown = ZOMBIE_ROUND_COOLDOWN;
+  }
+
+  /** 無料パーク: quick-revive以外からランダム1種を即時付与(購入と同じ適用経路) */
+  private grantFreeRoguePerk(): void {
+    const ids = (Object.keys(PERKS) as ZombiePerkId[]).filter((id) => id !== 'quick-revive');
+    const id = ids[Math.min(ids.length - 1, Math.floor(this.h.rand() * ids.length))];
+    if (!id) return;
+    const count = (this.zombiePerkStacks.get(id) ?? 0) + 1;
+    this.zombiePerkStacks.set(id, count);
+    this.applyZombiePerk(id, count);
+    this.h.announcements.push(`${PERKS[id].name} を無償取得`);
+  }
+
+  clearRoguePedestals(): void {
+    for (const ped of this.roguePedestals) {
+      this.h.scene.remove(ped.group);
+      for (const g of ped.geos) g.dispose();
+      for (const m of ped.mats) m.dispose();
+    }
+    this.roguePedestals.length = 0;
+  }
+
+  /** 台座選択中の最寄り台座(interact/プロンプト共用。範囲2.6m) */
+  private nearestRoguePedestal(): { card: RogueCard; dist: number } | null {
+    let best: { card: RogueCard; dist: number } | null = null;
+    const ppos = this.h.player.position;
+    for (const ped of this.roguePedestals) {
+      const dist = ped.group.position.distanceTo(ppos);
+      if (dist < 2.6 && (!best || dist < best.dist)) best = { card: ped.card, dist };
+    }
+    return best;
+  }
+
+  /** snapshot供給(match側は `rogue: this.zombie.rogueSnap(),` の1行配線のみ) */
+  rogueSnap(): { round: number; cards: string[]; pick?: { options: { id: string; name: string; desc: string; rarity: string }[]; remainS: number } } | undefined {
+    if (!this.rogueActive) return undefined;
+    return {
+      round: this.zombieRound,
+      cards: this.rogueCardNames.slice(),
+      pick: this.roguePickPending
+        ? {
+            options: this.roguePedestals.map((ped) => ({
+              id: ped.card.id, name: ped.card.name, desc: ped.card.desc, rarity: ped.card.rarity,
+            })),
+            remainS: this.roguePickRemain,
+          }
+        : undefined,
+    };
+  }
+
+  /** MatchResult.rogue供給(match側 `rogue: this.zombie.rogueResult(),` の1行配線) */
+  rogueResult(): { round: number; cards: string[] } | undefined {
+    if (!this.rogueActive) return undefined;
+    return { round: this.zombieRound, cards: this.rogueCardNames.slice() };
+  }
+
   updateZombieShopProximity(): void {
+    // R54-F5 輪廻: 供物選択中はショップより台座プロンプトを優先(ショップは一時休止)
+    if (this.roguePickPending) {
+      if (!this.h.player.alive) {
+        this.zombieShopPrompt = null;
+        return;
+      }
+      const near = this.nearestRoguePedestal();
+      this.zombieShopPrompt = near
+        ? { label: `供物『${near.card.name}』 — ${near.card.desc}`, canAfford: true, cost: 0 }
+        : { label: `供物を選べ(残り${Math.ceil(this.roguePickRemain)}秒)`, canAfford: false, cost: 0 };
+      return;
+    }
     if (!this.zombieShopLayout || !this.h.player.alive) {
       this.zombieShopPrompt = null;
       return;
@@ -1133,7 +1405,7 @@ export class ZombieDirector {
     if (slot.kind === 'perk-machine') {
       const perkDef = slot.perkId ? PERKS[slot.perkId] : null;
       let label = `[E] ${perkDef?.name ?? slot.perkId ?? '?'}  ${slot.cost}pt`;
-      if (slot.perkId === 'stamin-up' && this.zombiePerkMoveMul >= 1.5) {
+      if (slot.perkId === 'stamin-up' && this.zombiePerkMoveMulBase >= 1.5) {
         label += ' (速度上限)';
       }
       const stackN = slot.perkId ? (this.zombiePerkStacks.get(slot.perkId) ?? 0) : 0;
@@ -1169,7 +1441,14 @@ export class ZombieDirector {
 
   handleZombieInteract(): void {
     if (!this.h.input.wasPressed('interact')) return;
-    if (!this.h.player.alive || !this.zombieShopLayout) return;
+    if (!this.h.player.alive) return;
+    // R54-F5 輪廻: 供物選択中はEを台座選択に専有(ショップ購入は封止)
+    if (this.roguePickPending) {
+      const near = this.nearestRoguePedestal();
+      if (near) this.resolveRoguePick(near.card);
+      return;
+    }
+    if (!this.zombieShopLayout) return;
     if (this.zombieBoxAnimTimer > 0) return;
 
     const ppos = this.h.player.position;
@@ -1274,7 +1553,7 @@ export class ZombieDirector {
       const curTier = (this.zombiePapTiers.get(weapon.def.id) ?? 0) as PapTier;
       const isMaxed = curTier >= 3;
       const nextTier = (isMaxed ? 3 : curTier + 1) as PapTier;
-      const cost = isMaxed ? PAP_REFILL_COST : PAP_COST[nextTier];
+      const cost = this.roguePapCost(isMaxed ? PAP_REFILL_COST : PAP_COST[nextTier]);
       if (!canBuy(this.zombiePoints, cost)) {
         this.h.sounds.papDeny();
         return;
@@ -1379,7 +1658,7 @@ export class ZombieDirector {
       }
     } else if (perkId === 'stamin-up') {
       // +5%/スタック、上限×1.5。上限でも購入はできる(ポイントシンク)
-      this.zombiePerkMoveMul = Math.min(1.5, this.zombiePerkMoveMul * 1.05);
+      this.zombiePerkMoveMulBase = Math.min(1.5, this.zombiePerkMoveMulBase * 1.05);
     } else if (perkId === 'quick-revive') {
       this.zombieQuickReviveCharges += 1;
     } else {
@@ -1409,6 +1688,7 @@ export class ZombieDirector {
       extMagStacks: this.zombiePerkStacks.get('ext-mag') ?? 0,
       doubleTapStacks: this.zombiePerkStacks.get('double-tap') ?? 0,
       speedColaStacks: this.zombiePerkStacks.get('speed-cola') ?? 0,
+      rogue: this.rogueWeaponOpts(),
     });
     // ★V-A修正: tier維持の再購入では鍛神カモも維持(composeはカモを扱わないため明示設定)
     composed.papCamo = PAP_CAMO_BY_TIER[papTier];

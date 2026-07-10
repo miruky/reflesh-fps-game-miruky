@@ -1,3 +1,4 @@
+import './rogue.css'; // R54-F5 輪廻HUD/メニュー様式(style.css追記凍結のため機能別ファイル)
 import { RADAR_RANGE_M, RETICLE_COLORS } from '../core/settings';
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
@@ -550,8 +551,16 @@ export class Hud {
           <div class="hud-zombie" data-id="zombie" hidden>
             <div class="hud-zombie-round"><small>ROUND</small><strong data-id="zround">1</strong></div>
             <div class="hud-zombie-stat"><span data-id="zkills">0</span> KILLS · <span data-id="zpoints">0</span> PTS</div>
+            <!-- R54-F5 輪廻バッジ(取得供物数)。snap.rogue未配線(undefined)時は非表示のまま -->
+            <div class="hud-rogue-badge" data-id="rogue-badge" hidden>輪廻 <b data-id="rogue-cards-n">0</b><small>供物</small></div>
             <!-- R53-W2: アクティブパワーアップの横並びチップ(insta/double/nuke/maxammo/carpenter) -->
             <div class="w2-powerups" data-id="powerups" aria-hidden="true"></div>
+          </div>
+          <!-- R54-F5 輪廻: 供物の3-4択パネル(roguePickPending中のみ)。操作は台座へのE(照準UI) -->
+          <div class="hud-rogue-pick" data-id="rogue-pick" hidden aria-hidden="true">
+            <div class="rogue-pick-title">供物を選べ <span class="rogue-pick-remain"><b data-id="rogue-remain">30</b>s</span></div>
+            <div class="rogue-options" data-id="rogue-options"></div>
+            <div class="rogue-pick-hint">台座に近づいて <b>E</b> で受領 — 時間切れで見送り</div>
           </div>
           <!-- R53-W2: 潜入検知メーター(detect01定義時のみ表示。目アイコン+半円弧ゲージ) -->
           <div class="w2-detect" data-id="detect" hidden aria-hidden="true">
@@ -1165,6 +1174,7 @@ export class Hud {
       this.text('timer', `${minutes}:${String(seconds).padStart(2, '0')}`);
     }
 
+    this.updateRogue(inZombie ? snap.rogue : undefined);
     this.updateCompass(snap.yaw, width);
     this.updateCrosshair(snap, height);
     this.updateScope(snap, width, height);
@@ -1218,6 +1228,43 @@ export class Hud {
       scoreboard.hidden = !showScoreboard;
       if (showScoreboard) this.renderScoreboard(snap);
     }
+  }
+
+  // ── R54-F5 輪廻: バッジ+供物選択パネル(snap.rogue消費。undefined=完全非表示) ──
+  private rogueOptionsSig = ''; // 選択肢の再構築判定(毎フレームのinnerHTML再構築を避ける)
+  private updateRogue(rogue: MatchSnapshot['rogue']): void {
+    const badge = this.el['rogue-badge'];
+    if (badge) {
+      badge.hidden = rogue === undefined;
+      if (rogue) this.text('rogue-cards-n', String(rogue.cards.length));
+    }
+    const panel = this.el['rogue-pick'];
+    if (!panel) return;
+    const pick = rogue?.pick;
+    panel.hidden = pick === undefined;
+    if (!pick) {
+      this.rogueOptionsSig = '';
+      return;
+    }
+    const sig = pick.options.map((o) => o.id).join(',');
+    if (sig !== this.rogueOptionsSig) {
+      this.rogueOptionsSig = sig;
+      const wrap = this.el['rogue-options'];
+      if (wrap) {
+        const rarityJa = { common: '常', rare: '稀', epic: '極' } as Record<string, string>;
+        wrap.innerHTML = pick.options
+          .map(
+            (o) => `
+          <div class="rogue-card rogue-card--${o.rarity}">
+            <span class="rogue-card-rarity">${rarityJa[o.rarity] ?? '常'}</span>
+            <strong>${o.name}</strong>
+            <small>${o.desc}</small>
+          </div>`,
+          )
+          .join('');
+      }
+    }
+    this.text('rogue-remain', String(Math.max(0, Math.ceil(pick.remainS))));
   }
 
   private text(id: string, value: string): void {

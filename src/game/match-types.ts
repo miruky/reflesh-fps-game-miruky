@@ -34,6 +34,10 @@ export interface MatchConfig {
   carriedPerk?: ZombiePerkId; // perkcarryお守り用: 前試合から引き継ぐパーク種(menu側が決定)
   // ── R53-W2 M2b: ミッション難易度(MN2凍結契約。story=mission注入時のみ効果) ──
   missionDifficulty?: 'easy' | 'normal' | 'hard';
+  // ── R54-F5 輪廻(ゾンビ・ローグラン)。true でランダム3択カード成長のラン型ルールに
+  // 切り替わる(開始=ミサゴのみ/0pt/R1固定。charm/carriedPerk/zombieStartRound/hell/
+  // allGiant は純度優先で無効 — main.ts が転記段階で落とす) ──
+  rogueRun?: boolean;
   // ── R53-W3 M3: 刀身雷脈(黒雷帝キル累計)。main.tsが profile.kokuraiKillsTotal
   // (=試合ごとの実キル数 summary.kokuraiKills を積算した生涯カウンタ)を渡す。
   // 試合中の追加キル(tracker.kokuraiKillCount)と合算して100到達で恒久雷脈 ──
@@ -97,6 +101,8 @@ export interface MatchResult {
   specialZombieKills?: number;
   // R53-W2 M2b: S&D結果(mode==='snd'のみ)
   sndScore?: [number, number];
+  // R54-F5 輪廻(ローグラン)結果: 到達ラウンド+取得カード名列(menuのAAR行が消費)
+  rogue?: { round: number; cards: string[] };
 }
 
 export interface MatchSnapshot {
@@ -193,6 +199,14 @@ export interface MatchSnapshot {
   activePowerUps?: { kind: PowerUpKind; remainS: number }[]; // 発動中の時限効果(insta/double)
   specialRound?: 'rush' | null; // 現ラウンドの特殊種別
   poison01?: number; // 毒霧被曝 0..1(HUDビネット用)
+  // ── R54-F5 輪廻(ローグラン)。供給は ZombieDirector.rogueSnap() — match.ts の
+  // ゾンビsnapshotスプレッドへ `rogue: this.zombie.rogueSnap(),` の1行を要配線
+  // (F5はmatch.ts不可侵のためオーケストレータ/統合パスが行う。undefined=HUD不活性で安全) ──
+  rogue?: {
+    round: number;
+    cards: string[]; // 取得済みカード名(表示順)
+    pick?: { options: { id: string; name: string; desc: string; rarity: string }[]; remainS: number };
+  };
   // ── R53-W2 M2b: ストーリー帝王編(story=mission時のみ。H2契約凍結名) ──
   radioLine?: { speaker: RadioSpeaker; text: string } | null; // 無線字幕(表示中のみ非null)
   detect01?: number; // infiltrate: 敵の最大発見メータ 0..1(SPOTTED=0.9+)
