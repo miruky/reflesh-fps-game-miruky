@@ -56,6 +56,7 @@ const WALLRUN_DETECT = 0.32; // カプセル表面からの壁検出距離
 const WALLRUN_COOLDOWN = 0.3; // 離脱後の再取り付き禁止時間
 const WALLRUN_FALL_CAP = 2; // ウォールラン中の最大落下速度
 const WALLRUN_TILT_SPEED = 8; // 視点ロールの追従速度
+const WALLRUN_STEP_STRIDE = 2.2; // R54 音響2: wallRunKick()の周期間隔(m。footstepのstride 2.3に準拠)
 const WALLJUMP_UP = 10; // ~×1.5 (気持ちよく)
 const WALLJUMP_PUSH = 8; // ~×1.5 (気持ちよく)
 
@@ -146,6 +147,7 @@ export class Player {
   private wallRunTimer = 0;
   private wallRunCooldown = 0;
   private wallRunSide = 1; // 壁が右なら+1、左なら-1
+  private wallRunStepDistance = 0; // R54 音響2: wallRunKick()の周期発火用(壁沿い移動距離の累積)
   private readonly wallNormal = new THREE.Vector3(); // 壁から離れる向き(水平・正規化)
   private mantleTimer = 0;
   private readonly mantleFrom = new THREE.Vector3();
@@ -257,19 +259,21 @@ export class Player {
       this.sliding = true;
       this.slideTimer = 0;
       this.slideDir.copy(this.vel).setY(0).normalize();
+      // R54 音響2: 突入時の実速度(ブースト前)/最大スライド速度 = SEのピッチ材料
+      const speedAtEntry = this.speed;
       // パワースライド: 開始時に勢いを上乗せする
-      const boost = Math.max(this.speed, SLIDE_BOOST);
+      const boost = Math.max(speedAtEntry, SLIDE_BOOST);
       this.vel.x = this.slideDir.x * boost;
       this.vel.z = this.slideDir.z * boost;
-      sounds.slide();
+      sounds.slideStart(speedAtEntry / SLIDE_BOOST);
     } else if (this.sliding && input.crouchPressed) {
       // しゃがみ再入力でスライドキャンセル(再スプリント連係用)
-      this.endSlide();
+      this.endSlide(false, sounds);
     } else if (this.sliding && input.jumpPressed && this.grounded) {
       // MW2019式スライドキャンセル: ジャンプ入力で即スプリントへ直帰(空中へは行かない)。
       // スライドジャンプ(coyote窓での跳び)とは独立。接地中のみ発動。
       // クールダウン(SLIDE_COOLDOWN 0.25s)は endSlide() が管理 → 無限スパム不可。
-      this.endSlide();
+      this.endSlide(false, sounds);
       eatJump = true; // ジャンプ入力を消費し、下のバッファ充填を抑止
       forceSprint = true; // 入力に依らずスプリント復帰を即保証
     }
@@ -277,7 +281,7 @@ export class Player {
     if (this.sliding) {
       this.slideTimer += dt;
       if (this.slideTimer >= SLIDE_DURATION || !input.crouch || !this.grounded) {
-        this.endSlide();
+        this.endSlide(false, sounds);
       }
     }
 
@@ -387,7 +391,7 @@ export class Player {
         this.justBoosted = true;
       }
       if (wasSliding) {
-        this.endSlide();
+        this.endSlide(false, sounds);
         this.justBoosted = true;
       }
       sounds.footstep(0.5);
@@ -412,7 +416,7 @@ export class Player {
       !this.wallRunning &&
       input.z > 0.5 &&
       this.velY < 4 &&
-      this.tryMantle(forward)
+      this.tryMantle(forward, sounds)
     ) {
       sounds.mantle();
       return;
@@ -544,9 +548,11 @@ export class Player {
 
   // スライド終了。十分に速ければクールダウン0で即連係可(スライドキャンセル・チェーン)。
   // force=true は死亡/マントル等の確実な終了で、通常クールダウンを課す。
-  endSlide(force = false): void {
+  // sounds省略時は無音(死亡/リスポーン等の非update経路。slideStartのmaxDurS保険で漏れない)
+  endSlide(force = false, sounds?: SoundKit): void {
     this.sliding = false;
     this.slideCooldown = !force && this.speed > SLIDE_BOOST * 0.85 ? 0 : SLIDE_COOLDOWN;
+    sounds?.slideStop(); // R54 音響2: スライド終了(材質ループの畳み)
   }
 
   // ウォールランの開始・継続・終了。継続中は壁沿いの速度を設定する
@@ -575,6 +581,12 @@ export class Player {
       this.vel.x = along.x * WALLRUN_SPEED - this.wallNormal.x * WALLRUN_STICK;
       this.vel.z = along.z * WALLRUN_SPEED - this.wallNormal.z * WALLRUN_STICK;
       if (this.velY < -WALLRUN_FALL_CAP) this.velY = -WALLRUN_FALL_CAP;
+      // R54 音響2: 壁沿いの周期的な蹴り足(内蔵0.03sスロットルで多重発火は安全)
+      this.wallRunStepDistance += WALLRUN_SPEED * dt;
+      if (this.wallRunStepDistance >= WALLRUN_STEP_STRIDE) {
+        this.wallRunStepDistance -= WALLRUN_STEP_STRIDE;
+        sounds.wallRunKick();
+      }
       return;
     }
 
@@ -594,6 +606,7 @@ export class Player {
       this.wallRunning = true;
       this.wallRunSide = side;
       this.wallRunTimer = 0;
+      this.wallRunStepDistance = 0;
       this.wallNormal.copy(normal);
       this.airJumpsLeft = AIR_JUMPS; // 壁に取り付くとスラストが回復する
       if (this.velY < 0) this.velY = 0; // 取り付き時に落下を止める
@@ -617,7 +630,7 @@ export class Player {
   }
 
   // 登れる縁が見つかったらマントリングを開始してtrueを返す
-  private tryMantle(forward: THREE.Vector3): boolean {
+  private tryMantle(forward: THREE.Vector3, sounds: SoundKit): boolean {
     const center = this.position;
     const chest = center.clone();
     chest.y += 0.1;
@@ -647,7 +660,7 @@ export class Player {
     // マントル中は早期returnでバッファ減衰が止まるため、ここで消費しておく。
     // さもないと登り切った瞬間に持ち越したジャンプが暴発する
     this.jumpBuffered = 0;
-    this.endSlide();
+    this.endSlide(false, sounds);
     this.endWallRun(0);
     return true;
   }

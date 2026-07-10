@@ -121,6 +121,7 @@ export class ZombieDirector {
   botShadowLodTimer = 0; // ★1 近接影LODの周期トグル(全モード共通。0.25s)
   zombieSpawnColor = 0x4c5a30; // ゾンビ本体の腐敗色(setupで確定)
   playerDowns = 0;
+  private hordeDensityTimer = 0; // R54 音響2: setHordeDensity() 間欠発火(0.5s周期)
   // ── ゾンビ経済(R??) ──
   zombieShopLayout: ShopLayout | null = null;
   readonly zombieShopGroups: THREE.Group[] = [];
@@ -207,6 +208,8 @@ export class ZombieDirector {
 
   // 試合終了時のゾンビ系リソース解放(旧Match.dispose内の該当ブロックを原順序で移動)
   dispose(): void {
+    // R54 音響2: 群密度ベッドを0へ(sounds はmatch跨ぎで単一インスタンス→非ゾンビ試合への持ち越し防止)
+    this.h.sounds.setHordeDensity(0, 0);
     // R54-B1: 分離グリッドを空へ(次試合でrebuildされるまで separation はゼロ=安全)
     zombieSeparationGrid.clear();
     // R54-F5 輪廻: 恒久メタ加算(quit/全滅/再戦すべてdispose経由=一元化)。単発ガード付き
@@ -590,6 +593,20 @@ export class ZombieDirector {
     return n;
   }
 
+  // R54 音響2: プレイヤー視点基準のpan/distance(match.ts panAndDistanceと同じ規約)。
+  // カメラ実体を持たないためyawのみから水平右方向を導く(zombieVocalは定位のみ=ピッチ非依存で十分)
+  private zombiePanAndDist(source: THREE.Vector3): { pan: number; distance: number } {
+    const eye = this.h.player.eyePosition;
+    const dx = source.x - eye.x;
+    const dz = source.z - eye.z;
+    const distance = Math.hypot(dx, dz, source.y - eye.y);
+    const flat = Math.hypot(dx, dz) || 1;
+    const rightX = Math.cos(this.h.player.yaw);
+    const rightZ = -Math.sin(this.h.player.yaw);
+    const pan = THREE.MathUtils.clamp((dx / flat) * rightX + (dz / flat) * rightZ, -1, 1);
+    return { pan, distance };
+  }
+
   startZombieRound(r: number): void {
     this.zombieRound = r;
     this.zombieQueue = zombieTotal(r); // 一斉湧き: 次フレームから即バッチ充填開始
@@ -634,6 +651,9 @@ export class ZombieDirector {
     bot.tuning.damage = this.h.config.hellMode ? Math.round(dmg * 2.5) : dmg;
     bot.zombieRunMul = speedMul;
     this.zombieBossBot = bot;
+    // R54 音響2: 出現ボイス(距離カリング/スロットルはSoundKit側で内蔵)
+    const sp = this.zombiePanAndDist(spawn);
+    this.h.sounds.zombieVocal('spawn', sp.pan, sp.distance, bot.uid % 3);
   }
 
   // 毎フレーム(handleRespawns後): 死体解放→影LOD→ラウンド進行(ドリップ湧き/クリア判定)
@@ -646,6 +666,25 @@ export class ZombieDirector {
     }
     // (影LODは★1で全モード共通化し update() 側で駆動。ここでの個別運用は廃止)
     if (this.h.over) return;
+
+    // R54 音響2: BGM排他ステム(狂乱/特殊ラウンド)。ラウンド開始前(0)は通常BGMへ委ねる
+    this.h.sounds.setBgmStem(
+      this.zombieRound > 0 ? 'zombie-madness' : null,
+      this.zombieSpecialRound === 'rush' ? 1 : Math.min(1, 0.4 + this.zombieRound / 25),
+    );
+    // R54 音響2: 群密度ベッド(生存数/上限・平均距離)を0.5s間隔で供給
+    this.hordeDensityTimer -= dt;
+    if (this.hordeDensityTimer <= 0) {
+      this.hordeDensityTimer = 0.5;
+      let sum = 0;
+      let n = 0;
+      for (const b of this.h.bots) {
+        if (b.kind !== 'zombie' || !b.alive) continue;
+        n += 1;
+        sum += b.position.distanceTo(this.h.player.position);
+      }
+      this.h.sounds.setHordeDensity(Math.min(1, n / 36), n > 0 ? sum / n : 0);
+    }
 
     // R54-F5 輪廻: 供物選択中はラウンド進行を完全凍結(台座の演出/タイマーのみ進む)
     if (this.roguePickPending) {
@@ -743,6 +782,8 @@ export class ZombieDirector {
     const name = BOT_NAMES[Math.floor(this.h.rand() * BOT_NAMES.length)] ?? 'ゾンビ';
     // R53-W2: 特殊ゾンビ変種(spawnOneZombieの新規/プール再利用の両経路に適用)
     const variant = rollZombieVariant(r, () => this.h.rand(), this.aliveMiasmaCount());
+    // R54 音響2: 出現ボイス(新規/プール再利用の両経路共通。個体uidで3声を分散。距離カリング/スロットルは内蔵)
+    const spawnVoice = this.zombiePanAndDist(spawn);
 
     // ★ メッシュプール: 通常tier(=elite でない)かつプールに再利用可能インスタンスがあれば流用
     if (!elite && this.zombiePool.length > 0) {
@@ -761,6 +802,7 @@ export class ZombieDirector {
       this.h.tags.set(bot.headCollider.handle, { kind: 'bot', bot, part: 'head' });
       this.h.scene.add(bot.group);
       this.h.bots.push(bot);
+      this.h.sounds.zombieVocal('spawn', spawnVoice.pan, spawnVoice.distance, bot.uid % 3);
       return true;
     }
 
@@ -768,6 +810,7 @@ export class ZombieDirector {
     bot.zombieRunMul = run ? 1.6 : 1; // 走行個体はローカル倍率で加速(moveSpeedはreadonly)
     if (variant) bot.applyZombieVariantVisual(variant);
     this.assignCrowdSlot(bot); // R53-W3 M3: 新規生成経路も同じ協定で割当
+    this.h.sounds.zombieVocal('spawn', spawnVoice.pan, spawnVoice.distance, bot.uid % 3);
     return true;
   }
 
@@ -917,7 +960,16 @@ export class ZombieDirector {
       d2.push(b.getPositionInto(BOT_POS_SCRATCH).distanceToSquared(playerPos)); // ★5 割り当てゼロ
     }
     const ranks = zombieHordeRanks(d2);
-    for (let i = 0; i < zAlive.length; i += 1) zAlive[i]!.hordeRank = ranks[i]!;
+    // R54 音響2: 接近ボイス(2.5m以内)。距離二乗はhordeRank算出用に既に持っているので閾値比較のみ追加
+    const CLOSE_D2 = 2.5 * 2.5;
+    for (let i = 0; i < zAlive.length; i += 1) {
+      const b = zAlive[i]!;
+      b.hordeRank = ranks[i]!;
+      if (d2[i]! < CLOSE_D2) {
+        const cv = this.zombiePanAndDist(b.position);
+        this.h.sounds.zombieVocal('close', cv.pan, cv.distance, b.uid % 3);
+      }
+    }
     // R54-B1: 群衆分離グリッドの再構築(0.25s周期=この関数の呼び出し周期)。
     // rank>=24の後方群はKCCから対ゾンビ衝突を除外(bot.ts filterPredicate)しており、
     // 重なり防止はこのグリッドのseparation(bot.ts updateZombie)が担う

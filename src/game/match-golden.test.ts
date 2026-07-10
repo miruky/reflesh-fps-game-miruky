@@ -41,6 +41,7 @@ const GOLDEN_EXPORTS = [
   "hitToi", // R54-F2 意図的追加(同上)
   "hotspotEma",
   "instaKillApplies",
+  "isBehindListener", // R54 音響2 意図的追加: enemyFootstep/enemyShotの背後判定(純関数として単体テスト)
   "isCrowdEligible",
   "minigunNextRpm",
   "ninjaHp300Eligible",

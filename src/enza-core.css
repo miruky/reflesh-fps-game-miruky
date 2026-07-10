@@ -49,3 +49,455 @@
   --emperor: var(--kokurai);
   --emperor-ground: var(--kokurai-ground);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   共有部品(FA1)。実測値はモック06(リザルト)/07(オプション)/00(提案書)から採取。
+   片刃切り=右上を断つ一方向: polygon(0 0, calc(100% - Npx) 0, 100% Npx, 100% 100%, 0 100%)
+   実測: カード14px / 大パネル・CTA22px / チップ(左上)10px
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  --emperor-rgb: 255 107 43;
+}
+:root[data-emperor='kotei'] {
+  --emperor-rgb: 139 92 246;
+}
+:root[data-emperor='raitei'] {
+  --emperor-rgb: 143 219 255;
+}
+:root[data-emperor='kokurai'] {
+  --emperor-rgb: 196 77 255;
+}
+
+/* ── 文字部品 ── */
+.enza-kicker {
+  font-family: var(--font-inst);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.34em; /* 実測07 */
+  color: var(--hagane-3);
+  text-transform: uppercase;
+}
+.enza-ritual {
+  font-family: var(--font-ritual);
+  font-weight: 800;
+  letter-spacing: 0.06em; /* 実測06「勝利」 */
+  line-height: 0.94;
+  color: var(--hagane-0);
+  text-shadow:
+    0 0 80px rgba(255, 107, 43, 0.5),
+    0 0 26px rgba(255, 140, 70, 0.35),
+    0 4px 12px rgba(0, 0, 0, 0.8); /* 実測06 */
+}
+.enza-ritual--xl {
+  font-size: 158px; /* 実測06 */
+}
+.enza-ritual--watermark {
+  position: absolute;
+  font-size: 840px; /* 実測06 背景ウォーターマーク */
+  color: rgba(255, 107, 43, 0.045);
+  text-shadow: none;
+  pointer-events: none;
+  user-select: none;
+}
+:root[data-emperor] .enza-ritual {
+  text-shadow:
+    0 0 80px rgba(var(--emperor-rgb) / 0.55),
+    0 0 26px rgba(var(--emperor-rgb) / 0.4),
+    0 4px 12px rgba(0, 0, 0, 0.8);
+}
+.enza-num {
+  font-family: var(--font-inst);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 片刃プレート ── */
+.enza-plate {
+  position: relative;
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.94), rgba(11, 10, 9, 0.95)); /* 実測06 */
+  border: 1px solid rgba(232, 227, 216, 0.13);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+.enza-plate--sm {
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+.enza-plate--lg {
+  background: linear-gradient(180deg, rgba(22, 19, 16, 0.95), rgba(12, 11, 9, 0.96)); /* 実測06 大パネル */
+  border-color: rgba(232, 227, 216, 0.15);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 12px 34px rgba(0, 0, 0, 0.5);
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+}
+.enza-plate--chip {
+  /* チップ系は左上を断つ(実測06 メダル帯) */
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%, 0 10px);
+}
+.enza-plate--ember {
+  background: linear-gradient(180deg, rgba(28, 19, 12, 0.95), rgba(14, 11, 9, 0.95)); /* 実測06 */
+  border-color: rgba(255, 107, 43, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 180, 120, 0.12),
+    0 0 22px rgba(255, 107, 43, 0.12);
+}
+.enza-plate--gold {
+  background: linear-gradient(180deg, rgba(26, 22, 11, 0.94), rgba(14, 12, 8, 0.94)); /* 実測06 */
+  border-color: rgba(245, 208, 107, 0.45);
+  box-shadow: inset 0 1px 0 rgba(255, 230, 160, 0.12);
+}
+.enza-plate--emperor {
+  background: linear-gradient(180deg, rgba(30, 12, 42, 0.96), rgba(16, 7, 22, 0.95)); /* 実測06 黒雷帝 */
+  border-color: rgba(var(--emperor-rgb) / 0.6);
+  box-shadow:
+    0 0 24px rgba(var(--emperor-rgb) / 0.2),
+    inset 0 1px 0 rgba(var(--emperor-rgb) / 0.24);
+}
+:root[data-emperor] .enza-plate {
+  border-color: rgba(var(--emperor-rgb) / 0.38);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 0 22px rgba(var(--emperor-rgb) / 0.14);
+}
+
+/* ── セグメントゲージ ── */
+.enza-seg {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.enza-seg > i {
+  width: 12px;
+  height: 14px; /* 実測07 */
+  background: rgba(232, 227, 216, 0.15);
+  display: inline-block;
+}
+.enza-seg > i.on {
+  background: var(--hagane-1);
+}
+.enza-seg--ember > i.on {
+  background: linear-gradient(180deg, var(--hibana-bright), var(--hibana-deep));
+  box-shadow: 0 0 8px rgba(255, 107, 43, 0.45);
+}
+.enza-seg--emperor > i.on {
+  background: var(--emperor);
+  box-shadow: 0 0 8px rgba(var(--emperor-rgb) / 0.6);
+}
+
+/* ── 菱紋 ── */
+.enza-diamond {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  transform: rotate(45deg); /* 実測06 */
+  background: rgba(255, 107, 43, 0.25);
+  border: 1.5px solid var(--hibana-bright);
+}
+.enza-diamond--filled {
+  background: var(--hibana);
+  border: none;
+  box-shadow: 0 0 12px rgba(255, 107, 43, 0.8);
+}
+.enza-diamond--outline {
+  background: transparent;
+  border: 1.5px solid rgba(232, 227, 216, 0.4);
+}
+.enza-diamond--gold {
+  background: linear-gradient(135deg, var(--kogane), var(--kogane-deep));
+  border: none;
+}
+.enza-diamond--emperor {
+  width: 15px;
+  height: 15px;
+  background: rgba(var(--emperor-rgb) / 0.3);
+  border: 2px solid var(--emperor);
+  box-shadow: 0 0 18px rgba(var(--emperor-rgb) / 0.8);
+  animation: enzaPulse 2.4s ease-in-out infinite; /* 実測06 */
+}
+@keyframes enzaPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: rotate(45deg) scale(1);
+  }
+  50% {
+    opacity: 0.72;
+    transform: rotate(45deg) scale(0.9);
+  }
+}
+
+/* ── タブ ── */
+.enza-tabbar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border-bottom: 1px solid var(--keisen);
+}
+.enza-tab {
+  padding: 11px 26px; /* 実測07 */
+  background: rgba(15, 13, 11, 0.85);
+  border: 1px solid rgba(232, 227, 216, 0.12);
+  color: var(--hagane-2);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 14.5px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    color var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease),
+    box-shadow var(--enza-t-fast) var(--enza-ease);
+}
+.enza-tab:hover,
+.enza-tab:focus-visible {
+  color: var(--hagane-0);
+  border-color: rgba(255, 107, 43, 0.45);
+  box-shadow: inset 0 -2px 0 rgba(255, 107, 43, 0.5);
+  outline: none;
+}
+.enza-tab.active {
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16); /* 実測07 */
+  color: #1a0b04;
+  font-weight: 800;
+  border-color: transparent;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 190, 0.5);
+}
+.enza-tab--gold {
+  color: var(--kogane);
+}
+
+/* ── ボタン/CTA ── */
+.enza-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 50px;
+  padding: 0 24px;
+  border: 1px solid rgba(232, 227, 216, 0.28); /* 実測06 */
+  color: #d8d1c2;
+  background: rgba(14, 12, 11, 0.82);
+  font-family: var(--font-body);
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+  transition:
+    color var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease),
+    box-shadow var(--enza-t-fast) var(--enza-ease),
+    transform var(--enza-t-fast) var(--enza-ease);
+}
+.enza-btn:hover,
+.enza-btn:focus-visible {
+  color: var(--hagane-0);
+  border-color: rgba(255, 107, 43, 0.6);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 107, 43, 0.25),
+    0 0 16px rgba(255, 107, 43, 0.15);
+  outline: none;
+}
+.enza-cta {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: 64px; /* 実測06「再出撃」 */
+  padding: 0 36px;
+  background: linear-gradient(180deg, #ff7e3f, #e85615 55%, #c2451a); /* 実測06 */
+  color: #1a0b04;
+  font-family: var(--font-body);
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  border: none;
+  cursor: pointer;
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+  box-shadow:
+    0 0 36px rgba(255, 107, 43, 0.4),
+    inset 0 1px 0 rgba(255, 220, 190, 0.5);
+  overflow: hidden;
+  transition: transform var(--enza-t-fast) var(--enza-ease);
+}
+.enza-cta::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0));
+  opacity: 0;
+  transition: opacity var(--enza-t-fast) var(--enza-ease);
+}
+.enza-cta:hover::after,
+.enza-cta:focus-visible::after {
+  opacity: 0.4;
+}
+.enza-cta:focus-visible {
+  outline: none;
+}
+.enza-cta:active {
+  transform: translateY(1px);
+}
+
+/* ── リスト行 ── */
+.enza-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(15, 13, 11, 0.82);
+  border: 1px solid rgba(232, 227, 216, 0.1);
+  color: var(--hagane-1);
+  cursor: pointer;
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease),
+    background-color var(--enza-t-fast) var(--enza-ease),
+    box-shadow var(--enza-t-fast) var(--enza-ease);
+}
+.enza-row:hover,
+.enza-row:focus-visible {
+  transform: translateX(8px); /* 応答: 7-10px(提案書) */
+  border-color: rgba(255, 107, 43, 0.4);
+  outline: none;
+}
+.enza-row.active {
+  background: linear-gradient(90deg, rgba(46, 28, 15, 0.95), rgba(26, 17, 11, 0.9)); /* 実測06 */
+  border-color: rgba(255, 107, 43, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 180, 120, 0.14),
+    0 0 20px rgba(255, 107, 43, 0.12);
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%, 0 10px);
+  color: var(--hagane-0);
+}
+.enza-row.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--hibana-bright), var(--hibana-deep));
+}
+
+/* ── コーナーブラケット(対角2箇所。帝王時のみ四隅) ── */
+.enza-corners {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.enza-corners::before,
+.enza-corners::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+}
+.enza-corners::before {
+  left: 0;
+  top: 0;
+  border-left: 1px solid rgba(232, 227, 216, 0.4);
+  border-top: 1px solid rgba(232, 227, 216, 0.4);
+}
+.enza-corners::after {
+  right: 0;
+  bottom: 0;
+  border-right: 1px solid rgba(232, 227, 216, 0.4);
+  border-bottom: 1px solid rgba(232, 227, 216, 0.4);
+}
+:root[data-emperor] .enza-corners {
+  background:
+    linear-gradient(to left, rgba(var(--emperor-rgb) / 0.8), rgba(var(--emperor-rgb) / 0.8)) top
+      right / 14px 1px no-repeat,
+    linear-gradient(to left, rgba(var(--emperor-rgb) / 0.8), rgba(var(--emperor-rgb) / 0.8)) top
+      right / 1px 14px no-repeat,
+    linear-gradient(to left, rgba(var(--emperor-rgb) / 0.8), rgba(var(--emperor-rgb) / 0.8)) bottom
+      left / 14px 1px no-repeat,
+    linear-gradient(to left, rgba(var(--emperor-rgb) / 0.8), rgba(var(--emperor-rgb) / 0.8)) bottom
+      left / 1px 14px no-repeat;
+}
+:root[data-emperor] .enza-corners::before,
+:root[data-emperor] .enza-corners::after {
+  border-color: rgba(var(--emperor-rgb) / 0.8);
+}
+
+/* ── 操作ヒント帯 ── */
+.enza-hintbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 26px;
+  font-family: var(--font-inst);
+  font-size: 12px; /* 実測06 */
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--hagane-3);
+}
+.enza-hintbar kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  margin-right: 7px;
+  border: 1px solid rgba(232, 227, 216, 0.35);
+  border-radius: 50%;
+  font-family: var(--font-inst);
+  font-size: 11px;
+  color: var(--hagane-1);
+}
+.enza-hintbar .accent {
+  color: var(--hibana-bright);
+}
+
+/* ── 画面題パターン ── */
+.enza-page-head {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  column-gap: 18px;
+  align-items: center;
+}
+.enza-page-head__icon {
+  grid-row: span 2;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(232, 227, 216, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.enza-page-head__kicker {
+  font-family: var(--font-inst);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  color: var(--hagane-3);
+}
+.enza-page-head__title {
+  font-family: var(--font-body);
+  font-weight: 800;
+  font-size: 42px; /* 実測07 */
+  line-height: 1.05;
+  letter-spacing: 0.05em;
+  color: var(--hagane-0);
+}
+
+/* ── reduced-motion 短絡 ── */
+@media (prefers-reduced-motion: reduce) {
+  .enza-diamond--emperor {
+    animation: none;
+  }
+  .enza-tab,
+  .enza-btn,
+  .enza-cta,
+  .enza-cta::after,
+  .enza-row {
+    transition-duration: 0.15s;
+  }
+  .enza-row:hover,
+  .enza-row:focus-visible {
+    transform: none;
+  }
+}

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import './enza-bg.css'; // W-ENZA FA4: 焔座の情景レイヤ様式(style.css追記凍結のため機能別ファイル)
 
 // ── プロシージャル惑星のGLSL(アセットレス: テクスチャ画像を一切使わない)──────────
 // Ashima/Stefan Gustavson の 3D simplex noise(webgl-noise, MITライセンス相当の定番実装)
@@ -263,6 +264,258 @@ const FOCUS: Record<string, BgFocus> = {
   system: { pos: [-0.4, 0.28, 0.72], look: [-6, 3, -60], starDim: 0.78 },
 };
 
+// ── 焔座 情景レイヤ(W-ENZA FA4) ────────────────────────────────────
+// 'top'=既存WebGL宇宙。それ以外はDOM+インラインSVGの情景(CSSアニメ=transform/opacityのみ)。
+// 切替は setScene() が data-scene を書き換えるだけ(0.6sクロスフェードはCSS宣言)。
+// 非topではWebGLループを停止しGPUを解放。粒子上限: 火の粉48/塵26/星40(規約80/200以内)。
+export type BgScene = 'title' | 'top' | 'lobby' | 'result';
+
+const EMBER_PALETTE = ['#ffb98a', '#ffd9bc', '#f5d06b', '#ffa061'] as const;
+
+type EmberOpts = {
+  n: number; // 粒子数
+  xMin: number; // 出現帯の左端(%)
+  xMax: number; // 右端(%)
+  dMin: number; // 周期最短(s)
+  dMax: number; // 周期最長(s)
+  sMin: number; // 粒径最小(px)
+  sMax: number; // 粒径最大(px)
+  oMax: number; // ピーク不透明度上限
+  ty: string; // 上昇距離(CSS長)
+  dxAmp: number; // 横流れ振幅(vw)
+};
+
+// 火の粉/塵の粒子場。負のdelayで初期状態から場が満ちている(入場時の空白を避ける)
+function emberFieldHtml(o: EmberOpts): string {
+  let out = '';
+  for (let i = 0; i < o.n; i += 1) {
+    const x = o.xMin + Math.random() * (o.xMax - o.xMin);
+    const d = o.dMin + Math.random() * (o.dMax - o.dMin);
+    const s = o.sMin + Math.random() * (o.sMax - o.sMin);
+    const op = o.oMax * (0.45 + Math.random() * 0.55);
+    const dx = (Math.random() * 2 - 1) * o.dxAmp;
+    const c = EMBER_PALETTE[i % EMBER_PALETTE.length];
+    out +=
+      `<i class="ebg-ember" style="--x:${x.toFixed(1)}%;--d:${d.toFixed(1)}s;` +
+      `--delay:-${(Math.random() * d).toFixed(1)}s;--s:${s.toFixed(1)}px;--o:${op.toFixed(2)};` +
+      `--dx:${dx.toFixed(1)}vw;--ty:${o.ty};--c:${c}"></i>`;
+  }
+  return out;
+}
+
+// タイトルの同心円目盛環(コンパス盤面。150sで一周する微かな計器)
+function titleDialSvg(): string {
+  const ticks: string[] = [];
+  for (let i = 0; i < 72; i += 1) {
+    const a = (i / 72) * Math.PI * 2;
+    const r0 = i % 6 === 0 ? 84 : 88;
+    ticks.push(
+      `<line x1="${(100 + Math.cos(a) * r0).toFixed(1)}" y1="${(100 + Math.sin(a) * r0).toFixed(1)}" ` +
+        `x2="${(100 + Math.cos(a) * 92).toFixed(1)}" y2="${(100 + Math.sin(a) * 92).toFixed(1)}"/>`,
+    );
+  }
+  return (
+    '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<circle cx="100" cy="100" r="92" fill="none" stroke="rgba(247,242,232,0.05)" stroke-width="0.6"/>' +
+    '<circle cx="100" cy="100" r="70" fill="none" stroke="rgba(247,242,232,0.035)" stroke-width="0.5"/>' +
+    `<g stroke="rgba(247,242,232,0.07)" stroke-width="0.8">${ticks.join('')}</g>` +
+    '</svg>'
+  );
+}
+
+// 円環鍔の短剣(タイトルの主役シルエット)。刃先に熾火の床フレア
+function titleDaggerSvg(): string {
+  return (
+    '<svg viewBox="0 0 120 420" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<defs>' +
+    '<linearGradient id="ebgTBlade" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="#262b33"/><stop offset="0.55" stop-color="#181c22"/>' +
+    '<stop offset="1" stop-color="#0e1013"/></linearGradient>' +
+    '<radialGradient id="ebgTGlow" cx="0.5" cy="0.5" r="0.5">' +
+    '<stop offset="0" stop-color="rgba(255,160,97,0.5)"/>' +
+    '<stop offset="0.5" stop-color="rgba(255,107,43,0.16)"/>' +
+    '<stop offset="1" stop-color="rgba(255,107,43,0)"/></radialGradient>' +
+    '</defs>' +
+    // 円環の鍔(ポンメル): 太い環+内側のハイライト弧
+    '<circle cx="60" cy="36" r="20" fill="none" stroke="#343a44" stroke-width="8.5"/>' +
+    '<path d="M45,26 A18,18 0 0 1 74,30" fill="none" stroke="#4a5260" stroke-width="2" opacity="0.5"/>' +
+    '<rect x="56" y="54" width="8" height="9" fill="#20242b"/>' +
+    // 柄(巻き): 斜めの巻紐
+    '<polygon points="52,62 68,62 66,141 54,141" fill="#15181d"/>' +
+    '<path d="M52,72 L68,80 M52,86 L68,94 M52,100 L68,108 M52,114 L68,122 M52,128 L68,136" ' +
+    'stroke="#272d36" stroke-width="2.6" fill="none"/>' +
+    // 鍔元(ガード): 片刃の面取り
+    '<polygon points="40,141 80,141 76,157 44,157" fill="#1c2027"/>' +
+    '<line x1="40" y1="141" x2="80" y2="141" stroke="#3a414c" stroke-width="1" opacity="0.6"/>' +
+    // 直刃: 中心に鎬筋
+    '<polygon points="49,157 71,157 62,394 58,394" fill="url(#ebgTBlade)"/>' +
+    '<line x1="60" y1="160" x2="60" y2="390" stroke="#3d454f" stroke-width="1" opacity="0.55"/>' +
+    // 刃先の熾火: グロー+床を走る細いフレア弧
+    '<g class="ebg-t-flare">' +
+    '<circle cx="60" cy="392" r="36" fill="url(#ebgTGlow)"/>' +
+    '<path d="M14,400 Q60,382 106,400" fill="none" stroke="#ffb98a" stroke-width="1" opacity="0.5"/>' +
+    '<path d="M26,406 Q60,392 94,406" fill="none" stroke="#ffa061" stroke-width="0.8" opacity="0.35"/>' +
+    '<path d="M2,396 Q60,374 118,396" fill="none" stroke="#ffd9bc" stroke-width="0.6" opacity="0.22"/>' +
+    '</g>' +
+    '</svg>'
+  );
+}
+
+// ロビー上空の疎らな星(瞬きは2群のopacity交代)
+function lobbyStarsSvg(): string {
+  const gs: string[][] = [[], []];
+  for (let i = 0; i < 40; i += 1) {
+    const x = (Math.random() * 100).toFixed(1);
+    const y = (Math.random() * 100).toFixed(1);
+    const r = (0.3 + Math.random() * 0.5).toFixed(2);
+    const op = (0.3 + Math.random() * 0.4).toFixed(2);
+    gs[i % 2]!.push(`<circle cx="${x}" cy="${y}" r="${r}" opacity="${op}"/>`);
+  }
+  return (
+    '<svg viewBox="0 0 100 100" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" fill="#f7f2e8">' +
+    `<g class="ebg-l-tw1">${gs[0]!.join('')}</g><g class="ebg-l-tw2">${gs[1]!.join('')}</g>` +
+    '</svg>'
+  );
+}
+
+// 残照の都市: 遠景ビル帯+パゴダ+鋸壁タワー群+電柱と垂線+稜線
+function lobbyCitySvg(): string {
+  return (
+    '<svg viewBox="0 0 1200 500" preserveAspectRatio="xMidYMax slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    // 遠景帯(淡い紫灰)
+    '<g fill="#2c2233" opacity="0.5">' +
+    '<rect x="250" y="215" width="95" height="285"/><rect x="415" y="185" width="70" height="315"/>' +
+    '<rect x="640" y="240" width="120" height="260"/><rect x="905" y="205" width="80" height="295"/>' +
+    '</g>' +
+    // 中景(主役シルエット)
+    '<g fill="#241b29">' +
+    // パゴダ(左): 尖った反り屋根4層+芯柱
+    '<rect x="130" y="66" width="6" height="78" />' +
+    '<path d="M33,150 Q70,118 133,112 Q196,118 233,150 L204,150 L204,196 L62,196 L62,150 Z"/>' +
+    '<path d="M48,218 Q88,192 133,188 Q178,192 218,218 L192,218 L192,262 L74,262 L74,218 Z"/>' +
+    '<path d="M60,284 Q96,262 133,258 Q170,262 206,284 L184,284 L184,330 L82,330 L82,284 Z"/>' +
+    '<path d="M72,350 Q102,332 133,329 Q164,332 194,350 L176,350 L176,500 L90,500 L90,350 Z"/>' +
+    // 鋸壁タワー群(右): 天端の欠けた歯型
+    '<path d="M560,500 V208 h12 v-14 h14 v14 h20 v-14 h14 v14 h20 v-14 h14 v14 h16 V500 Z"/>' +
+    '<path d="M712,500 V150 h18 v-12 h16 v12 h26 v-20 h16 v20 h24 v-12 h14 v12 h16 V500 Z"/>' +
+    '<path d="M868,500 V244 h14 v-10 h18 v10 h22 v-16 h14 v16 h30 V500 Z"/>' +
+    '<path d="M994,500 V132 h22 v-14 h18 v14 h30 v-22 h16 v22 h26 v-14 h16 v14 h12 V500 Z"/>' +
+    '<rect x="1140" y="268" width="60" height="232"/>' +
+    '<line x1="1052" y1="132" x2="1052" y2="86" stroke="#241b29" stroke-width="3"/>' +
+    '</g>' +
+    // 電柱と垂れた電線
+    '<g stroke="#191320" fill="none">' +
+    '<rect x="338" y="222" width="5" height="278" fill="#191320" stroke="none"/>' +
+    '<rect x="468" y="206" width="5" height="294" fill="#191320" stroke="none"/>' +
+    '<rect x="320" y="230" width="40" height="4" fill="#191320" stroke="none"/>' +
+    '<rect x="450" y="214" width="40" height="4" fill="#191320" stroke="none"/>' +
+    '<path d="M341,234 Q405,266 470,219" stroke-width="2"/>' +
+    '<path d="M341,242 Q405,276 470,227" stroke-width="1.6"/>' +
+    '<path d="M470,219 Q580,268 712,296" stroke-width="2"/>' +
+    '<path d="M341,234 Q250,270 150,300" stroke-width="1.6"/>' +
+    '</g>' +
+    // 手前の稜線
+    '<path d="M0,432 Q210,398 430,424 Q640,446 850,428 Q1030,414 1200,424 L1200,500 L0,500 Z" fill="#140e15"/>' +
+    '</svg>'
+  );
+}
+
+// 菱紋の幟(のぼり)。hasRing=同心円環つきの大紋
+function lobbyBannerSvg(hasRing: boolean): string {
+  return (
+    '<svg viewBox="0 0 90 420" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<defs><linearGradient id="ebgLbRim' +
+    (hasRing ? 'A' : 'B') +
+    '" x1="0" y1="0" x2="1" y2="0">' +
+    '<stop offset="0" stop-color="rgba(201,134,92,0)"/>' +
+    '<stop offset="1" stop-color="rgba(201,134,92,0.3)"/></linearGradient></defs>' +
+    // 竿+横手
+    '<rect x="6" y="0" width="4" height="420" fill="#0e0a0e"/>' +
+    '<rect x="6" y="10" width="72" height="4" fill="#0e0a0e"/>' +
+    // 布(裾は緩い波)+右端の残照リム
+    '<path d="M18,16 h56 v332 q-15,15 -28,8 q-13,7 -28,-8 Z" fill="#120c12" stroke="#2a1f2c" stroke-width="1"/>' +
+    `<rect x="66" y="16" width="8" height="330" fill="url(#ebgLbRim${hasRing ? 'A' : 'B'})"/>` +
+    // 菱紋(45°の正方形=rotateで厳密に)+内菱
+    (hasRing
+      ? '<circle cx="46" cy="118" r="33" fill="none" stroke="#c9865c" stroke-width="2.5" opacity="0.9"/>'
+      : '') +
+    '<rect x="32" y="104" width="28" height="28" fill="none" stroke="#d99a66" stroke-width="3" transform="rotate(45 46 118)"/>' +
+    '<rect x="39" y="111" width="14" height="14" fill="#e8956b" transform="rotate(45 46 118)"/>' +
+    // 紋下の点線
+    '<g fill="#d8d1c2" opacity="0.5">' +
+    '<rect x="44" y="196" width="4" height="16"/><rect x="44" y="228" width="4" height="16"/>' +
+    '<rect x="44" y="260" width="4" height="16"/><rect x="44" y="292" width="4" height="16"/>' +
+    '<rect x="44" y="324" width="4" height="14"/>' +
+    '</g>' +
+    '</svg>'
+  );
+}
+
+// 各情景レイヤの内容HTML(純関数: テストで構造不変条件をピン)
+export function titleSceneHtml(): string {
+  const shafts = [
+    { x: '6%', w: '9vw', r: '-4deg', d: '13s', delay: '0s' },
+    { x: '20%', w: '13vw', r: '-2.5deg', d: '17s', delay: '-4s' },
+    { x: '37%', w: '10vw', r: '-1deg', d: '11s', delay: '-8s' },
+    { x: '52%', w: '14vw', r: '0.5deg', d: '15s', delay: '-2s' },
+    { x: '69%', w: '11vw', r: '2deg', d: '12s', delay: '-6s' },
+    { x: '84%', w: '12vw', r: '3.5deg', d: '16s', delay: '-10s' },
+  ]
+    .map(
+      (s) =>
+        `<div class="ebg-t-shaft" style="--x:${s.x};--w:${s.w};--r:${s.r};--d:${s.d};--delay:${s.delay}"></div>`,
+    )
+    .join('');
+  return (
+    shafts +
+    `<div class="ebg-t-dial">${titleDialSvg()}</div>` +
+    `<div class="ebg-t-dagger">${titleDaggerSvg()}</div>` +
+    emberFieldHtml({
+      n: 30, xMin: 38, xMax: 76, dMin: 9, dMax: 17, sMin: 1.4, sMax: 3.2,
+      oMax: 0.85, ty: '-58vh', dxAmp: 3,
+    }) +
+    emberFieldHtml({
+      n: 18, xMin: 2, xMax: 98, dMin: 12, dMax: 20, sMin: 1.2, sMax: 2.4,
+      oMax: 0.55, ty: '-88vh', dxAmp: 5,
+    })
+  );
+}
+
+export function lobbySceneHtml(): string {
+  const clouds = [
+    { x: '4%', y: '9%', w: '52vw', h: '11vh', d: '120s', delay: '0s' },
+    { x: '42%', y: '20%', w: '46vw', h: '9vh', d: '95s', delay: '-30s' },
+    { x: '20%', y: '31%', w: '58vw', h: '12vh', d: '140s', delay: '-70s' },
+  ]
+    .map(
+      (c) =>
+        `<div class="ebg-l-cloud" style="--x:${c.x};--y:${c.y};--w:${c.w};--h:${c.h};--d:${c.d};--delay:${c.delay}"></div>`,
+    )
+    .join('');
+  return (
+    clouds +
+    `<div class="ebg-l-stars">${lobbyStarsSvg()}</div>` +
+    `<div class="ebg-l-city">${lobbyCitySvg()}</div>` +
+    `<div class="ebg-l-banner ebg-l-banner-a">${lobbyBannerSvg(false)}</div>` +
+    `<div class="ebg-l-banner ebg-l-banner-b">${lobbyBannerSvg(true)}</div>` +
+    emberFieldHtml({
+      n: 26, xMin: 2, xMax: 98, dMin: 14, dMax: 24, sMin: 1.1, sMax: 2.2,
+      oMax: 0.4, ty: '-70vh', dxAmp: 6,
+    }) +
+    '<div class="ebg-l-ground"></div>'
+  );
+}
+
+export function resultSceneHtml(): string {
+  return (
+    '<div class="ebg-r-sweep"></div>' +
+    emberFieldHtml({
+      n: 30, xMin: 2, xMax: 98, dMin: 13, dMax: 22, sMin: 1.1, sMax: 2.6,
+      oMax: 0.45, ty: '-80vh', dxAmp: 4,
+    })
+  );
+}
+
 const STAR_COUNT = 3000;
 const DUST_COUNT = 300; // 近景の浮遊ダスト(BO3的な奥行きの手掛かり)
 const DUST_CHUNK = 60; // 1フレームで動かす点数(残りは据置=部分アップロードで軽量化)
@@ -337,6 +590,10 @@ export class SpaceBg {
 
   private lastT = 0; // dt正規化用(高リフレッシュ環境で回転が速くなりすぎないように)
 
+  // ── 焔座 情景レイヤ(title/lobby/result はDOM情景、top のみWebGL) ────
+  private sceneName: BgScene = 'top';
+  private sceneHost: HTMLDivElement | null = null;
+
   // ── ページ連動カメラ(setFocus / setModalDim) ──────────────────────
   private readonly focusPos = new THREE.Vector3(0, 0, 0.3);
   private readonly focusLook = new THREE.Vector3(0, 0, -1);
@@ -351,7 +608,7 @@ export class SpaceBg {
   private readonly onResize = (): void => this.resize();
   private readonly onVisibility = (): void => {
     if (document.hidden) this.pauseLoop();
-    else if (this.running) this.startLoop();
+    else if (this.running && this.sceneName === 'top') this.startLoop();
   };
   private readonly onPointer = (e: PointerEvent): void => {
     if (!this.finePointer) return;
@@ -445,8 +702,41 @@ export class SpaceBg {
     this.buildDust();
     this.buildMeteor();
     this.scene.add(this.earthGroup, this.planetGroup);
+    this.buildSceneHost();
 
     this.resize();
+  }
+
+  // 情景レイヤのDOMホストをcanvas直後(z:2)に挿す。生成は起動時1回のみで、
+  // 以後の切替は data-scene の書換だけ(レイヤ実体の生成/破棄をしない)。
+  private buildSceneHost(): void {
+    const host = document.createElement('div');
+    host.className = 'ebg-host';
+    host.dataset.scene = 'top';
+    host.setAttribute('aria-hidden', 'true');
+    host.hidden = true; // start()までcanvasのhidden初期値と揃える
+    host.innerHTML =
+      `<div class="ebg-layer ebg-title">${titleSceneHtml()}</div>` +
+      `<div class="ebg-layer ebg-lobby">${lobbySceneHtml()}</div>` +
+      `<div class="ebg-layer ebg-result">${resultSceneHtml()}</div>`;
+    if (this.canvas.parentElement) this.canvas.insertAdjacentElement('afterend', host);
+    else document.body.appendChild(host);
+    this.sceneHost = host;
+  }
+
+  // 情景切替(冪等)。'top'=WebGL宇宙を再開、他=DOM情景へ0.6sクロスフェードし
+  // WebGLループは凍結フレームのままフェードアウトさせて即GPU解放する。
+  setScene(scene: BgScene): void {
+    if (scene === this.sceneName) return;
+    this.sceneName = scene;
+    if (this.sceneHost) this.sceneHost.dataset.scene = scene;
+    if (scene === 'top') {
+      this.canvas.classList.remove('ebg-off');
+      if (this.running) this.startLoop();
+    } else {
+      this.canvas.classList.add('ebg-off');
+      this.pauseLoop();
+    }
   }
 
   // 等距円筒マップ(地球アルベド/夜光/雲 + 星雲)を起動時に1回だけGPUで焼く。
@@ -713,11 +1003,12 @@ export class SpaceBg {
     if (this.running) return;
     this.running = true;
     this.canvas.hidden = false;
+    if (this.sceneHost) this.sceneHost.hidden = false;
     this.resize();
     window.addEventListener('resize', this.onResize);
     document.addEventListener('visibilitychange', this.onVisibility);
     if (this.finePointer) window.addEventListener('pointermove', this.onPointer);
-    this.startLoop();
+    if (this.sceneName === 'top') this.startLoop();
   }
 
   // 冪等: 二重停止しても安全
@@ -729,13 +1020,16 @@ export class SpaceBg {
     document.removeEventListener('visibilitychange', this.onVisibility);
     window.removeEventListener('pointermove', this.onPointer);
     this.canvas.hidden = true;
+    if (this.sceneHost) this.sceneHost.hidden = true;
   }
 
   setReduceMotion(v: boolean): void {
     const was = this.reduceMotion;
     this.reduceMotion = v;
+    // DOM情景側もアプリ設定に追従(メディアクエリ非依存の設定トグル)
+    this.sceneHost?.classList.toggle('ebg-reduce', v);
     // 省モーションを解除したら動きを再開。有効化時は frame() が1枚描いて自然停止する
-    if (was && !v && this.running) this.startLoop();
+    if (was && !v && this.running && this.sceneName === 'top') this.startLoop();
   }
 
   // MFDページに応じて画角を切り替える。通常時は frame() が指数減衰で寄せ、
@@ -753,8 +1047,10 @@ export class SpaceBg {
       this.applyDim();
       this.camera.position.copy(this.curPos);
       this.camera.lookAt(this.curLook);
-      // 省モーションでループ停止中(running かつ rafId==0)は1枚描き直す(resize同型)
-      if (this.running && this.rafId === 0) this.renderer.render(this.scene, this.camera);
+      // 省モーションでループ停止中(running かつ rafId==0)は1枚描き直す(resize同型)。
+      // DOM情景中(非top)は不可視のcanvasを描かない
+      if (this.running && this.rafId === 0 && this.sceneName === 'top')
+        this.renderer.render(this.scene, this.camera);
     }
   }
 
@@ -765,7 +1061,8 @@ export class SpaceBg {
     if (nv === this.modalDim) return;
     this.modalDim = nv;
     this.applyPixelRatio();
-    if (this.running && this.rafId === 0) this.renderer.render(this.scene, this.camera);
+    if (this.running && this.rafId === 0 && this.sceneName === 'top')
+      this.renderer.render(this.scene, this.camera);
   }
 
   private basePixelRatio(): number {
@@ -937,11 +1234,14 @@ export class SpaceBg {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     // 省モーションでループ停止中(running かつ rafId==0)はリサイズ時に1枚描き直す
-    if (this.running && this.rafId === 0) this.renderer.render(this.scene, this.camera);
+    if (this.running && this.rafId === 0 && this.sceneName === 'top')
+      this.renderer.render(this.scene, this.camera);
   }
 
   dispose(): void {
     this.stop();
+    this.sceneHost?.remove();
+    this.sceneHost = null;
     this.geometry.dispose();
     this.starMat.dispose();
     // 惑星のジオメトリ/マテリアルとベイク済みRenderTargetを解放

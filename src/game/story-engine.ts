@@ -50,6 +50,19 @@ const BOSS_PILLAR_RADIUS_M = 2.2;
 // R54-F6: resupply波(chB歴戦の間)の小休止秒数 — 全滅確認→補給→この秒数後に次波
 const WAVE_INTERMISSION_S = 8;
 
+// R54 音響2: ストーリー章番号(chapterId='ch<N>')から「帝王の指紋」動機の重みを決める。
+// ch1-3=0(訓練/序盤は素の曲)/ch4-6=0.4/ch7以降=0.8(終盤ほど動機が濃くなる)。
+// 非ストーリー(mission未注入)・数値化できない特別章(chB等)は0=従来と同一。
+// main.ts の launch() から sounds.setMusicProfile の第2引数として配線される
+// (main.tsはWebGL/DOM依存でテスト不可のため、ここに純関数として置いてテストする)
+export function motifWeightForMission(mission: MissionDef | null | undefined): number {
+  const m = /^ch(\d+)/.exec(mission?.chapterId ?? '');
+  const num = m ? Number(m[1]) : 0;
+  if (num >= 7) return 0.8;
+  if (num >= 4) return 0.4;
+  return 0;
+}
+
 export interface StoryHost {
   readonly player: Player;
   readonly sounds: SoundKit;
@@ -137,6 +150,7 @@ export class StoryEngine {
   sndBombMesh: THREE.Mesh | null = null; // ドロップ/設置ボムの可視化
   sndPlantTickTimer = 0; // 設置ビープの周期
   sndFuseTickTimer = 0; // ヒューズ鼓動の周期
+  private sndStemPlanted = false; // R54 音響2: setBgmStem('snd-planted')のエッジ検出用
 
   // ══ R53-W2 M2b: Search & Destroy 配線 ══════════════════════════════════
   // 重ロジック(フェーズ機/先取/交替)は snd.ts の SndRound/SndMatch。match は
@@ -250,6 +264,13 @@ export class StoryEngine {
     const round = this.sndRound;
     const sndMatch = this.sndMatch;
     if (!round || !sndMatch || !this.sndSites) return;
+
+    // R54 音響2: 設置中は排他BGMステムへ(エッジ検出のみ呼ぶ=毎tickの無駄なランプ再スケジュールを避ける)
+    const planted = round.phase === 'planted';
+    if (planted !== this.sndStemPlanted) {
+      this.sndStemPlanted = planted;
+      this.h.sounds.setBgmStem(planted ? 'snd-planted' : null);
+    }
 
     // ノーリスポーン: 死亡者の復活カウントダウンを毎tick凍結(roundEnd中も=次ラウンド側で復活させる)
     if (!this.h.player.alive) this.h.player.respawnIn = Infinity;
@@ -867,6 +888,18 @@ export class StoryEngine {
     return boss ? boss.hp / boss.maxHp : undefined;
   }
 
+  // R54 音響2: 台本化されたボスフェーズ機(activeBossPhases/mission.bossPhases)が
+  // 稼働中かつ対象ボスが生存しているか。単発bossなし(assassinate等)はfalse=通常の物語動機のまま
+  bossPhasesActive(): boolean {
+    const phases = this.activeBossPhases ?? this.h.mission?.bossPhases;
+    if (!phases || phases.length === 0) return false;
+    const boss =
+      this.bossPhaseRef && this.h.bots.includes(this.bossPhaseRef)
+        ? this.bossPhaseRef
+        : (this.h.bots.find((b) => b.tier === 'boss') ?? null);
+    return !!boss && boss.alive;
+  }
+
   // ══ R53-W2 M2b: ストーリー帝王編エンジン ═══════════════════════════════
   // updateMission から毎tick呼ばれる(mission確定時のみ)。無線劇・ボスフェーズ・回収物の
   // 「進行」だけを担い、重いロジック(台本/フェーズ定義)は campaign.ts のデータ、
@@ -874,6 +907,12 @@ export class StoryEngine {
   updateStoryEngine(dt: number): void {
     this.updateRadio(dt);
     this.updateBossPhases(dt);
+    // R54 音響2: 排他BGMステム。bossPhases活性中は決闘曲、それ以外は目的進行度で強まる物語動機
+    if (this.bossPhasesActive()) {
+      this.h.sounds.setBgmStem('boss-duel');
+    } else {
+      this.h.sounds.setBgmStem('story-motif', this.objectiveProgress01());
+    }
     // 回収物の回転(視認性)。ダメージ等は持たない演出のみ
     for (const item of this.collectItems) item.mesh.rotation.y += dt * 1.8;
     // collectのEインタラクト(ゾンビEと同じキー。storyではケアパッケージと共存 — 距離判定が排他)

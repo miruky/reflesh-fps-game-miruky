@@ -1,0 +1,736 @@
+/*
+  焔座 ENZA — 武器庫 ARMORY(W-ENZA FB8所有、接頭辞 .earm-*)
+  「武器庫ロビー.png」準拠: 左=武器行リスト(選択=熾火の片刃面)、右=漆黒の展示台+白鋼の銘板+
+  セグメント計器。金=EXOTIC専用、橙=選択/行動のみ。
+  スコープは #mfd-panel-armory(id=1-0-0)で style.css/mk3-menu.css の旧規則に勝つ。
+  鉄則: filter/backdrop-filter禁止 / 面は不透明0.82+ / アニメはtransform,opacityのみ。
+*/
+
+/* ── レイアウト: 左リスト26% + 右展示台 ─────────────────────────── */
+#mfd-panel-armory .armory-layout {
+  grid-template-columns: minmax(300px, 27%) 1fr;
+  gap: 22px;
+}
+
+#mfd-panel-armory .armory-list {
+  max-height: none;
+  gap: 18px;
+  padding-right: 4px;
+}
+
+/* ── セクション頭: kicker+特大題(シェルの h2 を焔座化) ───────────── */
+#mfd-panel-armory .menu-section h2 {
+  position: relative;
+  margin: 0 0 10px;
+  padding: 14px 0 6px;
+  border: 0;
+  font-family: var(--font-body);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--hagane-0);
+  text-transform: none;
+}
+
+#mfd-panel-armory .menu-section h2::before {
+  content: 'CUSTOM CLASS ・ 兵装選択';
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-family: var(--font-inst);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .menu-section h2::after {
+  content: '';
+  display: block;
+  margin-top: 6px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--hibana-deep), var(--keisen) 55%, transparent);
+}
+
+/* ── クラスタブ帯 ───────────────────────────────────────────── */
+#mfd-panel-armory .wclass-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 10px;
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.94), rgba(11, 10, 9, 0.95));
+  border: 1px solid var(--keisen);
+}
+
+#mfd-panel-armory .wcls-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 13px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--hagane-2);
+  cursor: pointer;
+  transition:
+    color var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease),
+    background var(--enza-t-fast) var(--enza-ease);
+}
+
+#mfd-panel-armory .wcls-tab b {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .wcls-tab:hover {
+  color: var(--hagane-0);
+  border-color: rgba(232, 227, 216, 0.28);
+}
+
+#mfd-panel-armory .wcls-tab.selected {
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  border-color: rgba(255, 185, 138, 0.6);
+  color: #1a0b04;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+#mfd-panel-armory .wcls-tab.selected b {
+  color: rgba(26, 11, 4, 0.72);
+}
+
+/* EXOTIC=金の意味色(菱紋つき)。選択時は金面 */
+#mfd-panel-armory .wcls-tab--exotic {
+  color: var(--kogane);
+}
+
+#mfd-panel-armory .earm-tab-diamond {
+  width: 7px;
+  height: 7px;
+  transform: rotate(45deg);
+  background: linear-gradient(135deg, var(--kogane), var(--kogane-deep));
+  flex: none;
+}
+
+#mfd-panel-armory .wcls-tab--exotic.selected {
+  background: linear-gradient(180deg, #f5d06b, #d3a83e 60%, #b8862e);
+  border-color: rgba(245, 208, 107, 0.65);
+  color: #1a0b04;
+}
+
+/* ── 武器リスト: グリッド→縦一列の行構成 ─────────────────────── */
+#mfd-panel-armory .weapon-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#mfd-panel-armory .weapon-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 8px 12px;
+  border: 1px solid var(--keisen);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.94), rgba(11, 10, 9, 0.95));
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+  text-align: left;
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease),
+    background var(--enza-t-fast) var(--enza-ease);
+}
+
+#mfd-panel-armory .weapon-card::before {
+  display: none; /* 旧IGNITIONの標線を解任(焔座は面と縁で語る) */
+}
+
+#mfd-panel-armory .weapon-card:not(.locked):hover {
+  transform: translateX(8px);
+  border-color: rgba(255, 107, 43, 0.55);
+  background: linear-gradient(180deg, rgba(28, 22, 17, 0.95), rgba(14, 12, 10, 0.96));
+}
+
+#mfd-panel-armory .weapon-card:focus-visible {
+  outline: 1px solid var(--hibana);
+  outline-offset: 1px;
+}
+
+#mfd-panel-armory .weapon-sil {
+  flex: none;
+  width: 104px;
+  opacity: 0.8;
+}
+
+#mfd-panel-armory .earm-wtext {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+#mfd-panel-armory .weapon-name {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--hagane-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#mfd-panel-armory .weapon-mode {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--hagane-3);
+}
+
+/* 選択行=熾火の面+黒銘(モックのカエデAR行) */
+#mfd-panel-armory .weapon-card.selected {
+  background: linear-gradient(180deg, #ff7e3f, #e85615 58%, #cc4a16);
+  border-color: rgba(255, 185, 138, 0.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 6px 18px rgba(178, 62, 20, 0.35);
+}
+
+#mfd-panel-armory .weapon-card.selected .weapon-name {
+  color: #1a0b04;
+}
+
+#mfd-panel-armory .weapon-card.selected .weapon-mode {
+  color: rgba(26, 11, 4, 0.78);
+}
+
+#mfd-panel-armory .weapon-card.selected .weapon-sil {
+  opacity: 1;
+}
+
+#mfd-panel-armory .weapon-card.locked {
+  opacity: 0.42;
+}
+
+#mfd-panel-armory .locked-note {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--hagane-3);
+  white-space: nowrap;
+}
+
+/* 差分チップ(装備比較 ▲/▼)は計器色: 上げ=熾火/下げ=白鋼薄 */
+#mfd-panel-armory .mk3m-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-inst);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+#mfd-panel-armory .mk3m-diff i {
+  font-style: normal;
+}
+
+#mfd-panel-armory .mk3m-diff i.up {
+  color: var(--hibana-bright);
+}
+
+#mfd-panel-armory .mk3m-diff i.up::before {
+  content: '▲ ';
+}
+
+#mfd-panel-armory .mk3m-diff i.down {
+  color: rgba(232, 227, 216, 0.4);
+}
+
+#mfd-panel-armory .mk3m-diff i.down::before {
+  content: '▼ ';
+}
+
+#mfd-panel-armory .weapon-card.selected .mk3m-diff i.up,
+#mfd-panel-armory .weapon-card.selected .mk3m-diff i.down {
+  color: rgba(26, 11, 4, 0.7);
+}
+
+/* EXOTICバッジ=金の計器ラベル */
+#mfd-panel-armory .exotic-badge {
+  font-family: var(--font-inst);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--kogane);
+  border: 1px solid rgba(245, 208, 107, 0.4);
+  padding: 2px 6px 2px 8px;
+}
+
+/* ── 展示台(プレビュー面): 枠を捨て漆黒の舞台に ─────────────────── */
+#mfd-panel-armory .armory-preview {
+  position: sticky;
+  top: 4px;
+  background: radial-gradient(ellipse at 50% 34%, rgba(38, 26, 18, 0.9), rgba(7, 6, 8, 0.96) 74%);
+  border: 1px solid var(--keisen);
+  border-radius: 0;
+  padding: 14px 16px 16px;
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+}
+
+#mfd-panel-armory .weapon-canvas {
+  height: clamp(240px, 34vh, 420px);
+  border-radius: 0;
+  background: radial-gradient(ellipse at 50% 62%, rgba(255, 107, 43, 0.1), transparent 68%);
+}
+
+/* 銘板: 白鋼面に黒銘(モックの「カエデAR」白プレート) */
+#mfd-panel-armory .armory-wname {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+#mfd-panel-armory .earm-namerow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#mfd-panel-armory .earm-nameplate {
+  display: inline-block;
+  padding: 7px 18px 8px 14px;
+  background: linear-gradient(180deg, #f7f2e8, #ded8ca);
+  color: #16130f;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+  box-shadow: 0 4px 14px rgba(2, 2, 7, 0.5);
+}
+
+#mfd-panel-armory .earm-name-chips {
+  display: flex;
+  gap: 6px;
+}
+
+#mfd-panel-armory .earm-chip {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--hagane-2);
+  border: 1px solid var(--keisen);
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+#mfd-panel-armory .earm-chip--on {
+  color: var(--hibana-bright);
+  border-color: rgba(255, 107, 43, 0.5);
+}
+
+#mfd-panel-armory .earm-kicker {
+  margin: 8px 0 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .earm-flavor {
+  margin: 7px 0 2px;
+  font-size: 12.5px;
+  line-height: 1.8;
+  letter-spacing: 0.04em;
+  color: var(--hagane-2);
+  max-width: 56ch;
+}
+
+/* ── セグメント計器(10分割バー) ─────────────────────────────── */
+#mfd-panel-armory .armory-bars {
+  gap: 7px;
+  margin-top: 10px;
+}
+
+#mfd-panel-armory .stat-seg-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 26px;
+  align-items: center;
+  gap: 10px;
+}
+
+#mfd-panel-armory .stat-seg-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--hagane-2);
+}
+
+#mfd-panel-armory .stat-bar--seg {
+  display: flex;
+  gap: 4px;
+}
+
+#mfd-panel-armory .stat-bar--seg i {
+  width: 22px;
+  height: 12px;
+  background: rgba(232, 227, 216, 0.13);
+  border: 0;
+  border-radius: 0;
+}
+
+#mfd-panel-armory .stat-bar--seg i.on {
+  background: linear-gradient(180deg, #f7f2e8, #cfc8b8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+#mfd-panel-armory .stat-seg-num {
+  font-family: var(--font-inst);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--hagane-3);
+  text-align: right;
+}
+
+/* ── 計器行(TTK/RPM/装弾/保有・マスタリー) ───────────────────── */
+#mfd-panel-armory .armory-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--keisen);
+  font-size: 11px;
+}
+
+#mfd-panel-armory .earm-inst {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .earm-inst b {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--hagane-0);
+}
+
+#mfd-panel-armory .earm-inst em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .earm-vault {
+  margin-top: 5px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .earm-vault b {
+  color: var(--kogane);
+  font-weight: 700;
+}
+
+/* ── カモ工房 ─────────────────────────────────────────────── */
+#mfd-panel-armory .armory-camo {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--keisen);
+}
+
+#mfd-panel-armory .camo-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .camo-head > b {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--hagane-1);
+}
+
+#mfd-panel-armory .earm-camo-equip {
+  letter-spacing: 0.12em;
+}
+
+#mfd-panel-armory .earm-camo-equip b {
+  color: var(--hibana-bright);
+}
+
+#mfd-panel-armory .earm-camo-next {
+  margin: 6px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .earm-camo-next b {
+  color: var(--hagane-1);
+}
+
+#mfd-panel-armory .camo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+#mfd-panel-armory .camo-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 7px 8px;
+  border: 1px solid var(--keisen);
+  border-radius: 0;
+  background: rgba(11, 10, 9, 0.9);
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+  transition: border-color var(--enza-t-fast) var(--enza-ease);
+}
+
+#mfd-panel-armory .camo-chip:not(.locked):hover {
+  border-color: rgba(255, 107, 43, 0.5);
+}
+
+#mfd-panel-armory .camo-swatch {
+  width: 100%;
+  height: 26px;
+  border: 1px solid rgba(2, 2, 7, 0.6);
+}
+
+#mfd-panel-armory .camo-chip .camo-name {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--hagane-1);
+}
+
+#mfd-panel-armory .camo-chip .camo-sub {
+  font-family: var(--font-inst);
+  font-size: 9px;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .camo-chip.selected {
+  border-color: var(--hibana);
+  box-shadow: inset 0 0 0 1px rgba(255, 107, 43, 0.55);
+}
+
+#mfd-panel-armory .camo-chip.selected .camo-sub {
+  color: var(--hibana-bright);
+}
+
+#mfd-panel-armory .camo-chip.mastery {
+  border-color: rgba(245, 208, 107, 0.35);
+}
+
+#mfd-panel-armory .camo-chip.locked {
+  opacity: 0.5;
+}
+
+#mfd-panel-armory .camo-bar {
+  width: 100%;
+  height: 3px;
+  background: rgba(232, 227, 216, 0.12);
+  overflow: hidden;
+}
+
+#mfd-panel-armory .camo-bar i {
+  display: block;
+  height: 100%;
+  background: var(--hibana);
+  transform-origin: left;
+}
+
+/* ── アタッチメント/投擲物 ─────────────────────────────────── */
+#mfd-panel-armory .attach-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#mfd-panel-armory .attach-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--keisen);
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.94), rgba(11, 10, 9, 0.95));
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+
+#mfd-panel-armory .attach-slot {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .attach-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+#mfd-panel-armory .attach-btn {
+  padding: 6px 11px;
+  border: 1px solid var(--keisen);
+  border-radius: 0;
+  background: rgba(11, 10, 9, 0.85);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--hagane-2);
+  transition:
+    color var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease),
+    background var(--enza-t-fast) var(--enza-ease);
+}
+
+#mfd-panel-armory .attach-btn:not(.locked):hover {
+  color: var(--hagane-0);
+  border-color: rgba(232, 227, 216, 0.3);
+  background: rgba(20, 17, 14, 0.9);
+}
+
+#mfd-panel-armory .attach-btn.selected {
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  border-color: rgba(255, 185, 138, 0.6);
+  color: #1a0b04;
+}
+
+#mfd-panel-armory .attach-btn.locked {
+  opacity: 0.4;
+}
+
+#mfd-panel-armory .grenade-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#mfd-panel-armory .grenade-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 12px;
+  border: 1px solid var(--keisen);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.94), rgba(11, 10, 9, 0.95));
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+  text-align: left;
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease);
+}
+
+#mfd-panel-armory .grenade-card::before {
+  display: none;
+}
+
+#mfd-panel-armory .grenade-card:hover {
+  transform: translateX(8px);
+  border-color: rgba(255, 107, 43, 0.55);
+}
+
+#mfd-panel-armory .grenade-card.selected {
+  background: linear-gradient(180deg, #ff7e3f, #e85615 58%, #cc4a16);
+  border-color: rgba(255, 185, 138, 0.7);
+}
+
+#mfd-panel-armory .grenade-card.selected .grenade-name,
+#mfd-panel-armory .grenade-card.selected .grenade-desc,
+#mfd-panel-armory .grenade-card.selected .grenade-carry {
+  color: #1a0b04;
+}
+
+#mfd-panel-armory .grenade-name {
+  font-size: 13.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--hagane-1);
+}
+
+#mfd-panel-armory .grenade-carry {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  color: var(--hagane-3);
+}
+
+#mfd-panel-armory .grenade-desc {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--hagane-3);
+}
+
+/* ── EXOTIC神殿(金×深紫)を焔座語彙で継承 ─────────────────────── */
+#mfd-panel-armory .weapon-grid.mk3m-exotic-shrine .weapon-card {
+  border-color: rgba(245, 208, 107, 0.28);
+  background: linear-gradient(180deg, rgba(22, 16, 26, 0.94), rgba(10, 7, 20, 0.95));
+}
+
+#mfd-panel-armory .weapon-grid.mk3m-exotic-shrine .weapon-card:not(.locked):hover {
+  border-color: rgba(245, 208, 107, 0.6);
+}
+
+#mfd-panel-armory .weapon-grid.mk3m-exotic-shrine .weapon-card.selected {
+  background: linear-gradient(180deg, #f5d06b, #d3a83e 58%, #b8862e);
+  border-color: rgba(245, 208, 107, 0.75);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 6px 18px rgba(139, 92, 246, 0.3);
+}
+
+#mfd-panel-armory .armory-preview.mk3m-exotic-shrine {
+  background: radial-gradient(ellipse at 50% 34%, rgba(30, 20, 44, 0.92), rgba(7, 6, 12, 0.96) 74%);
+  border-color: rgba(245, 208, 107, 0.3);
+}
+
+/* EXOTIC奥義解説(既存mk3m-lore)の縁だけ焔座トーンへ */
+#mfd-panel-armory .mk3m-exotic-lore {
+  border-top: 1px solid rgba(245, 208, 107, 0.25);
+  margin-top: 10px;
+  padding-top: 8px;
+}
+
+/* ── ヒント行(シェル文言)=計器の小文字 ───────────────────────── */
+#mfd-panel-armory .armory-hint {
+  margin: 10px 0 0;
+  font-family: var(--font-inst);
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  color: var(--hagane-3);
+  text-align: right;
+}
+
+/* ── 省モーション: 全応答短絡 ─────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  #mfd-panel-armory .weapon-card,
+  #mfd-panel-armory .grenade-card,
+  #mfd-panel-armory .wcls-tab,
+  #mfd-panel-armory .attach-btn,
+  #mfd-panel-armory .camo-chip {
+    transition-duration: 0.01ms;
+  }
+
+  #mfd-panel-armory .weapon-card:not(.locked):hover,
+  #mfd-panel-armory .grenade-card:hover {
+    transform: none;
+  }
+}

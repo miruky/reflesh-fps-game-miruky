@@ -16,6 +16,7 @@ import { PhotoMode } from './game/photo';
 import { applyCampaignMission, applyMatch, applyScoreRecord, XP_MUL_NORMAL, XP_MUL_ZOMBIE } from './game/progression';
 import { stageDefFromId } from './game/biomes';
 import { stageById } from './game/stages';
+import { motifWeightForMission } from './game/story-engine';
 import { Hud } from './ui/hud';
 import { Menu, type MenuSelection } from './ui/menu';
 import { SpaceBg } from './ui/menu-bg';
@@ -79,7 +80,7 @@ renderer.toneMappingExposure = 1.0;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 appRoot.appendChild(renderer.domElement);
 const sounds = new SoundKit();
-sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi);
+sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi, settings.musicVolume, settings.voVolume);
 const input = new Input();
 input.attach(renderer.domElement);
 input.setGamepadBindings(settings.gamepadBindings);
@@ -176,7 +177,7 @@ function launch(config: MatchConfig): void {
       : bgmMood === 'night' && config.stage.id === 'yoichi'
         ? 'night-neon'
         : bgmMood;
-  sounds.setMusicProfile(bgmKey);
+  sounds.setMusicProfile(bgmKey, motifWeightForMission(config.mission));
   sounds.startAmbience(config.stage);
   match = new Match(
     config,
@@ -314,7 +315,7 @@ const menu = new Menu(menuRoot, settings, profile, {
   },
   onPhoto: () => enterPhoto(),
   onSettingsChanged: () => {
-    sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi);
+    sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi, settings.musicVolume, settings.voVolume);
     applyUiScale();
     applyAccent();
     applyMotion();

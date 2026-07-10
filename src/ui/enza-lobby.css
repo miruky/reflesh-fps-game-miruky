@@ -1,0 +1,678 @@
+/*
+  W-ENZA FB7 — 出撃ロビー/ステージ/キャンペーン/デイリー(焔座様式、接頭辞 .elby-)
+  「神話が顔、計器が骨」: 大項目=ゴシック特大+英kicker、計測値=等幅、儀式(作戦名)=明朝。
+  熾火(--hibana)は選択・行動・達成のみ。片刃切り=一方向。filter/backdrop-filter不使用。
+  旧style.css(.mode-card等)は読み込み順で後勝ち上書き(詳細度は同格0-2-0に揃える)。
+*/
+
+/* ── モード選択 = 祭壇ナビ(公開マッチ左ナビの文法) ───────────────── */
+.mode-card.elby-mode {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 22px 14px 16px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  clip-path: none;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    background-color var(--enza-t-fast) var(--enza-ease),
+    color var(--enza-t-fast) var(--enza-ease);
+}
+.mode-card.elby-mode::before,
+.mode-card.elby-mode::after {
+  content: none;
+}
+.elby-mode-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.elby-mode-name {
+  font-family: var(--font-body);
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--hagane-1);
+  transition: color var(--enza-t-fast) var(--enza-ease);
+}
+.elby-mode-desc {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--hagane-3);
+  line-height: 1.5;
+}
+.mode-card.elby-mode:hover,
+.mode-card.elby-mode:focus-visible {
+  transform: translateX(8px);
+  background: rgba(232, 227, 216, 0.04);
+  outline: none;
+}
+.mode-card.elby-mode:hover .elby-mode-name,
+.mode-card.elby-mode:focus-visible .elby-mode-name {
+  color: var(--hagane-0);
+}
+/* 選択 = 熾火の片刃プレート+右端の菱(公開マッチ「クラス作成」実測) */
+.mode-card.elby-mode.selected {
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%);
+  padding-right: 34px;
+  box-shadow: 0 6px 22px rgba(255, 107, 43, 0.28);
+  transform: translateX(6px);
+}
+.mode-card.elby-mode.selected .elby-mode-name {
+  color: #1a0b04;
+}
+.mode-card.elby-mode.selected .elby-mode-desc {
+  color: rgba(26, 11, 4, 0.78);
+}
+/* 選択行の左の菱マーカー(未選択=輪郭、選択=塗り黒) */
+.elby-mode-mark {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  transform: rotate(45deg);
+  border: 1.5px solid rgba(232, 227, 216, 0.35);
+  transition:
+    background-color var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease);
+}
+.mode-card.elby-mode.selected .elby-mode-mark {
+  background: #1a0b04;
+  border-color: #1a0b04;
+}
+
+/* ── ステージカード = 情景プレート ─────────────────────────── */
+.stage-card.elby-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.94), rgba(11, 10, 9, 0.95));
+  border: 1px solid rgba(232, 227, 216, 0.1);
+  border-radius: 0;
+  box-shadow: none;
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%, 0 10px);
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease),
+    box-shadow var(--enza-t-fast) var(--enza-ease);
+}
+.stage-card.elby-stage::before,
+.stage-card.elby-stage.selected::before {
+  content: none;
+}
+.stage-card.elby-stage:hover,
+.stage-card.elby-stage:focus-visible {
+  transform: translateY(-3px);
+  border-color: rgba(255, 107, 43, 0.35);
+  outline: none;
+}
+.stage-card.elby-stage.selected {
+  border-color: rgba(255, 107, 43, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 180, 120, 0.14),
+    0 0 20px rgba(255, 107, 43, 0.14);
+}
+.stage-card.elby-stage.selected::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--hibana-bright), var(--hibana-deep));
+}
+.elby-stage .stage-preview {
+  border-bottom: 1px solid var(--keisen);
+}
+.elby-stage .stage-no {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  color: var(--hagane-2);
+  background: rgba(5, 5, 6, 0.85);
+  border: 1px solid var(--keisen);
+  padding: 3px 8px;
+}
+.elby-stage .stage-card-body {
+  gap: 4px;
+  padding: 12px 14px 13px;
+}
+.elby-stage .stage-name {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--hagane-0);
+}
+.stage-card.elby-stage.selected .stage-name {
+  color: var(--hibana-bright);
+}
+.elby-stage .stage-sub {
+  font-size: 11px;
+  color: var(--hagane-3);
+  letter-spacing: 0.05em;
+}
+.elby-stage .stage-meta {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--hagane-3);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.elby-stage .stage-seed {
+  color: var(--hagane-2);
+}
+.elby-stage .stage-swatch i {
+  width: 14px;
+  height: 5px;
+  border-radius: 0;
+}
+
+/* ── 難易度チップ ──────────────────────────────────── */
+.difficulty-card.elby-diff {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 18px;
+  background: rgba(15, 13, 11, 0.86);
+  border: 1px solid rgba(232, 227, 216, 0.12);
+  border-radius: 0;
+  box-shadow: none;
+  clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease),
+    background-color var(--enza-t-fast) var(--enza-ease);
+}
+.difficulty-card.elby-diff::before {
+  content: none;
+}
+.elby-diff-name {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--hagane-1);
+}
+.elby-diff-desc {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--hagane-3);
+}
+.difficulty-card.elby-diff:hover,
+.difficulty-card.elby-diff:focus-visible {
+  transform: translateX(8px);
+  border-color: rgba(255, 107, 43, 0.4);
+  outline: none;
+}
+.difficulty-card.elby-diff.selected {
+  background: linear-gradient(90deg, rgba(46, 28, 15, 0.95), rgba(26, 17, 11, 0.9));
+  border-color: rgba(255, 107, 43, 0.55);
+}
+.difficulty-card.elby-diff.selected .elby-diff-name {
+  color: var(--hibana-bright);
+}
+
+/* ── ゾンビ開始ラウンド(計器ステッパー) ───────────────────── */
+.elby-zr .zr-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+.elby-zr .zr-step {
+  width: 38px;
+  height: 38px;
+  background: rgba(15, 13, 11, 0.86);
+  border: 1px solid rgba(232, 227, 216, 0.22);
+  color: var(--hagane-0);
+  font-size: 18px;
+  font-family: var(--font-inst);
+  clip-path: polygon(6px 0, 100% 0, 100% 100%, 0 100%, 0 6px);
+  cursor: pointer;
+  transition:
+    border-color var(--enza-t-fast) var(--enza-ease),
+    background-color var(--enza-t-fast) var(--enza-ease);
+}
+.elby-zr .zr-step:hover:not(:disabled),
+.elby-zr .zr-step:focus-visible {
+  border-color: var(--hibana);
+  background: rgba(46, 28, 15, 0.9);
+  outline: none;
+}
+.elby-zr .zr-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.elby-zr .zr-val {
+  font-family: var(--font-inst);
+  font-variant-numeric: tabular-nums;
+  color: var(--hagane-0);
+}
+.elby-zr .zr-val b {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--hibana-bright);
+}
+.elby-zr .zr-val small {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--hagane-3);
+  letter-spacing: 0.18em;
+}
+
+/* ── お守り ───────────────────────────────────────── */
+.charm-chip.elby-charm {
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.94), rgba(11, 10, 9, 0.95));
+  border: 1px solid rgba(232, 227, 216, 0.1);
+  border-radius: 0;
+  clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease);
+}
+.charm-chip.elby-charm:hover:not(:disabled),
+.charm-chip.elby-charm:focus-visible {
+  transform: translateX(6px);
+  border-color: rgba(255, 107, 43, 0.4);
+  outline: none;
+}
+.charm-chip.elby-charm.selected {
+  border-color: rgba(255, 107, 43, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 180, 120, 0.14),
+    0 0 16px rgba(255, 107, 43, 0.12);
+}
+.charm-chip.elby-charm .charm-name {
+  letter-spacing: 0.1em;
+  font-weight: 800;
+}
+.charm-chip.elby-charm.locked {
+  opacity: 0.45;
+}
+
+/* ── ブリーフィング(ミッション=伝承の儀式) ─────────────────── */
+.elby-brief-panel {
+  position: relative;
+  background: linear-gradient(180deg, rgba(18, 15, 12, 0.96), rgba(9, 8, 7, 0.97));
+  border: 1px solid rgba(232, 227, 216, 0.14);
+  clip-path: polygon(22px 0, 100% 0, 100% calc(100% - 22px), calc(100% - 22px) 100%, 0 100%, 0 22px);
+  box-shadow:
+    inset 0 1px 0 rgba(247, 242, 232, 0.05),
+    0 12px 34px rgba(0, 0, 0, 0.5);
+}
+.elby-brief-kicker {
+  font-family: var(--font-inst);
+  font-size: 11px;
+  letter-spacing: 0.34em;
+  color: var(--hibana);
+  text-transform: uppercase;
+}
+.elby-brief-title {
+  font-family: var(--font-ritual);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  font-size: clamp(28px, 3.2vw, 40px);
+  color: var(--hagane-0);
+  text-shadow: 0 0 34px rgba(255, 107, 43, 0.22);
+}
+.elby-brief-sub {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--hagane-2);
+}
+.elby-brief-rule {
+  height: 1px;
+  background: linear-gradient(90deg, var(--hibana) 0 64px, var(--keisen) 64px);
+  margin: 10px 0 4px;
+}
+.elby-brief-meta dt {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  color: var(--hagane-3);
+}
+.elby-brief-meta dd {
+  color: var(--hagane-1);
+}
+
+/* ── キャンペーン(戦役=伝承) ─────────────────────────── */
+.elby-camp-head .campaign-op {
+  font-family: var(--font-inst);
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: var(--hibana);
+}
+.elby-camp-head strong {
+  display: block;
+  font-family: var(--font-ritual);
+  font-weight: 600;
+  font-size: clamp(26px, 2.8vw, 36px);
+  letter-spacing: 0.1em;
+  color: var(--hagane-0);
+  text-shadow: 0 0 30px rgba(255, 107, 43, 0.18);
+}
+.elby-camp-head span {
+  color: var(--hagane-3);
+  letter-spacing: 0.08em;
+}
+.elby-camp-stat {
+  font-family: var(--font-inst);
+  font-variant-numeric: tabular-nums;
+  color: var(--hagane-2);
+}
+.elby-camp-stat b {
+  color: var(--hibana-bright);
+  font-size: 18px;
+}
+.chapter-card.elby-chapter {
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.94), rgba(11, 10, 9, 0.95));
+  border: 1px solid rgba(232, 227, 216, 0.1);
+  border-radius: 0;
+  clip-path: polygon(14px 0, 100% 0, 100% 100%, 0 100%, 0 14px);
+  box-shadow: inset 0 1px 0 rgba(247, 242, 232, 0.05);
+}
+.chapter-card.elby-chapter .chapter-no {
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--hagane-0);
+}
+.chapter-card.elby-chapter .chapter-sub {
+  color: var(--hagane-3);
+}
+.chapter-card.elby-chapter.locked {
+  opacity: 0.5;
+}
+
+/* ミッションチップ: 片刃プレート+計器行(PAR/挑戦) */
+.mission-chip.elby-mission {
+  position: relative;
+  background: rgba(15, 13, 11, 0.88);
+  border: 1px solid rgba(232, 227, 216, 0.1);
+  border-radius: 0;
+  clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
+  box-shadow: none;
+  text-align: left;
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease),
+    box-shadow var(--enza-t-fast) var(--enza-ease);
+}
+.mission-chip.elby-mission:hover:not(:disabled),
+.mission-chip.elby-mission:focus-visible {
+  transform: translateX(8px);
+  border-color: rgba(255, 107, 43, 0.4);
+  box-shadow: 0 0 16px rgba(255, 107, 43, 0.1);
+  outline: none;
+}
+.mission-chip.elby-mission .mission-idx {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.26em;
+  color: var(--hibana);
+}
+.mission-chip.elby-mission .mission-name {
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--hagane-0);
+}
+.mission-chip.elby-mission .mission-sub {
+  color: var(--hagane-3);
+}
+.mission-chip.elby-mission .mission-stars b {
+  color: var(--hibana-bright);
+  text-shadow: 0 0 10px rgba(255, 107, 43, 0.4);
+}
+.mission-chip.elby-mission .mission-stars {
+  color: rgba(232, 227, 216, 0.28);
+}
+.elby-mission-inst {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--hagane-3);
+}
+.elby-mission-inst em {
+  font-style: normal;
+  color: var(--kogane);
+  letter-spacing: 0.2em;
+}
+.mission-chip.elby-mission .mission-reward {
+  color: var(--kogane);
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+.mission-chip.elby-mission.locked {
+  opacity: 0.42;
+}
+.mission-chip.elby-mission .mission-lock {
+  font-family: var(--font-inst);
+  letter-spacing: 0.3em;
+  color: var(--hagane-3);
+}
+
+/* ── 本日のチャレンジ(デイリー) ────────────────────────── */
+.elby-daily .daily-head {
+  border-bottom: 1px solid var(--keisen);
+}
+.elby-daily .daily-title {
+  font-family: var(--font-inst);
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: var(--hagane-2);
+}
+.elby-daily .daily-streak {
+  color: var(--hibana-bright);
+  font-family: var(--font-inst);
+}
+.elby-daily .daily-row {
+  border: none;
+  border-left: 2px solid rgba(232, 227, 216, 0.14);
+  background: rgba(15, 13, 11, 0.6);
+  transition: border-color var(--enza-t-fast) var(--enza-ease);
+}
+.elby-daily .daily-row--done {
+  border-left-color: var(--hibana);
+}
+.elby-daily .daily-diff {
+  font-family: var(--font-inst);
+  letter-spacing: 0.22em;
+}
+.elby-daily .daily-prog-txt,
+.elby-daily .daily-xp {
+  font-family: var(--font-inst);
+  font-variant-numeric: tabular-nums;
+}
+.elby-daily .daily-check {
+  color: var(--hibana-bright);
+}
+
+/* ── 生涯チャレンジ行 ─────────────────────────────── */
+.challenge-row.elby-chal {
+  background: rgba(15, 13, 11, 0.6);
+  border: none;
+  border-left: 2px solid rgba(232, 227, 216, 0.14);
+  border-radius: 0;
+}
+.challenge-row.elby-chal.challenge-done {
+  border-left-color: var(--hibana);
+}
+.challenge-row.elby-chal .challenge-name {
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--hagane-1);
+}
+.challenge-row.elby-chal .challenge-desc {
+  color: var(--hagane-3);
+}
+.challenge-row.elby-chal .challenge-xp {
+  font-family: var(--font-inst);
+  color: var(--kogane);
+}
+.challenge-row.elby-chal .challenge-bar {
+  height: 3px;
+  background: rgba(232, 227, 216, 0.1);
+}
+.challenge-row.elby-chal .challenge-bar i {
+  background: linear-gradient(90deg, var(--hibana-deep), var(--hibana));
+}
+
+/* ── 分隊カード(スロット [data-id="squad-card"] があれば描画) ──────── */
+.elby-squad {
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.94), rgba(11, 10, 9, 0.95));
+  border: 1px solid rgba(232, 227, 216, 0.14);
+  clip-path: polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px);
+  box-shadow: inset 0 1px 0 rgba(247, 242, 232, 0.05);
+  min-width: 260px;
+}
+.elby-squad-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--keisen);
+}
+.elby-squad-count {
+  font-weight: 800;
+  color: var(--hagane-0);
+  letter-spacing: 0.06em;
+}
+.elby-squad-count small {
+  font-weight: 500;
+  color: var(--hagane-3);
+  margin-left: 4px;
+}
+.elby-squad-net {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: #7dc98f;
+}
+.elby-squad-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--keisen);
+}
+.elby-squad-mark {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  transform: rotate(45deg);
+  background: var(--hibana);
+}
+.elby-squad-name {
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--hagane-0);
+}
+.elby-squad-rank {
+  font-size: 11px;
+  color: var(--hagane-2);
+  letter-spacing: 0.06em;
+}
+.elby-squad-role {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--hagane-3);
+  letter-spacing: 0.14em;
+}
+.elby-squad-foot {
+  padding: 9px 14px;
+  font-family: var(--font-inst);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--hagane-3);
+}
+.elby-squad-foot b {
+  color: var(--hagane-1);
+  font-weight: 600;
+}
+
+/* ── 次のステージ帯(スロット [data-id="stage-band"] があれば描画) ────── */
+.elby-band {
+  display: inline-flex;
+  align-items: stretch;
+  background: rgba(9, 8, 7, 0.92);
+  border: 1px solid rgba(232, 227, 216, 0.14);
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%, 0 10px);
+}
+.elby-band-main {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 22px;
+}
+.elby-band-kicker {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  color: var(--hagane-3);
+}
+.elby-band-stage {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--hagane-0);
+}
+.elby-band-dot {
+  width: 5px;
+  height: 5px;
+  transform: rotate(45deg);
+  background: var(--hibana);
+  align-self: center;
+}
+.elby-band-mode {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--hagane-1);
+}
+.elby-band-ready {
+  display: flex;
+  align-items: center;
+  padding: 0 22px;
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #c2451a);
+  color: #1a0b04;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  font-size: 13px;
+  clip-path: polygon(12px 0, 100% 0, 100% 100%, 0 100%);
+}
+
+/* ── 省モーション: 平行移動/浮きを止める(不透明遷移のみ残す) ─────────── */
+@media (prefers-reduced-motion: reduce) {
+  .mode-card.elby-mode:hover,
+  .mode-card.elby-mode:focus-visible,
+  .mode-card.elby-mode.selected,
+  .stage-card.elby-stage:hover,
+  .stage-card.elby-stage:focus-visible,
+  .difficulty-card.elby-diff:hover,
+  .difficulty-card.elby-diff:focus-visible,
+  .charm-chip.elby-charm:hover:not(:disabled),
+  .charm-chip.elby-charm:focus-visible,
+  .mission-chip.elby-mission:hover:not(:disabled),
+  .mission-chip.elby-mission:focus-visible {
+    transform: none;
+    transition-duration: 0.15s;
+  }
+}

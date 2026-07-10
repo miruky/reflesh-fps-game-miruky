@@ -1,0 +1,220 @@
+/*
+  W-ENZA FB5: タイトル画面(焔座) — 前景UIのみ。背景情景(短剣/光柱/火の粉)は enza-bg.css の .ebg-*。
+  規約: filter/backdrop-filter禁止 / transform+opacityのみ / 8pxグリッド / 熾火=選択・行動のみ。
+*/
+.ettl-root {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  font-family: var(--font-body);
+  color: var(--hagane-1);
+  pointer-events: auto;
+}
+
+/* ── 右上メタ(計器層) ── */
+.ettl-meta {
+  position: absolute;
+  top: 30px;
+  right: 36px;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  line-height: 2;
+  color: var(--hagane-3);
+}
+
+/* ── 題字(伝承層) ── */
+.ettl-hero {
+  position: absolute;
+  left: 8.5vw;
+  top: 30vh;
+  animation: ettlRise var(--enza-t-ritual) var(--enza-ease) both;
+}
+.ettl-kicker {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 20px;
+  color: var(--hagane-2);
+}
+.ettl-kicker-bar {
+  width: 34px;
+  height: 2px;
+  background: var(--hibana);
+}
+.ettl-title {
+  margin: 0;
+  font-size: clamp(64px, 9vw, 148px);
+  font-weight: 900;
+  letter-spacing: 0.015em;
+  line-height: 1;
+  color: var(--hagane-0);
+  text-shadow: 0 0 64px rgba(247, 242, 232, 0.22);
+}
+.ettl-flesh {
+  color: var(--hibana);
+  text-shadow: 0 0 44px rgba(255, 107, 43, 0.42);
+}
+.ettl-rule {
+  position: relative;
+  margin-top: 28px;
+  height: 1px;
+  width: min(46vw, 640px);
+  background: linear-gradient(90deg, rgba(232, 227, 216, 0.35), rgba(232, 227, 216, 0.05));
+}
+.ettl-rule-dia {
+  position: absolute;
+  right: 17%;
+  top: -4px;
+  width: 8px;
+  height: 8px;
+}
+
+/* ── ナビ(選択=熾火、それ以外=白鋼) ── */
+.ettl-nav {
+  position: absolute;
+  left: 8.5vw;
+  top: 58vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  animation: ettlFade 480ms var(--enza-ease) 180ms both;
+}
+.ettl-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px 8px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--hagane-1);
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    color var(--enza-t-fast) var(--enza-ease);
+}
+.ettl-item--dim {
+  color: var(--hagane-3);
+}
+.ettl-item:hover,
+.ettl-item:focus-visible,
+.ettl-item.sel {
+  color: var(--hibana);
+  transform: translateX(8px);
+  outline: none;
+}
+.ettl-dia {
+  width: 10px;
+  height: 10px;
+  flex: none;
+}
+
+/* ── 下端(コピーライト+操作ヒント) ── */
+.ettl-foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 36px 24px;
+  animation: ettlFade 480ms var(--enza-ease) 300ms both;
+}
+.ettl-copy {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--hagane-3);
+}
+
+/* ── クレジット(小モーダル) ── */
+.ettl-credits {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 2, 7, 0.72);
+}
+.ettl-credits[hidden] {
+  display: none;
+}
+.ettl-credits-panel {
+  width: min(560px, 86vw);
+  padding: 34px 38px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ettl-credits-title {
+  margin: 0;
+  font-family: var(--font-ritual);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--hagane-0);
+}
+.ettl-credits-title span {
+  margin-left: 10px;
+  color: var(--hibana);
+}
+.ettl-credits-body {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--hagane-2);
+}
+.ettl-credits-close {
+  align-self: flex-end;
+  min-width: 128px;
+  margin-top: 8px;
+}
+
+/* ── 入場演出(transform/opacityのみ) ── */
+@keyframes ettlRise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes ettlFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ── 省モーション(メディアクエリ+アプリ設定 .ettl-reduce の両輪) ── */
+@media (prefers-reduced-motion: reduce) {
+  .ettl-hero,
+  .ettl-nav,
+  .ettl-foot {
+    animation: none;
+  }
+  .ettl-item {
+    transition: none;
+  }
+}
+.ettl-reduce .ettl-hero,
+.ettl-reduce .ettl-nav,
+.ettl-reduce .ettl-foot {
+  animation: none;
+}
+.ettl-reduce .ettl-item {
+  transition: none;
+}

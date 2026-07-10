@@ -1,0 +1,551 @@
+/*
+  W-ENZA FB6: 焔座トップメニュー(.etop-*)
+  「神話が顔、計器が骨」— 特大漢字ナビ+等幅計器+片刃切り。
+  背景はSpaceBg(canvas)を透過で見せるため、canvas直上のプレートは
+  filter/backdrop-filter禁止・不透明度0.82以上(enza-core.cssの鉄則に従う)。
+  レイアウト: header / touchnote / body(nav+dock | deck) / launch / foot
+*/
+
+/* ── シェル ─────────────────────────────────────────────── */
+.menu-screen.etop-root {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  gap: 16px;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: clamp(20px, 2.6vh, 40px) clamp(24px, 3vw, 56px);
+  background: transparent;
+  color: var(--hagane-1);
+  font-family: var(--font-body);
+}
+
+/* ── ヘッダ: ブランド+ビルド+プレイヤーカード ───────────── */
+.etop-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+.etop-brand-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-inst);
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  color: var(--hagane-3);
+}
+.etop-brand-kicker::before {
+  content: '';
+  width: 26px;
+  height: 2px;
+  background: var(--hibana);
+}
+.etop-wordmark {
+  margin: 6px 0 0;
+  font-family: 'Helvetica Neue', Arial, var(--font-body);
+  font-size: clamp(34px, 4.2vw, 58px);
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  color: var(--hagane-0);
+}
+.etop-wordmark em {
+  font-style: normal;
+  color: var(--hibana);
+  text-shadow: 0 0 26px rgba(255, 107, 43, 0.28);
+}
+.etop-header-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.etop-meta {
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--hagane-3);
+}
+
+/* プレイヤーカード(超越階級+Lv+XP)。片刃切り+不透明プレート */
+.etop-player {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 280px;
+  padding: 12px 18px 14px 14px;
+  background: linear-gradient(180deg, rgba(32, 27, 22, 0.94), rgba(16, 13, 11, 0.94));
+  border: 1px solid var(--keisen);
+  box-shadow: inset 0 1px 0 rgba(247, 242, 232, 0.07);
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+}
+.etop-player-stamp {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  transform: rotate(45deg);
+  border: 1px solid var(--hibana);
+  background: linear-gradient(180deg, rgba(178, 62, 20, 0.35), rgba(11, 10, 13, 0.2));
+}
+.etop-player-stamp b {
+  transform: rotate(-45deg);
+  font-family: var(--font-ritual);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--hibana-pale);
+}
+.etop-player-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.etop-player-kicker,
+.etop-dock-kicker {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.26em;
+  color: var(--hagane-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.etop-player-rank {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--hagane-0);
+}
+.etop-player-lvrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.etop-player-lv {
+  font-size: 13px;
+  color: var(--hibana-bright);
+}
+.etop-player-pct {
+  font-size: 11px;
+  color: var(--hagane-3);
+}
+.etop-xpbar {
+  height: 3px;
+  background: rgba(232, 227, 216, 0.14);
+  overflow: hidden;
+}
+.etop-xpbar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--hibana-deep), var(--hibana));
+}
+
+/* ── PC専用注意(既存文言を控えめに中央へ) ─────────────────── */
+.etop-touchnote {
+  margin: 0;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--hagane-3);
+}
+
+/* ── ボディ: 左=特大漢字ナビ+ドック / 右=ページデッキ ───────── */
+.etop-body {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: clamp(16px, 2vw, 32px);
+  min-height: 0;
+}
+.etop-left {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ナビ(mfd-rail機構は維持、様式を全面刷新) */
+.etop-nav {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 14px;
+}
+.etop-root .etop-nav .mfd-tab {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-areas: 'num main' 'num sub';
+  align-items: baseline;
+  column-gap: 12px;
+  padding: 9px 12px 10px 4px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--hagane-2);
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    color var(--enza-t-fast) var(--enza-ease);
+}
+.etop-nav-num {
+  grid-area: num;
+  align-self: start;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: var(--hagane-3);
+  padding-top: 8px;
+}
+.etop-nav-main {
+  grid-area: main;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+.etop-nav-kanji {
+  font-size: clamp(26px, 2.8vw, 38px);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1.25;
+  color: inherit;
+}
+.etop-nav-kicker {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  color: var(--hagane-3);
+}
+.etop-nav-sub {
+  grid-area: sub;
+  font-family: var(--font-inst);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--hagane-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.etop-root .etop-nav .mfd-tab:hover,
+.etop-root .etop-nav .mfd-tab:focus-visible {
+  color: var(--hagane-0);
+  transform: translateX(8px);
+  outline: none;
+}
+.etop-root .etop-nav .mfd-tab.selected {
+  color: var(--hagane-0);
+  transform: translateX(10px);
+}
+.etop-root .etop-nav .mfd-tab.selected .etop-nav-kanji {
+  color: var(--hibana);
+}
+.etop-root .etop-nav .mfd-tab.selected .etop-nav-num,
+.etop-root .etop-nav .mfd-tab.selected .etop-nav-sub {
+  color: var(--hibana-bright);
+}
+/* 選択の片刃ブレード(タブ左)。帝王状態では状態色に転調 */
+.etop-root .etop-nav .mfd-tab.selected::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 12%;
+  bottom: 12%;
+  width: 4px;
+  background: linear-gradient(180deg, var(--emperor), transparent 130%);
+  transform: skewY(-14deg);
+}
+/* 走行インク(選択タブへ滑るレール)。updateMfdInkの --ink-y/--ink-h を消費 */
+.etop-root .etop-nav .mfd-ink {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2px;
+  height: var(--ink-h, 48px);
+  background: rgba(232, 227, 216, 0.2);
+  transform: translateY(var(--ink-y, 0));
+  transition:
+    transform var(--enza-t) var(--enza-ease),
+    height var(--enza-t) var(--enza-ease);
+}
+
+/* ── ドック: キャンペーン続行+デイリー ────────────────────── */
+.etop-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+  min-height: 0;
+}
+.etop-continue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--hagane-1);
+  background: linear-gradient(180deg, rgba(32, 27, 22, 0.92), rgba(16, 13, 11, 0.92));
+  border: 1px solid var(--keisen);
+  box-shadow: inset 0 1px 0 rgba(247, 242, 232, 0.07);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  transition:
+    transform var(--enza-t-fast) var(--enza-ease),
+    border-color var(--enza-t-fast) var(--enza-ease);
+}
+.etop-continue:hover,
+.etop-continue:focus-visible {
+  transform: translateX(7px);
+  border-color: rgba(255, 107, 43, 0.6);
+  outline: none;
+}
+.etop-continue-name {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--hagane-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.etop-continue-prog {
+  font-size: 11px;
+  color: var(--hibana-bright);
+}
+/* デイリー(renderDailiesの既存マークアップを焔座の器で受ける) */
+.etop-daily {
+  overflow: auto;
+  max-height: 26vh;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, rgba(32, 27, 22, 0.9), rgba(16, 13, 11, 0.9));
+  border: 1px solid var(--keisen);
+  box-shadow: inset 0 1px 0 rgba(247, 242, 232, 0.07);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+
+/* ── デッキ(ページ面)。中身の様式は各FBオーナー担当 — 器のみ焔座化 ── */
+.etop-deck {
+  position: relative;
+  min-height: 0;
+  overflow: hidden auto;
+  background: linear-gradient(180deg, rgba(22, 19, 15, 0.9), rgba(11, 10, 13, 0.92));
+  border: 1px solid var(--keisen);
+  box-shadow: inset 0 1px 0 rgba(247, 242, 232, 0.06);
+  clip-path: polygon(0 0, calc(100% - 26px) 0, 100% 26px, 100% 100%, 0 100%);
+  padding: clamp(14px, 1.8vw, 26px);
+}
+
+/* ── 出撃ストリップ(常設。briefing実データ+hold-to-launch CTA) ── */
+.etop-launch {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 20px;
+}
+.etop-brief {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 26px;
+  align-items: center;
+  margin: 0;
+  padding: 10px 18px;
+  background: linear-gradient(180deg, rgba(22, 19, 15, 0.9), rgba(11, 10, 13, 0.9));
+  border: 1px solid var(--keisen);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  flex: 1;
+  min-width: 0;
+}
+.etop-brief > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.etop-brief dt {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  color: var(--hagane-3);
+}
+.etop-brief dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--hagane-0);
+  white-space: nowrap;
+}
+/* CTA(enza-cta を土台に、hold-fill を内包) */
+.etop-root .etop-start {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 34px;
+  min-width: 230px;
+  justify-content: center;
+}
+.etop-start-label {
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: 0.3em;
+}
+.etop-start-hint {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  opacity: 0.75;
+}
+/* hold-to-launch のフィル(mk3の機構クラスを焔座様式で上書き) */
+.etop-root .etop-start .mk3m-hold-fill {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 2, 7, 0.25);
+  transform: scaleX(0);
+  transform-origin: left;
+  pointer-events: none;
+}
+.etop-root .etop-start.mk3m-holding .mk3m-hold-fill {
+  transform: scaleX(1);
+  transition: transform 300ms linear;
+}
+
+/* ── フッタ ─────────────────────────────────────────────── */
+.etop-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.etop-copy {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--hagane-3);
+}
+.etop-hints {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--hagane-3);
+}
+
+/* ── 帝王転調: 枠の灯りが状態色へ(UIそのものが「降臨」を語る) ── */
+:root[data-emperor] .etop-deck,
+:root[data-emperor] .etop-player,
+:root[data-emperor] .etop-continue {
+  border-color: color-mix(in srgb, var(--emperor) 35%, transparent);
+}
+:root[data-emperor] .etop-wordmark em {
+  color: var(--emperor);
+  text-shadow: 0 0 26px color-mix(in srgb, var(--emperor) 30%, transparent);
+}
+
+/* ── 狭幅: 1カラム化(ナビ横流し) ───────────────────────── */
+@media (max-width: 1100px) {
+  .etop-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .etop-left {
+    flex-direction: row;
+    align-items: flex-end;
+    overflow-x: auto;
+  }
+  .etop-nav {
+    flex-direction: row;
+    gap: 10px;
+    padding-left: 0;
+  }
+  .etop-root .etop-nav .mfd-tab.selected::before {
+    display: none;
+  }
+  .etop-root .etop-nav .mfd-ink {
+    display: none;
+  }
+  .etop-dock {
+    margin-top: 0;
+    min-width: 260px;
+  }
+}
+
+/* ── 省モーション: 全転移を短絡(enza-core規約) ─────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .etop-root .etop-nav .mfd-tab,
+  .etop-root .etop-nav .mfd-ink,
+  .etop-continue,
+  .etop-root .etop-start .mk3m-hold-fill {
+    transition: none;
+  }
+  .etop-root .etop-nav .mfd-tab:hover,
+  .etop-root .etop-nav .mfd-tab:focus-visible,
+  .etop-root .etop-nav .mfd-tab.selected,
+  .etop-continue:hover {
+    transform: none;
+  }
+}
+
+/* ── FB7スロット: 分隊カード(右上)/ステージ帯(下中央・粘着) ──
+   コンポーネント内部様式はFB7側で自己完結 — ここは配置のみ */
+.etop-deck .mfd-page {
+  position: relative;
+}
+.etop-squad-slot {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+.etop-squad-slot:empty,
+.etop-stageband-slot:empty {
+  display: none;
+}
+.etop-stageband-slot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+  pointer-events: none;
+}
+.etop-stageband-slot > * {
+  pointer-events: auto;
+}
+
+/* ── FB6追補: 武器庫の出撃CTA(右下・粘着。モック04「この兵装で出撃」) ── */
+.etop-armory-launch {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+  pointer-events: none;
+}
+.etop-armory-launch > * {
+  pointer-events: auto;
+}
+
+/* ── シェル見出しの焔座統一(deploy/intelの<h2> — 計器キッカー様式) ──
+   system頁の「設定」はFB10の.enza-page-headが持つため撤去済み。
+   armory頁はFB8の#mfd-panel-armoryスコープ様式が優先(こちらは触らない) */
+.etop-deck .menu-section > h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-family: var(--font-inst);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  color: var(--hagane-3);
+}
+.etop-deck .menu-section > h2::before {
+  content: '';
+  width: 14px;
+  height: 2px;
+  background: var(--hibana);
+  flex: none;
+}

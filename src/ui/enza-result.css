@@ -1,0 +1,786 @@
+/*
+  W-ENZA FB9: リザルト(戦闘詳報)— 焔座様式。接頭辞 .ersl-*。
+  実測値はモック06(scratchpad/enza-mock-06.html)から採取:
+  外周56px / 上部帯34px+罫76px / 儀式題158px / 統計値40px / 右列452px(左断ちミラー) /
+  ラベル10px字間0.2em / チーム色: 味方#FFB98A・敵#8FA8C4 / XP加算#9FE39F。
+  鉄則: filter/backdrop-filter不使用・プレート不透明0.82+・アニメはtransform/opacityのみ。
+*/
+
+/* ── 画面地(FA4のresult情景を透過で見せる: 走査線+ビネットのみ重ねる) ── */
+.menu-screen.ersl-screen {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.012) 0,
+      rgba(255, 255, 255, 0.012) 1px,
+      transparent 1px,
+      transparent 4px
+    ),
+    radial-gradient(130% 100% at 50% 45%, rgba(2, 2, 7, 0.28) 55%, rgba(2, 2, 7, 0.78) 100%),
+    linear-gradient(180deg, rgba(11, 10, 13, 0.72), rgba(2, 2, 7, 0.8));
+  padding: clamp(20px, 2.6vw, 40px) clamp(20px, 2.9vw, 56px) clamp(20px, 2.9vw, 56px);
+}
+
+.ersl-wrap {
+  position: relative;
+  max-width: 1808px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 24vw, 452px);
+  grid-template-areas:
+    'head head'
+    'rule rule'
+    'hero side'
+    'story side'
+    'stats side'
+    'extra side'
+    'board side'
+    'medals medals'
+    'hint hint';
+  column-gap: clamp(24px, 2.4vw, 44px);
+  row-gap: 18px;
+}
+
+/* ── 上部帯 ── */
+.ersl-head {
+  grid-area: head;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+}
+.ersl-head-l {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.ersl-dash {
+  width: 34px;
+  height: 2px;
+  background: var(--hibana);
+  box-shadow: 0 0 12px rgba(255, 107, 43, 0.8); /* 実測06 */
+}
+.ersl-head .enza-kicker {
+  font-size: 12px;
+  letter-spacing: 0.3em;
+}
+.ersl-meta {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #5e594f; /* 実測06 */
+  white-space: nowrap;
+}
+.ersl-rule {
+  grid-area: rule;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 107, 43, 0.5),
+    rgba(232, 227, 216, 0.13) 30%,
+    rgba(232, 227, 216, 0.13) 100%
+  ); /* 実測06 */
+}
+
+/* ── 見出し(儀式) ── */
+.ersl-hero {
+  grid-area: hero;
+  display: flex;
+  align-items: flex-end;
+  gap: clamp(18px, 2vw, 30px);
+  min-height: 0;
+}
+.ersl-verdict {
+  font-size: clamp(76px, 11vw, 158px);
+  margin: 0;
+  animation: ersl-ritual var(--enza-t-ritual) var(--enza-ease) both;
+}
+.ersl-lost .ersl-verdict {
+  color: var(--hagane-2);
+  text-shadow:
+    0 0 60px rgba(232, 227, 216, 0.14),
+    0 4px 12px rgba(0, 0, 0, 0.8);
+}
+@keyframes ersl-ritual {
+  from {
+    opacity: 0;
+    transform: scale(1.05);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.ersl-scoreline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: clamp(6px, 1vw, 16px);
+}
+.ersl-score {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-family: var(--font-inst);
+  font-variant-numeric: tabular-nums;
+}
+.ersl-score b {
+  font-size: clamp(28px, 2.8vw, 40px);
+  line-height: 1;
+  font-weight: 700;
+  color: var(--hibana-pale); /* 味方=暖 実測06 #FFB98A */
+}
+.ersl-score i {
+  font-style: normal;
+  font-size: 20px;
+  color: #55503f; /* 実測06 */
+}
+.ersl-score b.ersl-score-enemy {
+  color: #8fa8c4; /* 敵=青鋼 実測06 */
+}
+.ersl-subline {
+  margin: 0;
+  font-family: var(--font-inst);
+  font-size: 11.5px;
+  letter-spacing: 0.2em;
+  color: var(--hagane-3);
+}
+.ersl-hero .aar-grade {
+  margin-left: auto;
+  align-self: center;
+}
+
+/* ── マッチストーリー(菱ノードの水平帯) ── */
+.ersl-story {
+  grid-area: story;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ersl-story-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.ersl-story-band {
+  position: relative;
+  height: 78px;
+  border: 1px solid rgba(232, 227, 216, 0.09);
+  background: linear-gradient(180deg, rgba(16, 13, 11, 0.86), rgba(9, 8, 7, 0.88));
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+.ersl-story-line {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  top: 30px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 107, 43, 0.55),
+    rgba(232, 227, 216, 0.18) 40%,
+    rgba(255, 107, 43, 0.45)
+  );
+}
+.ersl-tl-node {
+  position: absolute;
+  top: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px; /* 実測06 */
+}
+.ersl-tl-node .enza-diamond {
+  flex: none;
+}
+.ersl-tl-label {
+  font-size: 11px;
+  color: var(--hagane-3); /* 実測06 #A79F90相当 */
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+.ersl-tl--gold .ersl-tl-label {
+  color: var(--kogane);
+}
+.ersl-tl--steel .enza-diamond {
+  background: rgba(232, 227, 216, 0.18);
+  border-color: rgba(232, 227, 216, 0.5);
+}
+.ersl-tl--cyan .enza-diamond {
+  background: rgba(159, 181, 201, 0.25);
+  border-color: var(--sofu);
+}
+.ersl-tl--ok .enza-diamond {
+  background: rgba(159, 227, 159, 0.25);
+  border-color: #9fe39f;
+}
+.ersl-tl--violet .enza-diamond {
+  background: rgba(139, 92, 246, 0.28);
+  border-color: var(--kotei);
+}
+/* 帝王イベント: 紫電の大菱+銘(実測06 黒雷帝降臨ノード) */
+.ersl-tl--emperor {
+  top: 18px;
+}
+.ersl-tl--emperor .ersl-tl-label {
+  font-weight: 700;
+  font-size: 12.5px;
+  color: #dfa8ff; /* 実測06 */
+}
+
+/* ── 統計カード列 ── */
+.ersl-stats {
+  grid-area: stats;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 14px;
+}
+.ersl-stat {
+  padding: 16px 18px 14px; /* 実測06 */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ersl-stat-k {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: #77705f; /* 実測06 */
+}
+.ersl-stat--ember .ersl-stat-k {
+  color: #c9865c; /* 実測06 */
+}
+.ersl-stat-v {
+  font-family: var(--font-inst);
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(30px, 2.6vw, 40px);
+  line-height: 1;
+  font-weight: 700;
+  color: #f5f0e6; /* 実測06 */
+}
+.ersl-stat--ember .ersl-stat-v {
+  color: var(--hibana-pale);
+  text-shadow: 0 0 18px rgba(255, 107, 43, 0.4); /* 実測06 */
+}
+.ersl-stat-sub {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--hagane-3);
+  min-height: 13px;
+}
+.ersl-stat-sub .up {
+  color: #9fe39f;
+}
+.ersl-stat-sub .gold {
+  color: #c9a25c; /* 実測06 */
+}
+.ersl-stat--weapon .ersl-stat-v {
+  font-family: var(--font-body);
+  font-size: 23px; /* 実測06 */
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+}
+.ersl-stat-unit {
+  font-style: normal;
+  font-size: 0.42em;
+  color: var(--hagane-3);
+  margin-left: 2px;
+}
+
+/* ── 付帯(輪廻チップ/ハイライトは既存様式を右幅に収める) ── */
+.ersl-extra {
+  grid-area: extra;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.ersl-extra:empty {
+  display: none;
+}
+
+/* ── スコアボード ── */
+.ersl-board {
+  grid-area: board;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.ersl-board-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ersl-brow {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 84px 84px 84px;
+  align-items: center;
+  column-gap: 10px;
+  padding: 10px 16px;
+  background: rgba(13, 11, 10, 0.84);
+  border: 1px solid rgba(232, 227, 216, 0.08);
+}
+.ersl-brow--head {
+  background: transparent;
+  border-color: transparent;
+  padding-top: 0;
+  padding-bottom: 2px;
+}
+.ersl-brow--head span {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: #77705f;
+}
+.ersl-brow .num {
+  font-family: var(--font-inst);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--hagane-3); /* 実測06 */
+  text-align: right;
+}
+.ersl-brow .who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--hagane-1);
+  min-width: 0;
+}
+.ersl-brow .who .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ersl-brow .rankchip {
+  flex: none;
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--hibana-pale);
+  border: 1px solid rgba(255, 107, 43, 0.4);
+  padding: 2px 8px;
+}
+.ersl-brow .rank {
+  font-family: var(--font-inst);
+  font-size: 12px;
+  color: #77705f;
+}
+/* 自分の行=1位様式(実測06: 橙罫+左上断ち+左端バー) */
+.ersl-brow--you {
+  background: linear-gradient(90deg, rgba(46, 28, 15, 0.95), rgba(26, 17, 11, 0.9));
+  border-color: rgba(255, 107, 43, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 180, 120, 0.14),
+    0 0 20px rgba(255, 107, 43, 0.12);
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%, 0 10px);
+  position: relative;
+}
+.ersl-brow--you::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--hibana-bright), var(--hibana-deep));
+}
+.ersl-brow--you .who,
+.ersl-brow--you .num {
+  color: var(--hagane-0);
+}
+.ersl-brow--ally .who {
+  color: var(--hibana-pale);
+}
+
+/* ── 右列(左断ちミラーの片刃プレート 実測06) ── */
+.ersl-side {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.ersl-plate-l {
+  position: relative;
+  background: linear-gradient(180deg, rgba(22, 19, 16, 0.95), rgba(12, 11, 9, 0.96));
+  border: 1px solid rgba(232, 227, 216, 0.15);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 12px 34px rgba(0, 0, 0, 0.5);
+  clip-path: polygon(22px 0, 100% 0, 100% 100%, 0 100%, 0 22px); /* 実測06 右列 */
+  padding: 22px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ersl-cardhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.ersl-cardhead .enza-kicker {
+  letter-spacing: 0.26em; /* 実測06 */
+}
+.ersl-xp-gain {
+  font-family: var(--font-inst);
+  font-size: 11px;
+  font-weight: 700;
+  color: #9fe39f; /* 実測06 XP加算緑 */
+  white-space: nowrap;
+}
+.ersl-lv-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.ersl-lv-row .lv {
+  font-family: var(--font-inst);
+  font-variant-numeric: tabular-nums;
+  font-size: 34px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--hagane-0);
+}
+.ersl-lv-row .delta {
+  font-family: var(--font-inst);
+  font-size: 12px;
+  font-weight: 700;
+  color: #9fe39f;
+}
+/* XPバー(共有クラス.profile-xpbarをカード内で焔座化) */
+.ersl-side .profile-xpbar {
+  display: block;
+  height: 7px;
+  background: rgba(232, 227, 216, 0.1);
+  border: none;
+  overflow: hidden;
+}
+.ersl-side .profile-xpbar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--hibana-deep), var(--hibana), var(--hibana-bright));
+  box-shadow: 0 0 12px rgba(255, 107, 43, 0.5);
+}
+/* XP内訳(result-xp-list契約クラス維持: staggerXpListが参照) */
+.ersl-side .result-xp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  row-gap: 5px;
+}
+.ersl-side .result-xp-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--font-inst);
+  font-size: 11px;
+  color: var(--hagane-3); /* 実測06 */
+}
+.ersl-side .result-xp-list li .xp-value {
+  color: #d8d1c2; /* 実測06 */
+}
+.ersl-side .result-xp-list li.xp-daily .xp-label {
+  color: var(--kogane);
+}
+.ersl-divider {
+  border-top: 1px solid rgba(232, 227, 216, 0.1); /* 実測06 */
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 超越階級 */
+.ersl-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.ersl-rank-sigil {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.ersl-rank-sigil .dia {
+  position: absolute;
+  inset: 6px;
+  transform: rotate(45deg);
+  background: linear-gradient(135deg, rgba(46, 28, 15, 0.95), rgba(26, 17, 11, 0.95));
+  border: 1.5px solid var(--hibana-bright);
+  box-shadow: 0 0 16px rgba(255, 107, 43, 0.35);
+}
+.ersl-rank-sigil .stamp {
+  position: relative;
+  font-family: var(--font-ritual);
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--hibana-pale);
+}
+.ersl-rank-name {
+  font-family: var(--font-ritual);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--hagane-0);
+}
+.ersl-rank-note {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: #77705f;
+}
+.ersl-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--hagane-2);
+}
+.ersl-note.up {
+  color: #9fe39f;
+}
+.ersl-note.down {
+  color: var(--teki);
+}
+.ersl-note.gold {
+  color: var(--kogane);
+}
+.ersl-unlocks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  row-gap: 4px;
+  font-size: 11.5px;
+  color: var(--hagane-2);
+}
+.ersl-unlocks .result-camo-unlock {
+  color: var(--kogane);
+}
+/* この試合の進行 */
+.ersl-progress-rows {
+  display: grid;
+  row-gap: 8px;
+}
+.ersl-progress-rows .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--hagane-2);
+}
+.ersl-progress-rows .row .st {
+  font-family: var(--font-inst);
+  font-size: 11px;
+  color: #9fe39f;
+  white-space: nowrap;
+}
+.ersl-progress-rows .row .st.dim {
+  color: var(--hagane-3);
+}
+/* 導線 */
+.ersl-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ersl-actions .enza-cta {
+  width: 100%;
+}
+.ersl-cta-scan {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(
+    105deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.18) 45%,
+    rgba(255, 255, 255, 0) 60%
+  ); /* 実測06 */
+  animation: ersl-scan 3.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes ersl-scan {
+  from {
+    transform: translateX(-130%);
+  }
+  to {
+    transform: translateX(380%);
+  }
+}
+.ersl-actions-row {
+  display: flex;
+  gap: 10px;
+}
+.ersl-actions-row .enza-btn {
+  flex: 1;
+}
+
+/* ── 獲得メダル帯 ── */
+.ersl-medals {
+  grid-area: medals;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ersl-medals-cap {
+  font-family: var(--font-inst);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  color: #77705f; /* 実測06 */
+}
+.ersl-medals-cap .xp {
+  color: #9fe39f;
+  letter-spacing: 0.12em;
+}
+.ersl-medal-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.ersl-medal-chip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: linear-gradient(180deg, rgba(24, 18, 13, 0.94), rgba(13, 11, 9, 0.94)); /* 実測06 */
+  border: 1px solid rgba(232, 227, 216, 0.12);
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%, 0 10px);
+}
+.ersl-medal-chip .mname {
+  font-family: var(--font-inst);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--hagane-1);
+  white-space: nowrap;
+}
+.ersl-medal-chip .mcount {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  color: var(--hagane-3);
+}
+.ersl-medal-chip--gold {
+  border-color: rgba(245, 208, 107, 0.45);
+}
+.ersl-medal-chip--gold .mname {
+  color: var(--kogane);
+}
+.ersl-medal-chip--emperor {
+  background: linear-gradient(180deg, rgba(30, 12, 42, 0.96), rgba(16, 7, 22, 0.95)); /* 実測06 */
+  border-color: rgba(196, 77, 255, 0.6);
+  box-shadow: 0 0 24px rgba(196, 77, 255, 0.2);
+}
+.ersl-medal-chip--emperor .mname {
+  color: #dfa8ff;
+}
+
+/* ── 操作ヒント ── */
+.ersl-hint {
+  grid-area: hint;
+}
+
+/* ── 入場stagger(transform/opacityのみ) ── */
+.ersl-wrap > * {
+  animation: ersl-in 420ms var(--enza-ease) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+@keyframes ersl-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── ミッションリザルト(戦役詳報: 単列中央) ── */
+.ersl-wrap--mission {
+  display: flex;
+  flex-direction: column;
+  max-width: 1100px;
+  gap: 18px;
+}
+.ersl-wrap--mission .ersl-verdict {
+  font-size: clamp(56px, 8vw, 120px);
+}
+.ersl-wrap--mission .result-stars {
+  display: flex;
+  gap: 14px;
+  font-size: 30px;
+}
+.ersl-wrap--mission .result-stars .on {
+  color: var(--hibana-bright);
+  text-shadow: 0 0 18px rgba(255, 107, 43, 0.6);
+}
+.ersl-wrap--mission .result-stars .off {
+  color: rgba(232, 227, 216, 0.22);
+  text-shadow: none;
+}
+.ersl-mission-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ersl-mission-notes p {
+  margin: 0;
+}
+.ersl-wrap--mission .ersl-stats {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.ersl-wrap--mission .ersl-side {
+  max-width: 560px;
+}
+.ersl-wrap--mission .ersl-actions-row .enza-btn {
+  flex: none;
+  padding: 0 32px;
+}
+
+/* ── 狭幅/低背フォールバック(スクロールは.menu-screenが担保) ── */
+@media (max-width: 1180px) {
+  .ersl-wrap {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'head'
+      'rule'
+      'hero'
+      'story'
+      'stats'
+      'extra'
+      'side'
+      'board'
+      'medals'
+      'hint';
+  }
+  .ersl-hero .aar-grade {
+    margin-left: 0;
+  }
+}
+
+/* ── reduced-motion 短絡 ── */
+@media (prefers-reduced-motion: reduce) {
+  .ersl-verdict,
+  .ersl-wrap > * {
+    animation: none;
+  }
+  .ersl-cta-scan {
+    animation: none;
+    opacity: 0;
+  }
+}

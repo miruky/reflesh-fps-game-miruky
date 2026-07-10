@@ -520,6 +520,12 @@ export function hitToi(hit: RayHitLike): number {
   return hit.toi ?? hit.timeOfImpact ?? 0;
 }
 
+// R54 音響2: 音源方位と視線の内積<0=背後。dirToSourceは符号だけを使うため正規化不要
+// (Match本体はWebGL依存のため、配線から抽出した純関数として単体テストする)
+export function isBehindListener(forward: THREE.Vector3, dirToSource: THREE.Vector3): boolean {
+  return forward.dot(dirToSource) < 0;
+}
+
 export type ColliderTag =
   | { kind: 'world' }
   | { kind: 'boundary' }   // ghost 壁専用(弾/視線/斬撃が素通り, ブリンク/KCCは止まる)
@@ -3845,6 +3851,8 @@ export class Match {
       // alpha = 1 - exp(-dt_check / tau) = 1 - exp(-0.25 / 3)
       const indoorAlpha = 1 - Math.exp(-0.25 / 3);
       this._indoor01 += indoorAlpha * (rawIndoor - this._indoor01);
+      // R54 音響2: 既存の屋根判定(AutoExposure用)をそのまま音響側(残響/こもり)へ流用
+      this.sounds.setIndoor01(this._indoor01);
     }
 
     // ── R29: プレイヤー追従シャドウ(±70mの影ボックスがプレイヤーと共に動く) ──
@@ -4455,6 +4463,13 @@ export class Match {
     const rightDir = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
     const pan = THREE.MathUtils.clamp(toSource.normalize().dot(rightDir), -1, 1);
     return { pan, distance };
+  }
+
+  // R54 音響2: 音源が視線の後方にあるか(音源方位と視線の内積<0)。
+  // enemyFootstep/enemyShotの「背後は少しこもる」定位材料
+  private isBehindPlayer(source: THREE.Vector3): boolean {
+    const eye = this.player.eyePosition;
+    return isBehindListener(this.cameraForward(), source.clone().sub(eye));
   }
 
   private incomingAngle(source: THREE.Vector3): number {
@@ -5204,6 +5219,9 @@ export class Match {
     const died = bot.takeDamage(finalDamage, toShooter);
     // ゾンビ経済: 命中+10 / キル+60 / HSキル+110 / 近接キル+130 / ボスキル+500ボーナス
     if (bot.kind === 'zombie') {
+      // R54 音響2: 被弾/死亡ボイス(距離カリング/スロットルはSoundKit側で内蔵)
+      const zv = this.panAndDistance(bot.position);
+      this.sounds.zombieVocal(died ? 'death' : 'hurt', zv.pan, zv.distance, bot.uid % 3);
       if (died) {
         this.zombie.zombieKills += 1;
         // ★V一括修正: charm解放条件(bossdmg=ボス10体)の入力。summary.zombieBossKillsへ供給
@@ -6092,7 +6110,9 @@ export class Match {
             }
             const isZombie = bot.kind === 'zombie';
             const intensity = isZombie ? Math.min(1, 0.6 + bot.horizSpeedMps * 0.08) : 0.45;
-            this.sounds.enemyFootstep(sp.pan, sp.distance, this.stageSurfaceFloor, intensity, occluded);
+            // R54 音響2: 背後判定(内積の符号だけを見るのでtoBotDirの正規化有無は無関係)
+            const behind = isBehindListener(this.cameraForward(), toBotDir);
+            this.sounds.enemyFootstep(sp.pan, sp.distance, this.stageSurfaceFloor, intensity, occluded, behind);
           }
         } else if (!bot.alive || bot.horizSpeedMps < 0.05) {
           this.botStepPhase.delete(bot.uid);
@@ -6601,7 +6621,8 @@ export class Match {
         }
       }
     }
-    this.sounds.enemyShot(pan, distance, occluded);
+    // R54 音響2: 背後判定(音源方位と視線の内積<0)
+    this.sounds.enemyShot(pan, distance, occluded, this.isBehindPlayer(origin));
 
     // ① 戦闘引力: 発砲イベント記録(敵botのみ・ゾンビ除外)
     if (bot.team !== PLAYER_TEAM && this.config.mode !== 'zombie' && !this.mission) {
@@ -9569,6 +9590,7 @@ export class Match {
     this.sounds.setLightningHum(false); // 雷帝ハムのループ音を停止(リスタート時の残留防止)
     this.sounds.stopKokuraiThunder();   // R33: 遠雷スケジューラ停止
     this.sounds.setEmperorBgm(null);    // R53-W3 M3: 帝王BGM層を通常へ復帰(試合終了/quit)
+    this.sounds.setBgmStem(null);       // R54 音響2: 排他BGMステム(設置/狂乱/物語/決闘)を畳む
     this.zombie.dispose(); // R54-F2: ゾンビ系リソース解放(crowd/ショップ/ドア/毒霧/ドロップ/プール/箱演出)
     this.zombie.zombieCrowd = null;
     this.humanoidCrowd?.dispose(this.scene); // R54-W1 F4: humanoid群InstancedMeshの解放
