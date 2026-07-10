@@ -14,7 +14,7 @@ import {
   type CampaignProgress,
   type MatchProgress,
 } from '../../game/progression';
-import { ALWAYS_BADGE, medalRank, type MedalId } from '../../game/medals';
+import { ALWAYS_BADGE, medalRank, medalDisplay, MEDAL_TOTAL, type MedalId } from '../../game/medals';
 import type { MenuScreenHost } from './host';
 import {
   latestTitle,
@@ -27,8 +27,9 @@ import type { GradeInfo } from './shared';
 
 // ── 焔座ヘルパ(表示のみ・純関数) ──────────────────────────────────
 
-// メダルIDの表示名(matchStoryMarkersと同規約: ハイフン→空白の大文字化)
-const medalLabel = (id: string): string => id.replace(/-/g, ' ').toUpperCase();
+// メダルの表示名: MEDALS表の実名(FQA昇格)。未知IDのみ旧規約(ハイフン→空白の大文字化)へフォールバック
+const medalLabel = (id: string): string =>
+  medalDisplay(id)?.name ?? id.replace(/-/g, ' ').toUpperCase();
 // 帝王系イベントの銘判定(タイムライン/メダル帯を紫電で飾る。表示のみの分類)
 const EMPEROR_RE = /kokurai|raitei|kotei|emperor|黒雷帝|雷帝|黒帝/i;
 
@@ -111,7 +112,9 @@ export function medalStripHtml(result: MatchResult, codexCount: number): string 
       : ALWAYS_BADGE.has(id as MedalId)
         ? 'enza-diamond enza-diamond--gold'
         : 'enza-diamond';
-    return `<div class="ersl-medal-chip${mod}"><span class="${dia}" aria-hidden="true"></span><span class="mname">${medalLabel(id)}</span>${n > 1 ? `<span class="mcount">×${n}</span>` : ''}</div>`;
+    const perXp = medalDisplay(id);
+    const xpTag = perXp ? `<span class="mxp">+${perXp.xp.toLocaleString()} XP</span>` : '';
+    return `<div class="ersl-medal-chip${mod}"><span class="${dia}" aria-hidden="true"></span><span class="mname">${medalLabel(id)}</span>${n > 1 ? `<span class="mcount">×${n}</span>` : ''}${xpTag}</div>`;
   });
   const overflow = entries.length - MAX;
   if (overflow > 0)
@@ -119,7 +122,7 @@ export function medalStripHtml(result: MatchResult, codexCount: number): string 
   const xp = result.summary.medalXp > 0 ? `${'\u3000'}<span class="xp">+${result.summary.medalXp.toLocaleString()} XP</span>` : '';
   return `
     <footer class="ersl-medals">
-      <span class="ersl-medals-cap">獲得メダル${'\u3000'}${entries.length}種${xp}${'\u3000'}·${'\u3000'}図鑑 ${codexCount}種</span>
+      <span class="ersl-medals-cap">獲得メダル${'\u3000'}${entries.length}種${xp}${'\u3000'}·${'\u3000'}図鑑 ${codexCount}/${MEDAL_TOTAL}種</span>
       <div class="ersl-medal-chips">${chips.join('')}</div>
     </footer>`;
 }
@@ -136,7 +139,7 @@ function matchProgressCardHtml(mnu: MenuScreenHost, progress: MatchProgress): st
     rows.push(`<div class="row"><span>${c.label}</span><span class="st">カモ解除</span></div>`);
   }
   rows.push(
-    `<div class="row"><span>メダル図鑑</span><span class="st dim">${mnu.profile.unlockedMedals.length}種 解禁</span></div>`,
+    `<div class="row"><span>メダル図鑑</span><span class="st dim">${mnu.profile.unlockedMedals.length}/${MEDAL_TOTAL}種 解禁</span></div>`,
   );
   return `
     <div class="ersl-plate-l">

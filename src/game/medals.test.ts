@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MedalTracker, SUPPRESS_BADGE, ALWAYS_BADGE, type KillCtx, type MedalEvent, type MedalId } from './medals';
+import { MedalTracker, SUPPRESS_BADGE, ALWAYS_BADGE, medalDisplay, MEDAL_TOTAL, type KillCtx, type MedalEvent, type MedalId } from './medals';
 
 function mk(overrides: Partial<KillCtx> = {}): KillCtx {
   return {
@@ -1239,5 +1239,21 @@ describe('M: 帝王編+W2システム連動メダル(emitManual)', () => {
 
   it('9種のIDは互いに一意で他区分と重複しない', () => {
     expect(new Set(M_IDS).size).toBe(M_IDS.length);
+  });
+});
+
+// ── W-ENZA FQA: リザルト表示lookup(読み取り専用の新公開面)のピン ──
+describe('medalDisplay / MEDAL_TOTAL', () => {
+  it('既知IDは実名とXPを返し、未知IDはnull(表示側の防御契約)', () => {
+    const d = medalDisplay('double-kill');
+    expect(d).not.toBeNull();
+    expect(d!.name).toBe('DOUBLE KILL');
+    expect(d!.xp).toBe(50);
+    expect(medalDisplay('no-such-medal')).toBeNull();
+  });
+
+  it('MEDAL_TOTALはMEDALS表の実総数(図鑑の分母。200種以上の実在保証)', () => {
+    expect(MEDAL_TOTAL).toBeGreaterThanOrEqual(200);
+    expect(Number.isInteger(MEDAL_TOTAL)).toBe(true);
   });
 });

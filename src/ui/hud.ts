@@ -926,7 +926,7 @@ export class Hud {
         <div class="hud-gg-top3" data-id="ggtop3"></div>
       </div>
       <div class="hud-death" data-id="death" hidden>
-        <div class="hud-death-title">やられた</div>
+        <div class="hud-death-title">戦死</div>
         <div class="hud-death-sub">リスポーンまで <span data-id="respawn">0.0</span> 秒</div>
       </div>
       <!-- R11 キルカメラ・シネマ: #hud直下(生存時は.hud-death暗幕の外)。

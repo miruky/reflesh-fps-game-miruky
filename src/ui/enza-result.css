@@ -674,6 +674,17 @@
   font-size: 10px;
   color: var(--hagane-3);
 }
+/* FQA: メダル個別XP(モック06「+500 XP」相当。実MEDALS表の値) */
+.ersl-medal-chip .mxp {
+  font-family: var(--font-inst);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--kogane-deep);
+  white-space: nowrap;
+}
+.ersl-medal-chip--emperor .mxp {
+  color: rgba(223, 168, 255, 0.75);
+}
 .ersl-medal-chip--gold {
   border-color: rgba(245, 208, 107, 0.45);
 }

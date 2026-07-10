@@ -43,8 +43,26 @@
     grid-template-columns: 1fr;
   }
 
+  /* FQA: 消さずに下部の薄帯へ(画質の再読み込み等、注記の可視性を狭幅でも保証) */
   .eopt-detail {
+    position: sticky;
+    bottom: 8px;
+    padding: 10px 16px;
+  }
+  .eopt-detail__icon,
+  .eopt-detail__en {
     display: none;
+  }
+  .eopt-detail__title {
+    font-size: 15px;
+    margin: 0;
+  }
+  .eopt-detail__desc {
+    font-size: 12px;
+    margin: 2px 0 0;
+  }
+  .eopt-detail__note {
+    margin: 2px 0 0;
   }
 }
 

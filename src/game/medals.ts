@@ -647,6 +647,14 @@ export const ALWAYS_BADGE: ReadonlySet<MedalId> = new Set<MedalId>([
   'kurogane-slayer', // 帝王編ラスボス「クロガネ」撃破
 ]);
 
+// リザルト表示用の読み取り専用lookup(W-ENZA FQA): メダル帯の実名/XP表示と図鑑分母。
+// MEDALS表は非exportのまま(書き換え不可の構造を維持)、未知IDはnullで表示側が防御する
+export function medalDisplay(id: string): { name: string; xp: number } | null {
+  const def = (MEDALS as Record<string, MedalDef>)[id];
+  return def ? { name: def.name, xp: def.xp } : null;
+}
+export const MEDAL_TOTAL: number = Object.keys(MEDALS).length;
+
 // アナウンサー音声の読み上げ優先度(大きいほど優先)。1キルで複数取得時に最上位を1件だけ読む
 export function medalRank(id: MedalId): number {
   // L: 超高チェーン

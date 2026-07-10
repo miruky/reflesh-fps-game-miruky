@@ -6,6 +6,7 @@ import type { MatchResult } from '../../game/match';
 import type { MatchProgress } from '../../game/progression';
 import type { MenuScreenHost } from './host';
 import { matchStoryHtml, medalStripHtml, progressHtml, statCardsHtml } from './result';
+import { medalDisplay, MEDAL_TOTAL } from '../../game/medals';
 
 function fixtureResult(overrides: Partial<MatchResult> = {}): MatchResult {
   return {
@@ -125,7 +126,7 @@ describe('medalStripHtml (獲得メダル帯)', () => {
     expect(html).toContain('+2</span>'); // 10-8=2件の集約
     expect(html).toContain('×10');
     expect(html).toContain('+2,250 XP'); // medalXp実数
-    expect(html).toContain('図鑑 148種');
+    expect(html).toContain(`図鑑 148/${MEDAL_TOTAL}種`); // FQA: 分母=MEDALS表の実総数
     expect(html).toContain('10種'); // 取得種数
   });
 
@@ -140,9 +141,10 @@ describe('medalStripHtml (獲得メダル帯)', () => {
       10,
     );
     expect(html).toContain('ersl-medal-chip--emperor');
-    expect(html).toContain('KOKURAI 50');
+    expect(html).toContain(medalDisplay('kokurai-50')!.name); // FQA: MEDALS表の実名表記
     expect(html).toContain('ersl-medal-chip--gold');
-    expect(html).toContain('NUCLEAR');
+    expect(html).toContain('NUCLEAR'); // 実名が英名のメダルはそのまま
+    expect(html).toContain(`+${medalDisplay('kokurai-50')!.xp.toLocaleString()} XP`); // 個別XP
   });
 });
 
