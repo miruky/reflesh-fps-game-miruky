@@ -285,6 +285,12 @@ const MACRO_NOISE_GLSL = /* glsl */ `
 `;
 
 const DEG = Math.PI / 180;
+// R55 W-C3 [9]: ミニマップに登録する箱の最小フットプリント面積(m²)。buildProp() の
+// 幹/支柱/竹稈など小物(prop:true だが decor:true ではない=幹は構造的に「幹単体」で
+// 別途 decor:true の樹冠が上に乗る等)を w*d が小さいという理由だけで弾き、微小装飾の
+// 矩形アイコンでミニマップが埋まる問題を解消する(中型建物/大型障害だけを残す)。
+// 6m² ≈ 2m×3m 程度の小屋/大型什器サイズが下限の目安(電柱1m×1m/街灯1m×1m/竹0.2m×0.2m等は除外)。
+const MINIMAP_MIN_AREA = 6;
 const EXOTIC_HOLD_FIRE_IDS = new Set(['banjin-smg', 'fujin-fan', 'gouen-musket', 'shinkirou-sniper']);
 const LOOK_BASE = 0.0022;
 // ゲームパッドのヒップファイア時アシストゲート(マウスはADS時のみ、パッドは常時BO3準拠)
@@ -1065,6 +1071,12 @@ export class Match {
     // R55 ④: 一人称キルカム(killer=プレイヤー)は武器を表示、三人称シネマ(killer=bot)は
     // 非表示(viewModelはカメラの子のため、カメラが三人称位置へ動くと銃が浮いて映るのを防ぐ)
     setViewmodelVisible: (v: boolean) => { this.viewModel.root.visible = v; },
+    // R55 W-C3 [26]: カメラが実際に一人称FPSビューを描画中か(RC-XD操縦中/旧来の死亡三人称
+    // killcam中はカメラを別システムが所有し、camera.fov/位置はプレイヤーの実効姿勢ではない)。
+    // これを実配線しない場合 killcam.ts 側は getPlayer().alive のみへフォールバックし、
+    // RC-XD操縦中(alive=trueのまま)は保護対象外になってしまう(recordFrameのeye/yaw/pitch/fov
+    // 保護ゲート=fkLast* が本来の目的を果たさない)。
+    isFpsView: () => !this.rcxdActive && !this.killcamCamActive && this.player.alive,
   });
 
   constructor(
@@ -1688,7 +1700,7 @@ export class Match {
           hp: brkSpec.hp,
           maxHp: brkSpec.hp,
         });
-        if (!isDecor) {
+        if (!isDecor && spec.w * spec.d >= MINIMAP_MIN_AREA) {
           this.minimapBoxData.push({ x: spec.x, z: spec.z, w: spec.w, d: spec.d, handle: collider.handle });
         }
         continue;
@@ -1743,7 +1755,7 @@ export class Match {
             this.scene.add(mesh);
           }
         }
-        if (!isDecor) {
+        if (!isDecor && spec.w * spec.d >= MINIMAP_MIN_AREA) {
           this.minimapBoxData.push({ x: spec.x, z: spec.z, w: spec.w, d: spec.d });
         }
       }

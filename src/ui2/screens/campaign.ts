@@ -398,7 +398,7 @@ function progressCardHtml(host: Ui2Host, progress: CampaignProgress): string {
   const xpRows = progress.xpBreakdown
     .map((entry, i) => {
       const daily = entry.label.startsWith('デイリー達成！');
-      return `<li${daily ? ' class="daily"' : ''} style="--i:${i}"><span>${esc(entry.label)}</span><span class="xp">+${entry.xp}</span></li>`;
+      return `<li${daily ? ' class="daily"' : ''} style="--i:${i}"><span>${esc(entry.label)}</span><span class="xp">+${entry.xp.toLocaleString('en-US')}</span></li>`;
     })
     .join('');
   const level = progress.levelAfter;
@@ -473,9 +473,13 @@ export const mountMissionResult: ScreenMount = (host, root, opts) => {
   const unlockNote = progress.chapterUnlocked
     ? `<p class="u2c-note unlock">新章解放: ${esc(CAMPAIGN.find((c) => c.id === progress.chapterUnlocked)?.title ?? '')}</p>`
     : '';
-  const firstNote = progress.firstClear
-    ? '<p class="u2c-note first">初制圧ボーナス +800 XP</p>'
-    : '';
+  // R55 W-C3[MEDIUM-13]: 「+800 XP」の焼き込みはxpMul倍(通常500倍)後の実額と食い違う
+  // 架空値だった。xpBreakdown内の実エントリから実額を引く(無ければ表示しない)。
+  const firstClearBonus = progress.xpBreakdown.find((e) => e.label === '初制圧ボーナス')?.xp;
+  const firstNote =
+    progress.firstClear && firstClearBonus != null
+      ? `<p class="u2c-note first">初制圧ボーナス +${firstClearBonus.toLocaleString('en-US')} XP</p>`
+      : '';
   const challengeNote =
     won && mission?.challenge
       ? `<p class="u2c-note challenge">${progress.challengeMet ? '挑戦達成！' : '挑戦未達'}\u3000${esc(mission.challenge.label)}</p>`

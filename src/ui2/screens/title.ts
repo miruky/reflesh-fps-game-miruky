@@ -3,8 +3,10 @@
 // モックの情景レイヤは1920×1080のPNGアセットだったため、アセットレス鉄則に従い
 // 同構図(光柱7本/目盛環+内接菱/輪鍔短剣/橙の地割れ/火の粉/雨条/ビネット)を
 // シード固定の決定論的インラインSVGとして再現している。
-// 1920×1080固定コンポジションを min(w/1920, h/1080) の一様スケールで全ビューポートに適合させる
-// (モック自体が固定ステージ設計のため、この方式が構図を正確に保存する)。
+// 1920×1080固定コンポジションは、コーディネータ(menu2.ts)の .u2-stage が
+// viewportへ scale-to-fit する(共通基盤=ui2.css)。本画面はその内側でモック座標を
+// 逐語移植するのみで独自の再スケールは持たない
+// (旧実装は常にs=1になる死んだ二重スケール処理を持っていたため撤去した)。
 import '../title.css';
 import { BUILD_LABEL } from '../../version';
 
@@ -229,7 +231,6 @@ export function mountTitle(host: TitleHost, root: HTMLElement, onStart: () => vo
     `</div>`;
   root.appendChild(el);
 
-  const stage = el.querySelector<HTMLElement>('.u2-title__stage');
   const buttons = Array.from(el.querySelectorAll<HTMLButtonElement>('.u2-title__nav-item'));
   const credits = el.querySelector<HTMLElement>('.u2-title__credits');
   // W-C: クレジットモーダル表示中のフォーカストラップ用。credits以外の背景コンテナ。
@@ -308,15 +309,6 @@ export function mountTitle(host: TitleHost, root: HTMLElement, onStart: () => vo
   };
   window.addEventListener('keydown', onKey);
 
-  // 1920×1080固定ステージの一様スケール適合
-  const rescale = (): void => {
-    const s = Math.min(el.clientWidth / 1920, el.clientHeight / 1080);
-    stage?.style.setProperty('--u2s', String(s));
-  };
-  const ro = new ResizeObserver(rescale);
-  ro.observe(el);
-  rescale();
-
   // 入場儀式(600ms、reduce時はCSS側で短絡)
   requestAnimationFrame(() => el.classList.add('u2-title--in'));
   const focusRaf = requestAnimationFrame(() => {
@@ -327,7 +319,6 @@ export function mountTitle(host: TitleHost, root: HTMLElement, onStart: () => vo
   return {
     dispose(): void {
       window.removeEventListener('keydown', onKey);
-      ro.disconnect();
       cancelAnimationFrame(focusRaf);
       el.remove();
     },

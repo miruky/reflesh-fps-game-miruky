@@ -210,10 +210,12 @@ export interface KillcamDeps {
    */
   setViewmodelVisible(v: boolean): void;
   /**
-   * R55 W-C2 ④: カメラが実際に一人称FPSビュー(通常プレイ/ADS)を描画中かどうか。
-   * RC-XD操縦中や旧来の死亡三人称killcam中はカメラを別システムが所有し、その camera.fov は
-   * プレイヤーの実効FOVではない共有値になる。recordFrame はこれが false の間、player slot の
-   * FOV(スロット7)を直前の有効値のまま保持し、他システム由来の値を録画しない。
+   * R55 W-C2/W-C3 ④: カメラが実際に一人称FPSビュー(通常プレイ/ADS)を描画中かどうか。
+   * RC-XD操縦中や旧来の死亡三人称killcam中はカメラ(位置/向き/FOV)を別システムが所有し、
+   * eyePosition/yaw/pitch/camera.fov はプレイヤーの実効視点ではない共有値になる。recordFrame は
+   * これが false の間、player slot の eye/yaw/pitch/FOV(スロット0-4,7)を直前の有効値のまま
+   * 保持し、他システム由来の値を録画しない(match.ts側は
+   * `!rcxdActive && !killcamCamActive && player.alive` を実配線する)。
    * オプショナル: 未実装(undefined)の場合は getPlayer().alive のみで後方互換フォールバックする
    * (RC-XD中はalive=trueのままのため完全な判定ではないが、既存挙動を壊さず最小の防御になる)。
    */
@@ -240,6 +242,16 @@ export class KillcamController {
   // R55 W-C2 ④: recordFrame が player slot の FOV(スロット7)を最後に「一人称FPSビュー中」に
   // 記録した値。isFpsView()===false の間はこの値を保持して録画する(他システム所有fov排除)。
   private fkLastFov           = FK_DEFAULT_FOV;
+  // R55 W-C3 [26]: fkLastFov と同じ理由で eye/yaw/pitch(スロット0-4)も直前の一人称有効値を
+  // 保持する。isFpsView()===false の間(RC-XD操縦中/旧来の死亡三人称killcam中)は
+  // カメラが別システム所有のため、プレイヤーの eyePosition/yaw/pitch を録画してしまうと
+  // 「見ていた画」と無関係な壊れフレームが一人称キルカム再生に混入する(fovだけの保護では
+  // 不十分だった=RC-XDキル等で位置/向きは腕誤差ではなく別物理エンティティ由来になり得る)。
+  private fkLastEyeX          = 0;
+  private fkLastEyeY          = 0;
+  private fkLastEyeZ          = 0;
+  private fkLastYaw           = 0;
+  private fkLastPitch         = 0;
   private fkPlaying           = false;
   fkFlash                     = 0;
   private fkCursor            = 0; // 再生中のゲーム時刻カーソル(begin で窓先頭へ初期化)
@@ -462,20 +474,29 @@ export class KillcamController {
     const bots = this.deps.getBots();
     const h   = this.fkHead;
     const off = h * FK_FRAME_STRIDE;
-    const pe  = this.deps.getPlayer().eyePosition;
-    this.fkBuf[off    ] = pe.x;
-    this.fkBuf[off + 1] = pe.y;
-    this.fkBuf[off + 2] = pe.z;
-    this.fkBuf[off + 3] = this.deps.getPlayer().yaw;
-    this.fkBuf[off + 4] = this.deps.getPlayer().pitch;
+    // R55 W-C3 [26]: eye/yaw/pitch/fov(スロット0-4,7)はRC-XD操縦中/旧来の死亡三人称killcam中に
+    // 他システムが一時的にカメラを所有するフレームで、プレイヤーの実効視点とは無関係な値になり
+    // 得る。isFpsView()(未実装なら getPlayer().alive で代替=後方互換フォールバック)が true の
+    // 間だけ最新値を fkLast* へ記録し、false の間は直前の一人称有効値を保持する
+    // (fkSetCameraFirstPersonが他システム由来の姿勢を再生してしまうFrankensteinフレーム防止。
+    // 従来はfovのみ保護対象で、eye/yaw/pitchは未保護だった)。
+    const fpsView = this.deps.isFpsView ? this.deps.isFpsView() : this.deps.getPlayer().alive;
+    if (fpsView) {
+      const pe = this.deps.getPlayer().eyePosition;
+      this.fkLastEyeX  = pe.x;
+      this.fkLastEyeY  = pe.y;
+      this.fkLastEyeZ  = pe.z;
+      this.fkLastYaw   = this.deps.getPlayer().yaw;
+      this.fkLastPitch = this.deps.getPlayer().pitch;
+      this.fkLastFov   = this.deps.getCamera().fov;
+    }
+    this.fkBuf[off    ] = this.fkLastEyeX;
+    this.fkBuf[off + 1] = this.fkLastEyeY;
+    this.fkBuf[off + 2] = this.fkLastEyeZ;
+    this.fkBuf[off + 3] = this.fkLastYaw;
+    this.fkBuf[off + 4] = this.fkLastPitch;
     this.fkBuf[off + 5] = this.deps.getPlayer().alive ? 1 : 0;
     this.fkBuf[off + 6] = this.deps.getAdsProgress();    // ADS率(0..1)
-    // R55 W-C2 ④: camera.fov はRC-XD操縦中/旧来の死亡三人称killcam中に他システムが一時的に
-    // 所有する共有値。isFpsView()(未実装なら getPlayer().alive で代替)が true の間だけ
-    // 実効FOV(ADS縮小を含む)を記録し、false の間は直前の有効値を保持する
-    // (fkSetCameraFirstPersonが他システム由来のfovを再生してしまうFrankensteinフレーム防止)。
-    const fpsView = this.deps.isFpsView ? this.deps.isFpsView() : this.deps.getPlayer().alive;
-    if (fpsView) this.fkLastFov = this.deps.getCamera().fov;
     this.fkBuf[off + 7] = this.fkLastFov;                              // 実効FOV(ADS縮小を含む)
     const nb = Math.min(bots.length, FK_MAX_BOTS);
     this.fkBotCnt[h] = nb;

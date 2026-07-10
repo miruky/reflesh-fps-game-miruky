@@ -61,6 +61,9 @@ export interface Ui2Host {
   mountWeaponPreview(): void;
   teardownWeaponPreview(): void;
   previewWeaponId(id: string): void;
+  // W-C3[21]: 投擲物ビュー等、プレビューを表示しない間はRAFを止める(disposeはしない=再開が速い)
+  suspendWeaponPreview(): void;
+  resumeWeaponPreview(): void;
 }
 
 // main.tsが消費するメニューの公開面(旧Menuと同一。1行スワップの根拠)

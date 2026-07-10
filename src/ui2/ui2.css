@@ -49,12 +49,17 @@
   text-align: inherit;
   cursor: pointer;
 }
-/* #menu 配下のグローバル focus 規則(#menu button:focus-visible=詳細度1,1,1、色=コーラル#ff574f)より
-   強い詳細度で焔座の熾火アウトラインを上書きする(#menu .u2-stage button:focus-visible=1,2,1)。 */
+/* #menu 配下のグローバル focus 規則(style.css: #menu button:focus{outline+box-shadowリング}/
+   :focus-visible{border-radius:2px})を、焔座の角ばった熾火アウトラインへ一括で正す。
+   style.cssは複数プロパティ(outline/box-shadow/border-radius)でリングを描くため、outlineだけ
+   上書きするとbox-shadow/border-radiusのリングが漏れて「角丸+光輪の箱」がモック非準拠で残る
+   (タイトルnavで3周再発した根本)。ここで全プロパティを中和し、焔座は熾火の角アウトライン一本に。 */
 #menu .u2-stage button:focus-visible,
 #menu .u2-stage button:focus {
   outline: 2px solid #ffa061;
   outline-offset: 3px;
+  box-shadow: none; /* style.cssのember光輪リングを断つ(発光は非focus時に戻る) */
+  border-radius: 0; /* style.cssの:focus-visible border-radius:2px(角丸)を角ばりへ戻す */
 }
 
 /* ═══ モック共通keyframes(mock helmetから逐語。単一定義でscreen間の重複を防ぐ) ═══ */

@@ -1085,6 +1085,12 @@ export class Bot {
   private hardStuckCheckS = ZOMBIE_HARD_STUCK_CHECK_S;
   private hardStuckAnchorX = 0;
   private hardStuckAnchorZ = 0;
+  // R55 W-C3: 前フレームの blocked(前進を実際に阻まれたか)。meleeRange以内かの判定は
+  // 直線距離だけでは「壁越しの偽近接」(壁の向こうにプレイヤーがいて距離だけは近い)を
+  // 見分けられないため、「近接射程内 かつ 前フレーム時点で前進ブロックされていない」
+  // (=本当に密着できている)場合にのみ意図的低速ガードを適用する。blockedはKCC計算後に
+  // 確定するため1フレーム遅延で保持する(updateZombie末尾で毎フレーム更新)。
+  private prevZombieBlocked = false;
 
   // ── R53-W2 ストーリー(campaign.ts BossPhase契約/追跡・護衛ミッション) ──
   // true の間、humanoid の非戦闘移動 wish を「target から離れる」方向へ固定する
@@ -1696,6 +1702,7 @@ export class Bot {
     this.hardStuckCheckS = ZOMBIE_HARD_STUCK_CHECK_S;
     this.hardStuckAnchorX = x;
     this.hardStuckAnchorZ = z;
+    this.prevZombieBlocked = false; // R55 W-C3: 前個体/転移前の壁越しblocked状態を持ち越さない
   }
 
   // ボスフェーズ遷移時にmatchが呼ぶ。省略したキーは現状維持(部分更新)。
@@ -2488,8 +2495,11 @@ export class Bot {
       // ── アンスタック: ラッチ中は横バイアスをwishへ直接注入する(humanoidのunstuckStrafeOverride
       // をゾンビへ移植)。headingは直後に再びtarget方向へ上書きされるため、heading操作ではwish
       // に影響を残せない。dist>meleeRangeガード必須: 密着時の意図的低速(*0.15)を詰まりと
-      // 誤判定させないため、近接射程内ではバイアスを注入しない。
-      if (this.unstuckStrafeOverride !== null && dist > meleeRange) {
+      // 誤判定させないため、近接射程内ではバイアスを注入しない。ただし直線距離だけの
+      // dist<=meleeRangeは「壁越しの偽近接」(壁の向こうにプレイヤーがいて距離だけ近い)を
+      // 見分けられない。R55 W-C3: 前フレームで実際に前進ブロックされていた(prevZombieBlocked)
+      // なら、近接射程内でも偽近接とみなしバイアス注入を有効にする。
+      if (this.unstuckStrafeOverride !== null && (dist > meleeRange || this.prevZombieBlocked)) {
         // R55: 迂回の連続失敗回数に応じて横成分を強める(浅い迂回で同じ壁へ押し戻される
         // のを防ぐ)。0.8倍(初回)〜最大1.6倍(ZOMBIE_UNSTUCK_MAX_ATTEMPTS到達)で頭打ち。
         const strafeMul = Math.min(1.6, 0.8 + this.zombieUnstuckAttempts * 0.2);
@@ -2522,7 +2532,12 @@ export class Bot {
     // あっても、zombie-director側のテレポート救済(zombieHardStuck/zombieHardStuckForce)
     // が最終的にラウンド進行を保証できる。登坂中/近接交戦中(意図的低速)/目標喪失中は
     // 誤検知するため測定を一時停止し、その間はアンカーだけ現在地に据え直す。
-    if (!target || this.climbing || distToPlayer <= meleeRange) {
+    // R55 W-C3: 「近接交戦中」の判定は直線距離(distToPlayer<=meleeRange)だけでは
+    // 「壁越しの偽近接」(壁の向こうにプレイヤーがいて距離だけ近い=実際は前進ブロックされ
+    // 詰まっている)を意図的低速と誤判定してしまい、最終安全弁ごと無効化されてしまう。
+    // 前フレームで実際に前進ブロックされていた(prevZombieBlocked)場合は「本当に密着」
+    // とはみなさず、サンプリングを止めない(壁越し偽近接でもhardStuckSが積算される)。
+    if (!target || this.climbing || (distToPlayer <= meleeRange && !this.prevZombieBlocked)) {
       this.hardStuckCheckS = ZOMBIE_HARD_STUCK_CHECK_S;
       this.hardStuckAnchorX = pos.x;
       this.hardStuckAnchorZ = pos.z;
@@ -2708,6 +2723,11 @@ export class Bot {
     const targetAmp = Math.min(1, step / Math.max(1e-4, this.moveSpeed * dt));
     this.walkAmp += (targetAmp - this.walkAmp) * Math.min(1, dt * 8);
     this.walkPhase += step * 8;
+    // R55 W-C3: 次フレームの「近接射程内ガード」判定用に今フレームのblockedを保持する
+    // (blockedはKCC計算後にしか確定しないため1フレーム遅延。distToPlayer<=meleeRangeでは
+    // forcedFull=trueで毎フレームblockedがフル計算されるため、ガードが参照する局面では
+    // 常に最新の実測値になる)。
+    this.prevZombieBlocked = blocked;
   }
 
   // アンスタック用: 指定角度の水平方向へ短いレイを撃ち、障害物があれば true を返す
@@ -3265,6 +3285,7 @@ export class Bot {
     this.hardStuckCheckS = ZOMBIE_HARD_STUCK_CHECK_S;
     this.hardStuckAnchorX = spawn.x;
     this.hardStuckAnchorZ = spawn.z;
+    this.prevZombieBlocked = false; // R55 W-C3: 前個体の壁越しblocked状態を持ち越さない
     // ゾンビKCC距離LODの前回movedキャッシュもリセット(プール再利用の取りこぼし防止。
     // 新スポーンの初フレームがLODスキップ側に回っても前個体の移動量を引き継がない)
     this.prevZombieMoved.x = 0;

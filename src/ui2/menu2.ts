@@ -105,6 +105,8 @@ export class Menu2 implements MenuApi {
         const def = WEAPON_DEFS[id];
         if (def) this.weaponPreview?.setWeapon(def);
       },
+      suspendWeaponPreview: () => this.weaponPreview?.suspend(),
+      resumeWeaponPreview: () => this.weaponPreview?.resume(),
     };
     this.showMain();
   }
@@ -249,9 +251,11 @@ export class Menu2 implements MenuApi {
   }
 
   private focusables(): HTMLElement[] {
+    // W-C3[8]: 装飾用の◀▶ステッパー等はtabindex="-1"で自前フォーカス管理するため、
+    // 汎用ゲームパッド走査(▲▼/Ⓐ)から除外する(視覚ハイライトとのズレ防止)。
     return Array.from(
       this.stage.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), select, input:not([type="hidden"]), [tabindex]:not([tabindex="-1"])',
+        'button:not([disabled]):not([tabindex="-1"]), select, input:not([type="hidden"]), [tabindex]:not([tabindex="-1"])',
       ),
     ).filter((el) => el.offsetParent !== null);
   }

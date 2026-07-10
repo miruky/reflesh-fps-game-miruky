@@ -2145,6 +2145,13 @@ export function buildGunBody(
       // full-rail機は耳を少し上げて上端レール線に枠を揃える(0.076)。他機は 0.070。
       const earPy = det.railTop === 'full' ? 0.076 : 0.070;
       for (const sx of [-1, 1] as const) {
+        // R55 W-C3 Fix-6: 耳の直下(y=BARREL_Y〜earPy)を埋める細いサイト基部を追加し、
+        // バレル/ハンドガードへ接地させる — 耳だけが本体から浮いた棒に見える問題の根治。
+        // 耳と同じ幅/奥行(0.005×0.008)・同じx/zでロール無しの縦ポストなので silhouette は不変。
+        boxP(
+          metalParts, 0x6a7e9a, 0.005, earPy - BARREL_Y, 0.008,
+          sx * 0.038, (BARREL_Y + earPy) / 2, -recD - 0.006,
+        );
         // Fix-1: 後照星耳を明るいミリタリーグレー(0x6a7e9a)へ。暗ステージで照門が消える問題の根治
         boxP(metalParts, 0x6a7e9a, 0.005, 0.065, 0.008, sx * 0.038, earPy, -recD - 0.006, 0, 0, sx * 0.18);
         amberDot(sx * 0.031, 0.064, -recD - 0.009, 0.0024);
@@ -4261,7 +4268,12 @@ export class ViewModel {
       const g = this.gun.getObjectByName(name);
       if (!g) continue;
       const existing = g.getObjectByName('vm:katanaVeins');
-      if (on && !existing) {
+      // R55 W-C3根治(MEDIUM[15]): _darkMode中(黒帝+雷帝併存)は vm:darkBlade 側が
+      // 同一寸法(0.86m/z-0.62)の雷脈を既に提供する(_buildLightningBladeMeshes L4435と
+      // 同一ガード)。vm:lightningBlade 側も darkMode 中は 0.86m 実寸で構築される(L4378-4379)ため、
+      // ここで isDark=false(0.30m基準)の雷脈を追加すると刀身寸法と食い違う雷脈が二重描画される。
+      const skipAdd = name === 'vm:lightningBlade' && this._darkMode;
+      if (on && !existing && !skipAdd) {
         this._addKatanaVeins(g as THREE.Group, name === 'vm:darkBlade');
       } else if (!on && existing) {
         existing.traverse((node) => {

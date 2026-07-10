@@ -5,7 +5,13 @@
 // 架空値(稼働ロビー214/PING 8ms/BETA等)は排し、全て実データをバインドする。
 import '../hub.css';
 import { CAMPAIGN } from '../../game/campaign';
-import { dailiesFor, dateStringFromSeed, refreshDailiesDate, todayDateSeed } from '../../game/dailies';
+import {
+  dailiesFor,
+  dateStringFromSeed,
+  refreshDailiesDate,
+  todayDateSeed,
+  type DailyChallengeDef,
+} from '../../game/dailies';
 import { MODE_IDS } from '../../game/modes';
 import { levelFromXp, rankNameFor } from '../../game/progression';
 import { STAGES } from '../../game/stages';
@@ -237,6 +243,24 @@ function earthSvg(): string {
   </svg>`;
 }
 
+// R55 W-C3[19]: デイリーカードの可変部(ラベル/進捗バー/カウント)のみを内包する断片。
+// mount時とtick()内の日跨ぎ再計算の両方から呼べるよう純関数として括り出す
+// (hub-daily-leftの残り時間表示は既存のtick()が別途毎秒更新するため対象外)。
+function dailyBodyHtml(daily: DailyChallengeDef, done: number): string {
+  return (
+    `<span style="font-size:14.5px;font-weight:700;color:#E4DECF;">${daily.label}\u3000<span style="color:#9FE39F;${MONO}font-size:12px;font-weight:400;">報酬 +${fmtInt(daily.rewardXp)} XP</span></span>` +
+    `<div style="display:flex;align-items:center;gap:12px;">` +
+    `<div style="position:relative;flex:1;height:4px;background:rgba(232,227,216,0.12);">` +
+    `<div style="width:${Math.round((done / Math.max(1, daily.target)) * 100)}%;height:4px;background:#FF6B2B;"></div>` +
+    (daily.target > 1
+      ? `<div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg, transparent 0 calc(${(100 / daily.target).toFixed(2)}% - 2px), rgba(4,4,8,0.9) calc(${(100 / daily.target).toFixed(2)}% - 2px) ${(100 / daily.target).toFixed(2)}%);"></div>`
+      : '') +
+    `</div>` +
+    `<span style="${MONO}font-size:12px;color:#E8E3D8;">${done} / ${daily.target}</span>` +
+    `</div>`
+  );
+}
+
 export const mountHub: ScreenMount = (host, root) => {
   root.setAttribute('data-id', 'hub-root');
   root.classList.toggle('u2h-reduce', host.reducedMotion());
@@ -455,19 +479,12 @@ export const mountHub: ScreenMount = (host, root) => {
     }
     ${
       daily
-        ? `<div class="u2h-card" style="position:relative;padding:18px 24px;display:flex;flex-direction:column;gap:10px;">
+        ? `<div class="u2h-card" data-id="hub-daily-card" style="position:relative;padding:18px 24px;display:flex;flex-direction:column;gap:10px;">
       <div style="display:flex;justify-content:space-between;align-items:baseline;">
         <span style="${MONO}font-size:10.5px;letter-spacing:0.24em;color:#77705F;">本日の試練\u3000DAILY</span>
         <span data-id="hub-daily-left" style="${MONO}font-size:10.5px;color:#FF8B4D;"></span>
       </div>
-      <span style="font-size:14.5px;font-weight:700;color:#E4DECF;">${daily.label}\u3000<span style="color:#9FE39F;${MONO}font-size:12px;font-weight:400;">報酬 +${fmtInt(daily.rewardXp)} XP</span></span>
-      <div style="display:flex;align-items:center;gap:12px;">
-        <div style="position:relative;flex:1;height:4px;background:rgba(232,227,216,0.12);">
-          <div style="width:${Math.round((dailyDone / Math.max(1, daily.target)) * 100)}%;height:4px;background:#FF6B2B;"></div>
-          ${daily.target > 1 ? `<div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg, transparent 0 calc(${(100 / daily.target).toFixed(2)}% - 2px), rgba(4,4,8,0.9) calc(${(100 / daily.target).toFixed(2)}% - 2px) ${(100 / daily.target).toFixed(2)}%);"></div>` : ''}
-        </div>
-        <span style="${MONO}font-size:12px;color:#E8E3D8;">${dailyDone} / ${daily.target}</span>
-      </div>
+      <div data-id="hub-daily-body" style="display:contents">${dailyBodyHtml(daily, dailyDone)}</div>
     </div>`
         : ''
     }
@@ -502,6 +519,10 @@ export const mountHub: ScreenMount = (host, root) => {
   // 実時刻(JST表記)+デイリー残り時間。1秒間隔・disposeで確実に停止
   const clockEl = root.querySelector<HTMLElement>('[data-id="hub-clock"]');
   const dailyLeftEl = root.querySelector<HTMLElement>('[data-id="hub-daily-left"]');
+  // R55 W-C3[19]: 日付跨ぎ検知用にmount時点のYYYYMMDDを保持する。tick()が実時計と
+  // 毎秒照合し、変わっていたらデイリーカードの可変部(ラベル/進捗/目標)だけ再計算して
+  // 差し替える(残り時間の表示は下で既に毎秒更新されている)。
+  let dailyDateStr = dateStringFromSeed(dailySeed);
   const tick = (): void => {
     const now = new Date();
     if (clockEl) {
@@ -516,6 +537,22 @@ export const mountHub: ScreenMount = (host, root) => {
       const m = Math.floor((left % 3600000) / 60000);
       const s = Math.floor((left % 60000) / 1000);
       dailyLeftEl.textContent = `残り ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+    const curDateStr = dateStringFromSeed(todayDateSeed());
+    if (curDateStr !== dailyDateStr) {
+      dailyDateStr = curDateStr;
+      const seed = todayDateSeed();
+      const defs = dailiesFor(seed);
+      refreshDailiesDate(p.daily, dateStringFromSeed(seed));
+      const prog = p.daily.progress;
+      let idx = defs.findIndex((d, i) => (prog[i] ?? 0) < d.target);
+      if (idx < 0) idx = 2;
+      const cur = defs[idx];
+      if (cur) {
+        const done = Math.min(prog[idx] ?? 0, cur.target);
+        const body = root.querySelector<HTMLElement>('[data-id="hub-daily-body"]');
+        if (body) body.innerHTML = dailyBodyHtml(cur, done);
+      }
     }
   };
   tick();

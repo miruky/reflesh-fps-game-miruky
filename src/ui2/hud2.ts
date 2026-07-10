@@ -8,6 +8,7 @@ import { MOVE_SPEEDS } from '../game/player';
 import { SUPPRESS_BADGE, ALWAYS_BADGE, medalRank, starPoints, type MedalEvent, type MedalId } from '../game/medals';
 import type { PowerUpKind } from '../game/zombie-economy';
 import type { RadioSpeaker } from '../game/campaign';
+import { GG_LADDER } from '../game/modes';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -490,6 +491,10 @@ export class Hud2 {
   private lastUltActive = false; // オーバードライブ発動の立ち上がり検出用
   private scopeOn = false; // スコープ表示の立ち上がり検出用
   private wasSteady = false; // 息止め成立の立ち上がり検出用(集中グリント再発火)
+  // R55 W-C3 [24]: ガンゲームのランクアップ/セットバック・フラッシュ用タイマーハンドル。
+  // 連続発火時に個別ハンドルで管理し、他イベントのタイマーに巻き込まれて早期消灯しないようにする
+  private ggFlashTimerId = 0;
+  private ggSetbackTimerId = 0;
   private badgeSeq = 0; // バッジSVGの一意ID用カウンタ(gradient/filterのid衝突回避)
   private readonly badgeQueue: MedalEvent[] = []; // ALWAYS_BADGE複数同時→500ms間隔キュー
   private badgeQueueTimer = 0;
@@ -922,7 +927,7 @@ export class Hud2 {
       <div class="u2h-zbuy" data-id="zbuy" hidden></div>
       <!-- ガンゲーム: 右上にランク + 武器名 + トップ3リーダーボード -->
       <div class="hud-gg" data-id="gg" hidden>
-        <div class="hud-gg-rank" data-id="ggrank">1/20</div>
+        <div class="hud-gg-rank" data-id="ggrank">1/${GG_LADDER.length}</div>
         <div class="hud-gg-weapon" data-id="ggweapon"></div>
         <div class="hud-gg-top3" data-id="ggtop3"></div>
       </div>
@@ -1063,6 +1068,9 @@ export class Hud2 {
     this.scopeOn = false;
     this.wasSteady = false;
     this.lastZombiePerks = '';
+    // ガンゲームのランクアップ/セットバック・フラッシュタイマーも前試合から持ち越さない
+    if (this.ggFlashTimerId) { window.clearTimeout(this.ggFlashTimerId); this.ggFlashTimerId = 0; }
+    if (this.ggSetbackTimerId) { window.clearTimeout(this.ggSetbackTimerId); this.ggSetbackTimerId = 0; }
     // ★W4C C-1: MK.III状態の完全リセット。前試合の終了間際に発行されたモーメント
     // (キュー上限4件)が次試合の開幕へ流出するのを根治する
     this.mk3Moments = emptyMomentQueue();
@@ -2489,6 +2497,17 @@ export class Hud2 {
     } else {
       this.fkcWeaponEl.hidden = true;
     }
+    // R55 W-C3 [14]: killcam中は hud.update() が呼ばれない(main.ts)ため、直前の
+    // 'playing' フレームでスコープが開いていた場合、DOMスコープオーバーレイ(倍率/開度)が
+    // 再生映像に同期せず凍結表示され続ける。一人称killcamはADS/スコープFOVを再生カメラ側で
+    // 再現するため、DOM側の古いオーバーレイと二重表示になり「広角→超望遠へ説明なくジャンプ」
+    // する画になる。hideFinalKillcam() と対称に、killcam開始時点で強制クローズし、
+    // killcam再生中は常に素の画(オーバーレイなし)にする
+    const scope = this.el['scope'];
+    if (scope) {
+      scope.hidden = true;
+      this.scopeOn = false;
+    }
   }
 
   /** ファイナルキルカム終了: オーバーレイを隠す。スコープが残っていたら消す */
@@ -2740,17 +2759,27 @@ export class Hud2 {
     if (!inGG) return;
 
     const rank = snap.ggRank!;
-    this.text('ggrank', `${rank} / 20`);
+    this.text('ggrank', `${rank} / ${GG_LADDER.length}`);
     this.text('ggweapon', snap.ggWeaponName ?? '');
 
-    // ランクアップフラッシュ(1フレームだけ演出クラスを付与)
+    // ランクアップフラッシュ(1フレームだけ演出クラスを付与)。連続発火時は既存タイマーを
+    // clearTimeoutしてから張り直す(他イベントのタイマーに巻き込まれて早期消灯しないように
+    // ハンドルを個別保持する)
     if (snap.ggRankUpFlash) {
       el.classList.add('gg-rankup');
-      setTimeout(() => el.classList.remove('gg-rankup'), 600);
+      if (this.ggFlashTimerId) clearTimeout(this.ggFlashTimerId);
+      this.ggFlashTimerId = window.setTimeout(() => {
+        el.classList.remove('gg-rankup');
+        this.ggFlashTimerId = 0;
+      }, 600);
     }
     if (snap.ggSetback) {
       el.classList.add('gg-setback');
-      setTimeout(() => el.classList.remove('gg-setback'), 600);
+      if (this.ggSetbackTimerId) clearTimeout(this.ggSetbackTimerId);
+      this.ggSetbackTimerId = window.setTimeout(() => {
+        el.classList.remove('gg-setback');
+        this.ggSetbackTimerId = 0;
+      }, 600);
     }
 
     // トップ3リーダーボード

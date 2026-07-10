@@ -518,7 +518,12 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
     } else {
       const b = document.createElement('span');
       b.className = 'u2a-tab on';
-      b.textContent = view === 'secondary' ? TAB_LABELS.pistol : '投擲物';
+      // W-C3[20]: サブ武器タブ帯は拳銃固定ではなく、選択中secondaryIdの実クラスに従う
+      // (EXOTIC手裏剣「万刃」選択時は『拳銃』ではなく『特殊兵装』と一致させる)
+      b.textContent =
+        view === 'secondary'
+          ? TAB_LABELS[WEAPON_DEFS[loadout.secondaryId]?.class ?? 'pistol']
+          : '投擲物';
       tabs.appendChild(b);
     }
     const rb = document.createElement('span');
@@ -579,6 +584,8 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
         ensureAttachmentGates();
       } else {
         loadout.secondaryId = id;
+        // W-C3[20]: 選択直後にもタブ帯ラベルを新クラスへ同期する(視覚ビュー切替を待たない)
+        renderTabs();
       }
       host.saveLoadout();
       host.previewWeaponId(id);
@@ -915,7 +922,11 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
     renderTabs();
     renderList();
     renderDetail();
-    if (v !== 'grenade') {
+    if (v === 'grenade') {
+      // W-C3[21]: 投擲物ビュー中は3Dプレビューが非表示のままRAFを回し続けないよう止める
+      host.suspendWeaponPreview();
+    } else {
+      host.resumeWeaponPreview();
       host.previewWeaponId(v === 'secondary' ? loadout.secondaryId : loadout.primaryId);
     }
   };
@@ -971,9 +982,13 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
                 .querySelector<HTMLElement>('.u2a-tab.on')
                 ?.focus({ preventScroll: true });
             } else if (rowsHadFocus) {
-              q('weapon-list')
-                .querySelector<HTMLElement>('.u2a-row.on')
-                ?.focus({ preventScroll: true });
+              // W-C3[1]: 装備中の武器が新クラスに存在しないと`.u2a-row.on`がnullでフォーカスが
+              // body経由で戻るボタンへ飛ぶ。選択行が無ければ先頭の解放済み行へ確実にフォーカスする。
+              const target =
+                q('weapon-list').querySelector<HTMLElement>('.u2a-row.on') ??
+                q('weapon-list').querySelector<HTMLElement>('.u2a-row:not(.locked)');
+              target?.focus({ preventScroll: true });
+              target?.scrollIntoView({ block: 'nearest' });
             }
           }
         }

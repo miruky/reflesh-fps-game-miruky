@@ -100,6 +100,26 @@ describe('カモ段階表', () => {
     expect(CAMO_VISUALS.diamond.roughness).toBeLessThanOrEqual(0.2);
     expect(CAMO_VISUALS['dark-matter'].pattern).toBe('pulse');
   });
+
+  // R55 W-C3根治(LOW[27]): diamondのsparkle/envMapIntensityに機械検査が無かった。
+  // 白飛び再発禁止(bloom閾値0.9)の実務上限として sparkle<=0.6 / envMapIntensity<=1.0 を
+  // 全カモ(CAMO_VISUALS走査=CAMO_IDS+pap1-3+tokoyami+報酬カモを含む全定義)で機械検査する。
+  it('sparkle/envMapIntensity は指定時のみ、白飛び回避の上限内(sparkle<=0.6, envMapIntensity<=1.0)', () => {
+    for (const id of Object.keys(CAMO_VISUALS) as CamoId[]) {
+      const v = CAMO_VISUALS[id];
+      if (v.sparkle !== undefined) {
+        expect(v.sparkle, id).toBeGreaterThanOrEqual(0);
+        expect(v.sparkle, id).toBeLessThanOrEqual(0.6);
+      }
+      if (v.envMapIntensity !== undefined) {
+        expect(v.envMapIntensity, id).toBeGreaterThanOrEqual(0);
+        expect(v.envMapIntensity, id).toBeLessThanOrEqual(1.0);
+      }
+    }
+    // 現状 diamond のみが両フィールドを定義している(このテストが実際に判定していることの保証)
+    expect(CAMO_VISUALS.diamond.sparkle).toBeDefined();
+    expect(CAMO_VISUALS.diamond.envMapIntensity).toBeDefined();
+  });
 });
 
 describe('対象武器とクラス', () => {

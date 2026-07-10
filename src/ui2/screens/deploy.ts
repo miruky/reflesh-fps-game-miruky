@@ -264,6 +264,10 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
       b.dataset.section = s.id;
       b.textContent = s.label;
       b.setAttribute('aria-pressed', String(s.id === active));
+      // R55 W-C3[5]: hub直行(opts.section)で初期activeがmode以外の時、menu2.open()の
+      // [data-autofocus]最優先ロジックへ現在アクティブなナビ項目を宣言する
+      // (未宣言だと先頭のモード選択ナビへフォーカスが落ちてしまう)。
+      if (s.id === active) b.setAttribute('data-autofocus', '');
       b.addEventListener(
         'click',
         () => {
@@ -293,7 +297,17 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     // 同時生存上限は描画tier依存(deploy画面ではtier未知)のため、確実な範囲(低〜高)で表示。
     // R55 W-C: 超鬼畜ONだとmatch.tsが実スポーンをMath.ceil(botCount*1.5)へ引き上げるため、
     // '最大'ラベルにのみ同じ上限を反映する(row3のAIボット表示は生値のまま=旧仕様維持)。
-    const hellBotCount = sel.hellMode ? Math.ceil(stageDef.botCount * 1.5) : stageDef.botCount;
+    const rawHellBotCount = sel.hellMode ? Math.ceil(stageDef.botCount * 1.5) : stageDef.botCount;
+    // R55 W-C3[3]: match.tsは描画tier別に湧き数を頭打ちする(low16/medium28/high無制限)。
+    // それを再現せずに表示すると、既定(medium)でも実際より多い架空人数が出てしまうため、
+    // ここでも同じ式で再クランプする(理想は共有定数だが、当面はここに複製する)。
+    const tierCap =
+      host.settings.graphicsQuality === 'high'
+        ? Infinity
+        : host.settings.graphicsQuality === 'medium'
+          ? 28
+          : 16;
+    const hellBotCount = Math.min(tierCap, rawHellBotCount);
     const capLabel = isZombie
       ? `同時生存上限 ${ZOMBIE_MAX_ALIVE.low}\u301c${ZOMBIE_MAX_ALIVE.high}体`
       : `最大${hellBotCount + 1}人`;
@@ -491,6 +505,9 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
         sel.rogueRun = rogue.checked;
         host.saveLoadout();
         renderPanel(); // 排他(開始R/お守り)の活性を作り直す
+        // R55 W-C3[4]: 輪廻ONで開始R/体数が変わるため、右上ロビーカード/次ステージ帯も
+        // トグル直後に同期する(hellMode/allGiantModeトグルと同じ流儀)
+        refreshShared();
         if (hadFocus)
           q('panel-body')
             .querySelector<HTMLElement>('[data-id="rogueRun"]')

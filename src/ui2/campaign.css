@@ -204,7 +204,8 @@
   border-left: 2px solid transparent;
 }
 .u2c-mission:hover:not(:disabled),
-.u2c-mission:focus-visible {
+.u2c-mission:focus-visible,
+.u2c-mission:focus {
   color: #ffa061;
   transform: translateX(8px);
   border-left-color: rgba(255, 107, 43, 0.7);
@@ -344,8 +345,10 @@
   overflow: visible;
   /* u2c-shineは40%幅+translateX(-120%〜420%)で自走するため、overflow:visibleのまま
      だと左側(-120%地点)がボタン外の余白(章リストと右レールの間)に灰色矩形として漏れる。
-     右のスパー菱形(-8px)とシャインの右超過分は許容しつつ、左/上/下は箱の内側でクリップする */
-  clip-path: inset(0 -22px 0 0);
+     右のスパー菱形(-8px)とシャインの右超過分は許容しつつ、左/上/下は箱の内側でクリップする。
+     ただし下の:focus-visibleアウトライン(2px+offset3px=box外側へ最大5px)を切り落とさない
+     よう、上/下/左は-6pxだけ外側へ逃がしておく(R55 W-C3[MEDIUM-12]) */
+  clip-path: inset(-6px -22px -6px -6px);
 }
 .u2c-cta:hover {
   background: linear-gradient(180deg, #ff9861, #f26722 60%, #dd5a1e);

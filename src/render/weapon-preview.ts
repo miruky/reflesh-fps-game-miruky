@@ -51,7 +51,7 @@ void main(){
   float edge = smoothstep(0.82, 0.98, d) * (1.0 - smoothstep(0.98, 1.02, d));
   float ang = atan(p.y, p.x);
   float sweep = (0.5 + 0.5 * sin(ang - uTime * 0.9)) * glow; // 掃引
-  float a = glow * (0.12 + 0.16 * ring) + edge * 0.7 + sweep * 0.1;
+  float a = glow * (0.12 + 0.16 * ring) + edge * 0.15 + sweep * 0.1;
   gl_FragColor = vec4(uColor * a, a);
 }
 `;
@@ -157,7 +157,9 @@ export class WeaponPreview {
       blending: THREE.AdditiveBlending,
       uniforms: {
         uTime: { value: 0 },
-        uColor: { value: new THREE.Color(0x6f8dff) },
+        // R55 W-C3[7]: 武器のtracerColor(橙アンバー系が多い)に追従させると常時強い橙で
+        // 発光しモック非準拠+キャプション文字と衝突するため、低彩度グレー固定にする
+        uColor: { value: new THREE.Color(0x2a2f36) },
       },
     });
     this.pedestal = new THREE.Mesh(new THREE.CircleGeometry(0.72, 64), this.pedestalMat);
@@ -247,7 +249,7 @@ export class WeaponPreview {
     this.inspectNodes = collectInspectNodes(gun); // MK.III: 可動ノードを一度だけ捕捉
     this.fireT = 0;
     this.accent.color.setHex(def.tracerColor);
-    this.pedestalMat.uniforms.uColor!.value.setHex(def.tracerColor);
+    // R55 W-C3[7]: 祭壇光輪はtracerColorに追従させない(uColorは低彩度グレー固定)
     this.presentT = 0; // 新武器の登場ドリーを開始
   }
 

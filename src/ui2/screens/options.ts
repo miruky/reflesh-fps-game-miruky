@@ -823,6 +823,9 @@ function mountOptionsImpl(
         const i = current();
         optLabel.textContent = options[i]?.label ?? '';
         if (isCheck) cycle.setAttribute('aria-checked', String(spec.get(settings)));
+        // R55 W-C3[22]: aria-labelを行ラベル固定から現在値込みへ動的化
+        // (スクリーンリーダーがフォーカス時点の実際の選択値を読み上げられるように)
+        cycle.setAttribute('aria-label', `${spec.label}: ${options[i]?.label ?? ''}`);
       };
       const applyIndex = (i: number): void => {
         const n = options.length;
