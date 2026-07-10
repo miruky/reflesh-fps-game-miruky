@@ -16,6 +16,20 @@ const HIP_POSITION = new THREE.Vector3(0.24, -0.22, -0.5);
 // (各銃のサイト=ビード/アイアン/レフレックス/スコープ をカメラ空間 Y=0 の射線へ載せる)。
 const ADS_X = 0;
 const ADS_Z = -0.42;
+// R53-W1 F1/F2: 据え撃ちブレースポーズ(ADS収束を中央でなく右下オフセットへ差し替える)。
+// 対象は resolveSightY=0(中央射線基準)かつ「大型シルエット+ADSで精度が変わらない
+// (spreadAdsDeg≒spreadHipDeg / adsFovScale=1)」武器 = 修羅(minigun)/風神扇(war-fan)。
+// 通常の (ADS_X, -resolveSightY, ADS_Z) へ収束させると、この2形状は前面ジオメトリが
+// カメラ光軸へ完全に一致し、しかもバレルクラスタ/扇骨がカメラのごく至近(数cm〜十数cm)
+// まで迫るため画面のほぼ全域を覆う(実測: 修羅の後端リング(半径0.157m)は現状の
+// ADS収束だとカメラ空間 z≈-0.068 まで迫り角半径69°=画面全域を覆う)。
+// このブレース値 (0.30,-0.30,-0.30) は実ジオメトリを角度計算で検証済み:
+//   修羅   : 後端リング/グリップはカメラ背面(near-plane超)へ抜けて非描画。前端リング
+//            の画面中心からの最近接距離は約11.2°(腰だめ時の前端リング5.8°より広い)。
+//   風神扇 : 要(ピボット)含む全リブが画面中心から26°以上。腰だめの前端相当(9.0°)を上回る。
+// resolveSightY はどちらも 0 のまま不変(サイト契約は据え置き)。adsProgress の値自体も
+// 不変のため、阿修羅連撃などのチャージ判定(adsProgress>0.3 && fireDown)には無関係。
+const BRACE_ADS_TARGET = new THREE.Vector3(0.30, -0.30, -0.30);
 const LOWERED_OFFSET = -0.35;
 // 銃身・マズルの基準高さ(全シルエット共通)。トレーサー原点もこの高さに乗る
 const BARREL_Y = 0.012;
@@ -2621,6 +2635,9 @@ interface MovableRig {
   magazine?: THREE.Object3D; // 着脱弾倉(リロードで落下)
   cylinder?: THREE.Object3D; // 回転シリンダ(発砲で回る)
   forend?: THREE.Object3D; // ポンプ・フォアエンド(前後)
+  // R53-W1 F3: 修羅(ミニガン)バレルクラスタ(スピンで回る)。setWeapon時に一度だけ捕捉し、
+  // 毎フレームの gun.traverse 検索(旧実装)を廃す。
+  barrel?: THREE.Object3D;
 }
 
 // ── クナイ(素手)ADS 逆手ダガー構え ─────────────────────────────────────
@@ -2930,7 +2947,14 @@ export class ViewModel {
     this.isSuppressed = !!def.suppressed || (def.attachmentIds ?? []).includes('suppressor');
     // 各武器のサイト高さを ADS 収束 Y へ反映(attachmentIds 可変にも追従)。キャッシュ両経路後。
     this.adsY = -resolveSightY(def);
-    this.adsTarget.set(ADS_X, this.adsY, ADS_Z);
+    // R53-W1 F1/F2: 修羅(minigun)/風神扇(war-fan)は通常の中央収束だと前面ジオメトリが
+    // 画面のほぼ全域を覆うため、専用の据え撃ちブレース位置へ差し替える(BRACE_ADS_TARGET
+    // 直上のコメント参照)。resolveSightY 契約(adsY 自体)は不変 = 他武器・他契約に無干渉。
+    if (def.shape === 'minigun' || def.shape === 'war-fan') {
+      this.adsTarget.copy(BRACE_ADS_TARGET);
+    } else {
+      this.adsTarget.set(ADS_X, this.adsY, ADS_Z);
+    }
     // 黒帝モード状態保持: 武器切替を跨いで _darkMode=true を維持。fists再装備でビジュアル再適用。
     if (this._darkMode) {
       this._removeDarkRimOverlay(); // 古い銃のリムオーバーレイを削除
@@ -2959,6 +2983,7 @@ export class ViewModel {
           magazine: g.getObjectByName('vm:magazine'),
           cylinder: g.getObjectByName('vm:cylinder'),
           forend: g.getObjectByName('vm:forend'),
+          barrel: g.getObjectByName('vm:barrel'),
         }
       : {};
     // クナイ逆手ポーズ対象を捕捉(該当ノードが無い銃では空=非干渉)。restへ復帰させておく。
@@ -3354,14 +3379,11 @@ export class ViewModel {
     this._updateDarkAura(dt);
     // RE-1 雷帝スパーク雨の毎フレーム更新
     this._updateLightningSparkRain(dt);
-    // R33 修羅バレル回転
-    if (this._minigunSpin01 > 0.01 && this.gun) {
+    // R33 修羅バレル回転。R53-W1 F3: captureRig で捕捉済みの参照を使い、毎フレームの
+    // traverse 検索を廃す(MovableRigの流儀。setWeapon 時に一度だけ引く)。
+    if (this._minigunSpin01 > 0.01 && this.rig.barrel) {
       this._minigunBarrelRot += dt * this._minigunSpin01 * 26;
-      this.gun.traverse((child) => {
-        if (child.name === 'vm:barrel') {
-          child.rotation.z = this._minigunBarrelRot;
-        }
-      });
+      this.rig.barrel.rotation.z = this._minigunBarrelRot;
     }
     // Fix-5: 万刃 ADS時ディスクz引き込み。腰だめ z=-0.12 → ADS z=+0.04 で視界クリア化。
     // setExoticCharge の charge オフセット(-c*0.06)と加算して update() が毎フレーム統合制御する。

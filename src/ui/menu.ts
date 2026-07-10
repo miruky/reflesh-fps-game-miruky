@@ -1,4 +1,5 @@
 import { easeOutCubic } from '../core/easing';
+import { BUILD_LABEL } from '../version';
 import {
   GP_LAYOUTS,
   PRESETS,
@@ -778,7 +779,7 @@ export class Menu {
               <p class="menu-tagline"><span lang="en">Orbital Dropdeck</span><span lang="ja">軌道降下管制盤</span></p>
             </div>
             <div class="nav-readout" aria-hidden="true">
-              <span class="nav-opr">OPR <b>LV.${this.playerLevel()} ${rankNameFor(this.playerLevel()).name}</b></span><span>ALT <b>408</b>KM</span><span>VEL <b>7.62</b>KM·S⁻¹</span><span class="nav-eta">DROP WINDOW <b>T-00:43</b></span>
+              <span class="nav-opr">OPR <b>LV.${this.playerLevel()} ${rankNameFor(this.playerLevel()).name}</b></span><span>STRK <b>${this.profile.records.bestWinStreak}</b></span><span>KILLS <b>${this.profile.stats.kills}</b></span><span class="nav-eta">DROP WINDOW <b>T-00:43</b></span>
             </div>
           </header>
           <p class="menu-touchnote">この作品はキーボードとマウスで操作します。スマートフォンやタブレットでは遊べません。PCで開いてください。</p>
@@ -910,7 +911,7 @@ export class Menu {
             </div>
           </div>
           <footer class="console-status" aria-hidden="true">
-            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span class="status-opr">OPR <b>LV.${this.playerLevel()} ${rankNameFor(this.playerLevel()).name}</b></span><span class="status-fill"></span><span>reFlesh // tactical sim · BUILD R34</span>
+            <span class="status-dot"></span><span>SYS NOMINAL</span><span class="status-fill"></span><span class="status-opr">OPR <b>LV.${this.playerLevel()} ${rankNameFor(this.playerLevel()).name}</b></span><span class="status-fill"></span><span>reFlesh // tactical sim · BUILD ${BUILD_LABEL}</span>
           </footer>
         </div>
       </div>

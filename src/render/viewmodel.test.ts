@@ -542,3 +542,142 @@ describe('RE-1 雷帝常時スパーク雨プール', () => {
     expect(() => vm.dispose()).not.toThrow();
   });
 });
+
+// ── R53-W1 F1/F2: 据え撃ちブレースポーズ(修羅/風神扇) ─────────────────────────
+// resolveSightY=0 の shape('minigun'/'war-fan')は、通常のADS収束(ADS_X=0,ADS_Z=-0.42へ
+// 中央収束)だと前面ジオメトリがカメラ光軸に一致しほぼ画面全域を覆う(修羅=後端リングが
+// カメラ至近z≈-0.068/角半径69°、風神扇=要が画面中心そのものに乗る)。setWeapon で
+// この2形状だけ ADS 収束先を専用ブレース位置(0.30,-0.30,-0.30)へ差し替えたことを検証する。
+describe('R53-W1: 据え撃ちブレースポーズ(修羅/風神扇)', () => {
+  const NEUTRAL_STATE = {
+    adsProgress: 1,
+    mouseDX: 0,
+    mouseDY: 0,
+    moveFactor: 0,
+    grounded: false,
+    reloadRatio: null,
+    raiseRatio: 0,
+    motionScale: 1,
+    alive: true,
+    scopeReveal01: 0,
+    sprinting: false,
+  };
+
+  it('修羅(shura-lmg): adsProgress=1 で root が中央でなくブレース位置(0.30,-0.30,-0.30)へ収束する', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['shura-lmg'];
+    if (!def) throw new Error('shura-lmg missing');
+    vm.setWeapon(def);
+    vm.update(0, NEUTRAL_STATE);
+    expect(vm.root.position.x).toBeCloseTo(0.30, 5);
+    expect(vm.root.position.y).toBeCloseTo(-0.30, 5);
+    expect(vm.root.position.z).toBeCloseTo(-0.30, 5);
+    vm.dispose();
+  });
+
+  it('風神扇(fujin-fan): adsProgress=1 で root が中央でなくブレース位置(0.30,-0.30,-0.30)へ収束する', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['fujin-fan'];
+    if (!def) throw new Error('fujin-fan missing');
+    vm.setWeapon(def);
+    vm.update(0, NEUTRAL_STATE);
+    expect(vm.root.position.x).toBeCloseTo(0.30, 5);
+    expect(vm.root.position.y).toBeCloseTo(-0.30, 5);
+    expect(vm.root.position.z).toBeCloseTo(-0.30, 5);
+    vm.dispose();
+  });
+
+  it('非回帰: 通常武器(kaede-ar)は従来通り中央(0, -resolveSightY, -0.42)へ収束する', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['kaede-ar'];
+    if (!def) throw new Error('kaede-ar missing');
+    vm.setWeapon(def);
+    vm.update(0, NEUTRAL_STATE);
+    expect(vm.root.position.x).toBeCloseTo(0, 5);
+    expect(vm.root.position.y).toBeCloseTo(-resolveSightY(def), 5);
+    expect(vm.root.position.z).toBeCloseTo(-0.42, 5);
+    vm.dispose();
+  });
+
+  it('非回帰: 蜃気楼(shinkirou-sniper, sniper-bolt)はブレース対象外で従来通り中央収束する', () => {
+    // 蜃気楼は scope:true の通常スコープ狙撃(sniper-bolt)であり、resolveSightYはOPTIC_SPECS
+    // 由来の非ゼロ値(0.08)。修羅/風神扇と異なりADS廃止コメントも無く、通常のscope-in収束
+    // (BO2式)で機能する。ブレース対象shapeに含めていないことをここで固定する。
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['shinkirou-sniper'];
+    if (!def) throw new Error('shinkirou-sniper missing');
+    expect(def.shape).toBe('sniper-bolt');
+    vm.setWeapon(def);
+    vm.update(0, { ...NEUTRAL_STATE, scopeWeapon: def.scope === true });
+    expect(vm.root.position.x).toBeCloseTo(0, 5);
+    expect(vm.root.position.y).toBeCloseTo(-resolveSightY(def), 5);
+    expect(vm.root.position.z).toBeCloseTo(-0.42, 5);
+    vm.dispose();
+  });
+
+  it('resolveSightYの契約(0)は不変: minigun/war-fanのサイト値そのものは中心のまま', () => {
+    const base = Object.values(WEAPON_DEFS)[0];
+    if (!base) throw new Error('WEAPON_DEFS is empty');
+    expect(resolveSightY({ ...base, shape: 'minigun' })).toBe(0);
+    expect(resolveSightY({ ...base, shape: 'war-fan' })).toBe(0);
+  });
+});
+
+// ── R53-W1 F3: 修羅バレルクラスタ回転のキャッシュ化 ────────────────────────────
+// 旧実装は毎フレーム gun.traverse で 'vm:barrel' を検索していた。setWeapon 時に
+// captureRig が rig.barrel へ一度だけ捕捉し、update() はその参照のみでスピンさせる。
+describe('R53-W1 F3: 修羅バレルのキャッシュ参照', () => {
+  const SPIN_STATE = {
+    adsProgress: 0,
+    mouseDX: 0,
+    mouseDY: 0,
+    moveFactor: 0,
+    grounded: false,
+    reloadRatio: null,
+    raiseRatio: 0,
+    motionScale: 1,
+    alive: true,
+    scopeReveal01: 0,
+  };
+
+  it('setWeapon(shura-lmg) 後に rig.barrel が vm:barrel ノードを捕捉している', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['shura-lmg'];
+    if (!def) throw new Error('shura-lmg missing');
+    vm.setWeapon(def);
+    const rig = (vm as unknown as Record<string, unknown>)['rig'] as { barrel?: THREE.Object3D };
+    expect(rig.barrel).toBeDefined();
+    expect(rig.barrel!.name).toBe('vm:barrel');
+    vm.dispose();
+  });
+
+  it('setMinigunSpin(1) 後、update() でキャッシュ済み rig.barrel の rotation.z が進む', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['shura-lmg'];
+    if (!def) throw new Error('shura-lmg missing');
+    vm.setWeapon(def);
+    vm.setMinigunSpin(1);
+    const rig = (vm as unknown as Record<string, unknown>)['rig'] as { barrel?: THREE.Object3D };
+    expect(rig.barrel!.rotation.z).toBe(0);
+    vm.update(0.1, SPIN_STATE);
+    expect(rig.barrel!.rotation.z).not.toBe(0);
+    vm.dispose();
+  });
+
+  it('他武器(kaede-ar)では rig.barrel が undefined(vm:barrelノード無し)', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['kaede-ar'];
+    if (!def) throw new Error('kaede-ar missing');
+    vm.setWeapon(def);
+    const rig = (vm as unknown as Record<string, unknown>)['rig'] as { barrel?: THREE.Object3D };
+    expect(rig.barrel).toBeUndefined();
+    vm.dispose();
+  });
+});

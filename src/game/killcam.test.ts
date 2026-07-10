@@ -243,30 +243,11 @@ describe('CK カメラ位置計算 (ckCamPos)', () => {
   });
 });
 
-describe('CK 三人称: スコープ非表示', () => {
-  it('シネマティックキルカムは常に adsRatio=0 を返す', () => {
-    // fkSetCamera は三人称モードで fkLiveAdsRatio = 0 を強制セット
-    const adsRatio = 0; // fkSetCamera末尾で強制代入
-    expect(adsRatio).toBe(0);
-  });
-
-  it('adsRatio=0 のとき スコープオーバーレイは表示しない', () => {
-    const adsRatio = 0;
-    const isScope  = true;
-    const scopeOn  = isScope && adsRatio > 0.85;
-    expect(scopeOn).toBe(false);
-  });
-
-  it('三人称でも fkScopeInfo.isScope=false(killer問わず)', () => {
-    // match.ts: fkSetCamera末尾で fkLiveAdsRatio=0 → fkScopeInfo.adsRatio=0
-    // → updateFinalKillcam(flash, 0, false) → hud はスコープ非表示
-    const fkLiveAdsRatio = 0;
-    const fkKillerScopedWeapon = true;
-    const fkKillerIsPlayer = true;
-    const isScope = fkKillerScopedWeapon && fkKillerIsPlayer && fkLiveAdsRatio > 0.85;
-    expect(isScope).toBe(false);
-  });
-});
+// T4(R53): 旧「三人称でもスコープ非表示」テスト群を削除。
+// match.ts から fkKillerScopedWeapon/fkLiveAdsRatio/fkLiveAdsFov/fkScopeInfo を
+// 全撤去(常時false相当を返すgetter自体がなくなった=キルカムにスコープ概念が存在しない)。
+// これらは削除済みフィールド名をローカル定数として再現するだけの自己参照テストで
+// あり、match.ts側の変更を検知できない死んだ回帰ガードだったため整理する。
 
 describe('FK applyDeathPose 時間境界', () => {
   function humanoidDeathT(elapsed: number): number {

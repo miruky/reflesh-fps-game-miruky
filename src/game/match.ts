@@ -14,6 +14,7 @@ import {
   DRONE_AIM_PARTS,
   TANK_AIM_PARTS,
   TURRET_AIM_PARTS,
+  type PartOffset,
   bulletBendFraction,
   BULLET_MAG_CONE_DEG,
   BULLET_MAG_MAX_DEG,
@@ -381,23 +382,8 @@ const CK_FOV       = 50;   // シネマティック三人称 FOV
 const CK_HEIGHT    = 3.0;  // カメラ高さオフセット(m)
 const CK_DOLLY_SPD = 0.5;  // ドリー速度(m/s)
 const CK_EYE_H     = 1.55; // プレイヤー眼高さオフセット(m)
-// キルカム再生中に死亡演出トランスフォームを巻き戻す/再現するための読み替え型。
-// bot.ts は別担当のため公開APIを増やせない。TSのprivateはコンパイル時のみで
-// 実行時にはフィールドが存在するので、この構造型を通して安全に参照する。
-// (bot.ts の updateDying / respawnAt と同じフィールド・同じ式を使う)
-interface FkBotRig {
-  rig: THREE.Group;
-  legL: THREE.Group;
-  legR: THREE.Group;
-  kneeL: THREE.Group;
-  kneeR: THREE.Group;
-  turretGroup: THREE.Group | null;
-  tankBarrel: THREE.Group | null;
-  turretHead: THREE.Group | null;
-  turretLegs: THREE.Group[];
-  dissolveU: { value: number };
-  deathTilt: number;
-}
+// T5: キルカム再生中のポーズ適用は Bot 公開API(fkApplyLivePose/fkApplyDeathPose/
+// fkResetPose)へ委譲する(旧 FkBotRig 構造型による private フィールド直接操作を撤去)。
 // bot.ts KIND_DEATH_S と同じ死亡演出の全長(s)。キルカムの手続き再現に使う
 const FK_DEATH_S: Record<string, number> = {
   humanoid: 0.6,
@@ -467,6 +453,17 @@ export function applyHellTuning(t: BotTuning): BotTuning {
   };
 }
 
+// T1: 超鬼畜(hellMode)を tier/kind 別に適用する境界(spawnBot の唯一の適用サイト)。
+// 「ゾンビの」boss tier は zombieBossHp が既に80,000上限の「1体20分の壁を作らない」
+// 設計曲線を持つため、ここへ HP×3 を重ねると240,000まで突破してしまう。
+// damage×2.5/speed×1.3(脅威の底上げ)は維持したまま、HP倍率だけを除外する。
+// V-W1レビュー: 除外は kind==='zombie' 限定 — 戦車/章ボス等の非ゾンビボスまで
+// 除外すると hell で従来より柔らかくなる回帰(6600→2200)になるため。
+export function applyHellTierTuning(merged: BotTuning, tier: BotTier, kind: BotKind): BotTuning {
+  const hell = applyHellTuning(merged);
+  return tier === 'boss' && kind === 'zombie' ? { ...hell, maxHp: merged.maxHp } : hell;
+}
+
 // R51 ユーザー⑥: 初期スポーンの敵種(達人/巨躯)選択(純関数)。
 // - allGiantMode(トグル明示ON): 個人戦/チーム戦を問わず全員巨躯(従来どおり)
 // - hellMode(トグル明示ON): 個人戦/チーム戦を問わず高確率(30%/35%)で自然湧き(従来どおり)
@@ -531,12 +528,40 @@ const ANIM_LOD_DIST_M = 50;
 const ZOMBIE_POOL_MAX = ZOMBIE_MAX_ALIVE.high;
 // F8 手裏剣discの飛行速度(m/s)。fireShurikenDiscのvelと寿命クランプの単一の真実
 const SHURIKEN_DISC_SPEED = 60;
-// ★4a aimAssistTarget粗ゲート用: AIM_PARTS/DRONE/TANK/TURRET全kindのdy絶対値の最大
-// (TANK_AIM_PARTSのhead dy=1.0)。中心(bot.position)基準のレンジ/コーン判定にこの分だけ
-// マージンを持たせ、部位オフセットで本来ヒットし得た候補を誤って弾かないことを保証する。
-const AIM_PART_DY_MARGIN_M = 1.0;
+// ★4a aimAssistTarget粗ゲート用: AIM_PARTS/DRONE/TANK/TURRET全kindのdy絶対値の最大。
+// 中心(bot.position)基準のレンジ/コーン判定にこの分だけマージンを持たせ、部位オフセットで
+// 本来ヒットし得た候補を誤って弾かないことを保証する。
+// V-W1レビュー: 全巨躯ゾンビはhead dy=0.88×1.35=1.188 が最大(TANKの1.0を上回る)→1.2に拡大
+const AIM_PART_DY_MARGIN_M = 1.2;
+
+// V-W1レビューC: スケール付きゾンビ(全巨躯 tuning.scale=1.35)は頭コライダーが scale 倍の
+// 高さ/半径で生成される(bot.ts)ため、エイムアシストの head 部位オフセットも同倍率にしないと
+// スナップ点が「胴カプセル上端と頭下端の隙間」へ落ちて頭に乗らない。scale値ごとに1回だけ
+// 派生配列を生成してキャッシュ(head以外=胴カプセルは無スケールなので dy 据え置き)。
+const scaledZombieAimPartsCache = new Map<number, readonly PartOffset[]>();
+function zombieAimPartsForScale(scale: number): readonly PartOffset[] {
+  if (scale === 1) return AIM_PARTS;
+  let parts = scaledZombieAimPartsCache.get(scale);
+  if (!parts) {
+    parts = AIM_PARTS.map((p) => (p.part === 'head' ? { ...p, dy: p.dy * scale } : p));
+    scaledZombieAimPartsCache.set(scale, parts);
+  }
+  return parts;
+}
 // ★5 ホットパス用スクラッチ(bot.getPositionInto の受け皿。逐次利用のみ=エイリアス無し)
 const BOT_POS_SCRATCH = new THREE.Vector3();
+// T7 ホットループGC節約: bot.position系の一時差分ベクトル(足音オクルージョン判定・スタン
+// スパーク位置)専用スクラッチ。他の用途と時分割共有しない(同フレーム内で使い切って捨てる値のみ)
+const HOT_DIFF_SCRATCH = new THREE.Vector3();
+// T7: bot.alertPos/lkp/lastTargetEye は Vector3|null の永続フィールド。既存インスタンスが
+// あれば copy で使い回し、null のときだけ新規確保する(初回のみアロケーション、以降ゼロ割り当て)
+function reuseVec3(cur: THREE.Vector3 | null, src: THREE.Vector3): THREE.Vector3 {
+  if (cur) {
+    cur.copy(src);
+    return cur;
+  }
+  return src.clone();
+}
 
 // R12軽量化: bloomを半解像で処理する。EffectComposer.addPass/setSize がフル実効サイズで
 // pass.setSize を強制するため、サブクラスで毎回半分へ丸めて bright/blur を面積1/16(現状1/4)へ。
@@ -707,6 +732,9 @@ export interface MatchSnapshot {
   kokuraiteiMode?: boolean; // 黒雷帝モード発動中
   chargeRatio?: number;    // 溜め攻撃ゲージ 0..1(0=非溜め)
   minigunSpin01?: number;  // 修羅スピンアップRPM 0..1(minigun装備+スピン>0のみ。HUDゲージ用)
+  // T7: minigun(修羅)/fan(風神扇)はADS中も通常のスコープ縮小ではなくブレース姿勢になるため、
+  // viewmodel側のブレースポーズ化とHUD側のクロスヘア維持が消費するフラグ(フィールド名凍結)
+  adsKeepsCrosshair?: boolean;
   incoming: number[]; // 被弾方向(カメラ基準の角度rad)
   tookDamage: boolean;
   scoreboard: ScoreRow[];
@@ -1367,12 +1395,6 @@ export class Match {
   private fkWinKill           = 0;
   private fkWinEnd            = 0;
   private fkPrevCursor        = -Infinity;
-  /** キル時に使っていた武器がスコープ持ちか(再生中のスコープオーバーレイ表示用) */
-  private fkKillerScopedWeapon = false;
-  /** 再生フレームから補間したプレイヤーADS率(0..1) — main.ts が HUD へ転送 */
-  fkLiveAdsRatio               = 0;
-  /** 再生フレームから補間した実効FOV(deg) — ADS縮小済み */
-  fkLiveAdsFov                 = 62;
   // ── シネマティックキルカム専用フィールド ──
   private fkAvatarGroup: THREE.Group | null = null;
   private readonly _ckCamBase  = new THREE.Vector3();
@@ -2331,6 +2353,10 @@ export class Match {
     };
 
     for (const spec of boxes) {
+      // T6: 環境プロップ(prop:true)はR38専用ビジュアル(幹/樹冠/構造材等)を既に持つため、
+      // ここでの汎用装飾(コンテナ波板リブ/AABB輪郭線/接地影)は二重掛けで害しかない。
+      // 例: 樹木の幹(0.5×3.5)が classifyArchetype で 'container' 誤判定され波板が生える。
+      if (spec.prop) continue;
       const cx = spec.x;
       const cz = spec.z;
       const top = spec.y + spec.h / 2;
@@ -5357,7 +5383,6 @@ export class Match {
         this.fkKillerBotIdx          = -1;
         this.fkVictimBotIdx          = this.bots.indexOf(bot);
         this.fkKillElapsed           = this.elapsed;
-        this.fkKillerScopedWeapon    = this.activeWeapon.def.scope === true;
       }
       this.killSurgeEnv = 1; // R20 rank4: キル確定サージ(PostFXの彩度/コントラスト+白エッジ)を点火
       this.scoreboardDirty = true; // ★6 キル確定は即時反映
@@ -5395,8 +5420,14 @@ export class Match {
       if (this.config.mode === 'gungame') {
         this.ggOnPlayerKill(bot, weaponName === '近接');
       }
-      // BO2 スコアストリーク: ゾンビ/ガンゲームモードは無効
-      if (this.config.mode !== 'zombie' && this.config.mode !== 'gungame') {
+      // BO2 スコアストリーク: ゾンビ/ガンゲーム/トレーニングモードは無効
+      // T2: トレーニングは自動蘇生標的の無限キルで容易にバンクが貯まってしまい、
+      // 無敵化(HK)やRC-XD凍結等の未設計な相互作用を起こすため明示的に除外する
+      if (
+        this.config.mode !== 'zombie' &&
+        this.config.mode !== 'gungame' &&
+        this.config.mode !== 'training'
+      ) {
         const newly = this.streakManager.addScore(headshot ? 125 : 100);
         for (const idx of newly) {
           const def = STREAK_DEFS[idx];
@@ -5577,7 +5608,9 @@ export class Match {
     }
 
     // ── キー入力 → 対応ストリークを tryConsume (生存中・RC-XD非操縦中のみ) ────
-    if (this.player.alive && !this.rcxdActive) {
+    // T2: トレーニングはバンクが常に空のはずだが「空だから安全」という暗黙依存を断ち、
+    // 発動ゲート自体にもモード除外を明示する
+    if (this.player.alive && !this.rcxdActive && this.config.mode !== 'training') {
       type StreakAction = 'streak1' | 'streak2' | 'streak3' | 'streak4' | 'streak5' | 'streak6' | 'streak7';
       const activationMap: Array<[StreakAction, StreakIndex]> = [
         ['streak1', 0],  // RC-XD 325
@@ -6051,7 +6084,7 @@ export class Match {
         botDistToPlayer < FOOTSTEP_HEAR_DIST
       ) {
         bot.alert = Math.max(bot.alert, 1.5);
-        bot.alertPos = playerPos.clone();
+        bot.alertPos = reuseVec3(bot.alertPos, playerPos);
       }
       let targetEye: THREE.Vector3 | null = null;
       if (bot.alive) {
@@ -6075,7 +6108,9 @@ export class Match {
       const stunUntil = this.botStunUntil.get(bot) ?? 0;
       if (this.elapsed < stunUntil) {
         if (Math.random() < dt * 6 && !this.settings.reduceMotion) {
-          this.effects.staffStunSpark(bot.position.clone().addScaledVector(new THREE.Vector3(0, 1, 0), 0.5));
+          // T7: new Vector3(0,1,0)の使い捨て確保→既存CAM_UP定数を再利用。位置はスクラッチ経由
+          // (staffStunSpark は同期的に読むだけで参照を保持しない=使い回し安全)
+          this.effects.staffStunSpark(HOT_DIFF_SCRATCH.copy(bot.position).addScaledVector(CAM_UP, 0.5));
         }
         continue;
       }
@@ -6108,7 +6143,9 @@ export class Match {
             const sp = this.panAndDistance(bot.position);
             // 遮蔽判定: プレイヤー視点からのレイキャスト(一歩ごとに1回のみ)
             const eye = this.player.eyePosition;
-            const toBotDir = bot.position.clone().sub(eye);
+            // T7: ストライド毎(頻度は低いが継続発生)のclone().sub()をスクラッチへ
+            // (castRayは同期的にx/y/zを読むだけで参照を保持しない=使い回し安全)
+            const toBotDir = HOT_DIFF_SCRATCH.copy(bot.position).sub(eye);
             const d = toBotDir.length();
             let occluded = false;
             if (d > 0.5) {
@@ -6151,7 +6188,7 @@ export class Match {
         }
         if (cand === null) cand = cached ?? cands[0]!; // 全て遮蔽=対象保持(rawVisible=false)
         bot.lastRawVisible = rawVisible;
-        if (rawVisible) bot.lastTargetEye = cand.eye.clone();
+        if (rawVisible) bot.lastTargetEye = reuseVec3(bot.lastTargetEye, cand.eye);
       } else {
         cand = cached; // 非担当フレームは前回可視候補を再利用
         rawVisible = bot.lastRawVisible;
@@ -6166,12 +6203,12 @@ export class Match {
 
     if (rawVisible && cand) {
       bot.spotAwareness = Math.min(1.3, bot.spotAwareness + this.calcSpotRate(bot, cand) * dt);
-      bot.lkp = cand.eye.clone();
+      bot.lkp = reuseVec3(bot.lkp, cand.eye);
       bot.engageGrace = ENGAGE_GRACE_S;
       // 発見途中(SPOTTED未満)は脅威方向へ振り向かせて自然に気づかせる(視線が外れて発見が止まらない)
       if (bot.spotAwareness < SPOTTED_TH && bot.alert <= 0) {
         bot.alert = 1.0;
-        bot.alertPos = cand.eye.clone();
+        bot.alertPos = reuseVec3(bot.alertPos, cand.eye);
       }
     } else {
       bot.spotAwareness = Math.max(0, bot.spotAwareness - SPOT_DECAY * dt);
@@ -6345,7 +6382,9 @@ export class Match {
             ? TANK_AIM_PARTS
             : bot.kind === 'turret'
               ? TURRET_AIM_PARTS
-              : AIM_PARTS; // humanoid, zombie, master, giant -> AIM_PARTS
+              : bot.kind === 'zombie' && bot.tuning.scale !== 1
+                ? zombieAimPartsForScale(bot.tuning.scale) // 全巨躯: 頭スナップをスケール追従
+                : AIM_PARTS; // humanoid, zombie, master, giant -> AIM_PARTS
       const ranked = rankAimPoints(eye, forward, base, parts, maxRange);
       for (const cand of ranked) {
         // rankedはeff(角度-頭バイアス)順なのでangleは単調でない。より近い部位を
@@ -6699,8 +6738,12 @@ export class Match {
     }
 
     // 武器切替(ランク20は fists なのでそのまま)
+    // T3: WEAPON_DEFS の生参照ではなく applyAttachments(base, []) のクローンを使う
+    // (switchPrimaryWeapon等と同じ流儀。def変異系機能(ext-mag等)がWEAPON_DEFS本体を
+    // 書き換えてしまう将来の波及を断つ)
     const newWeaponId = this.ggState.getWeaponIdAt(newRank);
-    const newDef = WEAPON_DEFS[newWeaponId] ?? WEAPON_DEFS['kaede-ar']!;
+    const newBaseDef = WEAPON_DEFS[newWeaponId] ?? WEAPON_DEFS['kaede-ar']!;
+    const newDef = applyAttachments(newBaseDef, []);
     const newWeapon = new Weapon(newDef);
     newWeapon.raise();
     (this.weapons as Weapon[])[0] = newWeapon;
@@ -6780,7 +6823,7 @@ export class Match {
     for (const bot of this.bots) {
       if (bot.alive && bot.team !== PLAYER_TEAM && bot.position.distanceTo(pos) < effectiveRadius) {
         bot.alert = 4;
-        bot.alertPos = pos.clone();
+        bot.alertPos = reuseVec3(bot.alertPos, pos);
       }
     }
   }
@@ -8378,8 +8421,9 @@ export class Match {
     }
     // 超鬼畜: 敵側のみ倍率適用。全spawn経路(対戦/ミッション波/ゾンビ)が
     // この漏斗を通るため、ここ一箇所で全モードへ効く
+    // T1: ゾンビboss tier のみ HP倍率対象外(applyHellTierTuning側で分岐。damage/speedは維持)
     const finalTuning =
-      this.config.hellMode && team !== PLAYER_TEAM ? applyHellTuning(merged) : merged;
+      this.config.hellMode && team !== PLAYER_TEAM ? applyHellTierTuning(merged, tier, kind) : merged;
     const bot = new Bot(this.physics, name, spawn, color, finalTuning, team, tier, kind);
     this.tags.set(bot.bodyCollider.handle, { kind: 'bot', bot, part: 'body' });
     this.tags.set(bot.headCollider.handle, { kind: 'bot', bot, part: 'head' });
@@ -9333,6 +9377,11 @@ export class Match {
         weapon.def.special === 'minigun' && this.minigunCurrentRpm > 0
           ? Math.min(1, this.minigunCurrentRpm / weapon.def.rpm)
           : undefined,
+      // T7: minigun(修羅)/fan(風神扇)はADSでスコープに入らずブレース姿勢のまま
+      // なので、HUD側の全画面クロスヘアを消さない。shapeは他武器と共有され非一意なため、
+      // 一意な special で判定する。W1-D1実査: 蜃気楼(beam)は正規のscope-in経路
+      // (scopeReveal→root非表示)を持ち閉塞バグと無関係=対象外。真の第二被害者は風神扇
+      adsKeepsCrosshair: weapon.def.special === 'minigun' || weapon.def.special === 'fan',
       // ── BO2 スコアストリーク ──
       streakProgress: this.streakManager.state.progress,
       streakBanked: this.streakManager.state.banked,
@@ -9680,8 +9729,6 @@ export class Match {
     this.fkCursor     = Math.max(oldest, killT - CK_WIN_PRE);
     this.fkPrevCursor = -Infinity;
     this.fkFlash      = 0;
-    this.fkLiveAdsRatio = 0;
-    this.fkLiveAdsFov   = 62;
     // ── シネマティックキルカム初期化 ──
     this._ckDollyDist = 0;
     this._ckHitSoundPlayed = false;
@@ -9846,95 +9893,34 @@ export class Match {
 
         if (i === this.fkVictimBotIdx) {
           // 被害者ボット: キル前はalive姿勢で表示、キル後は死亡アニメを手続き再現
-          bot.group.position.set(bx, by, bz);
-          bot.group.rotation.y = byaw;
-          bot.group.visible    = true;
-          // 死亡演出で変形したトランスフォームを一旦alive姿勢へ巻き戻す
-          this.fkResetAlivePose(bot);
+          bot.group.visible = true;
+          // T5: 位置/回転の適用+死亡演出トランスフォームのalive姿勢への巻き戻しは
+          // Bot公開APIへ委譲(旧 FkBotRig 経由の private フィールド直接操作を撤去)
+          bot.fkApplyLivePose(bx, by, bz, byaw);
           if (cursor >= killT) {
-            // キル後: 経過時間から死亡ポーズを手続き的に再現(倒れる瞬間を見せる)
-            this.fkApplyDeathPose(bot, cursor - killT);
+            // キル後: 経過時間を正規化(0..1)して死亡ポーズを手続き的に再現(倒れる瞬間を見せる)
+            const totalS = FK_DEATH_S[bot.kind] ?? 0.6;
+            const t01 = Math.min(1, Math.max(0, (cursor - killT) / totalS));
+            bot.fkApplyDeathPose(t01);
           }
         } else {
           // 非被害者ボット: バッファのaliveフラグに従う
           const balive = (this.fkBuf[boA + 5]! > 0.5) || (this.fkBuf[boB + 5]! > 0.5);
-          bot.group.position.set(bx, by, bz);
-          bot.group.rotation.y = byaw;
-          bot.group.visible    = balive;
           if (balive) {
-            // alive表示時は死亡演出のトランスフォームをリセットしてalive姿勢に戻す
-            this.fkResetAlivePose(bot);
+            // alive表示時は位置/回転の適用+死亡演出トランスフォームのリセットをBot側で行う
+            // (fkApplyLivePose内でvisible=trueも設定される)
+            bot.fkApplyLivePose(bx, by, bz, byaw);
+          } else {
+            // 非alive表示: fkApplyLivePose は呼ばない(pose強制リセット+visible=trueを避ける)。
+            // 位置/回転は公開フィールドのgroupへ直接同期し、visibleのみfalseにする(bot.ts契約)
+            bot.group.position.set(bx, by, bz);
+            bot.group.rotation.y = byaw;
+            bot.group.visible = false;
           }
         }
       } else {
         bot.group.visible = false;
       }
-    }
-  }
-
-  /**
-   * ファイナルキルカム用: 死亡演出で変形した全トランスフォームをalive姿勢へ巻き戻す。
-   * bot.ts respawnAt の視覚リセット部分と同一(物理/AI/HPは触らない)。
-   */
-  private fkResetAlivePose(bot: Bot): void {
-    const r = bot as unknown as FkBotRig;
-    bot.group.rotation.x = 0;
-    bot.group.rotation.z = 0;
-    r.rig.position.y = 0;
-    r.rig.rotation.x = 0;
-    r.rig.rotation.z = 0;
-    r.legL.rotation.set(0, 0, 0);
-    r.legR.rotation.set(0, 0, 0);
-    r.kneeL.rotation.set(0, 0, 0);
-    r.kneeR.rotation.set(0, 0, 0);
-    r.dissolveU.value = 0;
-    if (r.turretGroup) {
-      r.turretGroup.position.set(0, 0.95, 0.1);
-      r.turretGroup.rotation.set(0, 0, 0);
-    }
-    if (r.tankBarrel) r.tankBarrel.rotation.set(0, 0, 0);
-    if (r.turretHead) r.turretHead.rotation.set(0, 0, 0);
-    for (const leg of r.turretLegs) leg.rotation.x = 0;
-  }
-
-  /**
-   * ファイナルキルカム用: キル時刻からの経過秒を渡すと死亡演出ポーズを再現する。
-   * bot.ts updateDying と同一の式だがカウントダウンではなく経過時間を入力とする。
-   * (fkResetAlivePose 済みの姿勢に対して適用する前提)
-   */
-  private fkApplyDeathPose(bot: Bot, deathElapsedS: number): void {
-    const r = bot as unknown as FkBotRig;
-    const totalS = FK_DEATH_S[bot.kind] ?? 0.6;
-    const t = Math.min(1, Math.max(0, deathElapsedS / totalS));
-
-    if (bot.kind === 'drone') {
-      // 墜落スピンの簡易再現(物理Y降下は再現せず回転のみ)
-      bot.group.rotation.x = t * (Math.PI / 2) * 0.8;
-      bot.group.rotation.z = t * Math.PI * 1.5;
-    } else if (bot.kind === 'turret') {
-      bot.group.rotation.z = -1.25 * t;
-      if (r.turretHead) r.turretHead.rotation.x = t * 0.9;
-      for (const leg of r.turretLegs) leg.rotation.x = -t * 0.4;
-    } else if (bot.kind === 'tank') {
-      const blow = THREE.MathUtils.clamp(t / 0.3, 0, 1);
-      if (r.turretGroup) {
-        r.turretGroup.position.y = 0.95 + blow * 0.9;
-        r.turretGroup.rotation.z = blow * 0.7 * (r.deathTilt >= 0 ? 1 : -1);
-        r.turretGroup.rotation.x = -blow * 0.5;
-      }
-      if (r.tankBarrel) r.tankBarrel.rotation.x = blow * 0.6;
-    } else {
-      // humanoid / zombie / master / giant: 膝崩れ(前段)→前傾横倒し(後段)
-      const buckle = THREE.MathUtils.clamp(t / 0.45, 0, 1);
-      r.legL.rotation.x = buckle * 0.3;
-      r.legR.rotation.x = buckle * 0.3;
-      r.kneeL.rotation.x = buckle * 1.4;
-      r.kneeR.rotation.x = buckle * 1.4;
-      r.rig.position.y = -buckle * 0.22;
-      const fall = THREE.MathUtils.clamp((t - 0.35) / 0.65, 0, 1);
-      const ease = fall * fall * (3 - 2 * fall); // smoothstep
-      bot.group.rotation.x = ease * (Math.PI / 2) * 0.95;
-      bot.group.rotation.z = ease * r.deathTilt;
     }
   }
 
@@ -10035,22 +10021,6 @@ export class Match {
       this.camera.fov = CK_FOV;
       this.camera.updateProjectionMatrix();
     }
-    // 三人称シネマティックモードではスコープ非表示
-    this.fkLiveAdsRatio = 0;
-    this.fkLiveAdsFov   = 62;
-  }
-
-  /**
-   * ファイナルキルカム再生中のスコープ状態を返す。
-   * main.ts が毎フレーム呼んで hud.updateFinalKillcam に渡す。
-   * fkKillerIsPlayer でない場合は常に {adsRatio:0, isScope:false, adsFov:62}。
-   */
-  get fkScopeInfo(): { adsRatio: number; isScope: boolean; adsFov: number } {
-    return {
-      adsRatio: this.fkLiveAdsRatio,
-      isScope:  this.fkKillerScopedWeapon && this.fkKillerIsPlayer,
-      adsFov:   this.fkLiveAdsFov,
-    };
   }
 
   private fkReplayShots(prevCursor: number, cursor: number): void {

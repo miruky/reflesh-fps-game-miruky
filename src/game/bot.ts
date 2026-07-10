@@ -295,6 +295,14 @@ export function zombieKccSkipFactor(distToPlayerM: number, hordeRank = 0): numbe
 // ★5 ホットパス用スクラッチ(updateGiantの毎フレームnew Vector3を根絶)
 const GIANT_POS_SCRATCH = new THREE.Vector3();
 const GIANT_TO_SCRATCH = new THREE.Vector3();
+// R53-T5: humanoid/master(mainのupdate内インライン移動ロジック)とupdateZombieの
+// 毎フレームnew Vector3(this.position getter + target/alertPos/objectiveへの.clone())を
+// 同じ流儀で根絶する。update()は1体ずつ同期的に呼ばれるため(フレーム内で他個体の
+// updateと競合しない)、モジュールレベル使い回しで安全(GIANT_*と同じ前提)。
+const HUMANOID_POS_SCRATCH = new THREE.Vector3();
+const HUMANOID_TO_SCRATCH = new THREE.Vector3();
+const ZOMBIE_POS_SCRATCH = new THREE.Vector3();
+const ZOMBIE_TO_SCRATCH = new THREE.Vector3();
 
 // 角度を上限付きで目標へ寄せる(tank車体/砲塔・turretヘッドのslew制御)
 function stepAngle(current: number, target: number, maxStep: number): number {
@@ -562,6 +570,12 @@ export class Bot {
   hordeRank = 99;
   // V51: 中心基準の視覚スケール(全巨躯ゾンビ等)で足が沈むのを防ぐ持ち上げ量(見た目のみ)
   private visualLift = 0;
+  // R53-T1: rig(剛体中心基準の等比拡大)自身の足沈み補正。visualLiftとは別経路(groupではなく
+  // rig.position.yへ加える)。boss zombieのみ非0。syncMesh/updateDying/fkResetPose/
+  // fkApplyDeathPoseが毎フレーム rig.position.y を代入し直すため、コンストラクタで
+  // rig.position.yへ直接足すだけでは次フレームに上書きされて消える → base値として
+  // 各所の式に組み込む(他kind/tierは0のまま無害)。
+  private rigLiftY = 0;
   private meleeTimer = 0; // 個体の近接クールダウン
   private climbing = false; // 登坂アシスト作動中(前フレームのブロック検知で点火)
   private climbBaseY = 0; // 登坂開始時の足元中心Y。上限高さ判定の起点(青天井防止)
@@ -664,10 +678,16 @@ export class Bot {
     this.moveSpeed = MOVE_SPEED * tuning.moveSpeedMul;
     // ボスゾン��は体格1.8×スケールのコライダー・フィート/頭オフセットを使う
     const isBossZombie = kind === 'zombie' && tier === 'boss';
-    // humanoidは難度/階層tuningの頭高、他kindは体格から固定(コライダーと常に一致)
+    // humanoidは難度/階層tuningの頭高、他kindは体格から固定(コライダーと常に一致)。
+    // R53-T2: allGiantMode の tuning.scale(現状zombieのみ非1、既定1.35)は視覚を
+    // group.scale等比拡大するため、頭コライダーのローカルY offsetも同じ倍率で
+    // 生成時(コンストラクタ)に決定し、視覚頭部とのズレ(=ヘッドショット判定外れ)を
+    // 解消する。boss zombieは専用体格(ZOMBIE_BOSS_*)を使い tuning.scale は常に1
+    // (BOSS_TUNING.scale=1)なのでこの分岐と衝突しない。胴カプセルは非対象(T2指示)。
     this.headOff = (kind === 'humanoid' || kind === 'master') ? tuning.headOffset
       : isBossZombie ? ZOMBIE_BOSS_HEAD_OFFSET
       : kind === 'giant' ? GIANT_HEAD_OFFSET
+      : kind === 'zombie' ? KIND_HEAD_OFFSET.zombie * tuning.scale
       : KIND_HEAD_OFFSET[kind];
     this.feetOffset = isBossZombie ? ZOMBIE_BOSS_CENTER_TO_FEET : KIND_FEET_OFFSET[kind];
     this.hoverBaseY = spawn.y + DRONE_HOVER_ALT;
@@ -736,13 +756,17 @@ export class Bot {
         this.body,
       );
     } else {
-      // humanoid, master - standard capsule
+      // humanoid, master, zombie(normal/elite) - standard capsule
       this.bodyCollider = world.createCollider(
         RAPIER.ColliderDesc.capsule(BODY_HALF, BODY_RADIUS),
         this.body,
       );
+      // R53-T2: allGiantMode の zombie(tuning.scale!=1)は頭球だけ同倍率で拡大生成する
+      // (this.headOff は上ですでにscale済み)。胴カプセルは移動/ドア通過に影響するため
+      // 据え置き(master(1.15)はR51方針どおり対象外=group.scaleの視覚拡大のみ)。
+      const headR = (kind === 'zombie' && tuning.scale !== 1) ? HEAD_RADIUS * tuning.scale : HEAD_RADIUS;
       this.headCollider = world.createCollider(
-        RAPIER.ColliderDesc.ball(HEAD_RADIUS).setTranslation(0, this.headOff, 0),
+        RAPIER.ColliderDesc.ball(headR).setTranslation(0, this.headOff, 0),
         this.body,
       );
     }
@@ -936,11 +960,19 @@ export class Bot {
   // mergeByMaterialで (armor/dark/glow)×(cast/no-cast) へ畳む(1体≈3〜4ドローコール)。
   // 影を落とすシルエットは胴と腿のみ。no-cast片は userData.noShadow=true を焼き、
   // 距離LOD/近接影トグル(setCastShadow)が誤って影を点けないようにする。
+  // R53-T4: color引数は private メソッドなので呼び出し元は本コンストラクタ内(760行台)の
+  // 1箇所のみ(外部から直接呼ばれることはない)。ただしBotコンストラクタ自体は match.ts が
+  // 公開APIとして呼ぶため、そちらの色引数(zombieSpawnColor/精鋭色0x6d7d3a等)は今も
+  // 生きている前提で渡ってくる。R51蛍光グリーン化以降、この引数は tier==='boss' の
+  // ときだけ使われ、normal/elite では下の isElite 三項演算子が固定の蛍光グリーン定数を
+  // 選ぶため無視される(死に値)。Bot公開コンストラクタのシグネチャは他kind(humanoid等)
+  // でも共有するため変更しない=呼び出し元(match.ts)には現状の引数を渡し続けてよい。
   private buildZombieMesh(color: number, tier: BotTier = 'normal'): void {
     const isBoss = tier === 'boss';
     const isElite = tier === 'elite';
     // 蛍光グリーン化: ボスは既存の識別色(赤エンブレム/赤い目、colorから引き継ぐ)を維持し、
-    // 通常/精鋭は固定の蛍光グリーンへ寄せる(精鋭は明るめの色でtier識別を維持)
+    // 通常/精鋭は固定の蛍光グリーンへ寄せる(精鋭は明るめの色でtier識別を維持。
+    // = color引数は isBoss 分岐でのみ消費。上のコメント参照)
     const c = isBoss
       ? new THREE.Color(color).multiplyScalar(0.7)
       : new THREE.Color(isElite ? ZOMBIE_SKIN_ELITE : ZOMBIE_SKIN_NORMAL);
@@ -1066,6 +1098,12 @@ export class Bot {
       }
       this.glowMats.push({ mat: crackMat, base: 1.2 });
       this.rig.scale.setScalar(2.3);
+      // R53-T1修正: rig原点(=剛体中心)基準の等比拡大だとブーツ底(rigローカル≈-0.80。
+      // buildLegのコメント参照)が 2.3*0.80m 沈むが、ボスゾンビの実コライダー足元は
+      // ZOMBIE_BOSS_CENTER_TO_FEET(=1.44)。差分だけ持ち上げて接地を一致させる
+      // (従来は無補正で0.40m沈んでいた)。rigLiftYはsyncMesh/updateDying/killcamの
+      // fkResetPose/fkApplyDeathPoseの毎フレーム式にも反映する(他kind/tierは0のまま無害)。
+      this.rigLiftY = 2.3 * 0.8 - ZOMBIE_BOSS_CENTER_TO_FEET; // = +0.40
     }
 
     this.group.add(this.rig);
@@ -1432,10 +1470,15 @@ export class Bot {
     // 動く標的への追従は遅れて初弾がピクセルパーフェクトにならない)
     if (ctx.targetEye) this.slewAim(dt, ctx.targetEye, ctx.tuning.aimSlewRadS);
 
+    // R53-T5: 剛体位置は本関数内で(まだ)変化しない(setNextKinematicTranslationは次の
+    // world.step()まで反映されない)ため、1回だけ取得して以降すべての位置参照に使い回す
+    // (旧: this.position を分岐ごとに複数回呼び、その都度new Vector3していた)
+    const pos = this.getPositionInto(HUMANOID_POS_SCRATCH);
+
     let wishX = 0;
     let wishZ = 0;
     if (ctx.targetEye) {
-      const toTarget = ctx.targetEye.clone().sub(this.position);
+      const toTarget = HUMANOID_TO_SCRATCH.copy(ctx.targetEye).sub(pos);
       toTarget.y = 0;
       const dist = toTarget.length();
       toTarget.normalize();
@@ -1457,7 +1500,7 @@ export class Bot {
       // 警戒調査: 銃声などの音源方向へ振り向き、ゆっくり近づいて確かめる。
       // 千里眼にはならず「振り向いた結果、視野に入れば見つかる」自然な流れ。
       // 拠点(objective)持ちは調査で持ち場を放棄しない(ドミネーションの成立を守る)
-      const toAlert = this.alertPos.clone().sub(this.position);
+      const toAlert = HUMANOID_TO_SCRATCH.copy(this.alertPos).sub(pos);
       toAlert.y = 0;
       const dist = toAlert.length();
       if (dist > 1e-3) this.heading = Math.atan2(-toAlert.x, -toAlert.z);
@@ -1469,10 +1512,10 @@ export class Bot {
         // 音源へ到着。何も見つからなければ調査を終える
         this.alertPos = null;
       }
-    } else if (ctx.objective && this.position.distanceTo(ctx.objective) > 3) {
+    } else if (ctx.objective && pos.distanceTo(ctx.objective) > 3) {
       // 拠点へ向かう。直進しすぎないよう周期的に揺らす
       // (headingが移動方向を兼ねるため、警戒中でも拠点行動を優先する)
-      const toObjective = ctx.objective.clone().sub(this.position).setY(0).normalize();
+      const toObjective = HUMANOID_TO_SCRATCH.copy(ctx.objective).sub(pos).setY(0).normalize();
       this.headingTimer -= dt;
       if (this.headingTimer <= 0) {
         this.heading = Math.atan2(-toObjective.x, -toObjective.z) + (ctx.rand() - 0.5) * 0.7;
@@ -1534,9 +1577,9 @@ export class Bot {
       if (wishLen > 0.001 && movedLen < wishLen * 0.25) {
         this.stuckTimer += dt;
         if (this.stuckTimer > HUMANOID_STUCK_TH) {
-          const stuckP = this.position;
-          const leftBlocked = this.probeDirection(stuckP, this.heading + Math.PI / 2);
-          const rightBlocked = this.probeDirection(stuckP, this.heading - Math.PI / 2);
+          // R53-T5: 剛体はまだ動いていないので上で取得済みの pos をそのまま再利用できる
+          const leftBlocked = this.probeDirection(pos, this.heading + Math.PI / 2);
+          const rightBlocked = this.probeDirection(pos, this.heading - Math.PI / 2);
           if (ctx.targetEye) {
             // 戦闘中: strafeOverride で詰まっていない側へ誘導
             if (rightBlocked && !leftBlocked) this.unstuckStrafeOverride = -1;
@@ -1573,7 +1616,7 @@ export class Bot {
     // master 近接: 極近距離で刃を振る(射撃との複合攻撃)
     if (this.kind === 'master' && ctx.targetEye) {
       this.meleeTimer = Math.max(0, this.meleeTimer - dt);
-      const dist = ctx.targetEye.distanceTo(this.position);
+      const dist = ctx.targetEye.distanceTo(pos); // R53-T5: 上で取得済みのposを再利用
       if (dist <= MASTER_MELEE_RANGE && this.meleeTimer <= 0 && ctx.onMelee) {
         ctx.onMelee(this);
         this.meleeTimer = MASTER_MELEE_CD;
@@ -1800,7 +1843,9 @@ export class Bot {
   // 上書きされるため、詰まり検知時の是正は heading ではなく wish ベクトルへの横バイアス
   // 注入(unstuckStrafeOverride)で行う。詳細は wish 計算直後とKCC LODブロック内を参照。
   private updateZombie(dt: number, ctx: BotContext): void {
-    const pos = this.position;
+    // R53-T5: ★5と同じスクラッチ流儀(updateGiant参照)。this.position/.clone()の
+    // 毎フレームnew Vector3を根絶する(群れ数×毎フレームでGC圧が大きい経路)
+    const pos = this.getPositionInto(ZOMBIE_POS_SCRATCH);
     let wishX = 0;
     let wishZ = 0;
     const target = ctx.targetEye;
@@ -1810,7 +1855,7 @@ export class Bot {
     // KCC LOD 用: プレイヤーまでの距離(target=プレイヤー目線)
     let distToPlayer = Infinity;
     if (target) {
-      const to = target.clone().sub(pos);
+      const to = ZOMBIE_TO_SCRATCH.copy(target).sub(pos);
       to.y = 0;
       const dist = to.length();
       distToPlayer = dist;
@@ -2203,7 +2248,8 @@ export class Bot {
       this.legR.rotation.x = buckle * 0.3;
       this.kneeL.rotation.x = buckle * 1.4;
       this.kneeR.rotation.x = buckle * 1.4;
-      this.rig.position.y = -buckle * 0.22;
+      // R53-T1: rigLiftY基準(通常0。boss zombieのみ足沈み補正)から膝崩れ分を沈める
+      this.rig.position.y = this.rigLiftY - buckle * 0.22;
       const fall = THREE.MathUtils.clamp((t - 0.35) / 0.65, 0, 1);
       const ease = fall * fall * (3 - 2 * fall); // smoothstep
       this.group.rotation.x = ease * (Math.PI / 2) * 0.95;
@@ -2253,7 +2299,8 @@ export class Bot {
       this.kneeR.rotation.x = Math.max(0, zs) * this.walkAmp * 0.9;
       this.rig.rotation.x = 0.26 + Math.sin(this.anim * 3.1) * 0.045; // 常時前傾+上下よろめき
       this.rig.rotation.z = Math.sin(this.anim * 1.7 + this.bobPhase) * 0.07; // 左右のよろめき
-      this.rig.position.y = Math.abs(Math.cos(this.walkPhase)) * this.walkAmp * 0.03;
+      // R53-T1: rigLiftY(通常0。boss zombieのみ足沈み補正)を基準にボブを重ねる
+      this.rig.position.y = this.rigLiftY + Math.abs(Math.cos(this.walkPhase)) * this.walkAmp * 0.03;
       if (this.armRig) {
         this.armRig.rotation.x = Math.sin(this.anim * 2.3) * 0.12; // 前へ突き出した腕を揺らす
         this.armRig.rotation.z = Math.sin(this.anim * 1.3 + this.bobPhase) * 0.05;
@@ -2279,6 +2326,91 @@ export class Bot {
     if (this.armRig) {
       this.armRig.rotation.x = Math.sin(this.anim * 1.5) * 0.05 * idle - swing * 0.12;
       this.armRig.rotation.z = Math.sin(this.anim * 0.9 + 1.1) * 0.03 * idle;
+    }
+  }
+
+  // ── R53-T3: ファイナルキルカム公開API(契約凍結) ──────────────────────────
+  // match.ts はこれまで FkBotRig という duck-typing 構造型で bot 内部の private
+  // フィールド(rig/legL/legR/kneeL/kneeR/turretGroup/tankBarrel/turretHead/turretLegs/
+  // dissolveU/deathTilt)へ無警告で直接アクセスしていた。以下の3メソッドへ置き換え、
+  // bot側の内部表現を隠蔽する。式は旧 match.ts の fkResetAlivePose / fkApplyDeathPose と
+  // 完全に等価(キルカムの見た目を1px単位で非回帰にする最重要条件)。
+
+  /**
+   * キルカム: 記録済みフレームのワールド座標/向きへ生存姿勢を適用する
+   * (旧 match.ts fkApplyFrame のうち bot 側の処理: 位置/向き/可視化+死亡演出の巻き戻し)。
+   * 呼び出し側は非alive表示(バッファのaliveフラグ=false)の場合はこれを呼ばず、
+   * bot.group.position/rotation.y の設定と bot.group.visible=false のみ行うこと
+   * (group は既存どおり公開フィールドなので直接操作できる)。
+   */
+  fkApplyLivePose(x: number, y: number, z: number, rotY: number): void {
+    this.group.position.set(x, y, z);
+    this.group.rotation.y = rotY;
+    this.group.visible = true;
+    this.fkResetPose();
+  }
+
+  /**
+   * キルカム: 死亡演出で変形したトランスフォームを生存姿勢へ巻き戻す
+   * (旧 match.ts fkResetAlivePose と同一。bot.ts respawnAt の視覚リセット部分とも同じ式)。
+   * fkApplyLivePose が内部で呼ぶほか、match が単独で呼んでもよい。
+   */
+  fkResetPose(): void {
+    this.group.rotation.x = 0;
+    this.group.rotation.z = 0;
+    this.rig.position.y = this.rigLiftY; // R53-T1: boss zombieの足沈み補正を保持(他は0)
+    this.rig.rotation.x = 0;
+    this.rig.rotation.z = 0;
+    this.legL.rotation.set(0, 0, 0);
+    this.legR.rotation.set(0, 0, 0);
+    this.kneeL.rotation.set(0, 0, 0);
+    this.kneeR.rotation.set(0, 0, 0);
+    this.dissolveU.value = 0;
+    if (this.turretGroup) {
+      this.turretGroup.position.set(0, 0.95, 0.1);
+      this.turretGroup.rotation.set(0, 0, 0);
+    }
+    if (this.tankBarrel) this.tankBarrel.rotation.set(0, 0, 0);
+    if (this.turretHead) this.turretHead.rotation.set(0, 0, 0);
+    for (const leg of this.turretLegs) leg.rotation.x = 0;
+  }
+
+  /**
+   * キルカム: キル時刻からの経過秒を正規化した t01(0..1, 呼び出し側が
+   * kind別の全長で割ってクランプ済みのもの)で死亡演出ポーズを手続き再現する
+   * (旧 match.ts fkApplyDeathPose と同一式。bot.ts updateDying の式そのもの、ただし
+   * カウントダウンではなく経過側)。fkResetPose 済みの姿勢に対して適用する前提。
+   */
+  fkApplyDeathPose(t01: number): void {
+    const t = THREE.MathUtils.clamp(t01, 0, 1);
+    if (this.kind === 'drone') {
+      // 墜落スピンの簡易再現(物理Y降下は再現せず回転のみ)
+      this.group.rotation.x = t * (Math.PI / 2) * 0.8;
+      this.group.rotation.z = t * Math.PI * 1.5;
+    } else if (this.kind === 'turret') {
+      this.group.rotation.z = -1.25 * t;
+      if (this.turretHead) this.turretHead.rotation.x = t * 0.9;
+      for (const leg of this.turretLegs) leg.rotation.x = -t * 0.4;
+    } else if (this.kind === 'tank') {
+      const blow = THREE.MathUtils.clamp(t / 0.3, 0, 1);
+      if (this.turretGroup) {
+        this.turretGroup.position.y = 0.95 + blow * 0.9;
+        this.turretGroup.rotation.z = blow * 0.7 * (this.deathTilt >= 0 ? 1 : -1);
+        this.turretGroup.rotation.x = -blow * 0.5;
+      }
+      if (this.tankBarrel) this.tankBarrel.rotation.x = blow * 0.6;
+    } else {
+      // humanoid / zombie / master / giant: 膝崩れ(前段)→前傾横倒し(後段)
+      const buckle = THREE.MathUtils.clamp(t / 0.45, 0, 1);
+      this.legL.rotation.x = buckle * 0.3;
+      this.legR.rotation.x = buckle * 0.3;
+      this.kneeL.rotation.x = buckle * 1.4;
+      this.kneeR.rotation.x = buckle * 1.4;
+      this.rig.position.y = this.rigLiftY - buckle * 0.22;
+      const fall = THREE.MathUtils.clamp((t - 0.35) / 0.65, 0, 1);
+      const ease = fall * fall * (3 - 2 * fall); // smoothstep
+      this.group.rotation.x = ease * (Math.PI / 2) * 0.95;
+      this.group.rotation.z = ease * this.deathTilt;
     }
   }
 
@@ -2382,7 +2514,7 @@ export class Bot {
     this.group.rotation.x = 0;
     this.group.rotation.z = 0; // drone墜落/turret転倒のリセット
     this.walkAmp = 0;
-    this.rig.position.y = 0;
+    this.rig.position.y = this.rigLiftY; // R53-T1: boss zombieの足沈み補正を保持(他は0)
     this.rig.rotation.x = 0;
     this.rig.rotation.z = 0; // droneバンクのリセット
     this.bank = 0;

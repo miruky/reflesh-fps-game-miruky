@@ -3,12 +3,24 @@ import * as THREE from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   Bot,
+  BOSS_TUNING,
   DIFFICULTY,
   ZOMBIE_HORDE_THIN_RANK,
   zombieKccActive,
   zombieKccSkipFactor,
   type BotContext,
 } from './bot';
+
+// 平坦な床(cuboid)だけを持つ最小worldを作る(makeFixture以外の個別テストでも使う共通部)
+function makeFlatWorld(): RAPIER.World {
+  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  const floorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(50, 0.5, 50).setTranslation(0, -0.5, 0),
+    floorBody,
+  );
+  return world;
+}
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -275,5 +287,177 @@ describe('Bot ゾンビ unstuckStrafeOverride(壁詰まりのアンスタック)
 
     expect(override).not.toBeNull();
     expect(Math.abs(override as number)).toBe(1);
+  });
+});
+
+describe('Bot ボスゾンビの足元(R53-T1: rig等比拡大の0.40m沈み修正)', () => {
+  function makeBossZombie(): Bot {
+    const world = makeFlatWorld();
+    const tuning = { ...DIFFICULTY.normal, ...BOSS_TUNING }; // BOSS_TUNING.scale=1(視覚はrig側で拡大)
+    const boss = new Bot(world, 'ボス', new THREE.Vector3(0, 0, 0), 0xff2200, tuning, 1, 'boss', 'zombie');
+    world.step();
+    return boss;
+  }
+
+  it('rigLiftYが 2.3*0.80 - ZOMBIE_BOSS_CENTER_TO_FEET(=1.44) から導出した+0.40になる', () => {
+    const boss = makeBossZombie();
+    const internal = boss as unknown as { rigLiftY: number };
+    // ZOMBIE_BOSS_CENTER_TO_FEET = ZOMBIE_BOSS_BODY_HALF(0.45*1.8=0.81)
+    //                            + ZOMBIE_BOSS_BODY_RADIUS(0.35*1.8=0.63) = 1.44
+    const expected = 2.3 * 0.8 - 1.44;
+    expect(expected).toBeCloseTo(0.4, 10);
+    expect(internal.rigLiftY).toBeCloseTo(expected, 10);
+  });
+
+  it('fkResetPose適用後、視覚ブーツ底(rig.scale=2.3考慮)が実コライダー足元(-1.44)と一致する(従来は-1.84=0.40m沈み)', () => {
+    const boss = makeBossZombie();
+    boss.fkResetPose();
+    const internal = boss as unknown as { rig: THREE.Group };
+    // buildLeg内コメント: ブーツ底はrigローカル≈-0.80。rig.scale=2.3のため視覚足元は
+    // rigLiftY + (-0.80 * 2.3) となる。修正前(rigLiftY=0)は-1.84=0.40m沈んでいた。
+    const visualFootLocalY = internal.rig.position.y + -0.8 * 2.3;
+    expect(visualFootLocalY).toBeCloseTo(-1.44, 5);
+  });
+
+  it('通常/精鋭ゾンビ・humanoidはrigLiftYが0のまま(非回帰)', () => {
+    const humanoidFixture = makeFixture();
+    const internalHumanoid = humanoidFixture.bot as unknown as { rigLiftY: number };
+    expect(internalHumanoid.rigLiftY).toBe(0);
+
+    const world = makeFlatWorld();
+    const zombie = new Bot(
+      world, 'ゾンビ', new THREE.Vector3(0, 0, 0), 0x39d465,
+      { ...DIFFICULTY.normal }, 2, 'normal', 'zombie',
+    );
+    expect((zombie as unknown as { rigLiftY: number }).rigLiftY).toBe(0);
+  });
+});
+
+describe('Bot allGiantモードのゾンビ頭コライダー(R53-T2: 視覚拡大とのズレ修正)', () => {
+  it('tuning.scale=1.35のとき、頭コライダーのY offset/半径がscale倍で生成され、視覚頭位置相当のレイに当たる', () => {
+    const world = makeFlatWorld();
+    const zombie = new Bot(
+      world, '巨躯ゾンビ', new THREE.Vector3(0, 0, 0), 0x39d465,
+      { ...DIFFICULTY.normal, scale: 1.35 }, 2, 'normal', 'zombie',
+    );
+    world.step();
+
+    // headOffsetY(=headOff)がHEAD_OFFSET(0.88)*1.35で算出されている(視覚拡大と同倍率)
+    expect(zombie.headOffsetY).toBeCloseTo(0.88 * 1.35, 10);
+
+    // その高さの水平レイが頭コライダーに当たる。修正前は無スケールのHEAD_OFFSET(0.88)固定
+    // だったため、scale後の視覚頭位置(+0.308m相当)を狙うと外れていた
+    const headY = zombie.position.y + zombie.headOffsetY;
+    const ray = new RAPIER.Ray({ x: 0, y: headY, z: -10 }, { x: 0, y: 0, z: 1 });
+    const hit = world.castRay(ray, 100, true);
+    expect(hit).not.toBeNull();
+    expect(hit!.collider.handle).toBe(zombie.headCollider.handle);
+
+    // 半径もHEAD_RADIUS(0.22)*1.35で生成されている
+    const ball = zombie.headCollider.shape as RAPIER.Ball;
+    expect(ball.radius).toBeCloseTo(0.22 * 1.35, 10);
+  });
+
+  it('胴カプセルはscaleの影響を受けない(移動/ドア通過への非回帰)', () => {
+    const world = makeFlatWorld();
+    const zombie = new Bot(
+      world, '巨躯ゾンビ', new THREE.Vector3(0, 0, 0), 0x39d465,
+      { ...DIFFICULTY.normal, scale: 1.35 }, 2, 'normal', 'zombie',
+    );
+    const capsule = zombie.bodyCollider.shape as RAPIER.Capsule;
+    expect(capsule.halfHeight).toBeCloseTo(0.45, 10); // BODY_HALF(既定)のまま
+    expect(capsule.radius).toBeCloseTo(0.35, 10); // BODY_RADIUS(既定)のまま
+  });
+
+  it('scale=1(既定)のゾンビは従来どおりHEAD_RADIUS/HEAD_OFFSETのまま(非回帰)', () => {
+    const world = makeFlatWorld();
+    const zombie = new Bot(
+      world, 'ゾンビ', new THREE.Vector3(0, 0, 0), 0x39d465,
+      { ...DIFFICULTY.normal }, 2, 'normal', 'zombie',
+    );
+    expect(zombie.headOffsetY).toBeCloseTo(0.88, 10);
+    const ball = zombie.headCollider.shape as RAPIER.Ball;
+    expect(ball.radius).toBeCloseTo(0.22, 10);
+  });
+});
+
+describe('Bot キルカム公開API(R53-T3: fkApplyLivePose/fkApplyDeathPose/fkResetPose)', () => {
+  const ctxBase: BotContext = {
+    targetEye: null,
+    objective: null,
+    tuning: DIFFICULTY.normal,
+    rand: () => 0.5,
+    onShoot: () => {},
+    onMelee: () => {},
+  };
+
+  it('fkApplyLivePoseは位置/向き/可視を設定し、死亡演出で変形したトランスフォームをalive姿勢へ巻き戻す', () => {
+    const world = makeFlatWorld();
+    const bot = new Bot(world, 'テスト', new THREE.Vector3(0, 0, 0), 0xc84b3c, DIFFICULTY.normal);
+    bot.takeDamage(999);
+    world.step();
+    for (let i = 0; i < 20; i += 1) bot.update(1 / 60, ctxBase);
+
+    const internal = bot as unknown as {
+      rig: THREE.Group;
+      legL: THREE.Group;
+      kneeL: THREE.Group;
+      dissolveU: { value: number };
+    };
+    // 死亡演出で実際に変形している(前提の確認。でなければ以降の巻き戻し検証が無意味)
+    expect(internal.legL.rotation.x).toBeGreaterThan(0);
+
+    bot.fkApplyLivePose(3, 0, -4, 1.2);
+    expect(bot.group.position.x).toBe(3);
+    expect(bot.group.position.y).toBe(0);
+    expect(bot.group.position.z).toBe(-4);
+    expect(bot.group.rotation.y).toBe(1.2);
+    expect(bot.group.visible).toBe(true);
+    expect(bot.group.rotation.x).toBe(0);
+    expect(bot.group.rotation.z).toBe(0);
+    expect(internal.rig.position.y).toBe(0); // rigLiftY=0(通常humanoid)
+    expect(internal.legL.rotation.x).toBe(0);
+    expect(internal.kneeL.rotation.x).toBe(0);
+    expect(internal.dissolveU.value).toBe(0);
+  });
+
+  it('fkApplyDeathPoseはupdateDyingと同一の式で死亡ポーズを再現する(キルカム見た目の非回帰=数式の等価性)', () => {
+    const totalS = 0.6; // bot.ts KIND_DEATH_S.humanoid(=match.ts FK_DEATH_S.humanoidと同値)
+    const dt = 1 / 60;
+    const steps = 12; // 0.2s経過(t=0.2/0.6=0.333、膝崩れbuckle区間)
+
+    // 基準: 実際に死なせてupdateDyingを走らせる(内部private経路。update()経由でのみ駆動)
+    const worldA = makeFlatWorld();
+    const reference = new Bot(worldA, '基準', new THREE.Vector3(0, 0, 0), 0xc84b3c, DIFFICULTY.normal);
+    reference.takeDamage(999);
+    worldA.step();
+    for (let i = 0; i < steps; i += 1) reference.update(dt, ctxBase);
+
+    // 検証対象: 公開APIのfkApplyDeathPoseだけで同じ経過時間を手続き再現する
+    const worldB = makeFlatWorld();
+    const replay = new Bot(worldB, '再現', new THREE.Vector3(0, 0, 0), 0xc84b3c, DIFFICULTY.normal);
+    replay.fkApplyLivePose(0, 0, 0, 0);
+    const t01 = (steps * dt) / totalS;
+    replay.fkApplyDeathPose(t01);
+
+    const refI = reference as unknown as { rig: THREE.Group; legL: THREE.Group; kneeL: THREE.Group };
+    const repI = replay as unknown as { rig: THREE.Group; legL: THREE.Group; kneeL: THREE.Group };
+    expect(repI.rig.position.y).toBeCloseTo(refI.rig.position.y, 5);
+    expect(repI.legL.rotation.x).toBeCloseTo(refI.legL.rotation.x, 5);
+    expect(repI.kneeL.rotation.x).toBeCloseTo(refI.kneeL.rotation.x, 5);
+    expect(replay.group.rotation.x).toBeCloseTo(reference.group.rotation.x, 5);
+    expect(replay.group.rotation.z).toBeCloseTo(reference.group.rotation.z, 5);
+  });
+
+  it('fkApplyDeathPoseはboss zombieのrigLiftYを保持する(T1補正との整合)', () => {
+    const world = makeFlatWorld();
+    const tuning = { ...DIFFICULTY.normal, ...BOSS_TUNING };
+    const boss = new Bot(world, 'ボス', new THREE.Vector3(0, 0, 0), 0xff2200, tuning, 1, 'boss', 'zombie');
+    const rigLiftY = (boss as unknown as { rigLiftY: number }).rigLiftY;
+    boss.fkApplyLivePose(0, 0, 0, 0);
+    boss.fkApplyDeathPose(0); // t01=0 → buckle=0 なので rig.position.y は rigLiftY のみ
+    const rigY = (boss as unknown as { rig: THREE.Group }).rig.position.y;
+    expect(rigY).toBeCloseTo(rigLiftY, 10);
+    expect(rigLiftY).toBeCloseTo(0.4, 10);
   });
 });

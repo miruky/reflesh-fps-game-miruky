@@ -380,11 +380,21 @@ describe('XP乗数', () => {
     const p1 = emptyProfile();
     const p2 = emptyProfile();
     // won=true, kills=0: 勝利500+初制圧ボーナス800 = 1300 → ×500 = 650_000
+    // R53修正: デイリーチャレンジXPは設計上 xpMul 対象外(R31)かつ「今日の日付シード」で
+    // 達成有無が変わるため、デイリー行を除いた乗算部のみで等式を検証する(日付非依存化。
+    // 旧アサート scaled.xpTotal === base.xpTotal×MUL は、デイリーが達成される日付でのみ
+    // 落ちる flaky だった)
     const ms = missionSummary(m1.id, ch1.id, true, 30);
     const base = applyCampaignMission(p1, { ...ms });
     const scaled = applyCampaignMission(p2, { ...ms }, XP_MUL_NORMAL);
-    expect(scaled.xpTotal).toBe(base.xpTotal * XP_MUL_NORMAL);
-    expect(p2.xp).toBe(p1.xp * XP_MUL_NORMAL);
+    const dailySum = (rows: { label: string; xp: number }[]): number =>
+      rows.filter((r) => r.label.startsWith('デイリー')).reduce((s, r) => s + r.xp, 0);
+    const baseDaily = dailySum(base.xpBreakdown);
+    const scaledDaily = dailySum(scaled.xpBreakdown);
+    // デイリー行は両プロフィールで同一(同じ日付シード・同じ戦績)かつ非乗算
+    expect(scaledDaily).toBe(baseDaily);
+    expect(scaled.xpTotal - scaledDaily).toBe((base.xpTotal - baseDaily) * XP_MUL_NORMAL);
+    expect(p2.xp - scaledDaily).toBe((p1.xp - baseDaily) * XP_MUL_NORMAL);
   });
 });
 

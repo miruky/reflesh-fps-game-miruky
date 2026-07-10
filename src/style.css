@@ -10912,3 +10912,48 @@ body.killcam-active .hud-death {
   font-size: 0.875rem;
 }
 .menu-toggle input[type=checkbox] { accent-color: var(--accent, #4af); width: 16px; height: 16px; }
+
+/* ══════════════════════════════════════════════════════════════
+   R53 T3: 超越階級(「平行世界の王」「無限の無限・N乗」等)+ 最大7桁レベル表示の
+   オーバーフロー対策。既存ブロックは変更せず安全網として追記する(cascade順で後勝ち)。
+   対象: .nav-opr(menu.ts:781) / .status-opr(menu.ts:913) / .aar-tele-item(menu.ts:1330)
+        / .result-level(menu.ts:1458) / .profile-rank(menu.ts:1857)
+   ══════════════════════════════════════════════════════════════ */
+.nav-opr,
+.status-opr,
+.aar-tele-item,
+.result-level,
+.profile-rank {
+  display: inline-block;
+  max-width: min(46vw, 260px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* ── R53 T4: ゾンビパーク6種化(hud.ts:1957-1980のPERK_COLORS/LABELS/ARIA)で
+   .hud-zperks(hud.ts:399 / 元定義 style.css:10084)が横一列に伸び、HUD中央側の
+   要素と衝突しうる。折返しで横幅を抑える(既存.hud-zperksブロックは変更しない)。
+   PERK_LIMIT(zombie-economy.ts:31)自体の見直しはW2のeconomyオーナーへ申し送り。 ── */
+.hud-zperks {
+  flex-wrap: wrap;
+  max-width: 130px;
+}
+
+/* ── R53 T5: perfhud計測オーバーレイ(main.ts, ?perfhud=1時のみ生成)。
+   等幅・右下・半透明黒。canvas上のポストFXには一切触れない独立DOM。 ── */
+#perfhud {
+  position: fixed;
+  right: 8px;
+  bottom: 8px;
+  z-index: 9999;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #7fffb0;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  pointer-events: none;
+}

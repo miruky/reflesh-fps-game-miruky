@@ -2,7 +2,8 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Bot, DIFFICULTY, KIND_TUNING, tuningFor } from './bot';
-import { applyHellTuning, resolveNaturalBotKind } from './match';
+import { applyHellTierTuning, applyHellTuning, resolveNaturalBotKind } from './match';
+import { zombieBossHp } from './zombie';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -100,6 +101,42 @@ describe('超鬼畜 (hell) チューニング倍率', () => {
     const merged = { ...tuningFor('normal', 'normal'), moveSpeedMul: 0.9 };
     const hell = applyHellTuning(merged);
     expect(hell.moveSpeedMul).toBeCloseTo(0.9 * 1.3); // 1.17 < 1.75
+  });
+});
+
+describe('T1: 超鬼畜×ボスのHP壁修正(applyHellTierTuning)', () => {
+  it('r50(tier=10)のボスHPは80,000上限にちょうど到達する(zombieBossHp単体の前提確認)', () => {
+    expect(zombieBossHp(50)).toBe(80000);
+  });
+
+  it('boss tierはhellのHP倍率対象外 → r50×hellでも80,000のまま(240,000へ突破しない)', () => {
+    const hp = zombieBossHp(50); // 80000
+    const merged = { ...tuningFor('normal', 'normal'), maxHp: hp, damage: 90, moveSpeedMul: 1.44 * 2.0 };
+    const tuned = applyHellTierTuning(merged, 'boss', 'zombie');
+    expect(tuned.maxHp).toBe(80000);
+  });
+
+  it('boss tierでも damage/speedは素の applyHellTuning と同じ値を維持する(HPだけが例外)', () => {
+    const merged = { ...tuningFor('normal', 'normal'), maxHp: 80000, damage: 90, moveSpeedMul: 1.44 * 2.0 };
+    const plainHell = applyHellTuning(merged);
+    const tuned = applyHellTierTuning(merged, 'boss', 'zombie');
+    expect(tuned.damage).toBe(plainHell.damage); // damage×2.5は維持
+    expect(tuned.moveSpeedMul).toBe(plainHell.moveSpeedMul); // speed倍率も維持
+    expect(tuned.maxHp).not.toBe(plainHell.maxHp); // HPだけがboss tierで例外的にhell倍率を受けない
+    expect(tuned.maxHp).toBe(merged.maxHp);
+  });
+
+  it('boss以外のtierは従来どおりHP×3が適用される(回帰確認)', () => {
+    const merged = { ...tuningFor('normal', 'normal'), maxHp: 1000 };
+    expect(applyHellTierTuning(merged, 'normal', 'zombie').maxHp).toBe(3000);
+    expect(applyHellTierTuning(merged, 'elite', 'zombie').maxHp).toBe(3000);
+  });
+
+  it('非ゾンビのboss(戦車/章ボス等)は従来どおりHP×3を受ける(V-W1: 除外はゾンビboss限定)', () => {
+    // HP除外を kind 非依存にすると、hellで戦車ボスが従来(6600)より柔らかい2200になる回帰
+    const merged = { ...tuningFor('boss', 'normal'), maxHp: 2200 };
+    expect(applyHellTierTuning(merged, 'boss', 'tank').maxHp).toBe(6600);
+    expect(applyHellTierTuning(merged, 'boss', 'humanoid').maxHp).toBe(6600);
   });
 });
 

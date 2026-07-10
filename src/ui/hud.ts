@@ -22,6 +22,17 @@ export function isZombieRepeatBadgeMuted(firstUnlock: boolean, inZombieMode: boo
   return inZombieMode && !firstUnlock;
 }
 
+// R53 T6: adsKeepsCrosshair=true の武器(minigun=修羅/fan=風神扇)はADS中も腰だめクロスヘアを
+// フル表示のまま維持する(R12由来の消し込み経路=擬似要素レティクル用--ads / 4本バーの
+// barOpacityの両方を凍結する)。updateCrosshairから呼ぶ純関数として切り出しテスト容易化。
+export function crosshairAdsFade(
+  adsProgress: number,
+  keepsCrosshair: boolean,
+): { adsVar: number; barOpacity: number } {
+  if (keepsCrosshair) return { adsVar: 0, barOpacity: 1 };
+  return { adsVar: adsProgress, barOpacity: Math.max(0, 1 - adsProgress * 2.5) };
+}
+
 // 軽量化監査#8: 1フレームに生成するダメージ数値DOMノードの上限。
 // 全滅ウルト等で100体超同時キル→同数のspan+rAF+setTimeoutが同一フレームに積まれ、
 // 死亡FXスパイクと重なって重量化するのを防ぐ。超過分は個別ノードを作らず、
@@ -795,9 +806,13 @@ export class Hud {
       crosshair.dataset.reticle = snap.reticleStyle;
     }
     crosshair.style.setProperty('--reticle-color', reticleColorValue(snap.reticleColor));
+    // R53 T6: adsKeepsCrosshair=true の武器はADS中も腰だめクロスヘアをフルで維持する
+    // (擬似要素レティクル消し込み用の--adsと、4本バーのbarOpacityの両方を凍結する。
+    // スコープ/倍率光学の全消し=下のscopedWeapon分岐は対象外・従来どおり)
+    const fade = crosshairAdsFade(snap.adsProgress, snap.adsKeepsCrosshair === true);
     // 覗き込み量を毎フレーム公開。CSS側で circle/chevron 擬似要素レティクルを
     // ADS進行に応じて消し込む(barはJSのopacityで消えるが擬似要素は非対象なため)。
-    crosshair.style.setProperty('--ads', String(snap.adsProgress));
+    crosshair.style.setProperty('--ads', String(fade.adsVar));
     if (!snap.alive) {
       crosshair.style.opacity = '0';
       return;
@@ -811,8 +826,8 @@ export class Hud {
     crosshair.style.opacity = '1';
     const fovRad = (snap.fov * Math.PI) / 180;
     const gap = 4 + (Math.tan(snap.spreadRad) / Math.tan(fovRad / 2)) * (height / 2);
-    // ADS序盤で4本バーを素早く消す(係数2.5=ads≈0.4で消灯)。擬似要素はCSSで同係数消去。
-    const barOpacity = String(Math.max(0, 1 - snap.adsProgress * 2.5));
+    // ADS序盤で4本バーを素早く消す(係数2.5=ads≈0.4で消灯)。keepsCrosshairの武器は消さない。
+    const barOpacity = String(fade.barOpacity);
     const set = (id: string, transform: string) => {
       const bar = this.el[id];
       if (bar) {
@@ -1904,38 +1919,14 @@ export class Hud {
   }
 
   /**
-   * フラッシュ強度(0..1)とスコープ状態を毎フレーム更新する。
-   * adsRatio > 0.85 かつ isScope のときスコープオーバーレイを表示する。
-   * viewmodelは非表示のまま、既存の hud-scope 要素をキルカム中も駆動する。
+   * フラッシュ強度(0..1)を毎フレーム更新する。
+   * R48でファイナルキルカムは三人称固定になったため、R53でスコープオーバーレイ
+   * 駆動(adsRatio/isScope引数・hud-scope要素の開閉)を撤去した(表示経路が恒久的に
+   * 死んでいたため)。killcam開始時にスコープが開いていた場合の強制クローズは
+   * hideFinalKillcam() 側の安全策としてそのまま残す。
    */
-  updateFinalKillcam(flash: number, adsRatio = 0, isScope = false): void {
+  updateFinalKillcam(flash: number): void {
     this.fkcFlashEl.style.opacity = String(flash > 0.001 ? flash : 0);
-
-    const scope = this.el['scope'];
-    if (!scope) return;
-
-    // スコープオーバーレイ: ADS率>0.85 かつ scope武器でのキルの場合のみ表示
-    const scopeOn = isScope && adsRatio > 0.85;
-    scope.hidden = !scopeOn;
-    if (!scopeOn) {
-      this.scopeOn = false;
-      return;
-    }
-    // 既存の data属性と CSS変数を最小限セット(通常プレイの updateScope と同じ仕組み)
-    const t = Math.min(1, (adsRatio - 0.5) / 0.5);
-    scope.style.opacity = String(t);
-    scope.style.setProperty('--in', String(t));
-    scope.style.setProperty('--conv', String(1 - t));
-    // キルカム中: 息揺れなし・glintなし・steady/engaged クラスなし
-    scope.style.setProperty('--breath', '0');
-    scope.style.setProperty('--swx', '0px');
-    scope.style.setProperty('--swy', '0px');
-    scope.classList.remove('steady', 'engaged');
-    // 初回entry でグリント
-    if (!this.scopeOn) {
-      this.restartAnimation('scopeglint', 'show');
-      this.scopeOn = true;
-    }
   }
 
   private updateZombieShopHud(snap: MatchSnapshot): void {

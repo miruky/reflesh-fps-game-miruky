@@ -352,11 +352,51 @@ function showResult(): void {
   }
 }
 
+// ── ?perfhud=1: 軽量な自己計測オーバーレイ(既定OFF・出荷安全) ─────────────────
+// R53 T5: 軽量化計画(perf work)の前提となるフレームタイム計測ハーネス。
+// クエリが無ければ PERFHUD_ON=false のままで、リングバッファ書き込み含め
+// 以下のperfhud関連コードは一切実行されない(DOM生成もされない)。
+const PERFHUD_ON = new URLSearchParams(window.location.search).get('perfhud') === '1';
+const PERFHUD_BUF_SIZE = 256;
+const perfhudBuf = PERFHUD_ON ? new Float32Array(PERFHUD_BUF_SIZE) : null;
+let perfhudIdx = 0;
+let perfhudFilled = 0;
+let perfhudAcc = 0;
+// ゾンビ戦の参考値: レーダー可視(radarEnabled設定+射程+LOS)な敵数の概算。
+// 真の総alive数はmatch.tsに専用アクセサが無いため未提供(-1=非対象/非表示)。
+let perfhudZombieRound = -1;
+let perfhudZombieVisible = -1;
+let perfhudEl: HTMLDivElement | null = null;
+if (PERFHUD_ON) {
+  perfhudEl = document.createElement('div');
+  perfhudEl.id = 'perfhud';
+  document.body.appendChild(perfhudEl);
+}
+
+// rAF実dtをリングバッファへ積み、0.5秒ごとにp50/p95・draw call数・(ゾンビ戦なら)
+// 参考alive数をDOMへ書き戻す。バッファ書き込み自体はO(1)で毎フレームのコストは無視できる。
+function perfhudSample(realDtS: number): void {
+  if (!perfhudBuf || !perfhudEl) return;
+  perfhudBuf[perfhudIdx] = realDtS * 1000;
+  perfhudIdx = (perfhudIdx + 1) % PERFHUD_BUF_SIZE;
+  if (perfhudFilled < PERFHUD_BUF_SIZE) perfhudFilled++;
+  perfhudAcc += realDtS;
+  if (perfhudAcc < 0.5) return;
+  perfhudAcc = 0;
+  const n = perfhudFilled;
+  const sorted = Array.from(perfhudBuf.subarray(0, n)).sort((a, b) => a - b);
+  const pct = (q: number) => sorted[Math.min(n - 1, Math.floor(q * n))] ?? 0;
+  const calls = renderer.info.render.calls;
+  const zLine = perfhudZombieRound >= 0 ? `\nZ R${perfhudZombieRound} VIS${perfhudZombieVisible}` : '';
+  perfhudEl.textContent = `p50 ${pct(0.5).toFixed(2)}ms  p95 ${pct(0.95).toFixed(2)}ms\ncalls ${calls}${zLine}`;
+}
+
 const loop = new GameLoop(
   (dt) => {
     if (mode === 'playing' && match) match.update(dt);
   },
   (dt) => {
+    if (PERFHUD_ON) perfhudSample(dt);
     // Options(ゲームパッド)で一時停止/再開。pointer lock のジェスチャ制約で
     // 再開はベストエフォート(失敗時はクリックで再開できる)
     // finalkillcam 中は pause ボタンをスキップとして下のブロックで使うため、ここでは消費しない
@@ -399,6 +439,11 @@ const loop = new GameLoop(
           sounds.pauseCombatLoops(true);
           combatLoopsPaused = true;
         }
+        // perfhud: プレイ中でなければ前試合のゾンビ参考値を持ち越さない
+        if (PERFHUD_ON) {
+          perfhudZombieRound = -1;
+          perfhudZombieVisible = -1;
+        }
       }
       if (mode === 'playing') {
         const snap = match.snapshot();
@@ -411,6 +456,10 @@ const loop = new GameLoop(
           (world) => match!.projectToScreen(world, uiW, uiH),
           input.isDown('scoreboard'),
         );
+        if (PERFHUD_ON) {
+          perfhudZombieRound = snap.zombieRound ?? -1;
+          perfhudZombieVisible = snap.zombieRound !== undefined ? snap.enemyBearings.length : -1;
+        }
         // 被弾時の一瞬のクロマアベ(色相シフト)。競技性に配慮し省モーション時はスキップ
         if (snap.tookDamage && !effectiveReduceMotion()) {
           const el = renderer.domElement;
@@ -430,8 +479,9 @@ const loop = new GameLoop(
           input.wasPressed('jump') ||
           input.consumePausePressed();
         const done = match.advanceFinalKillcam(dt) || skipPressed;
-        const scope = match.fkScopeInfo;
-        hud.updateFinalKillcam(match.fkFlash, scope.adsRatio, scope.isScope);
+        // R53: ファイナルキルカムは三人称固定(R48)のためスコープ表示経路は撤去済み
+        // (旧 match.fkScopeInfo 消費 → hud.updateFinalKillcam(flash, adsRatio, isScope))。
+        hud.updateFinalKillcam(match.fkFlash);
         if (done) {
           letterboxEl.style.opacity = '0';
           hud.hideFinalKillcam();
