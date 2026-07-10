@@ -41,6 +41,10 @@ const POSTFX_SHADER = {
     uSuppress: { value: 0 },
     // R33 黒雷帝ビネット: 発動黒転スパイク(高値→減衰) + 常時紫脈動(低値)。uDarkAuraより明紫・速い
     uKokurai: { value: 0 },
+    // R54-F7 シネマDOF風封筒(0=no-op。キルカム/シネマカメラ中のみ >0)
+    uCinema: { value: 0 },
+    // R54-F7 フォトモード・フィルタ(0=なし/1=ノワール/2=ビビッド/3=帝王)
+    uPhoto: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
