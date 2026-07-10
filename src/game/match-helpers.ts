@@ -246,3 +246,11 @@ export function shurikenDiscLife(hitDistM: number | null, speedMps: number, maxL
   if (hitDistM === null || !(speedMps > 0) || !(hitDistM >= 0)) return maxLifeS;
   return Math.min(maxLifeS, hitDistM / speedMps);
 }
+
+// ── R54-F3: match.ts と story-engine.ts が共有する定数(移設) ──
+// 黒帝/敵対斬撃波のヒット半径・同時上限・敵対斬撃ダメージ基準値
+export const DARK_SLASH_RADIUS = 5.0; // m ヒット円柱半径(②倍サイズ化)
+export const DARK_SLASH_MAX = 8; // 同時存在上限
+// 34=HP100の1/3で「2発は耐えるが3発目が致命」(帝王編ボスの敵対斬撃基準値)
+export const HOSTILE_SLASH_DAMAGE = 34;
+export const PLAYER_NAME = 'あなた';
