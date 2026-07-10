@@ -1,0 +1,51 @@
+/*
+  焔座 ENZA — THE EMBER THRONE デザイン基盤(W-ENZA FA1所有)
+  「神話が顔、計器が骨」。トークン+共有部品のみをここに置く。
+  画面固有スタイルは各 enza-*.css へ(接頭辞規約: ehud-/etop-/elby-/earm-/ersl-/eopt-/ettl-/ebg-)。
+  鉄則: canvas直上に filter/backdrop-filter 禁止 / プレート不透明0.82+ / 片刃切りのみ(対称面取り禁止)。
+*/
+:root {
+  --sumi-0: #020207;
+  --sumi-1: #0b0a0d;
+  --sumi-2: #16130f;
+  --hagane-0: #f7f2e8;
+  --hagane-1: #e8e3d8;
+  --hagane-2: #c4bba8;
+  --hagane-3: #8f8778;
+  --keisen: rgba(232, 227, 216, 0.14);
+  --hibana-deep: #b23e14;
+  --hibana: #ff6b2b;
+  --hibana-bright: #ffa061;
+  --hibana-pale: #ffd9bc;
+  --kogane: #f5d06b;
+  --kogane-deep: #b8862e;
+  --teki: #d24545;
+  --sofu: #9fb5c9;
+  --kotei: #8b5cf6;
+  --kotei-ground: #0a0714;
+  --raitei: #8fdbff;
+  --raitei-ground: #071018;
+  --kokurai: #c44dff;
+  --kokurai-ground: #0c0313;
+  --emperor: var(--hibana);
+  --emperor-ground: var(--sumi-1);
+  --font-ritual: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  --font-body: 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  --font-inst: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  --enza-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --enza-t: 240ms;
+  --enza-t-fast: 120ms;
+  --enza-t-ritual: 600ms;
+}
+:root[data-emperor='kotei'] {
+  --emperor: var(--kotei);
+  --emperor-ground: var(--kotei-ground);
+}
+:root[data-emperor='raitei'] {
+  --emperor: var(--raitei);
+  --emperor-ground: var(--raitei-ground);
+}
+:root[data-emperor='kokurai'] {
+  --emperor: var(--kokurai);
+  --emperor-ground: var(--kokurai-ground);
+}
