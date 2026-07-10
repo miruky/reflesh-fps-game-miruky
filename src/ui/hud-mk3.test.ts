@@ -163,6 +163,44 @@ describe('MK.III stepMomentQueue(1ノード+キュー)', () => {
     expect(r.state.phase).toBe('idle');
     expect(r.state.current).toBe(null);
   });
+
+  // ── R54-W1 Q5: 満杯時は高価値(emperor/rankup)が最古の非高価値枠を明け渡させて割り込む ──
+  const evk = (kind: MomentEvent['kind'], title: string): MomentEvent => ({ kind, title });
+
+  it('満杯(4件・全てround)時にemperorが来たら最古(先頭)のroundを追い出して末尾に入る', () => {
+    const incoming = [evk('round', '1'), evk('round', '2'), evk('round', '3'), evk('round', '4'), evk('emperor', '黒雷帝')];
+    const r = stepMomentQueue(emptyMomentQueue(), incoming, true, 0.016);
+    expect(r.state.queue.map((m) => m.title)).toEqual(['2', '3', '4', '黒雷帝']);
+    expect(r.state.queue.length).toBe(MOMENT_QUEUE_MAX);
+  });
+
+  it('満杯時にrankupが来ても同様に最古の非高価値枠を明け渡す', () => {
+    const incoming = [evk('perk', 'A'), evk('special', 'B'), evk('round', 'C'), evk('perk', 'D'), evk('rankup', '宇宙開闢')];
+    const r = stepMomentQueue(emptyMomentQueue(), incoming, true, 0.016);
+    expect(r.state.queue.map((m) => m.title)).toEqual(['B', 'C', 'D', '宇宙開闢']);
+  });
+
+  it('満杯かつ全枠が既に高価値(emperor/rankup)なら明け渡さず据え置く(高価値同士は先着優先)', () => {
+    const incoming = [
+      evk('emperor', 'E1'), evk('rankup', 'R1'), evk('emperor', 'E2'), evk('rankup', 'R2'),
+      evk('emperor', 'E3'),
+    ];
+    const r = stepMomentQueue(emptyMomentQueue(), incoming, true, 0.016);
+    expect(r.state.queue.map((m) => m.title)).toEqual(['E1', 'R1', 'E2', 'R2']);
+    expect(r.state.queue.length).toBe(MOMENT_QUEUE_MAX);
+  });
+
+  it('満杯時に通常kind(round/perk/special/ggrank)が来た場合は従来どおり単純に破棄される(非回帰)', () => {
+    const incoming = [evk('round', '1'), evk('round', '2'), evk('round', '3'), evk('round', '4'), evk('perk', '拡張マガジン')];
+    const r = stepMomentQueue(emptyMomentQueue(), incoming, true, 0.016);
+    expect(r.state.queue.map((m) => m.title)).toEqual(['1', '2', '3', '4']);
+  });
+
+  it('満杯でなければ従来どおり通常追加(高価値割り込みロジックは満杯時のみ発火)', () => {
+    const incoming = [evk('round', '1'), evk('emperor', '黒雷帝')];
+    const r = stepMomentQueue(emptyMomentQueue(), incoming, true, 0.016);
+    expect(r.state.queue.map((m) => m.title)).toEqual(['1', '黒雷帝']);
+  });
 });
 
 describe('MK.III toKanjiNumeral / momentWatermark', () => {

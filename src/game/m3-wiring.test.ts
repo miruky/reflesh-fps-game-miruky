@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Bot, DIFFICULTY, fearAccuracyMul } from './bot';
-import { emperorChargeStageFor, isCrowdEligible, type MomentEvent } from './match';
+import { crowdSlotAction, emperorChargeStageFor, isCrowdEligible, type MomentEvent } from './match';
 import { ZOMBIE_CROWD_INSTANCED } from '../render/zombie-crowd';
 
 // ── R53-W3 M3: 最終match配線のロジック検証(純関数+実Botの怯え状態) ──────────
@@ -32,6 +32,52 @@ describe('isCrowdEligible(ゾンビ群InstancedMeshの協定)', () => {
     expect(isCrowdEligible('normal', 'miasma', 8)).toBe(false);
     expect(isCrowdEligible('normal', null, 7)).toBe(false);
     expect(isCrowdEligible('normal', null, 0)).toBe(false);
+  });
+});
+
+// ── R54-W1 Q8: 群衆スロットのヒステリシス(rank7-9デッドバンド、チャタリング防止) ──
+describe('crowdSlotAction(群衆スロットのヒステリシス判定)', () => {
+  it('rank<7かつスロット保持中は必ずrelease(近接=高忠実度優先)', () => {
+    expect(crowdSlotAction(0, true, false)).toBe('release');
+    expect(crowdSlotAction(6, true, true)).toBe('release');
+  });
+
+  it('rank<7でもスロット未保持なら何もしない(release対象がない)', () => {
+    expect(crowdSlotAction(0, false, false)).toBe('none');
+  });
+
+  it('rank>9かつスロット未保持かつeligibleならacquire', () => {
+    expect(crowdSlotAction(10, false, true)).toBe('acquire');
+    expect(crowdSlotAction(99, false, true)).toBe('acquire');
+  });
+
+  it('rank>9でもeligibleでなければacquireしない(isCrowdEligibleの他条件=boss/variant等を尊重)', () => {
+    expect(crowdSlotAction(99, false, false)).toBe('none');
+  });
+
+  it('rank>9でも既にスロット保持中ならacquireしない(二重取得防止)', () => {
+    expect(crowdSlotAction(99, true, true)).toBe('none');
+  });
+
+  it('rank7-9(デッドバンド)はスロット保持有無に関わらず現状維持(チャタリング防止の核心)', () => {
+    for (const rank of [7, 8, 9]) {
+      expect(crowdSlotAction(rank, true, true)).toBe('none');
+      expect(crowdSlotAction(rank, false, true)).toBe('none');
+      expect(crowdSlotAction(rank, true, false)).toBe('none');
+      expect(crowdSlotAction(rank, false, false)).toBe('none');
+    }
+  });
+
+  it('rank7⇔8⇔7で反転してもデッドバンド内なら状態が一切変わらない(実運用シナリオ)', () => {
+    // スロット未保持(近接から離脱直後を想定)でrankが7と8の間を往復してもacquireは起きない
+    let hasSlot = false;
+    for (const rank of [7, 8, 7, 8, 7]) {
+      const action = crowdSlotAction(rank, hasSlot, true);
+      expect(action).toBe('none');
+      if (action === 'acquire') hasSlot = true;
+      else if (action === 'release') hasSlot = false;
+    }
+    expect(hasSlot).toBe(false);
   });
 });
 

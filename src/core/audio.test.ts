@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applySpeechPause,
   BGM_PROFILES,
   BGM_PROGRESSION,
   BGM_ROOT_HZ,
@@ -997,6 +998,82 @@ describe('R53-W2 SoundKit 新API 無例外テスト(AudioContext不要)', () => 
     expect(() => kit.quiesce()).not.toThrow();
     // 二重quiesceも安全(冪等)
     expect(() => kit.quiesce()).not.toThrow();
+  });
+});
+
+// ── R54-W1 Q3: ポーズ中の無線TTS一時停止/再開(純ロジック) ──────────────────
+// jsdomではないNode環境にはwindow.speechSynthesis自体が存在しないため、SoundKit経由の
+// 統合テストではなく applySpeechPause 単体をモックsynthで検証する(pauseCombatLoops内の
+// 呼び出しはtypeof window!=='undefined'&&window.speechSynthesisで既にガードされている)。
+describe('R54-W1 Q3: applySpeechPause(TTSポーズ制御)', () => {
+  it('paused=trueはsynth.pause()を呼ぶ(resume/cancelは呼ばない)', () => {
+    let pauseCalls = 0;
+    let resumeCalls = 0;
+    let cancelCalls = 0;
+    const synth = {
+      pause: () => { pauseCalls += 1; },
+      resume: () => { resumeCalls += 1; },
+      cancel: () => { cancelCalls += 1; },
+    };
+    applySpeechPause(synth, true);
+    expect(pauseCalls).toBe(1);
+    expect(resumeCalls).toBe(0);
+    expect(cancelCalls).toBe(0);
+  });
+
+  it('paused=falseはsynth.resume()を呼ぶ(pause/cancelは呼ばない)', () => {
+    let pauseCalls = 0;
+    let resumeCalls = 0;
+    let cancelCalls = 0;
+    const synth = {
+      pause: () => { pauseCalls += 1; },
+      resume: () => { resumeCalls += 1; },
+      cancel: () => { cancelCalls += 1; },
+    };
+    applySpeechPause(synth, false);
+    expect(pauseCalls).toBe(0);
+    expect(resumeCalls).toBe(1);
+    expect(cancelCalls).toBe(0);
+  });
+
+  it('pause()が例外を投げたらcancel()へフォールバックする(Chromeのresume取りこぼし対策)', () => {
+    let cancelCalls = 0;
+    const synth = {
+      pause: () => { throw new Error('boom'); },
+      resume: () => {},
+      cancel: () => { cancelCalls += 1; },
+    };
+    expect(() => applySpeechPause(synth, true)).not.toThrow();
+    expect(cancelCalls).toBe(1);
+  });
+
+  it('resume()が例外を投げたらcancel()へフォールバックする', () => {
+    let cancelCalls = 0;
+    const synth = {
+      pause: () => {},
+      resume: () => { throw new Error('boom'); },
+      cancel: () => { cancelCalls += 1; },
+    };
+    expect(() => applySpeechPause(synth, false)).not.toThrow();
+    expect(cancelCalls).toBe(1);
+  });
+
+  it('cancel()自体が例外を投げても外へは伝播しない(致命的にしない)', () => {
+    const synth = {
+      pause: () => { throw new Error('boom'); },
+      resume: () => {},
+      cancel: () => { throw new Error('also boom'); },
+    };
+    expect(() => applySpeechPause(synth, true)).not.toThrow();
+  });
+});
+
+// ── R54-W1 Q3: pauseCombatLoops自体(window.speechSynthesis不在=Node環境)は無例外 ──
+describe('R54-W1 Q3: SoundKit.pauseCombatLoops(window.speechSynthesis不在時の安全性)', () => {
+  it('paused=true/falseどちらでも例外なし(Node環境にはwindow.speechSynthesisが無いため素通り)', () => {
+    const kit = new SoundKit();
+    expect(() => kit.pauseCombatLoops(true)).not.toThrow();
+    expect(() => kit.pauseCombatLoops(false)).not.toThrow();
   });
 });
 

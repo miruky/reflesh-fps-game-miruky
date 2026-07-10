@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fkIsStale } from './match';
 
 // ── CK(シネマティックキルカム) ウィンドウ計算の純関数テスト ──────────────────
 // match.ts の CK定数・ckSpeedAt・ckCamPos と同じロジックを純関数として再現してテストする。
@@ -372,5 +373,37 @@ describe('startFinalKillcam ガード順序', () => {
     const mode = 'zombie' as const;
     const wouldReturn = mode === 'zombie' ? false : true;
     expect(wouldReturn).toBe(false);
+  });
+});
+
+// ─── R54-W1 Q2: FK鮮度ガード(汎用・モード非依存) ───────────────────────────
+// startFinalKillcam 呼び出し時点で「最終キル」からリングバッファの実時間窓(4.5s)を
+// ほぼ使い切るほど経過していれば、そのキルのフレームはもはやバッファから信頼できる形で
+// 再現できない。over確定がキルと直結しないモード(Hardpoint等)で発生しうる潜在バグの保険。
+describe('fkIsStale(FK鮮度ガード)', () => {
+  const BUFFER_S = 4.5; // FK_MAX_FRAMES(90) / 20Hz
+
+  it('キル直後(elapsed===killElapsed)は鮮度あり=falseを返す', () => {
+    expect(fkIsStale(100, 100, BUFFER_S)).toBe(false);
+  });
+
+  it('経過が bufferSeconds-1 未満なら鮮度あり=false', () => {
+    expect(fkIsStale(100 + (BUFFER_S - 1 - 0.01), 100, BUFFER_S)).toBe(false);
+  });
+
+  it('経過が bufferSeconds-1 を境に false→true へ切り替わる', () => {
+    const killElapsed = 100;
+    expect(fkIsStale(killElapsed + (BUFFER_S - 1) - 0.001, killElapsed, BUFFER_S)).toBe(false);
+    expect(fkIsStale(killElapsed + (BUFFER_S - 1) + 0.001, killElapsed, BUFFER_S)).toBe(true);
+  });
+
+  it('新しいキル(over確定がキル直後)ではFKをスキップしない', () => {
+    // 典型: match.overがキルと同フレームで確定し、次rAFでstartFinalKillcamが呼ばれる
+    expect(fkIsStale(50.02, 50.0, BUFFER_S)).toBe(false);
+  });
+
+  it('古いキル(Hardpoint等でoverがキルと直結せず数秒後に確定)ではFKをスキップする', () => {
+    // 最終キルから5秒経ってから match.over が確定したケース(バッファ窓4.5sを超えて経過)
+    expect(fkIsStale(55, 50, BUFFER_S)).toBe(true);
   });
 });

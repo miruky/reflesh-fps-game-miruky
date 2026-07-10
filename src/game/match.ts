@@ -365,8 +365,15 @@ export function buildPropVisualFamilyGeometries(
  * (roughness/metalness基準値+onBeforeCompileのマクロ質感GLSL)を適用する。accent はキット無し
  * (素のemissive系。palette.emissiveAccent時のみ発光。0.45はbloom閾値0.9未満の既存踏襲値)。
  * shadow は接地コンタクトシャドウ専用(頂点色RGBA・itemSize4・MeshBasicMaterial)。
+ * R54-W1 Q6: tier==='low'は onBeforeCompile GLSLパッチ(applySurfaceKit)を適用せず、
+ * 素のMeshStandardMaterial既定roughness/metalnessのまま返す(低スペック機のフラグメント
+ * ALU削減。tier省略時は既定'high'=従来どおりキット適用、既存呼び出しは非回帰)。
  */
-export function buildPropFamilyMaterial(family: PropMatFamily, palette: StagePalette): THREE.Material {
+export function buildPropFamilyMaterial(
+  family: PropMatFamily,
+  palette: StagePalette,
+  tier: GraphicsQuality = 'high',
+): THREE.Material {
   if (family === 'shadow') {
     return new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false });
   }
@@ -380,7 +387,7 @@ export function buildPropFamilyMaterial(family: PropMatFamily, palette: StagePal
     return mat;
   }
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true });
-  applySurfaceKit(mat, family);
+  if (tier !== 'low') applySurfaceKit(mat, family);
   return mat;
 }
 
@@ -411,20 +418,26 @@ export interface PrewarmRenderer {
  * このステージが実際に使う v2 家族メッシュ/マテリアルは、この呼び出し時点で既に scene に
  * 追加済みであれば同じ renderer.compile() 呼び出しで一緒に事前コンパイルされる(呼び出し側は
  * v2家族メッシュの追加後にこの関数を呼ぶこと)。DC実測は ?perfhud=1 で確認できる。
+ * R54-W1 Q6: tier==='low'はSurfaceKitを一切使わない(buildPropFamilyMaterial側で不使用)ため、
+ * 5variant分の一時メッシュ生成/コンパイルは完全に無駄仕事。ループのみ省略し、実メッシュが
+ * 既にscene追加済みならその分のcompileは維持する(tier省略時は既定'high'=従来どおり)。
  */
 export function prewarmSurfaceKitVariants(
   scene: THREE.Scene,
   renderer: PrewarmRenderer,
   camera: THREE.Camera,
+  tier: GraphicsQuality = 'high',
 ): void {
   const tempGeo = new THREE.BoxGeometry(0.01, 0.01, 0.01);
   const tempMeshes: THREE.Mesh[] = [];
-  for (const kit of SURFACE_KIT_IDS) {
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true });
-    applySurfaceKit(mat, kit);
-    const mesh = new THREE.Mesh(tempGeo, mat);
-    scene.add(mesh);
-    tempMeshes.push(mesh);
+  if (tier !== 'low') {
+    for (const kit of SURFACE_KIT_IDS) {
+      const mat = new THREE.MeshStandardMaterial({ vertexColors: true });
+      applySurfaceKit(mat, kit);
+      const mesh = new THREE.Mesh(tempGeo, mat);
+      scene.add(mesh);
+      tempMeshes.push(mesh);
+    }
   }
   renderer.compile(scene, camera);
   for (const mesh of tempMeshes) {
@@ -590,6 +603,7 @@ const FIRE_TICK_S = 0.5;
 
 // ── ファイナルキルカム リングバッファ(R19) ──
 const FK_MAX_FRAMES   = 90;  // 4.5 s @ 20 Hz
+const FK_BUFFER_S     = FK_MAX_FRAMES / 20; // R54-W1 Q2: リングバッファの実時間窓(=4.5s)
 const FK_MAX_BOTS     = 36; // V32修正: 増員(最大36体)を全記録(32だとhigh tierで被害者を取りこぼす)
 const FK_TICK_INT     = 3;   // 60 Hz の何 tick おきに記録(→ 20 Hz)
 const FK_WIN_PRE      = 3.5; // キル前の窓 (s) — 3.5s of pre-kill context
@@ -693,6 +707,19 @@ export function papInteractSealed(hasDoor: boolean, doorOpen: boolean): boolean 
   return hasDoor && !doorOpen;
 }
 
+// R54-W1 Q1: ニンジャ(クナイ)ロードアウトのHP300タンク化を適用してよいか(純関数)。
+// ガンゲーム(ラダー武器強制)は既存どおり除外、S&D(ノーリスポーン戦術モード)も新たに除外する
+// (HP300+黒雷帝キットの組み合わせが不公平に成立するのを防ぐ。permanentDarkEmperorEligibleと対称)。
+export function ninjaHp300Eligible(primaryId: string, mode: GameMode): boolean {
+  return primaryId === 'fists' && mode !== 'gungame' && mode !== 'snd';
+}
+
+// R54-W1 Q1: 常闇カモ装備時の黒帝モード試合開始時永続化を適用してよいか(純関数)。
+// ninjaHp300Eligibleと対称のモード除外(gungame/training/snd)
+export function permanentDarkEmperorEligible(mode: GameMode): boolean {
+  return mode !== 'gungame' && mode !== 'training' && mode !== 'snd';
+}
+
 // ★V-A MEDIUM修正: インスタキルの適用判定(純関数)。ボス非適用=nukeのboss除外と対称
 // (80k HPのボスが1発で消える事故防止。BO2でもインスタキルはボス級に効かないのが自然)
 export function instaKillApplies(timerS: number, tier: BotTier): boolean {
@@ -726,6 +753,27 @@ export function isCrowdEligible(
   hordeRank: number,
 ): boolean {
   return ZOMBIE_CROWD_INSTANCED && tier !== 'boss' && variant === null && hordeRank >= 8;
+}
+
+// R54-W1 Q8: 群衆スロットの取得/解放をヒステリシス付きで判定する(純関数)。
+// isCrowdEligibleの単一閾値(rank>=8)をそのままacquire/release双方に使うと、rankが
+// 7⇔8境界で揺れる個体が0.25s周期のupdateZombieHordeRankのたびslot着脱をチャタリングする。
+// rank<7で確実にrelease/rank>9で確実にacquireし、7-9はデッドバンド(現状維持)にする。
+export function crowdSlotAction(
+  hordeRank: number,
+  hasSlot: boolean,
+  eligible: boolean,
+): 'release' | 'acquire' | 'none' {
+  if (hordeRank < 7 && hasSlot) return 'release';
+  if (hordeRank > 9 && !hasSlot && eligible) return 'acquire';
+  return 'none';
+}
+
+// R54-W1 Q6: 床のfloorDetailGlsl(亀裂/オイル染み/タイヤ痕。3x3セルラー+複数fbm合成)を
+// 合成してよいtierか(純関数)。low tierはmacroWear(applyMacroFloor既存の基礎汚れ変調、
+// 低コスト)のみに留め、この重量級パスは外す("素のroughness基準+床はmacroWearまで")。
+export function floorDetailEligible(tier: GraphicsQuality): boolean {
+  return tier !== 'low';
 }
 
 // R53-W2 M2b: ミッション難易度の敵チューニング乗算(純関数・spawnBot漏斗から呼ぶ)。
@@ -1280,6 +1328,14 @@ export function ckSpeedAt(cursor: number, killT: number): number {
   if (d < 0.6) return 0.2;
   const t = Math.min(1, (d - 0.6) / Math.max(1e-6, CK_WIN_POST - 0.6));
   return 0.2 + (1.0 - 0.2) * t;
+}
+
+// R54-W1 Q2: FK鮮度ガード(純関数、モード非依存)。startFinalKillcam 呼び出し時点で
+// 「最終キル」からリングバッファの実時間窓をほぼ使い切るほど経過していれば、そのキルの
+// フレームはもはや信頼できる形でバッファに残っていない(Hardpoint等、over確定がキルと
+// 直結しないモードで発生しうる潜在バグの保険)。skip=trueならFKを諦めて直接リザルトへ。
+export function fkIsStale(elapsed: number, killElapsed: number, bufferSeconds: number): boolean {
+  return elapsed - killElapsed > bufferSeconds - 1;
 }
 
 export class Match {
@@ -1893,7 +1949,9 @@ export class Match {
     // クナイ(ニンジャ)装備は接近戦で撃たれ弱い分、体力を 300 へ引き上げてインファイトを成立させる。
     // HUD/スナップショットの maxHp は player.maxHp を参照するため自動追従する。
     // V31修正: ガンゲームはラダー武器強制のためHP300を適用しない(純粋な銃勝負)
-    if (config.primaryId === 'fists' && config.mode !== 'gungame') playerOpts.maxHp = 300;
+    // R54-W1 Q1: S&Dはノーリスポーン戦術モードのため、HP300タンク化+黒雷帝キットの
+    // 組み合わせが成立してしまう不公平を避け対象外にする(下のisNinja/kit有効化も同様)
+    if (ninjaHp300Eligible(config.primaryId, config.mode)) playerOpts.maxHp = 300;
     if (config.hellMode) playerOpts.regenPerS = 12.5;
     this.player = new Player(this.physics, spawn, playerOpts);
     this.tags.set(this.player.collider.handle, { kind: 'player' });
@@ -2061,8 +2119,9 @@ export class Match {
     this.renderer.compile(this.scene, this.camera);
     for (const bot of this.bots) bot.prewarmDissolve(false);
 
-    // 常闇カモ装備中(かつ gungame/training 以外): 試合開始から黒帝モード永続
-    if (this.isNinja && config.mode !== 'gungame' && config.mode !== 'training') {
+    // 常闇カモ装備中(かつ gungame/training/snd 以外): 試合開始から黒帝モード永続
+    // R54-W1 Q1: S&D除外(HP300ゲートと対称。ノーリスポーン戦術モードでの不公平を防ぐ)
+    if (this.isNinja && permanentDarkEmperorEligible(config.mode)) {
       const profile = loadProfile();
       const fistsCamo = equippedCamoFor('fists', profile);
       if (fistsCamo === 'tokoyami') {
@@ -2504,7 +2563,7 @@ export class Match {
       for (const familyKey of Object.keys(familyGeos) as PropMatFamily[]) {
         const geo = familyGeos[familyKey];
         if (!geo) continue;
-        const mat = buildPropFamilyMaterial(familyKey, palette);
+        const mat = buildPropFamilyMaterial(familyKey, palette, tier);
         const mesh = new THREE.Mesh(geo, mat);
         const flags = propFamilyShadowFlags(familyKey);
         mesh.castShadow = flags.castShadow;
@@ -2553,14 +2612,14 @@ export class Match {
         this.scene.add(mesh);
         papMeshes.push(mesh);
       }
-      prewarmSurfaceKitVariants(this.scene, this.renderer, this.camera);
+      prewarmSurfaceKitVariants(this.scene, this.renderer, this.camera, tier);
       for (const mesh of papMeshes) {
         this.scene.remove(mesh);
         (mesh.material as THREE.Material).dispose();
       }
       papGeo.dispose();
     } else {
-      prewarmSurfaceKitVariants(this.scene, this.renderer, this.camera);
+      prewarmSurfaceKitVariants(this.scene, this.renderer, this.camera, tier);
     }
   }
 
@@ -2705,6 +2764,9 @@ export class Match {
   // (a)diffuseColor を値ノイズで摩耗/汚れ変調(暗め寄せで白飛び回避)、(b)第2ノイズ+濡れ度
   // uniform で roughnessFactor を筋状に~0.35 まで下げ、減光した空IBLの映り込みを拾わせる。
   private applyMacroFloor(mat: THREE.MeshStandardMaterial, wetness: number): void {
+    // R54-W1 Q6: low tierはfloorDetailGlsl(亀裂/オイル染み/タイヤ痕)を合成しない
+    const tier = resolveGraphicsTier(this.settings.graphicsQuality, this.renderer.capabilities.isWebGL2);
+    const detailEligible = floorDetailEligible(tier);
     mat.customProgramCacheKey = () => 'hibana-macrofloor';
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uWetness = { value: wetness };
@@ -2719,7 +2781,7 @@ export class Match {
           '#include <common>',
           // ★V-C CRITICAL修正: fd_*ヘルパ関数はグローバルスコープ(common)へ。GLSL ES 3.00は
           // main()内の関数定義を許可しないため、floorDetailGlsl()本体(ブロックのみ)と分離挿入する
-          `#include <common>\nvarying vec2 vWorldXZ;\nuniform float uWetness;\n${MACRO_NOISE_GLSL}\n${floorDetailGlslCommon()}`,
+          `#include <common>\nvarying vec2 vWorldXZ;\nuniform float uWetness;\n${MACRO_NOISE_GLSL}\n${detailEligible ? floorDetailGlslCommon() : ''}`,
         )
         .replace(
           '#include <color_fragment>',
@@ -2729,7 +2791,7 @@ export class Match {
             float macroWear = macroFbm(vWorldXZ * 0.16);
             diffuseColor.rgb *= mix(0.90, 1.045, macroWear);
           }
-          ${floorDetailGlsl()}`,
+          ${detailEligible ? floorDetailGlsl() : ''}`,
         )
         .replace(
           '#include <roughnessmap_fragment>',
@@ -10392,10 +10454,16 @@ export class Match {
     // rank<8はObject3D(実articulated影+個体忠実度)、rank>=8はInstancedMeshへ
     if (this.zombieCrowd) {
       for (const b of zAlive) {
-        if (b.hordeRank < 8 && b.crowdSlot >= 0) {
+        // R54-W1 Q8: ヒステリシス判定(rank7-9はデッドバンド=チャタリング防止)
+        const action = crowdSlotAction(
+          b.hordeRank,
+          b.crowdSlot >= 0,
+          isCrowdEligible(b.tier, b.zombieVariant, b.hordeRank),
+        );
+        if (action === 'release') {
           this.zombieCrowd.release(b.crowdSlot);
           b.setCrowdSlot(-1);
-        } else if (b.crowdSlot < 0 && isCrowdEligible(b.tier, b.zombieVariant, b.hordeRank)) {
+        } else if (action === 'acquire') {
           b.setCrowdSlot(this.zombieCrowd.acquire());
         }
       }
@@ -10598,7 +10666,7 @@ export class Match {
         if (group.hpMul !== undefined && group.hpMul !== 1) {
           waveTuning.maxHp = Math.round(waveTuning.maxHp * group.hpMul);
         }
-        this.spawnBot(
+        const spawned = this.spawnBot(
           name,
           spawn,
           this.colors.enemy,
@@ -10607,6 +10675,10 @@ export class Match {
           tier,
           kind,
         );
+        // R54-W1 Q4: story帝王編の燼骸(kind='zombie')は少数編成が設計意図のため、群衆間引き
+        // LOD(既定hordeRank=99=最遠扱い)を外し常時フル精度で描画する。zombieモード本編は
+        // updateZombieHordeRank が0.25s周期で上書きするため対象外(spawnWave専用の初期値上書き)
+        if (kind === 'zombie') spawned.hordeRank = 0;
         n += 1;
       }
     }
@@ -11588,6 +11660,9 @@ export class Match {
     // (ガード失敗でリザルト直行する場合に pauseCombatLoops 等の副作用を残さない)
     if (this.config.mode === 'zombie') return false;
     if (this.fkFill === 0 || this.fkKillElapsed === -Infinity) return false;
+    // R54-W1 Q2: 汎用鮮度ガード(モード非依存)。over確定がキルと直結しないモードで
+    // 最終キルが古すぎる場合はFKを諦める(下のoldestチェックの取りこぼしに対する保険)
+    if (fkIsStale(this.elapsed, this.fkKillElapsed, FK_BUFFER_S)) return false;
     const killT  = this.fkKillElapsed;
     const oldIdx = (this.fkHead - this.fkFill + FK_MAX_FRAMES) % FK_MAX_FRAMES;
     const oldest = this.fkTimeArr[oldIdx]!;

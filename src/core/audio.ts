@@ -996,6 +996,28 @@ export function radioProsodyFor(speaker: RadioSpeaker): Prosody {
   return { pitch, rate };
 }
 
+// R54-W1 Q3: 無線TTS(speechSynthesis)の一時停止/再開(純ロジック)。Chromeはpause()後の
+// resume()で取りこぼす既知の癖があるため、例外時はcancel()へ安全側フォールバックする
+// (発話が途中で消えるだけで致命ではない。無音のまま固まるより安全)。
+// 手動確認項目(自動テストでは speechSynthesis 実体を再現できないため): ① ラジオ台詞再生中に
+// ポーズすると台詞が止まる ② 再開すると台詞が続く(または自然に途切れる) ③ 長時間ポーズ後の
+// 再開でも例外/無限沈黙にならない(Chrome/Firefox/Safariで確認)。
+export function applySpeechPause(
+  synth: { pause: () => void; resume: () => void; cancel: () => void },
+  paused: boolean,
+): void {
+  try {
+    if (paused) synth.pause();
+    else synth.resume();
+  } catch {
+    try {
+      synth.cancel();
+    } catch {
+      /* noop: 復帰不能でも致命ではない(次の発話が新規cancel付きで上書きする) */
+    }
+  }
+}
+
 // 無線スケルチ(radioBeep)の話者別音色。kuroganeのみ歪み(電子的な硬さ)
 export const RADIO_SQUELCH_SPECS: Record<
   RadioSpeaker,
@@ -4067,6 +4089,11 @@ export class SoundKit {
   }
 
   pauseCombatLoops(paused: boolean): void {
+    // R54-W1 Q3: ポーズ中は無線TTS(ラジオ台詞)も止める(main.tsがmatch pause/finalkillcam
+    // 突入時にこのメソッドを呼ぶため、ここが「試合の一時停止」の集約点として自然)
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      applySpeechPause(window.speechSynthesis, paused);
+    }
     if (this._lightningHumGain && this.ctx) {
       const now = this.ctx.currentTime;
       this._lightningHumGain.gain.cancelScheduledValues(now);

@@ -1220,9 +1220,13 @@ export class Bot {
 
     if (boss) {
       // 視覚のみ拡大(コライダー不変)。rig原点(=剛体中心)基準の等比拡大だと
-      // ブーツ底(rigローカル≈-0.80)が0.80*(1.12-1)≈0.096沈むので同量持ち上げて接地を戻す
+      // ブーツ底(rigローカル≈-0.80)が0.80*(1.12-1)≈0.096沈むので同量持ち上げて接地を戻す。
+      // R54-W1 Q7: 旧実装は position.y += の一度きり補正だったが、syncMesh/updateDying/
+      // fkResetPose等が毎フレームposition.yを式で上書きするため実質無効化されていた。
+      // zombie boss(R53-T1)で実証済みのrigLiftY(永続フィールド。各所の式へ織り込み済み)方式へ
+      // 横展開する(buildMasterMeshはこのbuildMeshへ委譲するためmaster bossにも自動で効く)。
       this.rig.scale.setScalar(1.12);
-      this.rig.position.y += 0.8 * 0.12;
+      this.rigLiftY = 0.8 * 0.12;
     }
     this.group.add(this.rig);
   }
@@ -2715,7 +2719,9 @@ export class Bot {
     // 呼吸: 静止時ほど胴を上下させる(walkAmpが小さいほど呼吸が目立つ)
     const idle = 1 - Math.min(1, this.walkAmp);
     const breath = Math.sin(this.anim * 2.1) * 0.012 * idle;
-    this.rig.position.y = Math.abs(Math.cos(this.walkPhase)) * this.walkAmp * 0.04 + breath;
+    // R54-W1 Q7: rigLiftY(通常0。boss humanoid/masterのみ足沈み補正)を基準にボブを重ねる
+    // (zombie boss経路の既存式=2699/2648/2791/2839/2947行と同じ流儀に揃える)
+    this.rig.position.y = this.rigLiftY + Math.abs(Math.cos(this.walkPhase)) * this.walkAmp * 0.04 + breath;
     // 被弾時の一瞬ののけぞり(上体を後ろへ傾ける)
     this.rig.rotation.x = -(this.flinch / 0.14) * 0.18;
     // armRigの微スウェイ(把持ポーズを保ったまま±0.14rad内で揺らす)

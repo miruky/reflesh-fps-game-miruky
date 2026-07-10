@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { applyMissionDifficultyTuning, splitRadioLines } from './match';
+import {
+  applyMissionDifficultyTuning,
+  ninjaHp300Eligible,
+  permanentDarkEmperorEligible,
+  splitRadioLines,
+} from './match';
 import { tuningFor } from './bot';
 import { CAMPAIGN, type RadioLine } from './campaign';
-import { PLAYER_TEAM, ENEMY_TEAM, MODE_DEFS } from './modes';
+import { PLAYER_TEAM, ENEMY_TEAM, MODE_DEFS, type GameMode } from './modes';
 import { SndMatch, SndRound, SND_ROUNDS_TO_WIN } from './snd';
 
 // ── R53-W2 M2b: ストーリー帝王編+S&D配線のロジック検証 ──────────────────────
@@ -130,5 +135,42 @@ describe('S&D配線の前提整合(H2契約との突き合わせ)', () => {
     const r = new SndRound(PLAYER_TEAM);
     r.pickupBomb(-1);
     expect(r.carrierUid).toBe(-1);
+  });
+});
+
+// ── R54-W1 Q1: S&Dのfists優遇ゲート(HP300タンク化 + 常闇黒帝キット永続化を除外) ──
+describe('ninjaHp300Eligible(HP300タンク化ゲート)', () => {
+  it('fists装備かつ gungame/snd 以外は適用(既存挙動維持)', () => {
+    const modes: GameMode[] = ['ffa', 'tdm', 'dom', 'story', 'score', 'zombie', 'hardpoint', 'killconfirm', 'training'];
+    for (const m of modes) expect(ninjaHp300Eligible('fists', m)).toBe(true);
+  });
+
+  it('gungameは除外(V31既存挙動の非回帰)', () => {
+    expect(ninjaHp300Eligible('fists', 'gungame')).toBe(false);
+  });
+
+  it('R54-W1 Q1: S&Dは新規に除外(ノーリスポーン戦術モードでのHP300タンク+黒雷帝の不公平を防ぐ)', () => {
+    expect(ninjaHp300Eligible('fists', 'snd')).toBe(false);
+  });
+
+  it('fists以外の装備はどのモードでも適用しない', () => {
+    expect(ninjaHp300Eligible('kaede-ar', 'ffa')).toBe(false);
+    expect(ninjaHp300Eligible('kaede-ar', 'snd')).toBe(false);
+  });
+});
+
+describe('permanentDarkEmperorEligible(常闇カモ黒帝モード永続化ゲート)', () => {
+  it('gungame/training/snd 以外は適用(既存挙動維持)', () => {
+    const modes: GameMode[] = ['ffa', 'tdm', 'dom', 'story', 'score', 'zombie', 'hardpoint', 'killconfirm'];
+    for (const m of modes) expect(permanentDarkEmperorEligible(m)).toBe(true);
+  });
+
+  it('gungame/trainingは既存どおり除外(非回帰)', () => {
+    expect(permanentDarkEmperorEligible('gungame')).toBe(false);
+    expect(permanentDarkEmperorEligible('training')).toBe(false);
+  });
+
+  it('R54-W1 Q1: S&Dは新規に除外(HP300ゲートと対称)', () => {
+    expect(permanentDarkEmperorEligible('snd')).toBe(false);
   });
 });

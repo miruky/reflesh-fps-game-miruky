@@ -12,6 +12,7 @@ import {
   planPropVisualsV2,
   buildPropVisualFamilyGeometries,
   buildPropFamilyMaterial,
+  floorDetailEligible,
   propFamilyShadowFlags,
   prewarmSurfaceKitVariants,
   type PrewarmRenderer,
@@ -260,6 +261,36 @@ describe('buildPropFamilyMaterial: family→マテリアルの分岐', () => {
     expect(mat.customProgramCacheKey()).not.toMatch(/^hibana-surfacekit-/);
     mat.dispose();
   });
+
+  // ── R54-W1 Q6: low tierはapplySurfaceKitを適用しない(素のroughness基準) ──
+  it.each<PropMatFamily>(['metal', 'wood', 'stone', 'foliage', 'paint'])(
+    'tier省略(既定)は%sもapplySurfaceKitへ委譲される(非回帰)',
+    (family) => {
+      const mat = buildPropFamilyMaterial(family, PALETTE) as THREE.MeshStandardMaterial;
+      expect(mat.customProgramCacheKey()).toBe(`hibana-surfacekit-${family}`);
+      mat.dispose();
+    },
+  );
+
+  it.each<PropMatFamily>(['metal', 'wood', 'stone', 'foliage', 'paint'])(
+    "tier==='low'は%sでもapplySurfaceKitを適用しない(customProgramCacheKeyがhibana-surfacekit-*でない)",
+    (family) => {
+      const mat = buildPropFamilyMaterial(family, PALETTE, 'low') as THREE.MeshStandardMaterial;
+      expect(mat.customProgramCacheKey()).not.toMatch(/^hibana-surfacekit-/);
+      // applySurfaceKitのroughness/metalness基準値も適用されない(素のMeshStandardMaterial既定)
+      expect(mat.roughness).toBe(1);
+      expect(mat.metalness).toBe(0);
+      mat.dispose();
+    },
+  );
+
+  it("tier==='medium'/'high'は従来どおりapplySurfaceKitを適用する", () => {
+    for (const tier of ['medium', 'high'] as const) {
+      const mat = buildPropFamilyMaterial('metal', PALETTE, tier) as THREE.MeshStandardMaterial;
+      expect(mat.customProgramCacheKey()).toBe('hibana-surfacekit-metal');
+      mat.dispose();
+    }
+  });
 });
 
 describe('propFamilyShadowFlags: family→cast/receiveの分岐', () => {
@@ -328,5 +359,53 @@ describe('prewarmSurfaceKitVariants: R11 dissolve教訓のプリウォーム', (
     expect(scene.children).toEqual([permanentMesh]);
     permanentMesh.geometry.dispose();
     permanentMat.dispose();
+  });
+
+  // ── R54-W1 Q6: low tierは5variant分の一時メッシュ生成/compileを完全に省く ──
+  it("tier==='low'は一時kitメッシュを1つも追加せずcompileを呼ぶ(SurfaceKitは低tierで不使用のため)", () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    let meshCountDuringCompile = -1;
+    let callCount = 0;
+    const renderer: PrewarmRenderer = {
+      compile: (s) => {
+        callCount += 1;
+        meshCountDuringCompile = (s as THREE.Scene).children.filter((o) => o instanceof THREE.Mesh).length;
+        return new Set();
+      },
+    };
+    prewarmSurfaceKitVariants(scene, renderer, camera, 'low');
+    expect(callCount).toBe(1); // compile自体は呼ぶ(実メッシュがあれば一緒に暖機する契約は維持)
+    expect(meshCountDuringCompile).toBe(0);
+    expect(scene.children).toHaveLength(0);
+  });
+
+  it("tier省略(既定)/'medium'/'high'は従来どおり5variant分の一時メッシュを追加する(非回帰)", () => {
+    for (const tier of [undefined, 'medium', 'high'] as const) {
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera();
+      let meshCountDuringCompile = -1;
+      const renderer: PrewarmRenderer = {
+        compile: (s) => {
+          meshCountDuringCompile = (s as THREE.Scene).children.filter((o) => o instanceof THREE.Mesh).length;
+          return new Set();
+        },
+      };
+      if (tier === undefined) prewarmSurfaceKitVariants(scene, renderer, camera);
+      else prewarmSurfaceKitVariants(scene, renderer, camera, tier);
+      expect(meshCountDuringCompile).toBe(SURFACE_KIT_IDS.length);
+    }
+  });
+});
+
+// ── R54-W1 Q6: 床floorDetailGlsl(亀裂/オイル染み/タイヤ痕)のtierゲート(純関数) ──
+describe('floorDetailEligible: low tierは床の重量級ディテールを合成しない', () => {
+  it("tier==='low'はfalse(macroWearの基礎汚れ変調のみに留める)", () => {
+    expect(floorDetailEligible('low')).toBe(false);
+  });
+
+  it("tier==='medium'/'high'はtrue(従来どおりfloorDetailGlslを合成)", () => {
+    expect(floorDetailEligible('medium')).toBe(true);
+    expect(floorDetailEligible('high')).toBe(true);
   });
 });

@@ -399,7 +399,19 @@ export function stepMomentQueue(
 ): { state: MomentQueueState; change: MomentChange } {
   const queue = st.queue.slice();
   if (incoming) {
-    for (const m of incoming) if (queue.length < MOMENT_QUEUE_MAX) queue.push(m);
+    for (const m of incoming) {
+      if (queue.length < MOMENT_QUEUE_MAX) {
+        queue.push(m);
+      } else if (m.kind === 'emperor' || m.kind === 'rankup') {
+        // R54-W1 Q5: 満杯時は高価値(emperor/rankup)イベントを守るため、最古の非高価値枠を
+        // 明け渡してから末尾へ追加する(FIFO順序は維持)。全枠が既に高価値なら明け渡さず据え置く
+        const idx = queue.findIndex((q) => q.kind !== 'emperor' && q.kind !== 'rankup');
+        if (idx >= 0) {
+          queue.splice(idx, 1);
+          queue.push(m);
+        }
+      }
+    }
   }
   let { current, phase, t } = st;
   let change: MomentChange = null;
