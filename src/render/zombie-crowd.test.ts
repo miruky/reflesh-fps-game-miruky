@@ -414,3 +414,30 @@ describe('ZombieCrowdRenderer(スロット管理とGPUバッファ)', () => {
     expect(scene.children.length).toBe(before);
   });
 });
+
+// ★HF(R54): シャンブルポーズの前方性回帰テスト。R53以前から「前=+Z」前提で
+// ポーズが作られており、実際の前方(-Z=顔/移動方向)と反転していた(後傾+腕が背後
+// =「地面を滑っている」「腕が後ろ向き」のユーザー報告の根本原因)。
+// 腕ジオメトリが -Z 側へ伸び、前傾が -Z へ倒れることを恒久固定する。
+describe('シャンブルポーズの前方性(HF回帰)', () => {
+  it('腕ジオメトリは前方(-Z)へ伸びる', () => {
+    const geo = buildZombieCrowdGeometries();
+    geo.armDark.computeBoundingBox();
+    const bb = geo.armDark.boundingBox!;
+    // 前腕+手はarmDark家族。手先が体の前(-Z)へ届いていること
+    expect(bb.min.z).toBeLessThan(-0.3);
+    // 背後(+Z)へは肩幅程度しかはみ出さない
+    expect(bb.max.z).toBeLessThan(0.15);
+  });
+
+  it('生存時の前傾(rigRotX)は前方(-Z=負)へ倒れる', () => {
+    const p = emptyPose();
+    p.anim = 0;
+    p.dying01 = 0;
+    const m = makeCrowdMatrices();
+    composeZombieCrowdMatrices(p, m);
+    const e = new THREE.Euler().setFromRotationMatrix(m.body);
+    expect(e.x).toBeLessThan(-0.15); // -(0.26±0.045)域
+  });
+});
+

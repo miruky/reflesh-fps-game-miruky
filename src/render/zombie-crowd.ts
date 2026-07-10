@@ -180,7 +180,7 @@ export function composeZombieCrowdMatrices(p: ZombieCrowdPose, out: ZombieCrowdM
   //  ・rig.rotation.z はリセットされず、最後の生存フレームの値で凍結される。
   //    anim/walkPhase は死亡後進まない(update早期return)ため、aliveと同じ式が
   //    凍結値を厳密に再現する。
-  const rigRotX = t > 0 ? 0 : 0.26 + Math.sin(p.anim * 3.1) * 0.045;
+  const rigRotX = t > 0 ? 0 : -(0.26 + Math.sin(p.anim * 3.1) * 0.045); // ★HF: syncMeshの符号反転(真の前傾)と同時更新
   const rigRotZ = Math.sin(p.anim * 1.7 + p.bobPhase) * 0.07;
   const rigY =
     t > 0

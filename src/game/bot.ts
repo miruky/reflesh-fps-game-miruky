@@ -614,7 +614,7 @@ function zombieBodyRoot(m: ZombiePartMats): THREE.Group {
   zPart(root, taperPrism(0.24, 0.2, 0.58, 7, 0.66), m.armor, 0, 0.16, 0, true); // やせ細った胴
   zPart(root, chamferBox(0.34, 0.24, 0.13, 0.03), m.armor, 0, 0.31, -0.05, true); // 露出した肋骨帯
   zPart(root, taperPrism(0.2, 0.16, 0.18, 7, 0.7), m.dark, 0, -0.2, 0, false); // 腰
-  zPart(root, new THREE.CylinderGeometry(0.055, 0.07, 0.14, 8), m.dark, 0.02, 0.56, -0.02, false, 0.18, 0, 0.12); // 傾いた首
+  zPart(root, new THREE.CylinderGeometry(0.055, 0.07, 0.14, 8), m.dark, 0.02, 0.56, -0.02, false, -0.18, 0, 0.12); // 傾いた首(前方=-Zへうなだれる)
   zPart(root, new THREE.SphereGeometry(0.16, 12, 10), m.dark, 0.03, 0.72, -0.05, false); // うなだれた頭
   zPart(root, chamferBox(0.16, 0.05, 0.05, 0.02), m.dark, 0.03, 0.7, -0.18, false); // 顎
   // 落ちくぼんだ眼光(左右)
@@ -630,7 +630,9 @@ function zombieArmRoot(m: ZombiePartMats): THREE.Group {
   const buildArm = (sx: number, reach: number): void => {
     const g = new THREE.Group();
     g.position.set(sx * 0.26, 0.05, -0.02);
-    g.rotation.x = -1.35 - reach; // ほぼ水平に前へ突き出す
+    // ★HF(R54): 前方は -Z(顔/移動方向)。Rx(+θ)が腕(-Y伸長)を -Z へ振る。
+    // 旧値 -1.35 は +Z=背後へ突き出しており「腕が後ろ向き」の根本原因だった
+    g.rotation.x = 1.35 + reach; // ほぼ水平に前(-Z)へ突き出す
     g.rotation.z = -sx * 0.12;
     zPart(g, chamferBox(0.09, 0.27, 0.09, 0.02), m.armor, 0, -0.13, 0, false); // 上腕
     zPart(g, chamferBox(0.075, 0.27, 0.075, 0.02), m.dark, 0, -0.36, 0.01, false); // 前腕
@@ -2691,7 +2693,7 @@ export class Bot {
       this.legR.rotation.x = -zswing;
       this.kneeL.rotation.x = Math.max(0, -zs) * this.walkAmp * 0.9;
       this.kneeR.rotation.x = Math.max(0, zs) * this.walkAmp * 0.9;
-      this.rig.rotation.x = 0.26 + Math.sin(this.anim * 3.1) * 0.045; // 常時前傾+上下よろめき
+      this.rig.rotation.x = -(0.26 + Math.sin(this.anim * 3.1) * 0.045); // 常時前傾(-Z)+上下よろめき ★HF: 符号反転で真の前傾に
       this.rig.rotation.z = Math.sin(this.anim * 1.7 + this.bobPhase) * 0.07; // 左右のよろめき
       // R53-T1: rigLiftY(通常0。boss zombieのみ足沈み補正)を基準にボブを重ねる
       this.rig.position.y = this.rigLiftY + Math.abs(Math.cos(this.walkPhase)) * this.walkAmp * 0.03;
