@@ -1,0 +1,595 @@
+// ファイナルキルカム(FK記録リングバッファ+シネマティック三人称再生CK)。
+// R54-W1 F1 で match.ts から分割抽出した KillcamController。実装ロジックは移動のみ・挙動不変
+// (Match への依存は KillcamDeps の遅延クロージャ経由に限定 — 循環importなし)。
+// ガード(canStart)→Match側クリーンアップ→再生初期化(begin)の分割前の実行順は
+// match.ts 側の startFinalKillcam ラッパーが維持する。
+import * as THREE from 'three';
+import type { Bot } from './bot';
+import type { Player } from './player';
+
+// ── ファイナルキルカム リングバッファ(R19) ──
+const FK_MAX_FRAMES   = 90;  // 4.5 s @ 20 Hz
+const FK_BUFFER_S     = FK_MAX_FRAMES / 20; // R54-W1 Q2: リングバッファの実時間窓(=4.5s)
+const FK_MAX_BOTS     = 36; // V32修正: 増員(最大36体)を全記録(32だとhigh tierで被害者を取りこぼす)
+const FK_TICK_INT     = 3;   // 60 Hz の何 tick おきに記録(→ 20 Hz)
+const FK_WIN_PRE      = 3.5; // キル前の窓 (s) — 3.5s of pre-kill context
+const FK_WIN_POST     = 1.2; // キル後の窓 (s) — 1.2s for death animation
+const FK_MAX_SHOTS    = 48;
+// player slot : eyeX,eyeY,eyeZ, yaw, pitch, alive, adsRatio, adsFov = 8 floats
+const FK_P            = 8;
+// bot slot    : posX,posY,posZ, headY, yaw, alive  = 6 floats
+const FK_B            = 6;
+const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 224
+// shot slot   : from(3) + to(3) + color(1) + time(1) = 8 floats
+const FK_S            = 8;
+// ── シネマティックキルカム(CK) 再生窓・カメラ定数 ──
+const CK_WIN_PRE   = 2.5;  // 再生窓: キル前(s)
+const CK_WIN_POST  = 1.5;  // 再生窓: キル後(s)
+const CK_FOV       = 50;   // シネマティック三人称 FOV
+const CK_HEIGHT    = 3.0;  // カメラ高さオフセット(m)
+const CK_DOLLY_SPD = 0.5;  // ドリー速度(m/s)
+const CK_EYE_H     = 1.55; // プレイヤー眼高さオフセット(m)
+// T5: キルカム再生中のポーズ適用は Bot 公開API(fkApplyLivePose/fkApplyDeathPose/
+// fkResetPose)へ委譲する(旧 FkBotRig 構造型による private フィールド直接操作を撤去)。
+// bot.ts KIND_DEATH_S と同じ死亡演出の全長(s)。キルカムの手続き再現に使う
+const FK_DEATH_S: Record<string, number> = {
+  humanoid: 0.6,
+  drone: 1.1,
+  tank: 1.4,
+  turret: 0.5,
+  zombie: 0.6,
+  master: 0.6,
+  giant: 0.7,
+};
+
+/**
+ * シネマティックキルカム用: killer→victim線分の垂線上にカメラ位置を計算する(純粋関数)。
+ * side=1 or -1 で左右を切り替え。dollyOffset は slow dolly 積分値(m)。
+ */
+export function ckCamPos(
+  killer: THREE.Vector3,
+  victim: THREE.Vector3,
+  side: 1 | -1,
+  height: number,
+  dollyOffset = 0,
+): THREE.Vector3 {
+  const sx = victim.x - killer.x;
+  const sz = victim.z - killer.z;
+  const segLen = Math.sqrt(sx * sx + (victim.y - killer.y) ** 2 + sz * sz);
+  const horizLen = Math.sqrt(sx * sx + sz * sz);
+  let perpX = 0; let perpZ = 1;
+  if (horizLen > 0.01) { perpX = (-sz / horizLen) * side; perpZ = (sx / horizLen) * side; }
+  // V48修正: 遠距離キルでカメラが無制限に遠のき両者が点になる問題。
+  // アンカーを「近距離=中点 / 遠距離(18m超)=被害者寄り」へ滑らかに移し、距離も20mでクランプ。
+  // 遠距離キルは被害者の倒れ込み+着弾トレーサーを見せる構図になる。
+  const anchorT = Math.min(1, Math.max(0, (segLen - 18) / 24));
+  const ax = (killer.x + victim.x) * 0.5 * (1 - anchorT) + victim.x * anchorT;
+  const ay = (killer.y + victim.y) * 0.5 * (1 - anchorT) + victim.y * anchorT;
+  const az = (killer.z + victim.z) * 0.5 * (1 - anchorT) + victim.z * anchorT;
+  const d = Math.min(segLen * 0.9 + 6, 20) + dollyOffset;
+  return new THREE.Vector3(ax + perpX * d, ay + height, az + perpZ * d);
+}
+
+/**
+ * シネマティックキルカム再生速度ランプ(純粋関数)。
+ * キル -0.4s から急減速 → 0.2× ホールド → キル後 0.6s から復帰。
+ */
+export function ckSpeedAt(cursor: number, killT: number): number {
+  const d = cursor - killT;
+  if (d < -0.4) return 1.0;
+  if (d < 0.0) {
+    const t = (d + 0.4) / 0.4;
+    return 1.0 + (0.2 - 1.0) * t;
+  }
+  if (d < 0.6) return 0.2;
+  const t = Math.min(1, (d - 0.6) / Math.max(1e-6, CK_WIN_POST - 0.6));
+  return 0.2 + (1.0 - 0.2) * t;
+}
+
+// R54-W1 Q2: FK鮮度ガード(純関数、モード非依存)。startFinalKillcam 呼び出し時点で
+// 「最終キル」からリングバッファの実時間窓をほぼ使い切るほど経過していれば、そのキルの
+// フレームはもはや信頼できる形でバッファに残っていない(Hardpoint等、over確定がキルと
+// 直結しないモードで発生しうる潜在バグの保険)。skip=trueならFKを諦めて直接リザルトへ。
+export function fkIsStale(elapsed: number, killElapsed: number, bufferSeconds: number): boolean {
+  return elapsed - killElapsed > bufferSeconds - 1;
+}
+
+// fkRecordFrame の bot 位置読み出し用スクラッチ(旧 match.ts BOT_POS_SCRATCH と同役)
+const BOT_POS_SCRATCH = new THREE.Vector3();
+
+/** Match から注入する依存(全て遅延クロージャ=フィールド初期化順に依存しない)。 */
+export interface KillcamDeps {
+  getScene(): THREE.Scene;
+  getCamera(): THREE.PerspectiveCamera;
+  getAllyColor(): number;
+  getPlayer(): Player;
+  getBots(): readonly Bot[];
+  getAdsProgress(): number;
+  isZombie(): boolean;
+  playHit(): void;
+  reduceMotion(): boolean;
+  updateEffects(dt: number): void;
+  updateAtmosphere(dt: number): void;
+  tracer(from: THREE.Vector3, to: THREE.Vector3, color: number): void;
+  /** rayOrg→toMid方向distまでに boundary 以外の遮蔽があるか(壁チェック)。 */
+  blockedToMid(rayOrg: THREE.Vector3, toMid: THREE.Vector3, dist: number): boolean;
+}
+
+export { FK_WIN_POST };
+
+export class KillcamController {
+  // ── リングバッファ + ステートマシン(旧 Match フィールドの移動) ──
+  private readonly fkBuf     = new Float32Array(FK_MAX_FRAMES * FK_FRAME_STRIDE);
+  private readonly fkTimeArr = new Float32Array(FK_MAX_FRAMES);
+  private readonly fkBotCnt  = new Uint8Array(FK_MAX_FRAMES);
+  private fkHead = 0;
+  private fkFill = 0;
+  private fkTick = 0;
+  private readonly fkShotBuf = new Float32Array(FK_MAX_SHOTS * FK_S);
+  private fkShotHead = 0;
+  private fkShotFill = 0;
+  private fkKillerIsPlayer    = false;
+  private fkKillerBotIdx      = -1;
+  private fkVictimBotIdx      = -1; // キルカムの被害者BOT index(-1=プレイヤーが被害者)
+  private fkKillElapsed       = -Infinity;
+  private fkPlaying           = false;
+  fkFlash                     = 0;
+  private fkCursor            = 0; // 再生中のゲーム時刻カーソル(begin で窓先頭へ初期化)
+  private fkWinKill           = 0;
+  private fkWinEnd            = 0;
+  private fkPrevCursor        = -Infinity;
+  // ── シネマティックキルカム専用フィールド ──
+  private fkAvatarGroup: THREE.Group | null = null;
+  private readonly _ckCamBase  = new THREE.Vector3();
+  private readonly _ckDollyDir = new THREE.Vector3();
+  private _ckDollyDist = 0;
+  private _ckHitSoundPlayed = false;
+  private readonly _kcLook = new THREE.Vector3();
+
+  constructor(private readonly deps: KillcamDeps) {}
+
+  /** 再生中か(スナップショットの fkCinematicActive)。 */
+  get playing(): boolean {
+    return this.fkPlaying;
+  }
+
+  /** 最終キルのゲーム時刻(-Infinity=未発生)。trailing window 判定に使う。 */
+  get killElapsed(): number {
+    return this.fkKillElapsed;
+  }
+
+  /** キル発生をマーキングする(旧: Match が fk フィールドへ直接代入していた2サイトの置換)。 */
+  noteKill(killerIsPlayer: boolean, killerBotIdx: number, victimBotIdx: number, elapsed: number): void {
+    this.fkKillerIsPlayer = killerIsPlayer;
+    this.fkKillerBotIdx   = killerBotIdx;
+    this.fkVictimBotIdx   = victimBotIdx;
+    this.fkKillElapsed    = elapsed;
+  }
+
+  /** 20Hz 記録カデンス(旧: fkTick インクリメント+fkRecordFrame の2サイトの置換)。 */
+  tickRecord(elapsed: number): void {
+    this.fkTick = (this.fkTick + 1) % FK_TICK_INT;
+    if (this.fkTick === 0) this.recordFrame(elapsed);
+  }
+
+  /**
+   * 再生開始できるか(副作用なしの純ガード)。zombie除外/記録有無/鮮度/バッファ窓の
+   * 4条件は分割前 startFinalKillcam のガード1-3と同一。
+   */
+  canStart(elapsed: number): boolean {
+    if (this.deps.isZombie()) return false;
+    if (this.fkFill === 0 || this.fkKillElapsed === -Infinity) return false;
+    if (fkIsStale(elapsed, this.fkKillElapsed, FK_BUFFER_S)) return false;
+    const killT  = this.fkKillElapsed;
+    const oldIdx = (this.fkHead - this.fkFill + FK_MAX_FRAMES) % FK_MAX_FRAMES;
+    const oldest = this.fkTimeArr[oldIdx]!;
+    if (oldest > killT - FK_WIN_PRE + 0.5) return false;
+    return true;
+  }
+
+  /** 再生状態の初期化(canStart 通過後、Match 側クリーンアップの後に呼ぶ)。 */
+  begin(): void {
+    const killT  = this.fkKillElapsed;
+    const oldIdx = (this.fkHead - this.fkFill + FK_MAX_FRAMES) % FK_MAX_FRAMES;
+    const oldest = this.fkTimeArr[oldIdx]!;
+    this.fkWinKill    = killT;
+    this.fkWinEnd     = killT + CK_WIN_POST;
+    // カーソルはバッファの実際の先頭(oldest)と窓先頭の大きい方から開始する。
+    // oldest > killT-CK_WIN_PRE のとき先頭フレームが存在しないため、
+    // fkFindFrames が iA<0 を返して再生が即終了するバグ(kill瞬間カット)の根治。
+    this.fkCursor     = Math.max(oldest, killT - CK_WIN_PRE);
+    this.fkPrevCursor = -Infinity;
+    this.fkFlash      = 0;
+    // ── シネマティックキルカム初期化 ──
+    this._ckDollyDist = 0;
+    this._ckHitSoundPlayed = false;
+    this.fkDisposePlayerAvatar();
+    // キラー/ビクティム位置を初期フレームから取得してカメラ基底を計算する
+    const [iA0, iB0, t0] = this.fkFindFrames(this.fkCursor);
+    if (iA0 >= 0) {
+      const offA0 = iA0 * FK_FRAME_STRIDE; const offB0 = iB0 * FK_FRAME_STRIDE;
+      let kx: number; let ky: number; let kz: number;
+      let vx: number; let vy: number; let vz: number;
+      if (this.fkKillerIsPlayer) {
+        kx = this.fkBuf[offA0]! + (this.fkBuf[offB0]! - this.fkBuf[offA0]!) * t0;
+        ky = this.fkBuf[offA0+1]! + (this.fkBuf[offB0+1]! - this.fkBuf[offA0+1]!) * t0 - CK_EYE_H;
+        kz = this.fkBuf[offA0+2]! + (this.fkBuf[offB0+2]! - this.fkBuf[offA0+2]!) * t0;
+      } else {
+        const ki = this.fkKillerBotIdx;
+        if (ki >= 0 && ki < this.fkBotCnt[iA0]!) {
+          const boA = offA0+FK_P+ki*FK_B; const boB = offB0+FK_P+ki*FK_B;
+          kx = this.fkBuf[boA]!+(this.fkBuf[boB]!-this.fkBuf[boA]!)*t0;
+          ky = this.fkBuf[boA+3]!+(this.fkBuf[boB+3]!-this.fkBuf[boA+3]!)*t0;
+          kz = this.fkBuf[boA+2]!+(this.fkBuf[boB+2]!-this.fkBuf[boA+2]!)*t0;
+        } else { kx = 0; ky = 0; kz = 0; }
+      }
+      if (this.fkVictimBotIdx >= 0) {
+        const vi = this.fkVictimBotIdx;
+        if (vi < this.fkBotCnt[iA0]!) {
+          const boA = offA0+FK_P+vi*FK_B; const boB = offB0+FK_P+vi*FK_B;
+          vx = this.fkBuf[boA]!+(this.fkBuf[boB]!-this.fkBuf[boA]!)*t0;
+          vy = this.fkBuf[boA+3]!+(this.fkBuf[boB+3]!-this.fkBuf[boA+3]!)*t0;
+          vz = this.fkBuf[boA+2]!+(this.fkBuf[boB+2]!-this.fkBuf[boA+2]!)*t0;
+        } else { vx = kx; vy = ky+1.5; vz = kz; }
+      } else {
+        vx = this.fkBuf[offA0]!+(this.fkBuf[offB0]!-this.fkBuf[offA0]!)*t0;
+        vy = this.fkBuf[offA0+1]!+(this.fkBuf[offB0+1]!-this.fkBuf[offA0+1]!)*t0;
+        vz = this.fkBuf[offA0+2]!+(this.fkBuf[offB0+2]!-this.fkBuf[offA0+2]!)*t0;
+      }
+      const kVec = new THREE.Vector3(kx, ky, kz);
+      const vVec = new THREE.Vector3(vx, vy, vz);
+      // 壁チェック: サイド1→サイド-1→高さ+2 のフォールバック
+      let camP = ckCamPos(kVec, vVec, 1, CK_HEIGHT);
+      const rayOrg = new THREE.Vector3(camP.x, camP.y, camP.z);
+      const midP = new THREE.Vector3((kx+vx)*0.5, (ky+vy)*0.5, (kz+vz)*0.5);
+      const toMid = new THREE.Vector3().subVectors(midP, rayOrg).normalize();
+      if (this.deps.blockedToMid(rayOrg, toMid, camP.distanceTo(midP) * 0.9)) {
+        const camP2 = ckCamPos(kVec, vVec, -1, CK_HEIGHT);
+        const rayOrg2 = new THREE.Vector3(camP2.x, camP2.y, camP2.z);
+        const toMid2 = new THREE.Vector3().subVectors(midP, rayOrg2).normalize();
+        if (this.deps.blockedToMid(rayOrg2, toMid2, camP2.distanceTo(midP) * 0.9)) {
+          // 両サイドとも壁: 高さ+2m
+          camP = ckCamPos(kVec, vVec, 1, CK_HEIGHT + 2);
+        } else {
+          camP = camP2;
+        }
+      }
+      this._ckCamBase.copy(camP);
+      // ドリー方向: kill-line の水平方向(単位ベクトル)
+      const dx = vx - kx; const dz = vz - kz;
+      const horizLen2 = Math.sqrt(dx*dx + dz*dz);
+      if (horizLen2 > 0.01) {
+        this._ckDollyDir.set(dx/horizLen2, 0, dz/horizLen2);
+      } else {
+        this._ckDollyDir.set(0, 0, 1);
+      }
+    } else {
+      this._ckCamBase.set(0, CK_HEIGHT, 10);
+      this._ckDollyDir.set(0, 0, 1);
+    }
+    // プレイヤーアバター(三人称: killerがプレイヤーのとき表示)
+    this.fkAvatarGroup = this.fkCreatePlayerAvatar();
+    this.fkAvatarGroup.visible = false;
+    this.deps.getScene().add(this.fkAvatarGroup);
+    this.fkPlaying    = true;
+  }
+
+  // ── ファイナルキルカム: 記録メソッド ──────────────────────────────
+
+  private fkCreatePlayerAvatar(): THREE.Group {
+    const mat = new THREE.MeshStandardMaterial({ color: this.deps.getAllyColor(), roughness: 0.65, metalness: 0.15 });
+    const g = new THREE.Group();
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.60, 0.24), mat);
+    torso.position.y = 0.95; torso.castShadow = true; g.add(torso);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.28, 0.27), mat);
+    head.position.y = 1.49; head.castShadow = true; g.add(head);
+    const legGeo = new THREE.BoxGeometry(0.18, 0.50, 0.20);
+    for (const sx of [-0.13, 0.13] as const) {
+      const leg = new THREE.Mesh(legGeo, mat);
+      leg.position.set(sx, 0.50, 0); leg.castShadow = true; g.add(leg);
+    }
+    const armGeo = new THREE.BoxGeometry(0.14, 0.50, 0.18);
+    for (const sx of [-0.33, 0.33] as const) {
+      const arm = new THREE.Mesh(armGeo, mat);
+      arm.position.set(sx, 0.95, 0); arm.castShadow = true; g.add(arm);
+    }
+    return g;
+  }
+
+  private fkDisposePlayerAvatar(): void {
+    if (!this.fkAvatarGroup) return;
+    this.deps.getScene().remove(this.fkAvatarGroup);
+    this.fkAvatarGroup.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.geometry.dispose();
+        (obj.material as THREE.Material).dispose();
+      }
+    });
+    this.fkAvatarGroup = null;
+  }
+
+  recordFrame(elapsed: number): void {
+    const bots = this.deps.getBots();
+    const h   = this.fkHead;
+    const off = h * FK_FRAME_STRIDE;
+    const pe  = this.deps.getPlayer().eyePosition;
+    this.fkBuf[off    ] = pe.x;
+    this.fkBuf[off + 1] = pe.y;
+    this.fkBuf[off + 2] = pe.z;
+    this.fkBuf[off + 3] = this.deps.getPlayer().yaw;
+    this.fkBuf[off + 4] = this.deps.getPlayer().pitch;
+    this.fkBuf[off + 5] = this.deps.getPlayer().alive ? 1 : 0;
+    this.fkBuf[off + 6] = this.deps.getAdsProgress();    // ADS率(0..1)
+    this.fkBuf[off + 7] = this.deps.getCamera().fov;                  // 実効FOV(ADS縮小を含む)
+    const nb = Math.min(bots.length, FK_MAX_BOTS);
+    this.fkBotCnt[h] = nb;
+    for (let i = 0; i < nb; i++) {
+      const bot  = bots[i]!;
+      const bpos = bot.getPositionInto(BOT_POS_SCRATCH); // ★5 割り当てゼロ(旧: new×2/bot)
+      const bo = off + FK_P + i * FK_B;
+      this.fkBuf[bo    ] = bpos.x;
+      this.fkBuf[bo + 1] = bpos.y;
+      this.fkBuf[bo + 2] = bpos.z;
+      this.fkBuf[bo + 3] = bpos.y + bot.headOffsetY; // = headPosition().y
+      this.fkBuf[bo + 4] = Math.atan2(-bot.aimDir.x, -bot.aimDir.z);
+      this.fkBuf[bo + 5] = bot.alive ? 1 : 0;
+    }
+    this.fkTimeArr[h] = elapsed;
+    this.fkHead = (h + 1) % FK_MAX_FRAMES;
+    if (this.fkFill < FK_MAX_FRAMES) this.fkFill++;
+  }
+
+  recordShot(from: THREE.Vector3, to: THREE.Vector3, color: number, elapsed: number): void {
+    if (this.deps.isZombie()) return;
+    const h   = this.fkShotHead;
+    const off = h * FK_S;
+    this.fkShotBuf[off    ] = from.x;
+    this.fkShotBuf[off + 1] = from.y;
+    this.fkShotBuf[off + 2] = from.z;
+    this.fkShotBuf[off + 3] = to.x;
+    this.fkShotBuf[off + 4] = to.y;
+    this.fkShotBuf[off + 5] = to.z;
+    this.fkShotBuf[off + 6] = color;
+    this.fkShotBuf[off + 7] = elapsed;
+    this.fkShotHead = (h + 1) % FK_MAX_SHOTS;
+    if (this.fkShotFill < FK_MAX_SHOTS) this.fkShotFill++;
+  }
+
+  // ── ファイナルキルカム: 再生メソッド ──────────────────────────────
+
+
+  advance(dt: number): boolean {
+    if (!this.fkPlaying) return true;
+    // シネマティックランプ速度: ckSpeedAt はモジュールレベル純粋関数
+    const speed  = ckSpeedAt(this.fkCursor, this.fkWinKill);
+    this.fkCursor += dt * speed;
+    // ドリー前進(スロー中も同じレートで動かして映画的なヌルっと感を出す)
+    this._ckDollyDist += dt * CK_DOLLY_SPD;
+    const cursor = this.fkCursor;
+    if (cursor >= this.fkWinEnd) {
+      this.fkPlaying = false;
+      this.fkDisposePlayerAvatar();
+      return true;
+    }
+    const [iA, iB, t] = this.fkFindFrames(cursor);
+    // iA<0 = カーソルがまだ最初の記録フレーム前(バッファ先頭に到達していない)。
+    // 古い実装では即終了していた(kill瞬間カットの旧バグ)が、startFinalKillcam の
+    // cursor=max(oldest,…) クランプで通常は発生しない。防衛的に継続する。
+    if (iA < 0) return false;
+    this.fkApplyFrame(iA, iB, t);
+    this.fkSetCamera(iA, iB, t);
+    // キル瞬間: 白フラッシュ小 + ヒット音(1回のみ)
+    const afterKill = cursor - this.fkWinKill;
+    if (afterKill >= 0) {
+      if (!this._ckHitSoundPlayed) {
+        this._ckHitSoundPlayed = true;
+        this.deps.playHit();
+      }
+      if (!this.deps.reduceMotion() && afterKill < 0.05) {
+        this.fkFlash = Math.max(this.fkFlash, (1 - afterKill / 0.05) * 0.4);
+      }
+    }
+    this.fkFlash = Math.max(0, this.fkFlash - dt * 4);
+    // ショット再生(prevCursor..cursor の範囲のみ。重複なし)
+    this.fkReplayShots(this.fkPrevCursor, cursor);
+    this.fkPrevCursor = cursor;
+    // エフェクト・アトモスフィアを前進(トレーサー消滅 / 草揺れ維持)
+    this.deps.updateEffects(dt);
+    this.deps.updateAtmosphere(dt);
+    return false;
+  }
+
+
+  private fkFindFrames(cursor: number): [number, number, number] {
+    if (this.fkFill === 0) return [-1, -1, 0];
+    let bestA = -1; let bestATime = -Infinity;
+    let bestB = -1; let bestBTime =  Infinity;
+    for (let i = 0; i < this.fkFill; i++) {
+      const idx = (this.fkHead - this.fkFill + i + FK_MAX_FRAMES) % FK_MAX_FRAMES;
+      const ft  = this.fkTimeArr[idx]!;
+      if (ft <= cursor && ft > bestATime) { bestATime = ft; bestA = idx; }
+      if (ft >  cursor && ft < bestBTime) { bestBTime = ft; bestB = idx; }
+    }
+    if (bestA < 0) return [-1, -1, 0];
+    if (bestB < 0) return [bestA, bestA, 0];
+    const span = Math.max(1e-6, bestBTime - bestATime);
+    return [bestA, bestB, Math.min(1, Math.max(0, (cursor - bestATime) / span))];
+  }
+
+  private fkApplyFrame(iA: number, iB: number, t: number): void {
+    const bots = this.deps.getBots();
+    const offA   = iA * FK_FRAME_STRIDE;
+    const offB   = iB * FK_FRAME_STRIDE;
+    const nbA    = this.fkBotCnt[iA]!;
+    const nbB    = this.fkBotCnt[iB]!;
+    const nb     = Math.min(nbA, nbB, bots.length);
+    const cursor = this.fkCursor;
+    const killT  = this.fkWinKill;
+
+    for (let i = 0; i < bots.length; i++) {
+      const bot = bots[i]!;
+      if (i < nb) {
+        const boA = offA + FK_P + i * FK_B;
+        const boB = offB + FK_P + i * FK_B;
+        const bx  = this.fkBuf[boA    ]! + (this.fkBuf[boB    ]! - this.fkBuf[boA    ]!) * t;
+        const by  = this.fkBuf[boA + 1]! + (this.fkBuf[boB + 1]! - this.fkBuf[boA + 1]!) * t;
+        const bz  = this.fkBuf[boA + 2]! + (this.fkBuf[boB + 2]! - this.fkBuf[boA + 2]!) * t;
+        const ya  = this.fkBuf[boA + 4]!;
+        const yb  = this.fkBuf[boB + 4]!;
+        let   yd  = yb - ya;
+        if (yd >  Math.PI) yd -= Math.PI * 2;
+        if (yd < -Math.PI) yd += Math.PI * 2;
+        const byaw = ya + yd * t;
+
+        if (i === this.fkVictimBotIdx) {
+          // 被害者ボット: キル前はalive姿勢で表示、キル後は死亡アニメを手続き再現
+          bot.group.visible = true;
+          // T5: 位置/回転の適用+死亡演出トランスフォームのalive姿勢への巻き戻しは
+          // Bot公開APIへ委譲(旧 FkBotRig 経由の private フィールド直接操作を撤去)
+          bot.fkApplyLivePose(bx, by, bz, byaw);
+          if (cursor >= killT) {
+            // キル後: 経過時間を正規化(0..1)して死亡ポーズを手続き的に再現(倒れる瞬間を見せる)
+            const totalS = FK_DEATH_S[bot.kind] ?? 0.6;
+            const t01 = Math.min(1, Math.max(0, (cursor - killT) / totalS));
+            bot.fkApplyDeathPose(t01);
+          }
+        } else {
+          // 非被害者ボット: バッファのaliveフラグに従う
+          const balive = (this.fkBuf[boA + 5]! > 0.5) || (this.fkBuf[boB + 5]! > 0.5);
+          if (balive) {
+            // alive表示時は位置/回転の適用+死亡演出トランスフォームのリセットをBot側で行う
+            // (fkApplyLivePose内でvisible=trueも設定される)
+            bot.fkApplyLivePose(bx, by, bz, byaw);
+          } else {
+            // 非alive表示: fkApplyLivePose は呼ばない(pose強制リセット+visible=trueを避ける)。
+            // 位置/回転は公開フィールドのgroupへ直接同期し、visibleのみfalseにする(bot.ts契約)
+            bot.group.position.set(bx, by, bz);
+            bot.group.rotation.y = byaw;
+            bot.group.visible = false;
+          }
+        }
+      } else {
+        bot.group.visible = false;
+      }
+    }
+  }
+
+  private fkSetCamera(iA: number, iB: number, t: number): void {
+    const offA = iA * FK_FRAME_STRIDE;
+    const offB = iB * FK_FRAME_STRIDE;
+    const cursor = this.fkCursor;
+
+    // ── キラー位置を補間 ──
+    let killerX: number; let killerY: number; let killerZ: number; let killerYaw = 0;
+    if (this.fkKillerIsPlayer) {
+      killerX = this.fkBuf[offA]! + (this.fkBuf[offB]! - this.fkBuf[offA]!) * t;
+      killerY = this.fkBuf[offA+1]! + (this.fkBuf[offB+1]! - this.fkBuf[offA+1]!) * t - CK_EYE_H;
+      killerZ = this.fkBuf[offA+2]! + (this.fkBuf[offB+2]! - this.fkBuf[offA+2]!) * t;
+      const ya = this.fkBuf[offA+3]!; const yb = this.fkBuf[offB+3]!;
+      let yd = yb - ya;
+      if (yd >  Math.PI) yd -= Math.PI * 2;
+      if (yd < -Math.PI) yd += Math.PI * 2;
+      killerYaw = ya + yd * t;
+    } else {
+      const ki = this.fkKillerBotIdx;
+      const nbA = this.fkBotCnt[iA]!;
+      if (ki >= 0 && ki < nbA) {
+        const boA = offA+FK_P+ki*FK_B; const boB = offB+FK_P+ki*FK_B;
+        killerX = this.fkBuf[boA]! + (this.fkBuf[boB]! - this.fkBuf[boA]!) * t;
+        killerY = this.fkBuf[boA+3]! + (this.fkBuf[boB+3]! - this.fkBuf[boA+3]!) * t;
+        killerZ = this.fkBuf[boA+2]! + (this.fkBuf[boB+2]! - this.fkBuf[boA+2]!) * t;
+        const ya = this.fkBuf[boA+4]!; const yb = this.fkBuf[boB+4]!;
+        let yd = yb - ya;
+        if (yd >  Math.PI) yd -= Math.PI * 2;
+        if (yd < -Math.PI) yd += Math.PI * 2;
+        killerYaw = ya + yd * t;
+      } else {
+        killerX = this._ckCamBase.x; killerY = this._ckCamBase.y; killerZ = this._ckCamBase.z;
+      }
+    }
+
+    // ── ビクティム位置を補間 ──
+    let victimX: number; let victimY: number; let victimZ: number;
+    if (this.fkVictimBotIdx >= 0) {
+      const vi = this.fkVictimBotIdx;
+      if (vi < this.fkBotCnt[iA]!) {
+        const boA = offA+FK_P+vi*FK_B; const boB = offB+FK_P+vi*FK_B;
+        victimX = this.fkBuf[boA]! + (this.fkBuf[boB]! - this.fkBuf[boA]!) * t;
+        victimY = this.fkBuf[boA+3]! + (this.fkBuf[boB+3]! - this.fkBuf[boA+3]!) * t;
+        victimZ = this.fkBuf[boA+2]! + (this.fkBuf[boB+2]! - this.fkBuf[boA+2]!) * t;
+      } else {
+        victimX = this._ckCamBase.x; victimY = this._ckCamBase.y + 1.5; victimZ = this._ckCamBase.z;
+      }
+    } else {
+      victimX = this.fkBuf[offA]! + (this.fkBuf[offB]! - this.fkBuf[offA]!) * t;
+      victimY = this.fkBuf[offA+1]! + (this.fkBuf[offB+1]! - this.fkBuf[offA+1]!) * t;
+      victimZ = this.fkBuf[offA+2]! + (this.fkBuf[offB+2]! - this.fkBuf[offA+2]!) * t;
+    }
+
+    // ── プレイヤーアバター更新(3人称) ──
+    if (this.fkAvatarGroup) {
+      if (this.fkKillerIsPlayer) {
+        // killerがプレイヤー → アバターをkiller位置へ
+        this.fkAvatarGroup.position.set(killerX, killerY, killerZ);
+        this.fkAvatarGroup.rotation.y = killerYaw;
+        this.fkAvatarGroup.rotation.x = 0;
+      } else {
+        // victimがプレイヤー → アバターをvictim位置へ(死亡倒れアニメ付き)
+        const va = this.fkBuf[offA+3]!; const vb = this.fkBuf[offB+3]!;
+        let vyd = vb - va;
+        if (vyd >  Math.PI) vyd -= Math.PI * 2;
+        if (vyd < -Math.PI) vyd += Math.PI * 2;
+        this.fkAvatarGroup.position.set(victimX, victimY - CK_EYE_H, victimZ);
+        this.fkAvatarGroup.rotation.y = va + vyd * t;
+        if (cursor >= this.fkWinKill) {
+          const dpT = Math.min(1, (cursor - this.fkWinKill) / 0.6);
+          const dpSS = dpT * dpT * (3 - 2 * dpT);
+          this.fkAvatarGroup.rotation.x = dpSS * (Math.PI / 2) * 0.95;
+        } else {
+          this.fkAvatarGroup.rotation.x = 0;
+        }
+      }
+      this.fkAvatarGroup.visible = true;
+    }
+
+    // ── シネマティックカメラ ──
+    // V48修正: 近距離は中点寄りを注視して両者をフレームイン、遠距離は被害者を注視
+    {
+      const dx = victimX - killerX; const dz = victimZ - killerZ;
+      const segL = Math.sqrt(dx * dx + dz * dz);
+      const lookT = Math.min(1, Math.max(0, (segL - 18) / 24)); // 0=中点寄り, 1=被害者
+      const mixV = 0.55 + 0.45 * lookT; // 被害者の重み 0.55..1.0
+      this._kcLook.set(
+        victimX * mixV + (killerX + victimX) * 0.5 * (1 - mixV),
+        victimY * mixV + (killerY + victimY) * 0.5 * (1 - mixV),
+        victimZ * mixV + (killerZ + victimZ) * 0.5 * (1 - mixV),
+      );
+    }
+    this.deps.getCamera().position.copy(this._ckCamBase).addScaledVector(this._ckDollyDir, this._ckDollyDist);
+    this.deps.getCamera().lookAt(this._kcLook);
+    if (Math.abs(this.deps.getCamera().fov - CK_FOV) > 0.01) {
+      this.deps.getCamera().fov = CK_FOV;
+      this.deps.getCamera().updateProjectionMatrix();
+    }
+  }
+
+  private fkReplayShots(prevCursor: number, cursor: number): void {
+    for (let i = 0; i < this.fkShotFill; i++) {
+      const h   = (this.fkShotHead - this.fkShotFill + i + FK_MAX_SHOTS) % FK_MAX_SHOTS;
+      const off = h * FK_S;
+      const st  = this.fkShotBuf[off + 7]!;
+      if (st > prevCursor && st <= cursor) {
+        this.deps.tracer(
+          new THREE.Vector3(this.fkShotBuf[off    ]!, this.fkShotBuf[off + 1]!, this.fkShotBuf[off + 2]!),
+          new THREE.Vector3(this.fkShotBuf[off + 3]!, this.fkShotBuf[off + 4]!, this.fkShotBuf[off + 5]!),
+          this.fkShotBuf[off + 6]!,
+        );
+      }
+    }
+  }
+
+  /** アバター等の解放(Match.dispose から)。 */
+  dispose(): void {
+    this.fkDisposePlayerAvatar();
+  }
+}

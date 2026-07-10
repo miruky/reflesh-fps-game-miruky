@@ -61,7 +61,6 @@ import {
   type BotKind,
   type BotTier,
   type BotTuning,
-  type Difficulty,
   type ZombieCrowdPose,
 } from './bot';
 import type { BossPhase, EnemyWaveDef, MissionDef, ObjectiveDef, RadioLine, RadioSpeaker } from './campaign';
@@ -71,7 +70,6 @@ import {
   isWithinSndSite,
   makeSndSites,
   SND_FUSE_S,
-  type SndPhase,
   type SndSite,
 } from './snd';
 import { deriveSurfaceMaterials } from './materials';
@@ -84,8 +82,9 @@ import { GodRaysPass } from '../render/godrays';
 import { AdsDofPass } from '../render/dof';
 import { patchPcss, unpatchPcss, isPcssPatched } from '../render/pcss';
 import { AutoExposure } from '../render/exposure';
-import { buildPropVisual, PROP_VISUAL_KINDS, type PropMatFamily } from '../render/prop-visuals';
-import { applySurfaceKit, SURFACE_KIT_IDS, floorDetailGlsl, floorDetailGlslCommon } from '../render/surface-kit';
+import type { PropMatFamily } from '../render/prop-visuals';
+import { floorDetailGlsl, floorDetailGlslCommon } from '../render/surface-kit';
+import { KillcamController, FK_WIN_POST } from './killcam';
 import type { MissionSummary } from './progression';
 import {
   MedalTracker,
@@ -116,7 +115,6 @@ import {
   PLAYER_TEAM,
   ScoreBoard,
   TrainingStats,
-  type GameMode,
   type ModeDef,
   type TeamId,
   type ZoneSnapshot,
@@ -168,26 +166,21 @@ import {
   type ZombiePerkId,
   type PapTier,
   type PowerUpKind,
-  type CharmId,
   type CharmEffect,
   LAST_ZOMBIE_PERK_KEY,
 } from './zombie-economy';
-import type { MatchSummary } from './progression';
 import { weaponIdByName, equippedCamoFor, CAMO_VISUALS } from './camo';
 import { loadProfile } from '../core/profile';
 import {
   generateStage,
-  buildProp,
   type StageDef,
   type MoodId,
-  type BoxSpec,
   type PropPlacement,
-  type StagePalette,
 } from './stage';
 import { StreakManager, STREAK_DEFS, type StreakIndex } from './scorestreaks';
 import { type SurfaceMaterial } from './materials';
 import { teamPalette, type TeamPalette } from './teamcolors';
-import { Weapon, WEAPON_DEFS, SECONDARY_IDS, type WeaponClass, type WeaponDef } from './weapons';
+import { Weapon, WEAPON_DEFS, SECONDARY_IDS, type WeaponClass } from './weapons';
 
 // Sky.js のシェーダ uniform。noUncheckedIndexedAccess を避けるための型付きビュー
 interface SkyUniforms {
@@ -198,254 +191,87 @@ interface SkyUniforms {
   sunPosition: { value: THREE.Vector3 };
 }
 
-// ── R30 動的天候 ────────────────────────────────────────────────────
-// configシード(stage.seed)から決定論的にロール: 晴60% / 濃霧20% / 雨20%。
-// 日付やDate.now()は使わない=同じステージ選択なら常に同じ天候(リプレイ性/テスト安定)。
-export type WeatherKind = 'clear' | 'fog' | 'rain';
-export function rollWeather(seed: number): WeatherKind {
-  // 整数ハッシュ(xorshift-乗算)。Math.imul で32bit演算を保証し、浮動小数の桁落ちを避ける
-  let v = (seed ^ (seed >>> 16)) >>> 0;
-  v = Math.imul(v, 0x45d9f3b) >>> 0;
-  v = (v ^ (v >>> 16)) >>> 0;
-  const r01 = v / 0x100000000;
-  if (r01 < 0.6) return 'clear';
-  return r01 < 0.8 ? 'fog' : 'rain';
-}
+// ── R54-W1 F1: match.ts分割リレー第1段 — 純関数クラスタを機能別モジュールへ抽出 ──
+// 実装は weather.ts / match-helpers.ts / prop-visual-plan.ts へ「移動のみ」。既存のimport元
+// (hud/menu/main/テスト8本)を無破壊にするため、公開面はここから re-export して維持する
+// (match-golden.test.ts がこの表面を固定している)。
+export { rollWeather } from './weather';
+export type { WeatherKind } from './weather';
+export {
+  spawnDistScore,
+  hotspotEma,
+  bowChargeMultiplier,
+  fanPelletYaw,
+  minigunNextRpm,
+  EXT_MAG_EXCLUDED_IDS,
+  PAP_CAMO_BY_TIER,
+  applyHellTuning,
+  papInteractSealed,
+  ninjaHp300Eligible,
+  permanentDarkEmperorEligible,
+  instaKillApplies,
+  papTierAfterWallBuy,
+  applyHellTierTuning,
+  emperorChargeStageFor,
+  isCrowdEligible,
+  crowdSlotAction,
+  applyMissionDifficultyTuning,
+  splitRadioLines,
+  resolveNaturalBotKind,
+  shadowLodFlags,
+  zombieHordeRanks,
+  refundRound,
+  shurikenDiscLife,
+} from './match-helpers';
+export {
+  planPropVisualsV2,
+  buildPropVisualFamilyGeometries,
+  buildPropFamilyMaterial,
+  propFamilyShadowFlags,
+  prewarmSurfaceKitVariants,
+  floorDetailEligible,
+} from './prop-visual-plan';
+export type { PrewarmRenderer } from './prop-visual-plan';
+export { ckCamPos, ckSpeedAt, fkIsStale } from './killcam';
+import { rollWeather } from './weather';
+import type { WeatherKind } from './weather';
+import {
+  spawnDistScore,
+  hotspotEma,
+  bowChargeMultiplier,
+  fanPelletYaw,
+  minigunNextRpm,
+  EXT_MAG_EXCLUDED_IDS,
+  PAP_CAMO_BY_TIER,
+  applyHellTuning,
+  papInteractSealed,
+  ninjaHp300Eligible,
+  permanentDarkEmperorEligible,
+  instaKillApplies,
+  papTierAfterWallBuy,
+  applyHellTierTuning,
+  emperorChargeStageFor,
+  isCrowdEligible,
+  crowdSlotAction,
+  applyMissionDifficultyTuning,
+  splitRadioLines,
+  resolveNaturalBotKind,
+  shadowLodFlags,
+  zombieHordeRanks,
+  refundRound,
+  shurikenDiscLife,
+} from './match-helpers';
+import {
+  planPropVisualsV2,
+  buildPropVisualFamilyGeometries,
+  buildPropFamilyMaterial,
+  propFamilyShadowFlags,
+  prewarmSurfaceKitVariants,
+  floorDetailEligible,
+} from './prop-visual-plan';
 
-/**
- * ② BO2式スポーンスコアリング(純関数・テスト可能)。
- * 敵から 40-70m を最高点(100)、<25m は大減点、遠すぎは緩く減点。
- * 既存の占有チェック(1.2m)と組み合わせて pickSpawn が最適地点を選ぶ。
- */
-export function spawnDistScore(d: number): number {
-  if (d < 25) return -200 + d * 4;            // 大減点: 0→-200, 25→-100
-  if (d < 40) return (d - 25) * (100 / 15) - 100; // 線形: 25→-100, 40→0
-  if (d <= 70) return 100;                     // 最高スコア帯
-  if (d <= 120) return 100 - (d - 70) * 2;    // 70→100, 120→0
-  return Math.max(-50, 100 - (d - 70) * 2);   // 120m超: 最低-50
-}
 
-/**
- * ① 戦闘引力ホットスポットのEMA更新(純関数・テスト可能)。
- * prev=null(初イベントまたは10秒減衰後)はイベント位置をそのまま採用、
- * 以降は α=0.35 の指数移動平均で直近の戦闘位置へ滑らかに寄せる。O(1)/イベント。
- */
-export function hotspotEma(
-  prev: { x: number; z: number } | null,
-  event: { x: number; z: number },
-  alpha = 0.35,
-): { x: number; z: number } {
-  if (!prev) return { x: event.x, z: event.z };
-  return {
-    x: prev.x + (event.x - prev.x) * alpha,
-    z: prev.z + (event.z - prev.z) * alpha,
-  };
-}
 
-// ── R33 特殊武器 純関数ヘルパー(テスト可能) ──
-
-/** 月光弓チャージ乗数: 0s→0.5倍, 1.2s→1.3倍 の線形補間 */
-export function bowChargeMultiplier(chargeS: number): number {
-  const t = Math.max(0, Math.min(1, chargeS / 1.2));
-  return 0.5 + t * 0.8;
-}
-
-/** 風神扇ペレット水平yaw角(rad): 垂直pitchはゼロ(純水平扇形) */
-export function fanPelletYaw(i: number, total: number, halfSpanRad: number): number {
-  if (total <= 1) return 0;
-  return -halfSpanRad + (i / (total - 1)) * halfSpanRad * 2;
-}
-
-/** 修羅スピンアップ曲線: 1.5sで400→1800rpm, 0.5sでスピンダウン */
-export function minigunNextRpm(currentRpm: number, dt: number, spinning: boolean): number {
-  if (spinning) {
-    const rate = (1800 - 400) / 1.5;
-    return Math.min(1800, currentRpm + rate * dt);
-  }
-  const rate = 1800 / 0.5;
-  return Math.max(0, currentRpm - rate * dt);
-}
-
-// ── R53-W2 M2c: プロップ超リアル化v2の配線ロジック(純関数群・テスト可能) ──────────
-//
-// buildStageScene() は stage.ts の layout.propPlacements(kind/cx/cz/rotRad/scaleJitter)を
-// render/prop-visuals.buildPropVisual() へ渡して実物寄りジオメトリを得るが、layout.boxes
-// (buildProp()由来のBoxSpec)は「どのpropPlacementに属するか」を示すidを持たない。
-// そこで、buildProp()がrand非使用の純関数である性質を利用し、propPlacementsを辿りながら
-// 同じ(kind,cx,cz,rot)でbuildProp()を再呼び出しして得られる箱「個数」だけ、boxesの中の
-// prop:trueな箱列(生成順=propPlacementsの生成順と厳密に一致。stage.tsのgenerateThemeObjects
-// はbox列とplacements列を同一ループ内で常に同時にpushするため)から連続して切り出す
-// 2ポインタ走査でbox↔placementの対応を復元する。stage.tsは変更しない(消費のみ)。
-
-/**
- * propPlacements と実際に生成された boxes を突き合わせ、
- * (a) v2ビジュアル(buildPropVisual)を適用するインスタンス一覧
- * (b) 旧箱ビジュアル(マージ/個別/shadowCaster全経路)の描画をスキップすべき BoxSpec の集合
- * を決定する。コライダー/tags/breakable/minimapの生成には一切関与しない(視覚生成の
- * 分岐にのみ使う値を返すだけの純関数)。
- *
- * 除外基準:
- * - kind が PROP_VISUAL_KINDS に含まれない(未実装kind) → v2対象外。
- * - インスタンスを構成する箱のうち1つでも breakable が付与されている → v2対象外
- *   (破壊時にそのメッシュだけを個別除去する必要があるため、現行の個別メッシュ経路の
- *   ままにする。判断済み — このインスタンスは丸ごと旧経路で描画される)。
- */
-export function planPropVisualsV2(
-  placements: readonly PropPlacement[],
-  boxes: readonly BoxSpec[],
-  palette: StagePalette,
-): { v2Placements: PropPlacement[]; skipBoxes: Set<BoxSpec> } {
-  const propBoxesInOrder = boxes.filter((b) => b.prop === true);
-  let cursor = 0;
-  const v2Placements: PropPlacement[] = [];
-  const skipBoxes = new Set<BoxSpec>();
-  for (const placement of placements) {
-    // rotRad は quantSteps*(π/2) ± 0.45rad のジッタ済み値(stage.ts jitterRotRad)。
-    // ジッタ振幅(最大0.45rad)は90°の半分(0.785rad)未満なので四捨五入で必ず元のquantStepsへ戻る。
-    const rotSteps = Math.round(placement.rotRad / (Math.PI / 2)) & 3;
-    const regenerated = buildProp(placement.kind, placement.cx, placement.cz, rotSteps, () => 0, palette);
-    const group = propBoxesInOrder.slice(cursor, cursor + regenerated.length);
-    cursor += regenerated.length;
-    const kindSupported = PROP_VISUAL_KINDS.includes(placement.kind);
-    const hasBreakable = group.some((b) => b.breakable !== undefined);
-    if (kindSupported && !hasBreakable) {
-      v2Placements.push(placement);
-      for (const b of group) skipBoxes.add(b);
-    }
-  }
-  return { v2Placements, skipBoxes };
-}
-
-/**
- * v2対象のインスタンス一覧から PropMatFamily 別に1メッシュ分のマージ済みジオメトリを作る
- * (mergeGeometries、既存 match.ts buildPropDecor/propMerge と同じ流儀)。中間ジオメトリは
- * マージ後に破棄する(試合ごとdispose契約に沿い、マージに使った一時分を残さない)。
- * 戻り値は最大7キー(metal/wood/stone/foliage/paint/accent/shadow) — DC予算の直接的な上限。
- */
-export function buildPropVisualFamilyGeometries(
-  placements: readonly PropPlacement[],
-  palette: StagePalette,
-  rand: Rand,
-): Partial<Record<PropMatFamily, THREE.BufferGeometry>> {
-  const acc = new Map<PropMatFamily, THREE.BufferGeometry[]>();
-  for (const placement of placements) {
-    const visual = buildPropVisual(
-      placement.kind,
-      placement.cx,
-      placement.cz,
-      0, // baseY: 全プロップ地面設置(M2c配線メモどおり常に0)
-      placement.rotRad,
-      placement.scaleJitter,
-      rand,
-      palette,
-    );
-    if (!visual) continue;
-    for (const key of Object.keys(visual) as PropMatFamily[]) {
-      const geos = visual[key];
-      if (!geos || geos.length === 0) continue;
-      let arr = acc.get(key);
-      if (!arr) {
-        arr = [];
-        acc.set(key, arr);
-      }
-      arr.push(...geos);
-    }
-  }
-  const merged: Partial<Record<PropMatFamily, THREE.BufferGeometry>> = {};
-  for (const [family, geos] of acc) {
-    const m = mergeGeometries(geos, false);
-    for (const g of geos) g.dispose();
-    if (m) merged[family] = m;
-  }
-  return merged;
-}
-
-/**
- * PropMatFamily → マテリアル。metal/wood/stone/paint/foliage は applySurfaceKit で質感キット
- * (roughness/metalness基準値+onBeforeCompileのマクロ質感GLSL)を適用する。accent はキット無し
- * (素のemissive系。palette.emissiveAccent時のみ発光。0.45はbloom閾値0.9未満の既存踏襲値)。
- * shadow は接地コンタクトシャドウ専用(頂点色RGBA・itemSize4・MeshBasicMaterial)。
- * R54-W1 Q6: tier==='low'は onBeforeCompile GLSLパッチ(applySurfaceKit)を適用せず、
- * 素のMeshStandardMaterial既定roughness/metalnessのまま返す(低スペック機のフラグメント
- * ALU削減。tier省略時は既定'high'=従来どおりキット適用、既存呼び出しは非回帰)。
- */
-export function buildPropFamilyMaterial(
-  family: PropMatFamily,
-  palette: StagePalette,
-  tier: GraphicsQuality = 'high',
-): THREE.Material {
-  if (family === 'shadow') {
-    return new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false });
-  }
-  if (family === 'accent') {
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.0 });
-    if (palette.emissiveAccent) {
-      mat.emissive = new THREE.Color(palette.accent);
-      mat.emissiveIntensity = 0.45;
-      mat.envMapIntensity = 0.35;
-    }
-    return mat;
-  }
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true });
-  if (tier !== 'low') applySurfaceKit(mat, family);
-  return mat;
-}
-
-/**
- * PropMatFamily別のシャドウフラグ。metal/wood/stone/paint/foliage は個別shadowCasterメッシュ
- * 経路(旧: h>3の箱を個別castShadow=trueメッシュで描画)をv2が完全に肩代わりするため
- * castShadow=trueに統一(family1本で全個体分をまとめて落とすためdraw call増ゼロ)。
- * accent(薄い発光帯)はcastShadow=false(旧mergedPropMeshと同じ扱い)。
- * shadow(接地コンタクトシャドウのデカール)はcast/receiveとも false(旧buildPropDecorの
- * 接地シャドウメッシュと同じ扱い。MeshBasicMaterialは光の影響を受けない)。
- */
-export function propFamilyShadowFlags(family: PropMatFamily): { castShadow: boolean; receiveShadow: boolean } {
-  if (family === 'shadow') return { castShadow: false, receiveShadow: false };
-  if (family === 'accent') return { castShadow: false, receiveShadow: true };
-  return { castShadow: true, receiveShadow: true };
-}
-
-/** renderer.compile() の scene/camera 引数だけを要求する最小インタフェース(テスト用にモック可能)。 */
-export interface PrewarmRenderer {
-  compile: (scene: THREE.Object3D, camera: THREE.Camera, targetScene?: THREE.Scene | null) => unknown;
-}
-
-/**
- * SurfaceKit 5バリアント(metal/wood/stone/paint/foliage)を、このステージで実際に使われて
- * いるかどうかに関わらず一時メッシュとして scene へ追加した状態で renderer.compile() へ通し、
- * 直後に scene から除去+dispose する(R11 dissolve教訓: あるステージで「稀にしか出ないキット」
- * のプロップに初めて近づいた瞬間だけ絵が止まる、を試合開始時の1回のcompileで潰す)。
- * このステージが実際に使う v2 家族メッシュ/マテリアルは、この呼び出し時点で既に scene に
- * 追加済みであれば同じ renderer.compile() 呼び出しで一緒に事前コンパイルされる(呼び出し側は
- * v2家族メッシュの追加後にこの関数を呼ぶこと)。DC実測は ?perfhud=1 で確認できる。
- * R54-W1 Q6: tier==='low'はSurfaceKitを一切使わない(buildPropFamilyMaterial側で不使用)ため、
- * 5variant分の一時メッシュ生成/コンパイルは完全に無駄仕事。ループのみ省略し、実メッシュが
- * 既にscene追加済みならその分のcompileは維持する(tier省略時は既定'high'=従来どおり)。
- */
-export function prewarmSurfaceKitVariants(
-  scene: THREE.Scene,
-  renderer: PrewarmRenderer,
-  camera: THREE.Camera,
-  tier: GraphicsQuality = 'high',
-): void {
-  const tempGeo = new THREE.BoxGeometry(0.01, 0.01, 0.01);
-  const tempMeshes: THREE.Mesh[] = [];
-  if (tier !== 'low') {
-    for (const kit of SURFACE_KIT_IDS) {
-      const mat = new THREE.MeshStandardMaterial({ vertexColors: true });
-      applySurfaceKit(mat, kit);
-      const mesh = new THREE.Mesh(tempGeo, mat);
-      scene.add(mesh);
-      tempMeshes.push(mesh);
-    }
-  }
-  renderer.compile(scene, camera);
-  for (const mesh of tempMeshes) {
-    scene.remove(mesh);
-    (mesh.material as THREE.Material).dispose();
-  }
-  tempGeo.dispose();
-}
 
 // R20 rank3: 床/障害物の onBeforeCompile へ挿す決定論的な値ノイズ(3オクターブfbm)。
 // ワールドXZから摩耗/汚れ/濡れパッチのマクロ質感を作る。追加DC/ジオメトリはゼロ、
@@ -478,14 +304,6 @@ const MACRO_NOISE_GLSL = /* glsl */ `
 
 const DEG = Math.PI / 180;
 const EXOTIC_HOLD_FIRE_IDS = new Set(['banjin-smg', 'fujin-fan', 'gouen-musket', 'shinkirou-sniper']);
-// 拡張マガジン(ext-mag)対象外の武器ID。fists(クナイ)は magazine.fire() を経由しない素手格闘で
-// 弾薬概念自体が無い(999は「表示上の∞」を示すダミー値)ため、容量パークを適用する意味がない。
-// テストから直接除外判定を検証できるよう export する。
-export const EXT_MAG_EXCLUDED_IDS = new Set(['fists']);
-// R53-W2: papTier(0-3)→def.papCamoの対応表。tier0はカモなし(undefined)。
-// composeZombieWeaponDef自体はpapCamoに触れないため、recomposeWeapon/switchPrimaryWeapon側で
-// このテーブルを介して明示的に設定する(viewmodel.setWeaponのキャッシュキー分離に必須)。
-export const PAP_CAMO_BY_TIER: ReadonlyArray<WeaponDef['papCamo']> = [undefined, 'pap1', 'pap2', 'pap3'];
 const MIASMA_TICK_S = 0.5; // 毒雲DPSの離散ティック間隔(FIRE_TICK_Sと同じ流儀)
 const LOOK_BASE = 0.0022;
 // ゲームパッドのヒップファイア時アシストゲート(マウスはADS時のみ、パッドは常時BO3準拠)
@@ -601,40 +419,6 @@ const ALERT_RADIUS_SUPPRESSED = 9;
 const COOK_SAFETY_S = 0.25;
 const FIRE_TICK_S = 0.5;
 
-// ── ファイナルキルカム リングバッファ(R19) ──
-const FK_MAX_FRAMES   = 90;  // 4.5 s @ 20 Hz
-const FK_BUFFER_S     = FK_MAX_FRAMES / 20; // R54-W1 Q2: リングバッファの実時間窓(=4.5s)
-const FK_MAX_BOTS     = 36; // V32修正: 増員(最大36体)を全記録(32だとhigh tierで被害者を取りこぼす)
-const FK_TICK_INT     = 3;   // 60 Hz の何 tick おきに記録(→ 20 Hz)
-const FK_WIN_PRE      = 3.5; // キル前の窓 (s) — 3.5s of pre-kill context
-const FK_WIN_POST     = 1.2; // キル後の窓 (s) — 1.2s for death animation
-const FK_MAX_SHOTS    = 48;
-// player slot : eyeX,eyeY,eyeZ, yaw, pitch, alive, adsRatio, adsFov = 8 floats
-const FK_P            = 8;
-// bot slot    : posX,posY,posZ, headY, yaw, alive  = 6 floats
-const FK_B            = 6;
-const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 224
-// shot slot   : from(3) + to(3) + color(1) + time(1) = 8 floats
-const FK_S            = 8;
-// ── シネマティックキルカム(CK) 再生窓・カメラ定数 ──
-const CK_WIN_PRE   = 2.5;  // 再生窓: キル前(s)
-const CK_WIN_POST  = 1.5;  // 再生窓: キル後(s)
-const CK_FOV       = 50;   // シネマティック三人称 FOV
-const CK_HEIGHT    = 3.0;  // カメラ高さオフセット(m)
-const CK_DOLLY_SPD = 0.5;  // ドリー速度(m/s)
-const CK_EYE_H     = 1.55; // プレイヤー眼高さオフセット(m)
-// T5: キルカム再生中のポーズ適用は Bot 公開API(fkApplyLivePose/fkApplyDeathPose/
-// fkResetPose)へ委譲する(旧 FkBotRig 構造型による private フィールド直接操作を撤去)。
-// bot.ts KIND_DEATH_S と同じ死亡演出の全長(s)。キルカムの手続き再現に使う
-const FK_DEATH_S: Record<string, number> = {
-  humanoid: 0.6,
-  drone: 1.1,
-  tank: 1.4,
-  turret: 0.5,
-  zombie: 0.6,
-  master: 0.6,
-  giant: 0.7,
-};
 
 // ── R16 spot-time 知覚FSM(matchが積分する。calcSpotRateはraycast無しで毎フレーム)──
 const BOT_CENTRAL_COS = Math.cos((22 * Math.PI) / 180); // 中心視野(この内側でconeFactor=1)
@@ -681,189 +465,6 @@ function killcamWeaponFor(killer: Bot): string {
   }
 }
 
-// 超鬼畜の敵チューニング倍率(純粋関数)。HP×3 / ダメージ×2.5 / 速度×1.3。
-// spawnBot が KIND_TUNING 合成の「後」に適用する(合成前だと達人600/巨躯1500の
-// maxHp が KIND_TUNING の後勝ちで倍率を打ち消してしまうため)
-export function applyHellTuning(t: BotTuning): BotTuning {
-  return {
-    ...t,
-    maxHp: Math.round(t.maxHp * 3),
-    damage: Math.round(t.damage * 2.5),
-    // ★7 1.75でcap(巨躯2.08→1.75)。高速化しすぎたKCCのsubstep増を抑える(監査確証)
-    moveSpeedMul: Math.max(t.moveSpeedMul, Math.min(1.75, t.moveSpeedMul * 1.3)), // V36: capは基礎速度未満に落とさない(精鋭鈍足化の回帰防止。capの主対象=巨躯のKCC)
-  };
-}
-
-// T1: 超鬼畜(hellMode)を tier/kind 別に適用する境界(spawnBot の唯一の適用サイト)。
-// 「ゾンビの」boss tier は zombieBossHp が既に80,000上限の「1体20分の壁を作らない」
-// 設計曲線を持つため、ここへ HP×3 を重ねると240,000まで突破してしまう。
-// damage×2.5/speed×1.3(脅威の底上げ)は維持したまま、HP倍率だけを除外する。
-// V-W1レビュー: 除外は kind==='zombie' 限定 — 戦車/章ボス等の非ゾンビボスまで
-// 除外すると hell で従来より柔らかくなる回帰(6600→2200)になるため。
-// ★V-A MEDIUM修正: 鍛神台の封印判定(純関数)。ドアが存在し未開放の間、PaPは使用不可 —
-// ドア(1750pt)に「鍛神台の解錠」という機能的意味を与える。ドアが無いレイアウト(将来)では
-// 封印しない(恒久使用不能の防止)。
-export function papInteractSealed(hasDoor: boolean, doorOpen: boolean): boolean {
-  return hasDoor && !doorOpen;
-}
-
-// R54-W1 Q1: ニンジャ(クナイ)ロードアウトのHP300タンク化を適用してよいか(純関数)。
-// ガンゲーム(ラダー武器強制)は既存どおり除外、S&D(ノーリスポーン戦術モード)も新たに除外する
-// (HP300+黒雷帝キットの組み合わせが不公平に成立するのを防ぐ。permanentDarkEmperorEligibleと対称)。
-export function ninjaHp300Eligible(primaryId: string, mode: GameMode): boolean {
-  return primaryId === 'fists' && mode !== 'gungame' && mode !== 'snd';
-}
-
-// R54-W1 Q1: 常闇カモ装備時の黒帝モード試合開始時永続化を適用してよいか(純関数)。
-// ninjaHp300Eligibleと対称のモード除外(gungame/training/snd)
-export function permanentDarkEmperorEligible(mode: GameMode): boolean {
-  return mode !== 'gungame' && mode !== 'training' && mode !== 'snd';
-}
-
-// ★V-A MEDIUM修正: インスタキルの適用判定(純関数)。ボス非適用=nukeのboss除外と対称
-// (80k HPのボスが1発で消える事故防止。BO2でもインスタキルはボス級に効かないのが自然)
-export function instaKillApplies(timerS: number, tier: BotTier): boolean {
-  return timerS > 0 && tier !== 'boss';
-}
-
-// ★V-A修正: 壁(再)購入後のPaP tier(純関数)。「今まさに所持している改造済み武器」の
-// 再購入は弾補給扱いでtier維持(BO2準拠)。非所持武器の取得=新品tier0
-export function papTierAfterWallBuy(currentlyHeld: boolean, currentTier: PapTier): PapTier {
-  return currentlyHeld && currentTier > 0 ? currentTier : 0;
-}
-
-export function applyHellTierTuning(merged: BotTuning, tier: BotTier, kind: BotKind): BotTuning {
-  const hell = applyHellTuning(merged);
-  return tier === 'boss' && kind === 'zombie' ? { ...hell, maxHp: merged.maxHp } : hell;
-}
-
-// R53-W3 M3: 帝王溜めの段判定(純関数)。0.5/1.2/2.2sの閾値、段3=黒雷・天壊(黒雷帝限定)
-export function emperorChargeStageFor(timerS: number): 0 | 1 | 2 | 3 {
-  if (timerS >= 2.2) return 3;
-  if (timerS >= 1.2) return 2;
-  if (timerS >= 0.5) return 1;
-  return 0;
-}
-
-// R53-W3 M3: ゾンビ群InstancedMeshの適格判定(純関数、zombie-crowd.ts協定)。
-// 非boss かつ variant無し かつ 最近接8体(rank<8)でない個体のみinstanced化する
-export function isCrowdEligible(
-  tier: BotTier,
-  variant: string | null,
-  hordeRank: number,
-): boolean {
-  return ZOMBIE_CROWD_INSTANCED && tier !== 'boss' && variant === null && hordeRank >= 8;
-}
-
-// R54-W1 Q8: 群衆スロットの取得/解放をヒステリシス付きで判定する(純関数)。
-// isCrowdEligibleの単一閾値(rank>=8)をそのままacquire/release双方に使うと、rankが
-// 7⇔8境界で揺れる個体が0.25s周期のupdateZombieHordeRankのたびslot着脱をチャタリングする。
-// rank<7で確実にrelease/rank>9で確実にacquireし、7-9はデッドバンド(現状維持)にする。
-export function crowdSlotAction(
-  hordeRank: number,
-  hasSlot: boolean,
-  eligible: boolean,
-): 'release' | 'acquire' | 'none' {
-  if (hordeRank < 7 && hasSlot) return 'release';
-  if (hordeRank > 9 && !hasSlot && eligible) return 'acquire';
-  return 'none';
-}
-
-// R54-W1 Q6: 床のfloorDetailGlsl(亀裂/オイル染み/タイヤ痕。3x3セルラー+複数fbm合成)を
-// 合成してよいtierか(純関数)。low tierはmacroWear(applyMacroFloor既存の基礎汚れ変調、
-// 低コスト)のみに留め、この重量級パスは外す("素のroughness基準+床はmacroWearまで")。
-export function floorDetailEligible(tier: GraphicsQuality): boolean {
-  return tier !== 'low';
-}
-
-// R53-W2 M2b: ミッション難易度の敵チューニング乗算(純関数・spawnBot漏斗から呼ぶ)。
-// easy 0.75/0.75=「初見でも詰まない」、hard 1.4/1.3=「hell(HP×3/dmg×2.5)未満の歯応え」。
-// normal/未指定は恒等(参照そのまま=アロケなし)
-export function applyMissionDifficultyTuning(
-  t: BotTuning,
-  difficulty?: 'easy' | 'normal' | 'hard',
-): BotTuning {
-  if (!difficulty || difficulty === 'normal') return t;
-  const hard = difficulty === 'hard';
-  return {
-    ...t,
-    maxHp: Math.round(t.maxHp * (hard ? 1.4 : 0.75)),
-    damage: Math.round(t.damage * (hard ? 1.3 : 0.75)),
-  };
-}
-
-// R53-W2 M2b: 無線劇スケジューラの振り分け(純関数)。発火条件(イベント一致 or 時刻到達)を
-// 満たす行を fired へ、残りを rest へ(いずれもデータ順を維持)
-export function splitRadioLines(
-  lines: readonly RadioLine[],
-  cond: { event?: 'start' | 'boss-hp50' | 'wave-clear' | 'objective-done'; timeS?: number },
-): { fired: RadioLine[]; rest: RadioLine[] } {
-  const fired: RadioLine[] = [];
-  const rest: RadioLine[] = [];
-  for (const line of lines) {
-    const byEvent = cond.event !== undefined && line.at.event === cond.event;
-    const byTime = cond.timeS !== undefined && line.at.s !== undefined && cond.timeS >= line.at.s;
-    if (byEvent || byTime) fired.push(line);
-    else rest.push(line);
-  }
-  return { fired, rest };
-}
-
-// R51 ユーザー⑥: 初期スポーンの敵種(達人/巨躯)選択(純関数)。
-// - allGiantMode(トグル明示ON): 個人戦/チーム戦を問わず全員巨躯(従来どおり)
-// - hellMode(トグル明示ON): 個人戦/チーム戦を問わず高確率(30%/35%)で自然湧き(従来どおり)
-// - トグルOFFのデフォルト: チーム系モード(teamBased)でのみ低確率(8%/13%)の自然湧きを許可。
-//   個人戦(FFA/ガンゲーム等)はデフォルトで達人/巨躯ゼロ(ユーザー要望)
-export function resolveNaturalBotKind(
-  rand: () => number,
-  teamBased: boolean,
-  hellMode: boolean,
-  allGiantMode: boolean,
-): BotKind {
-  if (allGiantMode) return 'giant';
-  if (hellMode) {
-    const r = rand();
-    if (r < 0.30) return 'master';
-    if (r < 0.35) return 'giant';
-    return 'humanoid';
-  }
-  if (!teamBased) return 'humanoid';
-  const r = rand();
-  if (r < 0.08) return 'master';
-  if (r < 0.13) return 'giant';
-  return 'humanoid';
-}
-
-// ★1 影LODバケット(純関数): 距離二乗の配列から「近い順にcap体だけtrue」のフラグ配列を返す。
-// 同距離は先着(index昇順)で安定。cap以下なら全true
-export function shadowLodFlags(d2: readonly number[], cap: number): boolean[] {
-  if (d2.length <= cap) return d2.map(() => true);
-  const order = d2.map((_, i) => i).sort((a, b) => d2[a]! - d2[b]! || a - b);
-  const flags = new Array<boolean>(d2.length).fill(false);
-  for (let i = 0; i < cap; i += 1) flags[order[i]!] = true;
-  return flags;
-}
-
-// ★5 群衆ランク(純関数、R51-4e): 距離二乗の配列から「近い順の順位」を返す(0=最近接)。
-// 同距離はindex昇順で安定。bot.ts の zombieKccSkipFactor が hordeRank>=ZOMBIE_HORDE_THIN_RANK
-// (先頭集団の外)のKCC解決を間引くLODに使う
-export function zombieHordeRanks(d2: readonly number[]): number[] {
-  const order = d2.map((_, i) => i).sort((a, b) => d2[a]! - d2[b]! || a - b);
-  const ranks = new Array<number>(d2.length);
-  for (let i = 0; i < order.length; i += 1) ranks[order[i]!] = i;
-  return ranks;
-}
-
-// F2 修羅スピンアップ(純関数): 発射しなかったfireイベントの弾をマガジンへ安全に返す
-export function refundRound(rounds: number, capacity: number): number {
-  return Math.min(capacity, rounds + 1);
-}
-
-// F8 手裏剣disc寿命(純関数): hitscan着弾距離で飛行時間をクランプ。未ヒット/不正速度は既定0.5s
-export function shurikenDiscLife(hitDistM: number | null, speedMps: number, maxLifeS = 0.5): number {
-  if (hitDistM === null || !(speedMps > 0) || !(hitDistM >= 0)) return maxLifeS;
-  return Math.min(maxLifeS, hitDistM / speedMps);
-}
 
 // ★1 影LOD: 全モードでプレイヤー最近接この体数のみ castShadow=true(影DCを一定に保つ)
 const SHADOW_CASTER_CAP = 8;
@@ -926,263 +527,27 @@ class HalfBloom extends UnrealBloomPass {
   }
 }
 
-export interface MatchConfig {
-  stage: StageDef;
-  mode: GameMode;
-  primaryId: string;
-  attachments: string[];
-  grenade: GrenadeKind;
-  difficulty: Difficulty;
-  durationS: number;
-  // ── R6 ストーリー/拡張(すべて任意。未指定なら従来の対戦として動く) ──
-  mission?: MissionDef; // 注入するとストーリーモードとして目的/波/勝敗で進行する
-  perks?: string[]; // パーク(将来拡張)
-  wildcard?: 'gunfighter' | 'tactician' | null; // ワイルドカード
-  secondaryId?: string; // 副武器の上書き
-  scoreAttack?: boolean; // スコアアタック(自己ベスト記録)
-  zombieStartRound?: number; // R27: ゾンビモードの開始ラウンド(1-50、未指定=1)
-  hellMode?: boolean;
-  allGiantMode?: boolean;
-  // ── R53-W2 お守り(charm) ──────────────────────────────────────────────
-  charm?: CharmId; // メニューが選択中のお守りを渡す(zombieモードのみ効果を持つ)
-  carriedPerk?: ZombiePerkId; // perkcarryお守り用: 前試合から引き継ぐパーク種(menu側が決定)
-  // ── R53-W2 M2b: ミッション難易度(MN2凍結契約。story=mission注入時のみ効果) ──
-  missionDifficulty?: 'easy' | 'normal' | 'hard';
-  // ── R53-W3 M3: 刀身雷脈(黒雷帝キル累計)。main.tsが profile.kokuraiKillsTotal
-  // (=試合ごとの実キル数 summary.kokuraiKills を積算した生涯カウンタ)を渡す。
-  // 試合中の追加キル(tracker.kokuraiKillCount)と合算して100到達で恒久雷脈 ──
-  kokuraiKillsBase?: number;
-}
-
-export interface FeedEntry {
-  killer: string;
-  victim: string;
-  weapon: string;
-  headshot: boolean;
-}
-
-// R53-W3 M3: HUDモーメント(下1/3帯の統一演出)。medals と同じ「1回性イベントの
-// ドレイン方式」— snapshot で渡し、次tick冒頭で消費済みとしてクリアする。
-// hud.ts 側は構造的に同型のローカル定義で消費する(契約凍結)。
-export interface MomentEvent {
-  kind: 'round' | 'rankup' | 'perk' | 'emperor' | 'ggrank' | 'special';
-  title: string;
-  sub?: string;
-  tone?: 'ember' | 'ice' | 'violet';
-}
-
-export interface DamageNumber {
-  amount: number;
-  world: THREE.Vector3;
-  kind: 'body' | 'head' | 'kill' | 'limb'; // 色・大きさの段階分け
-}
-
-export interface ScoreRow {
-  name: string;
-  kills: number;
-  deaths: number;
-  isPlayer: boolean;
-  // チーム戦でプレイヤー側ならtrue。FFAではプレイヤー本人のみtrue
-  isAlly: boolean;
-}
-
-export interface ZoneView {
-  id: string;
-  owner: 'mine' | 'enemy' | null;
-  progress: number;
-  capturing: 'mine' | 'enemy' | null;
-  contested: boolean;
-}
-
-export interface MatchResult {
-  rows: ScoreRow[];
-  won: boolean;
-  accuracy: number;
-  headshots: number;
-  modeName: string;
-  teamScores: { mine: number; enemy: number } | null;
-  // 進行度(XP・チャレンジ)への入力
-  summary: MatchSummary;
-  // R45a: ゾンビモード結果
-  zombieRound?: number;
-  zombiePoints?: number;
-  // R53-W2 M2b: ゾンビAAR用(menu側が行を追加する契約。ゾンビ時のみ)
-  papTierMax?: number;
-  specialZombieKills?: number;
-  // R53-W2 M2b: S&D結果(mode==='snd'のみ)
-  sndScore?: [number, number];
-}
-
-export interface MatchSnapshot {
-  hp: number;
-  maxHp: number;
-  alive: boolean;
-  respawnIn: number;
-  ammo: number;
-  reserve: number;
-  magSize: number; // 弾倉容量(HUDの弾ピップ正規化 ammo/magSize 用)
-  weaponName: string;
-  weaponSlot: string; // 'PRIMARY' / 'SECONDARY'
-  fireMode: string;
-  reloading: boolean;
-  reloadRatio: number;
-  spreadRad: number;
-  adsProgress: number;
-  kills: number;
-  deaths: number;
-  streak: number;
-  timeLeft: number;
-  yaw: number;
-  fov: number;
-  over: boolean;
-  // 移動状態(HUDの速度計・状態チップ用)
-  speed: number;
-  sliding: boolean;
-  wallRunning: boolean;
-  airborne: boolean;
-  reduceMotion: boolean;
-  radarEnabled: boolean; // 簡易レーダーの表示設定
-  ultCharge: number; // 0..1
-  ultActive: boolean; // オーバードライブ発動中
-  // スナイパースコープ/エイムアシスト関連
-  scopedWeapon: boolean; // 現在の武器がスコープ持ちか(オーバーレイ表示の起点)
-  opticId: string; // 現在の光学ID(optics.ts OPTIC_SPECS)。HUDレティクル/オーバーレイ駆動
-  adsOpticActive: boolean; // 倍率光学をADS中(magnified && adsProgress>0.5)。def.scopeとは独立系統
-  sightStyle: string; // = OpticSpec.reticleKind。HUDの data-reticle 駆動(全画面レティクルの種類)
-  scope: { sway: { x: number; y: number }; steady: boolean; breath01: number }; // swayは度
-  aimAssistEngaged: boolean; // 視認できる敵が吸着円錐内にいる
-  rangeM: number; // スコープのレンジ表示(対象までの距離m、無ければ0)
-  zoomX: number; // スコープ倍率(fov/adsFov)
-  reticleStyle: string; // 設定のレティクル形状(腰だめクロスヘア用)
-  reticleColor: string; // 設定のレティクル色
-  weaponId: string; // 現在の武器ID
-  grenadeName: string;
-  grenadeCount: number;
-  cookRatio: number; // 0=非クッキング、1=強制投擲直前
-  whiteout: number; // フラッシュの白飛び 0..1
-  modeName: string;
-  teamBased: boolean;
-  scoreMine: number;
-  scoreEnemy: number; // FFAでは首位の敵スコア
-  scoreTarget: number;
-  zones: ZoneView[]; // ドミネーション以外は空
-  announcements: string[];
-  spectating: boolean;
-  killcam: string | null; // キルカメラ中に映している相手の名前
-  // ── R11 シネマティック・キルカメラ / ジュース(HUDは読むのみ) ──
-  killcamRatio: number; // 0..1 = killcamTimer/KILLCAM_S(キルカメラ非該当時0)
-  killcamWeapon: string | null; // キルした相手の武器/機種ラベル(非該当null)
-  killcamDistM: number; // killer→player 水平距離(m, round)
-  killcamFlash: number; // 0..1 キルカメラ突入の白フラッシュ(dt*5.5減衰)
-  deathVeil: number; // 0..1 遷移黒幕(死亡/リスポーンの無条件減衰)
-  killcamFinal: boolean; // 終盤(killcamTimer<0.7 && killer生存)の赤ビネット
-  killcamCamActive: boolean; // カメラがシネマ姿勢を所有中(HUDシネマ枠の単一の真実)
-  fkCinematicActive: boolean; // ファイナルキルカム再生中(main.tsのレターボックス制御用)
-  lowHp01: number; // 0..1 低HP(juiceのDOMフォールバック用)
-  postfxActive: boolean; // medium/high=true(PostFXシェーダ所有), low=false
-  feed: FeedEntry[];
-  hits: Array<'hit' | 'head' | 'kill' | 'snipe' | 'limb'>;
-  hitExpandRad: number; // ヒットマーカーの一時拡大量(連続ヒットで広がる)
-  damageNumbers: DamageNumber[];
-  // ── R6 ストーリー(非ストーリーでは undefined) ──
-  missionId?: string;
-  objectiveText?: string; // 現在の目的の文言
-  objectiveProgress01?: number; // 目的の進捗 0..1
-  waveIndex?: number; // 現在の波(1始まり)
-  waveTotal?: number; // 総波数
-  bossHp01?: number; // ボスの残りHP割合(0..1)。ボス不在なら undefined
-  // ── R16 ゾンビ(mode!=='zombie'では undefined。HUD/menuはこれで round HUD を分岐)──
-  zombieRound?: number; // 現在のラウンド(1始まり。0=開始前)
-  zombieKills?: number; // 累計撃破数
-  zombiePoints?: number; // 累計ポイント(命中10/キル60/HSキル100)
-  playerDowns?: number; // プレイヤーがダウンした回数(ゲームオーバー確定)
-  // ── ゾンビ経済(shop/perks/floats) ──
-  zombieShopPrompt?: { label: string; canAfford: boolean; cost: number };
-  zombiePerks?: readonly ZombiePerkId[];
-  zombiePerkStacks?: Readonly<Partial<Record<ZombiePerkId, number>>>; // パークのスタック数
-  zombieQuickReviveCharges?: number; // V23: 所持中の自己復活チャージ(HUDチップ表示用)
-  // ── R53-W2 Pack-a-Punch/パワーアップ/特殊ラウンド/毒霧(HUDビルダーH2契約、フィールド名凍結) ──
-  papTier?: number; // 装備武器の現Pack-a-Punch tier(0-3)
-  zombiePowerUps?: { kind: PowerUpKind; x: number; y: number; z: number }[]; // 地面ドロップ位置
-  activePowerUps?: { kind: PowerUpKind; remainS: number }[]; // 発動中の時限効果(insta/double)
-  specialRound?: 'rush' | null; // 現ラウンドの特殊種別
-  poison01?: number; // 毒霧被曝 0..1(HUDビネット用)
-  // ── R53-W2 M2b: ストーリー帝王編(story=mission時のみ。H2契約凍結名) ──
-  radioLine?: { speaker: RadioSpeaker; text: string } | null; // 無線字幕(表示中のみ非null)
-  detect01?: number; // infiltrate: 敵の最大発見メータ 0..1(SPOTTED=0.9+)
-  bossPhase?: { idx: number; total: number } | null; // bossPhases進行(idx=現フェーズ1始まり)
-  // ── R53-W2 M2b: S&D(mode==='snd'時のみ。H2契約凍結名) ──
-  sndPhase?: SndPhase;
-  sndScore?: [number, number]; // [自チーム, 敵チーム] 先取4
-  sndBombTimer?: number; // planted中のヒューズ残秒
-  sndProgress01?: number; // プレイヤー自身の設置/解除ホールド進捗
-  sndProgressKind?: 'plant' | 'defuse';
-  sndCarrierIsPlayer?: boolean;
-  // ── R53-W3 M3: MK.III HUD契約(Fable#3消費) ──
-  uiHeat?: number; // 0..1 戦闘熱(Adaptive HUDのcalm/combat判定)
-  moments?: MomentEvent[]; // 1回性の演出イベント(medalsと同じドレイン方式)
-  emperorState?: 'dark' | 'raitei' | 'kokuraitei' | null; // 帝王状態(activeKit由来)
-  zombieBossFlash?: number; // ボス出現の赤フラッシュ 0..1
-  zombiePointFloats?: Array<{ amount: number; world: THREE.Vector3 }>;
-  zombieReviveFlash?: number; // 0..1
-  darkEmperorS?: number; // 黒帝モードの残り秒(undefined=非発動またはfists以外)
-  darkEmperorPermanent?: boolean; // 常闇カモによる永続黒帝(タイマー非表示)
-  raiteiMode?: boolean;    // 雷帝モード発動中
-  kokuraiteiMode?: boolean; // 黒雷帝モード発動中
-  chargeRatio?: number;    // 溜め攻撃ゲージ 0..1(0=非溜め)
-  minigunSpin01?: number;  // 修羅スピンアップRPM 0..1(minigun装備+スピン>0のみ。HUDゲージ用)
-  // T7: minigun(修羅)/fan(風神扇)はADS中も通常のスコープ縮小ではなくブレース姿勢になるため、
-  // viewmodel側のブレースポーズ化とHUD側のクロスヘア維持が消費するフラグ(フィールド名凍結)
-  adsKeepsCrosshair?: boolean;
-  incoming: number[]; // 被弾方向(カメラ基準の角度rad)
-  tookDamage: boolean;
-  scoreboard: ScoreRow[];
-  scoreEvents: Array<{ label: string; xp: number }>; // スコア獲得トースト(キル/HS/制圧)
-  enemyBearings: Array<{ angle: number; dist: number }>; // レーダー用: 自機yaw基準の相対角と水平距離
-  medals: MedalEvent[]; // この描画フレームで取得したメダル(初回=バッジ/以降=大文字)
-  // ── BO2 スコアストリーク ──
-  streakProgress: number;        // 0..799
-  streakBanked: readonly boolean[];  // 7ストリークのバンク状態
-  streakUavActive: boolean;       // UAV 発動中か
-  streakUavTimeLeft: number;      // UAV 残り秒(0=非活動)
-  streakRcxdActive: boolean;      // RC-XD操縦中
-  streakRcxdTimeLeft: number;     // RC-XD残り秒
-  streakCauavActive: boolean;     // カウンターUAVアクティブ
-  streakCauavTimeLeft: number;    // カウンターUAV残り秒
-  // ── ミニマップ (UAV=敵ドット, 常時=味方ドット) ──
-  minimapEnemies: ReadonlyArray<{ relX: number; relZ: number; opacity: number }>;
-  minimapAllies: ReadonlyArray<{ relX: number; relZ: number }>;
-  minimapStageSize: number;
-  // ── ③ 発砲ブリップ(BO2本物仕様: 敵発砲位置1秒表示) ──
-  fireBlips: ReadonlyArray<{ relX: number; relZ: number; age01: number }>;
-  // ── ハードポイント ──
-  hardpointZoneAngle?: number;       // プレイヤーヨー基準の方向角(rad)。undefined=非対象モード/死亡
-  hardpointZoneRelX?: number;        // プレイヤーからの相対X (ミニマップ表示用)
-  hardpointZoneRelZ?: number;        // プレイヤーからの相対Z
-  hardpointOwner?: 'mine' | 'enemy' | null;
-  hardpointContested?: boolean;
-  hardpointTimeLeft?: number;        // 残り秒数(0-60)
-  hardpointPreview?: boolean;        // true when ≤10s
-  // ── キルコンファーム ──
-  kcEvent?: 'confirmed' | 'denied' | null; // このフレームのタグ回収イベント
-  kcTagPositions?: ReadonlyArray<{ relX: number; relZ: number; isEnemy: boolean }>; // ミニマップ用
-  // ── ガンゲーム ──
-  ggRank?: number;           // 現在のランク (1-20)。gungame以外では undefined
-  ggWeaponName?: string;     // 現在のラダー武器名
-  ggRankUpFlash?: boolean;   // このフレームにランクアップした(HUD演出トリガ)
-  ggSetback?: boolean;       // このフレームに setback(ランクダウン)した
-  ggTop3?: ReadonlyArray<{ name: string; rank: number; isPlayer: boolean }>; // トップ3
-  // ── 訓練場 ──
-  trainingStats?: {
-    dps: number;
-    accuracy: number;
-    hsRate: number;
-    streak: number;
-  };
-  // 破壊済み breakable プロップのコライダーハンドルセット(将来のミニマップ連携用)
-  destroyedPropHandles: ReadonlySet<number>;
-  hellMode?: boolean;
-}
+// ── 試合の公開型(実体は match-types.ts — R54-W1 F1で型のみ移動、ランタイム影響ゼロ) ──
+export type {
+  MatchConfig,
+  FeedEntry,
+  MomentEvent,
+  DamageNumber,
+  ScoreRow,
+  ZoneView,
+  MatchResult,
+  MatchSnapshot,
+} from './match-types';
+import type {
+  MatchConfig,
+  FeedEntry,
+  MomentEvent,
+  DamageNumber,
+  ScoreRow,
+  ZoneView,
+  MatchResult,
+  MatchSnapshot,
+} from './match-types';
 
 interface RayHitLike {
   collider: RAPIER.Collider;
@@ -1286,57 +651,6 @@ interface BreakableProp {
   maxHp: number;
 }
 
-/**
- * シネマティックキルカム用: killer→victim線分の垂線上にカメラ位置を計算する(純粋関数)。
- * side=1 or -1 で左右を切り替え。dollyOffset は slow dolly 積分値(m)。
- */
-export function ckCamPos(
-  killer: THREE.Vector3,
-  victim: THREE.Vector3,
-  side: 1 | -1,
-  height: number,
-  dollyOffset = 0,
-): THREE.Vector3 {
-  const sx = victim.x - killer.x;
-  const sz = victim.z - killer.z;
-  const segLen = Math.sqrt(sx * sx + (victim.y - killer.y) ** 2 + sz * sz);
-  const horizLen = Math.sqrt(sx * sx + sz * sz);
-  let perpX = 0; let perpZ = 1;
-  if (horizLen > 0.01) { perpX = (-sz / horizLen) * side; perpZ = (sx / horizLen) * side; }
-  // V48修正: 遠距離キルでカメラが無制限に遠のき両者が点になる問題。
-  // アンカーを「近距離=中点 / 遠距離(18m超)=被害者寄り」へ滑らかに移し、距離も20mでクランプ。
-  // 遠距離キルは被害者の倒れ込み+着弾トレーサーを見せる構図になる。
-  const anchorT = Math.min(1, Math.max(0, (segLen - 18) / 24));
-  const ax = (killer.x + victim.x) * 0.5 * (1 - anchorT) + victim.x * anchorT;
-  const ay = (killer.y + victim.y) * 0.5 * (1 - anchorT) + victim.y * anchorT;
-  const az = (killer.z + victim.z) * 0.5 * (1 - anchorT) + victim.z * anchorT;
-  const d = Math.min(segLen * 0.9 + 6, 20) + dollyOffset;
-  return new THREE.Vector3(ax + perpX * d, ay + height, az + perpZ * d);
-}
-
-/**
- * シネマティックキルカム再生速度ランプ(純粋関数)。
- * キル -0.4s から急減速 → 0.2× ホールド → キル後 0.6s から復帰。
- */
-export function ckSpeedAt(cursor: number, killT: number): number {
-  const d = cursor - killT;
-  if (d < -0.4) return 1.0;
-  if (d < 0.0) {
-    const t = (d + 0.4) / 0.4;
-    return 1.0 + (0.2 - 1.0) * t;
-  }
-  if (d < 0.6) return 0.2;
-  const t = Math.min(1, (d - 0.6) / Math.max(1e-6, CK_WIN_POST - 0.6));
-  return 0.2 + (1.0 - 0.2) * t;
-}
-
-// R54-W1 Q2: FK鮮度ガード(純関数、モード非依存)。startFinalKillcam 呼び出し時点で
-// 「最終キル」からリングバッファの実時間窓をほぼ使い切るほど経過していれば、そのキルの
-// フレームはもはや信頼できる形でバッファに残っていない(Hardpoint等、over確定がキルと
-// 直結しないモードで発生しうる潜在バグの保険)。skip=trueならFKを諦めて直接リザルトへ。
-export function fkIsStale(elapsed: number, killElapsed: number, bufferSeconds: number): boolean {
-  return elapsed - killElapsed > bufferSeconds - 1;
-}
 
 export class Match {
   readonly scene = new THREE.Scene();
@@ -1869,32 +1183,26 @@ export class Match {
   private trainingTargets: TrainingTarget[] = [];
   private trainingStats: TrainingStats | null = null;
 
-  // ── ファイナルキルカム: リングバッファ + ステートマシン ──
-  private readonly fkBuf     = new Float32Array(FK_MAX_FRAMES * FK_FRAME_STRIDE);
-  private readonly fkTimeArr = new Float32Array(FK_MAX_FRAMES);
-  private readonly fkBotCnt  = new Uint8Array(FK_MAX_FRAMES);
-  private fkHead = 0;
-  private fkFill = 0;
-  private fkTick = 0;
-  private readonly fkShotBuf = new Float32Array(FK_MAX_SHOTS * FK_S);
-  private fkShotHead = 0;
-  private fkShotFill = 0;
-  private fkKillerIsPlayer    = false;
-  private fkKillerBotIdx      = -1;
-  private fkVictimBotIdx      = -1; // キルカムの被害者BOT index(-1=プレイヤーが被害者)
-  private fkKillElapsed       = -Infinity;
-  private fkPlaying           = false;
-  fkFlash                     = 0;
-  private fkCursor            = 0; // 再生中のゲーム時刻カーソル(startFinalKillcam で窓先頭へ初期化)
-  private fkWinKill           = 0;
-  private fkWinEnd            = 0;
-  private fkPrevCursor        = -Infinity;
-  // ── シネマティックキルカム専用フィールド ──
-  private fkAvatarGroup: THREE.Group | null = null;
-  private readonly _ckCamBase  = new THREE.Vector3();
-  private readonly _ckDollyDir = new THREE.Vector3();
-  private _ckDollyDist = 0;
-  private _ckHitSoundPlayed = false;
+  // ── ファイナルキルカム: 実装は killcam.ts KillcamController(R54-W1 F1分割)。
+  // Match は所有+委譲のみ。deps は全て遅延クロージャ=フィールド初期化順に依存しない
+  private readonly killcam = new KillcamController({
+    getScene: () => this.scene,
+    getCamera: () => this.camera,
+    getAllyColor: () => this.colors.ally,
+    getPlayer: () => this.player,
+    getBots: () => this.bots,
+    getAdsProgress: () => this.activeWeapon.adsProgress,
+    isZombie: () => this.config.mode === 'zombie',
+    playHit: () => this.sounds.hit(),
+    reduceMotion: () => this.settings.reduceMotion,
+    updateEffects: (dt: number) => this.effects.update(dt),
+    updateAtmosphere: (dt: number) => this.atmosphere?.update(dt, this.camera.position),
+    tracer: (from: THREE.Vector3, to: THREE.Vector3, color: number) => this.effects.tracer(from, to, color),
+    blockedToMid: (rayOrg: THREE.Vector3, toMid: THREE.Vector3, dist: number) => {
+      const hit = this.castRay(rayOrg, toMid, dist, null);
+      return hit !== null && this.tags.get(hit.collider.handle)?.kind !== 'boundary';
+    },
+  });
 
   constructor(
     readonly config: MatchConfig,
@@ -3975,17 +3283,16 @@ export class Match {
   // 固定60Hzで呼ばれるゲームロジック本体
   update(dt: number): void {
     if (this.over) {
-      // キルカム trailing window: over後もFK_WIN_POST秒間だけelapsed/fkTick/fkRecordFrameを継続。
+      // キルカム trailing window: over後もFK_WIN_POST秒間だけelapsed/killcam.tickRecordを継続。
       // 物理/AI/スコアは動かさない=記録専用。これでキル後のフレームがバッファに蓄積され、
       // スロー再生後半(kill〜kill+1.2s)が静止画面になるバグを根治する。
       if (
         this.config.mode !== 'zombie' &&
-        this.fkKillElapsed !== -Infinity &&
-        this.elapsed <= this.fkKillElapsed + FK_WIN_POST
+        this.killcam.killElapsed !== -Infinity &&
+        this.elapsed <= this.killcam.killElapsed + FK_WIN_POST
       ) {
         this.elapsed += dt;
-        this.fkTick = (this.fkTick + 1) % FK_TICK_INT;
-        if (this.fkTick === 0) this.fkRecordFrame();
+        this.killcam.tickRecord(this.elapsed);
       }
       return;
     }
@@ -4525,8 +3832,7 @@ export class Match {
 
     // ファイナルキルカム: 3 tick ごと 20 Hz でキーフレームをリングバッファへ記録
     if (this.config.mode !== 'zombie') {
-      this.fkTick = (this.fkTick + 1) % FK_TICK_INT;
-      if (this.fkTick === 0) this.fkRecordFrame();
+      this.killcam.tickRecord(this.elapsed);
     }
 
     // プレイヤー死亡の立ち下がりでメダル連続系をリセット(復讐対象=直近のkiller)
@@ -6123,7 +5429,7 @@ export class Match {
         ? from.clone().addScaledVector(dir, hitToi(hit))
         : from.clone().addScaledVector(dir, remainingRange);
       this.effects.tracer(tracerFrom, end, weapon.def.tracerColor);
-      this.fkRecordShot(tracerFrom, end, weapon.def.tracerColor);
+      this.killcam.recordShot(tracerFrom, end, weapon.def.tracerColor, this.elapsed);
       if (!hit) return;
 
       const tag = this.tags.get(hit.collider.handle);
@@ -6309,10 +5615,7 @@ export class Match {
       this.haptic(150, 0.5, 0.75); // キル確定の手応え
       // ファイナルキルカム: プレイヤーのキルを記録
       if (this.config.mode !== 'zombie') {
-        this.fkKillerIsPlayer        = true;
-        this.fkKillerBotIdx          = -1;
-        this.fkVictimBotIdx          = this.bots.indexOf(bot);
-        this.fkKillElapsed           = this.elapsed;
+        this.killcam.noteKill(true, -1, this.bots.indexOf(bot), this.elapsed);
       }
       this.killSurgeEnv = 1; // R20 rank4: キル確定サージ(PostFXの彩度/コントラスト+白エッジ)を点火
       this.scoreboardDirty = true; // ★6 キル確定は即時反映
@@ -7821,7 +7124,7 @@ export class Match {
       bot.team === PLAYER_TEAM ? this.colors.allyTracer : this.colors.enemyTracer,
     );
     if (this.config.mode !== 'zombie') {
-      this.fkRecordShot(origin, end, bot.team === PLAYER_TEAM ? this.colors.allyTracer : this.colors.enemyTracer);
+      this.killcam.recordShot(origin, end, bot.team === PLAYER_TEAM ? this.colors.allyTracer : this.colors.enemyTracer, this.elapsed);
     }
 
     // 発砲音は方向と距離をつけて鳴らす。敵弾のみ遮蔽レイ1本で「壁越しのこもり」を判定
@@ -8063,10 +7366,7 @@ export class Match {
       this.killcamFlash = this.settings.reduceMotion ? 0 : 1;
       // ファイナルキルカム: ボットのキルを記録
       if (this.config.mode !== 'zombie') {
-        this.fkKillerIsPlayer = false;
-        this.fkKillerBotIdx   = this.bots.indexOf(killer);
-        this.fkVictimBotIdx   = -1; // プレイヤーが被害者
-        this.fkKillElapsed    = this.elapsed;
+        this.killcam.noteKill(false, this.bots.indexOf(killer), -1, this.elapsed);
       }
       this.killcamElapsedS = 0;
       this.killcamArc = 0;
@@ -11261,7 +10561,7 @@ export class Match {
       deathVeil: this.deathVeil,
       killcamFinal: this.killcamCamActive && this.killcamTimer < 0.7,
       killcamCamActive: this.killcamCamActive,
-      fkCinematicActive: this.fkPlaying,
+      fkCinematicActive: this.killcam.playing,
       lowHp01: this.player.alive
         ? Math.max(0, Math.min(1, (0.3 - this.player.hp / this.player.maxHp) / 0.3))
         : 0,
@@ -11569,105 +10869,16 @@ export class Match {
     return this.scoreboardCache;
   }
 
-  // ── ファイナルキルカム: 記録メソッド ──────────────────────────────
-
-  private fkCreatePlayerAvatar(): THREE.Group {
-    const mat = new THREE.MeshStandardMaterial({ color: this.colors.ally, roughness: 0.65, metalness: 0.15 });
-    const g = new THREE.Group();
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.60, 0.24), mat);
-    torso.position.y = 0.95; torso.castShadow = true; g.add(torso);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.28, 0.27), mat);
-    head.position.y = 1.49; head.castShadow = true; g.add(head);
-    const legGeo = new THREE.BoxGeometry(0.18, 0.50, 0.20);
-    for (const sx of [-0.13, 0.13] as const) {
-      const leg = new THREE.Mesh(legGeo, mat);
-      leg.position.set(sx, 0.50, 0); leg.castShadow = true; g.add(leg);
-    }
-    const armGeo = new THREE.BoxGeometry(0.14, 0.50, 0.18);
-    for (const sx of [-0.33, 0.33] as const) {
-      const arm = new THREE.Mesh(armGeo, mat);
-      arm.position.set(sx, 0.95, 0); arm.castShadow = true; g.add(arm);
-    }
-    return g;
-  }
-
-  private fkDisposePlayerAvatar(): void {
-    if (!this.fkAvatarGroup) return;
-    this.scene.remove(this.fkAvatarGroup);
-    this.fkAvatarGroup.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        obj.geometry.dispose();
-        (obj.material as THREE.Material).dispose();
-      }
-    });
-    this.fkAvatarGroup = null;
-  }
-
-  private fkRecordFrame(): void {
-    const h   = this.fkHead;
-    const off = h * FK_FRAME_STRIDE;
-    const pe  = this.player.eyePosition;
-    this.fkBuf[off    ] = pe.x;
-    this.fkBuf[off + 1] = pe.y;
-    this.fkBuf[off + 2] = pe.z;
-    this.fkBuf[off + 3] = this.player.yaw;
-    this.fkBuf[off + 4] = this.player.pitch;
-    this.fkBuf[off + 5] = this.player.alive ? 1 : 0;
-    this.fkBuf[off + 6] = this.activeWeapon.adsProgress;    // ADS率(0..1)
-    this.fkBuf[off + 7] = this.camera.fov;                  // 実効FOV(ADS縮小を含む)
-    const nb = Math.min(this.bots.length, FK_MAX_BOTS);
-    this.fkBotCnt[h] = nb;
-    for (let i = 0; i < nb; i++) {
-      const bot  = this.bots[i]!;
-      const bpos = bot.getPositionInto(BOT_POS_SCRATCH); // ★5 割り当てゼロ(旧: new×2/bot)
-      const bo = off + FK_P + i * FK_B;
-      this.fkBuf[bo    ] = bpos.x;
-      this.fkBuf[bo + 1] = bpos.y;
-      this.fkBuf[bo + 2] = bpos.z;
-      this.fkBuf[bo + 3] = bpos.y + bot.headOffsetY; // = headPosition().y
-      this.fkBuf[bo + 4] = Math.atan2(-bot.aimDir.x, -bot.aimDir.z);
-      this.fkBuf[bo + 5] = bot.alive ? 1 : 0;
-    }
-    this.fkTimeArr[h] = this.elapsed;
-    this.fkHead = (h + 1) % FK_MAX_FRAMES;
-    if (this.fkFill < FK_MAX_FRAMES) this.fkFill++;
-  }
-
-  private fkRecordShot(from: THREE.Vector3, to: THREE.Vector3, color: number): void {
-    if (this.config.mode === 'zombie') return;
-    const h   = this.fkShotHead;
-    const off = h * FK_S;
-    this.fkShotBuf[off    ] = from.x;
-    this.fkShotBuf[off + 1] = from.y;
-    this.fkShotBuf[off + 2] = from.z;
-    this.fkShotBuf[off + 3] = to.x;
-    this.fkShotBuf[off + 4] = to.y;
-    this.fkShotBuf[off + 5] = to.z;
-    this.fkShotBuf[off + 6] = color;
-    this.fkShotBuf[off + 7] = this.elapsed;
-    this.fkShotHead = (h + 1) % FK_MAX_SHOTS;
-    if (this.fkShotFill < FK_MAX_SHOTS) this.fkShotFill++;
-  }
-
-  // ── ファイナルキルカム: 再生メソッド ──────────────────────────────
+  // ── ファイナルキルカム(実装は killcam.ts へ分割 — R54-W1 F1) ──────────────
 
   /**
    * match.over 確定後に main.ts から1回だけ呼ぶ。
    * 条件を満たせば再生状態をセットアップして true、対象外なら false を返す。
+   * ガード判定(canStart)→Match側の演出クリーンアップ→再生初期化(begin)の順は分割前と同一
+   * (ガード失敗でリザルト直行する場合に pauseCombatLoops 等の副作用を残さない)。
    */
   startFinalKillcam(): boolean {
-    // ─── ガード1-3: 全条件を先に評価し、副作用はガード通過後に限定する ───
-    // (ガード失敗でリザルト直行する場合に pauseCombatLoops 等の副作用を残さない)
-    if (this.config.mode === 'zombie') return false;
-    if (this.fkFill === 0 || this.fkKillElapsed === -Infinity) return false;
-    // R54-W1 Q2: 汎用鮮度ガード(モード非依存)。over確定がキルと直結しないモードで
-    // 最終キルが古すぎる場合はFKを諦める(下のoldestチェックの取りこぼしに対する保険)
-    if (fkIsStale(this.elapsed, this.fkKillElapsed, FK_BUFFER_S)) return false;
-    const killT  = this.fkKillElapsed;
-    const oldIdx = (this.fkHead - this.fkFill + FK_MAX_FRAMES) % FK_MAX_FRAMES;
-    const oldest = this.fkTimeArr[oldIdx]!;
-    // バッファが kill から 2.2s 前まで届いていない場合はスキップ
-    if (oldest > killT - FK_WIN_PRE + 0.5) return false;
+    if (!this.killcam.canStart(this.elapsed)) return false;
     // ─── ガード通過確定: 以下は副作用クリーンアップ ───
     // V33: キルカムに遠雷/ハムと黒転ビネットを持ち込まない
     this.sounds.pauseCombatLoops(true);
@@ -11699,322 +10910,20 @@ export class Match {
     this.deathVeil = 0;
     this.whiteout = 0;
     this.shingetsuPhase = 'idle';
-    this.fkWinKill    = killT;
-    this.fkWinEnd     = killT + CK_WIN_POST;
-    // カーソルはバッファの実際の先頭(oldest)と窓先頭の大きい方から開始する。
-    // oldest > killT-CK_WIN_PRE のとき先頭フレームが存在しないため、
-    // fkFindFrames が iA<0 を返して再生が即終了するバグ(kill瞬間カット)の根治。
-    this.fkCursor     = Math.max(oldest, killT - CK_WIN_PRE);
-    this.fkPrevCursor = -Infinity;
-    this.fkFlash      = 0;
-    // ── シネマティックキルカム初期化 ──
-    this._ckDollyDist = 0;
-    this._ckHitSoundPlayed = false;
-    this.fkDisposePlayerAvatar();
-    // キラー/ビクティム位置を初期フレームから取得してカメラ基底を計算する
-    const [iA0, iB0, t0] = this.fkFindFrames(this.fkCursor);
-    if (iA0 >= 0) {
-      const offA0 = iA0 * FK_FRAME_STRIDE; const offB0 = iB0 * FK_FRAME_STRIDE;
-      let kx: number; let ky: number; let kz: number;
-      let vx: number; let vy: number; let vz: number;
-      if (this.fkKillerIsPlayer) {
-        kx = this.fkBuf[offA0]! + (this.fkBuf[offB0]! - this.fkBuf[offA0]!) * t0;
-        ky = this.fkBuf[offA0+1]! + (this.fkBuf[offB0+1]! - this.fkBuf[offA0+1]!) * t0 - CK_EYE_H;
-        kz = this.fkBuf[offA0+2]! + (this.fkBuf[offB0+2]! - this.fkBuf[offA0+2]!) * t0;
-      } else {
-        const ki = this.fkKillerBotIdx;
-        if (ki >= 0 && ki < this.fkBotCnt[iA0]!) {
-          const boA = offA0+FK_P+ki*FK_B; const boB = offB0+FK_P+ki*FK_B;
-          kx = this.fkBuf[boA]!+(this.fkBuf[boB]!-this.fkBuf[boA]!)*t0;
-          ky = this.fkBuf[boA+3]!+(this.fkBuf[boB+3]!-this.fkBuf[boA+3]!)*t0;
-          kz = this.fkBuf[boA+2]!+(this.fkBuf[boB+2]!-this.fkBuf[boA+2]!)*t0;
-        } else { kx = 0; ky = 0; kz = 0; }
-      }
-      if (this.fkVictimBotIdx >= 0) {
-        const vi = this.fkVictimBotIdx;
-        if (vi < this.fkBotCnt[iA0]!) {
-          const boA = offA0+FK_P+vi*FK_B; const boB = offB0+FK_P+vi*FK_B;
-          vx = this.fkBuf[boA]!+(this.fkBuf[boB]!-this.fkBuf[boA]!)*t0;
-          vy = this.fkBuf[boA+3]!+(this.fkBuf[boB+3]!-this.fkBuf[boA+3]!)*t0;
-          vz = this.fkBuf[boA+2]!+(this.fkBuf[boB+2]!-this.fkBuf[boA+2]!)*t0;
-        } else { vx = kx; vy = ky+1.5; vz = kz; }
-      } else {
-        vx = this.fkBuf[offA0]!+(this.fkBuf[offB0]!-this.fkBuf[offA0]!)*t0;
-        vy = this.fkBuf[offA0+1]!+(this.fkBuf[offB0+1]!-this.fkBuf[offA0+1]!)*t0;
-        vz = this.fkBuf[offA0+2]!+(this.fkBuf[offB0+2]!-this.fkBuf[offA0+2]!)*t0;
-      }
-      const kVec = new THREE.Vector3(kx, ky, kz);
-      const vVec = new THREE.Vector3(vx, vy, vz);
-      // 壁チェック: サイド1→サイド-1→高さ+2 のフォールバック
-      let camP = ckCamPos(kVec, vVec, 1, CK_HEIGHT);
-      const rayOrg = new THREE.Vector3(camP.x, camP.y, camP.z);
-      const midP = new THREE.Vector3((kx+vx)*0.5, (ky+vy)*0.5, (kz+vz)*0.5);
-      const toMid = new THREE.Vector3().subVectors(midP, rayOrg).normalize();
-      const hit1 = this.castRay(rayOrg, toMid, camP.distanceTo(midP) * 0.9, null);
-      if (hit1 !== null && this.tags.get(hit1.collider.handle)?.kind !== 'boundary') {
-        const camP2 = ckCamPos(kVec, vVec, -1, CK_HEIGHT);
-        const rayOrg2 = new THREE.Vector3(camP2.x, camP2.y, camP2.z);
-        const toMid2 = new THREE.Vector3().subVectors(midP, rayOrg2).normalize();
-        const hit2 = this.castRay(rayOrg2, toMid2, camP2.distanceTo(midP) * 0.9, null);
-        if (hit2 !== null && this.tags.get(hit2.collider.handle)?.kind !== 'boundary') {
-          // 両サイドとも壁: 高さ+2m
-          camP = ckCamPos(kVec, vVec, 1, CK_HEIGHT + 2);
-        } else {
-          camP = camP2;
-        }
-      }
-      this._ckCamBase.copy(camP);
-      // ドリー方向: kill-line の水平方向(単位ベクトル)
-      const dx = vx - kx; const dz = vz - kz;
-      const horizLen2 = Math.sqrt(dx*dx + dz*dz);
-      if (horizLen2 > 0.01) {
-        this._ckDollyDir.set(dx/horizLen2, 0, dz/horizLen2);
-      } else {
-        this._ckDollyDir.set(0, 0, 1);
-      }
-    } else {
-      this._ckCamBase.set(0, CK_HEIGHT, 10);
-      this._ckDollyDir.set(0, 0, 1);
-    }
-    // プレイヤーアバター(三人称: killerがプレイヤーのとき表示)
-    this.fkAvatarGroup = this.fkCreatePlayerAvatar();
-    this.fkAvatarGroup.visible = false;
-    this.scene.add(this.fkAvatarGroup);
-    this.fkPlaying    = true;
+    this.killcam.begin();
     return true;
   }
 
-  /**
-   * finalKillcam 中に毎フレーム呼ぶ。
-   * 完了(窓を抜けた)なら true、継続なら false を返す。
-   */
+  /** finalKillcam 中に毎フレーム呼ぶ。完了(窓を抜けた)なら true、継続なら false を返す。 */
   advanceFinalKillcam(dt: number): boolean {
-    if (!this.fkPlaying) return true;
-    // シネマティックランプ速度: ckSpeedAt はモジュールレベル純粋関数
-    const speed  = ckSpeedAt(this.fkCursor, this.fkWinKill);
-    this.fkCursor += dt * speed;
-    // ドリー前進(スロー中も同じレートで動かして映画的なヌルっと感を出す)
-    this._ckDollyDist += dt * CK_DOLLY_SPD;
-    const cursor = this.fkCursor;
-    if (cursor >= this.fkWinEnd) {
-      this.fkPlaying = false;
-      this.fkDisposePlayerAvatar();
-      return true;
-    }
-    const [iA, iB, t] = this.fkFindFrames(cursor);
-    // iA<0 = カーソルがまだ最初の記録フレーム前(バッファ先頭に到達していない)。
-    // 古い実装では即終了していた(kill瞬間カットの旧バグ)が、startFinalKillcam の
-    // cursor=max(oldest,…) クランプで通常は発生しない。防衛的に継続する。
-    if (iA < 0) return false;
-    this.fkApplyFrame(iA, iB, t);
-    this.fkSetCamera(iA, iB, t);
-    // キル瞬間: 白フラッシュ小 + ヒット音(1回のみ)
-    const afterKill = cursor - this.fkWinKill;
-    if (afterKill >= 0) {
-      if (!this._ckHitSoundPlayed) {
-        this._ckHitSoundPlayed = true;
-        this.sounds.hit();
-      }
-      if (!this.settings.reduceMotion && afterKill < 0.05) {
-        this.fkFlash = Math.max(this.fkFlash, (1 - afterKill / 0.05) * 0.4);
-      }
-    }
-    this.fkFlash = Math.max(0, this.fkFlash - dt * 4);
-    // ショット再生(prevCursor..cursor の範囲のみ。重複なし)
-    this.fkReplayShots(this.fkPrevCursor, cursor);
-    this.fkPrevCursor = cursor;
-    // エフェクト・アトモスフィアを前進(トレーサー消滅 / 草揺れ維持)
-    this.effects.update(dt);
-    this.atmosphere?.update(dt, this.camera.position);
-    return false;
+    return this.killcam.advance(dt);
   }
 
-  private fkFindFrames(cursor: number): [number, number, number] {
-    if (this.fkFill === 0) return [-1, -1, 0];
-    let bestA = -1; let bestATime = -Infinity;
-    let bestB = -1; let bestBTime =  Infinity;
-    for (let i = 0; i < this.fkFill; i++) {
-      const idx = (this.fkHead - this.fkFill + i + FK_MAX_FRAMES) % FK_MAX_FRAMES;
-      const ft  = this.fkTimeArr[idx]!;
-      if (ft <= cursor && ft > bestATime) { bestATime = ft; bestA = idx; }
-      if (ft >  cursor && ft < bestBTime) { bestBTime = ft; bestB = idx; }
-    }
-    if (bestA < 0) return [-1, -1, 0];
-    if (bestB < 0) return [bestA, bestA, 0];
-    const span = Math.max(1e-6, bestBTime - bestATime);
-    return [bestA, bestB, Math.min(1, Math.max(0, (cursor - bestATime) / span))];
+  /** main.ts が読むキル瞬間フラッシュ値(旧 public field の読み取り互換getter)。 */
+  get fkFlash(): number {
+    return this.killcam.fkFlash;
   }
 
-  private fkApplyFrame(iA: number, iB: number, t: number): void {
-    const offA   = iA * FK_FRAME_STRIDE;
-    const offB   = iB * FK_FRAME_STRIDE;
-    const nbA    = this.fkBotCnt[iA]!;
-    const nbB    = this.fkBotCnt[iB]!;
-    const nb     = Math.min(nbA, nbB, this.bots.length);
-    const cursor = this.fkCursor;
-    const killT  = this.fkWinKill;
-
-    for (let i = 0; i < this.bots.length; i++) {
-      const bot = this.bots[i]!;
-      if (i < nb) {
-        const boA = offA + FK_P + i * FK_B;
-        const boB = offB + FK_P + i * FK_B;
-        const bx  = this.fkBuf[boA    ]! + (this.fkBuf[boB    ]! - this.fkBuf[boA    ]!) * t;
-        const by  = this.fkBuf[boA + 1]! + (this.fkBuf[boB + 1]! - this.fkBuf[boA + 1]!) * t;
-        const bz  = this.fkBuf[boA + 2]! + (this.fkBuf[boB + 2]! - this.fkBuf[boA + 2]!) * t;
-        const ya  = this.fkBuf[boA + 4]!;
-        const yb  = this.fkBuf[boB + 4]!;
-        let   yd  = yb - ya;
-        if (yd >  Math.PI) yd -= Math.PI * 2;
-        if (yd < -Math.PI) yd += Math.PI * 2;
-        const byaw = ya + yd * t;
-
-        if (i === this.fkVictimBotIdx) {
-          // 被害者ボット: キル前はalive姿勢で表示、キル後は死亡アニメを手続き再現
-          bot.group.visible = true;
-          // T5: 位置/回転の適用+死亡演出トランスフォームのalive姿勢への巻き戻しは
-          // Bot公開APIへ委譲(旧 FkBotRig 経由の private フィールド直接操作を撤去)
-          bot.fkApplyLivePose(bx, by, bz, byaw);
-          if (cursor >= killT) {
-            // キル後: 経過時間を正規化(0..1)して死亡ポーズを手続き的に再現(倒れる瞬間を見せる)
-            const totalS = FK_DEATH_S[bot.kind] ?? 0.6;
-            const t01 = Math.min(1, Math.max(0, (cursor - killT) / totalS));
-            bot.fkApplyDeathPose(t01);
-          }
-        } else {
-          // 非被害者ボット: バッファのaliveフラグに従う
-          const balive = (this.fkBuf[boA + 5]! > 0.5) || (this.fkBuf[boB + 5]! > 0.5);
-          if (balive) {
-            // alive表示時は位置/回転の適用+死亡演出トランスフォームのリセットをBot側で行う
-            // (fkApplyLivePose内でvisible=trueも設定される)
-            bot.fkApplyLivePose(bx, by, bz, byaw);
-          } else {
-            // 非alive表示: fkApplyLivePose は呼ばない(pose強制リセット+visible=trueを避ける)。
-            // 位置/回転は公開フィールドのgroupへ直接同期し、visibleのみfalseにする(bot.ts契約)
-            bot.group.position.set(bx, by, bz);
-            bot.group.rotation.y = byaw;
-            bot.group.visible = false;
-          }
-        }
-      } else {
-        bot.group.visible = false;
-      }
-    }
-  }
-
-  private fkSetCamera(iA: number, iB: number, t: number): void {
-    const offA = iA * FK_FRAME_STRIDE;
-    const offB = iB * FK_FRAME_STRIDE;
-    const cursor = this.fkCursor;
-
-    // ── キラー位置を補間 ──
-    let killerX: number; let killerY: number; let killerZ: number; let killerYaw = 0;
-    if (this.fkKillerIsPlayer) {
-      killerX = this.fkBuf[offA]! + (this.fkBuf[offB]! - this.fkBuf[offA]!) * t;
-      killerY = this.fkBuf[offA+1]! + (this.fkBuf[offB+1]! - this.fkBuf[offA+1]!) * t - CK_EYE_H;
-      killerZ = this.fkBuf[offA+2]! + (this.fkBuf[offB+2]! - this.fkBuf[offA+2]!) * t;
-      const ya = this.fkBuf[offA+3]!; const yb = this.fkBuf[offB+3]!;
-      let yd = yb - ya;
-      if (yd >  Math.PI) yd -= Math.PI * 2;
-      if (yd < -Math.PI) yd += Math.PI * 2;
-      killerYaw = ya + yd * t;
-    } else {
-      const ki = this.fkKillerBotIdx;
-      const nbA = this.fkBotCnt[iA]!;
-      if (ki >= 0 && ki < nbA) {
-        const boA = offA+FK_P+ki*FK_B; const boB = offB+FK_P+ki*FK_B;
-        killerX = this.fkBuf[boA]! + (this.fkBuf[boB]! - this.fkBuf[boA]!) * t;
-        killerY = this.fkBuf[boA+3]! + (this.fkBuf[boB+3]! - this.fkBuf[boA+3]!) * t;
-        killerZ = this.fkBuf[boA+2]! + (this.fkBuf[boB+2]! - this.fkBuf[boA+2]!) * t;
-        const ya = this.fkBuf[boA+4]!; const yb = this.fkBuf[boB+4]!;
-        let yd = yb - ya;
-        if (yd >  Math.PI) yd -= Math.PI * 2;
-        if (yd < -Math.PI) yd += Math.PI * 2;
-        killerYaw = ya + yd * t;
-      } else {
-        killerX = this._ckCamBase.x; killerY = this._ckCamBase.y; killerZ = this._ckCamBase.z;
-      }
-    }
-
-    // ── ビクティム位置を補間 ──
-    let victimX: number; let victimY: number; let victimZ: number;
-    if (this.fkVictimBotIdx >= 0) {
-      const vi = this.fkVictimBotIdx;
-      if (vi < this.fkBotCnt[iA]!) {
-        const boA = offA+FK_P+vi*FK_B; const boB = offB+FK_P+vi*FK_B;
-        victimX = this.fkBuf[boA]! + (this.fkBuf[boB]! - this.fkBuf[boA]!) * t;
-        victimY = this.fkBuf[boA+3]! + (this.fkBuf[boB+3]! - this.fkBuf[boA+3]!) * t;
-        victimZ = this.fkBuf[boA+2]! + (this.fkBuf[boB+2]! - this.fkBuf[boA+2]!) * t;
-      } else {
-        victimX = this._ckCamBase.x; victimY = this._ckCamBase.y + 1.5; victimZ = this._ckCamBase.z;
-      }
-    } else {
-      victimX = this.fkBuf[offA]! + (this.fkBuf[offB]! - this.fkBuf[offA]!) * t;
-      victimY = this.fkBuf[offA+1]! + (this.fkBuf[offB+1]! - this.fkBuf[offA+1]!) * t;
-      victimZ = this.fkBuf[offA+2]! + (this.fkBuf[offB+2]! - this.fkBuf[offA+2]!) * t;
-    }
-
-    // ── プレイヤーアバター更新(3人称) ──
-    if (this.fkAvatarGroup) {
-      if (this.fkKillerIsPlayer) {
-        // killerがプレイヤー → アバターをkiller位置へ
-        this.fkAvatarGroup.position.set(killerX, killerY, killerZ);
-        this.fkAvatarGroup.rotation.y = killerYaw;
-        this.fkAvatarGroup.rotation.x = 0;
-      } else {
-        // victimがプレイヤー → アバターをvictim位置へ(死亡倒れアニメ付き)
-        const va = this.fkBuf[offA+3]!; const vb = this.fkBuf[offB+3]!;
-        let vyd = vb - va;
-        if (vyd >  Math.PI) vyd -= Math.PI * 2;
-        if (vyd < -Math.PI) vyd += Math.PI * 2;
-        this.fkAvatarGroup.position.set(victimX, victimY - CK_EYE_H, victimZ);
-        this.fkAvatarGroup.rotation.y = va + vyd * t;
-        if (cursor >= this.fkWinKill) {
-          const dpT = Math.min(1, (cursor - this.fkWinKill) / 0.6);
-          const dpSS = dpT * dpT * (3 - 2 * dpT);
-          this.fkAvatarGroup.rotation.x = dpSS * (Math.PI / 2) * 0.95;
-        } else {
-          this.fkAvatarGroup.rotation.x = 0;
-        }
-      }
-      this.fkAvatarGroup.visible = true;
-    }
-
-    // ── シネマティックカメラ ──
-    // V48修正: 近距離は中点寄りを注視して両者をフレームイン、遠距離は被害者を注視
-    {
-      const dx = victimX - killerX; const dz = victimZ - killerZ;
-      const segL = Math.sqrt(dx * dx + dz * dz);
-      const lookT = Math.min(1, Math.max(0, (segL - 18) / 24)); // 0=中点寄り, 1=被害者
-      const mixV = 0.55 + 0.45 * lookT; // 被害者の重み 0.55..1.0
-      this._kcLook.set(
-        victimX * mixV + (killerX + victimX) * 0.5 * (1 - mixV),
-        victimY * mixV + (killerY + victimY) * 0.5 * (1 - mixV),
-        victimZ * mixV + (killerZ + victimZ) * 0.5 * (1 - mixV),
-      );
-    }
-    this.camera.position.copy(this._ckCamBase).addScaledVector(this._ckDollyDir, this._ckDollyDist);
-    this.camera.lookAt(this._kcLook);
-    if (Math.abs(this.camera.fov - CK_FOV) > 0.01) {
-      this.camera.fov = CK_FOV;
-      this.camera.updateProjectionMatrix();
-    }
-  }
-
-  private fkReplayShots(prevCursor: number, cursor: number): void {
-    for (let i = 0; i < this.fkShotFill; i++) {
-      const h   = (this.fkShotHead - this.fkShotFill + i + FK_MAX_SHOTS) % FK_MAX_SHOTS;
-      const off = h * FK_S;
-      const st  = this.fkShotBuf[off + 7]!;
-      if (st > prevCursor && st <= cursor) {
-        this.effects.tracer(
-          new THREE.Vector3(this.fkShotBuf[off    ]!, this.fkShotBuf[off + 1]!, this.fkShotBuf[off + 2]!),
-          new THREE.Vector3(this.fkShotBuf[off + 3]!, this.fkShotBuf[off + 4]!, this.fkShotBuf[off + 5]!),
-          this.fkShotBuf[off + 6]!,
-        );
-      }
-    }
-  }
 
   // 描画。composer(medium/high)があればそれ、無ければ素のレンダラ。
   render(): void {
@@ -12693,7 +11602,7 @@ export class Match {
       (hk.mesh.material as THREE.Material).dispose();
     }
     this.hkEntities.length = 0;
-    this.fkDisposePlayerAvatar();
+    this.killcam.dispose();
     // RC-XD / ケアパッケージクレートを解放
     this.cleanupRcxd();
     for (let i = this.carePackageCrates.length - 1; i >= 0; i -= 1) this.disposeCarePackageCrate(i);
