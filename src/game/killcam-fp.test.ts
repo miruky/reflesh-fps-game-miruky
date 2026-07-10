@@ -147,3 +147,76 @@ describe('KillcamController 一人称パス(fkKillerIsPlayer=true)', () => {
 function sceneHasAvatar(deps: KillcamDeps): boolean {
   return deps.getScene().children.length > 0;
 }
+
+// ─── R55 W-C4 [3]: 一人称キルカムのスコープADS退避ポーズ露出根治(回帰テスト) ─────────────
+// begin() の一人称分岐が resetViewmodelAdsPose を setViewmodelVisible(true) より先に呼ぶこと、
+// および未提供(undefined)でも例外を投げず安全にフォールバックすることをピン留めする。
+describe('KillcamController 一人称パス: resetViewmodelAdsPose(スコープ退避ポーズ根治)', () => {
+  function recordMinimalHistory(controller: KillcamController, player: { eyePosition: THREE.Vector3; yaw: number; pitch: number }, camera: THREE.PerspectiveCamera): number {
+    for (let e = 0; e <= 5.0; e += 0.25) {
+      player.eyePosition.set(1, 2, 3);
+      player.yaw = 0;
+      player.pitch = 0;
+      camera.fov = 50;
+      controller.recordFrame(e);
+    }
+    const killT = 5.0;
+    controller.noteKill(true, -1, 0, killT, 'ScopeGun', 30);
+    return killT;
+  }
+
+  it('一人称begin()は resetViewmodelAdsPose を setViewmodelVisible(true) より前に呼ぶ', () => {
+    const { deps, camera, player } = makeMockDeps();
+    const callOrder: string[] = [];
+    const depsWithReset: KillcamDeps = {
+      ...deps,
+      resetViewmodelAdsPose: () => { callOrder.push('reset'); },
+      setViewmodelVisible: (v: boolean) => { callOrder.push(v ? 'visible:true' : 'visible:false'); },
+    };
+    const controller = new KillcamController(depsWithReset);
+    const killT = recordMinimalHistory(controller, player, camera);
+    expect(controller.canStart(killT)).toBe(true);
+
+    controller.begin();
+
+    expect(callOrder).toContain('reset');
+    expect(callOrder).toContain('visible:true');
+    expect(callOrder.indexOf('reset')).toBeLessThan(callOrder.indexOf('visible:true'));
+  });
+
+  it('resetViewmodelAdsPose が未提供(undefined)でも begin() は例外を投げず setViewmodelVisible(true) は呼ばれる', () => {
+    const { deps, camera, player, visibleCalls } = makeMockDeps(); // resetViewmodelAdsPose 未定義
+    const controller = new KillcamController(deps);
+    const killT = recordMinimalHistory(controller, player, camera);
+    expect(controller.canStart(killT)).toBe(true);
+
+    expect(() => controller.begin()).not.toThrow();
+    expect(visibleCalls).toContain(true);
+    expect(controller.playing).toBe(true);
+  });
+
+  it('killer=bot(三人称)では resetViewmodelAdsPose は呼ばれない(setViewmodelVisible(false)経路)', () => {
+    const { deps, camera, player } = makeMockDeps();
+    const resetCalls: number[] = [];
+    const depsWithReset: KillcamDeps = {
+      ...deps,
+      resetViewmodelAdsPose: () => { resetCalls.push(1); },
+    };
+    const controller = new KillcamController(depsWithReset);
+    for (let e = 0; e <= 5.0; e += 0.25) {
+      player.eyePosition.set(0, 1.6, 0);
+      player.yaw = 0;
+      player.pitch = 0;
+      camera.fov = 50;
+      controller.recordFrame(e);
+    }
+    const killT = 5.0;
+    controller.noteKill(false, -1, -1, killT, 'BotGun', 8);
+    expect(controller.canStart(killT)).toBe(true);
+
+    controller.begin();
+
+    expect(controller.firstPerson).toBe(false);
+    expect(resetCalls.length).toBe(0);
+  });
+});

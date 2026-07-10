@@ -142,7 +142,20 @@ export const mountCampaign: ScreenMount = (host, root) => {
   const camp = host.profile.campaign;
   const totalStars = Object.values(camp.missionBests).reduce((s, b) => s + b.stars, 0);
   const cleared = camp.clearedMissions.length;
-  const { missions: totalMissions, starsMax } = campaignTotals(CAMPAIGN);
+
+  // R55: ★/前章制圧を条件にした章・ミッションのLOCKED表示を撤廃。全章・全ミッションを
+  // 常に選択可能として描画する(ユーザー要望「面倒なので」)。★自体は任意の実績として
+  // starsHtmlで表示だけ継続する。
+  // W-C[18]: 秘匿章(全ミッションが未解放=chB「歴戦の間」)は、ch10全クリアで解放されるまで
+  // 一覧から隠す(ネタバレ/実績先食いの防止)。通常章(ch1-ch10)は⑤どおり常に全解放なので
+  // 必ず可視。解放済み or 1つでもクリア済みの章は表示する。
+  // R55 W-C4[LOW]: campaignTotals()より前に定義する(ヘッダの合計ミッション数/★上限を
+  // 可視章のみで集計させ、chB総数がch10クリア前にリークするのを防ぐため)。
+  const chapterVisible = (chapter: (typeof CAMPAIGN)[number]): boolean =>
+    chapter.missions.some(
+      (m) => isMissionUnlocked(host.profile, m.id) || camp.clearedMissions.includes(m.id),
+    );
+  const { missions: totalMissions, starsMax } = campaignTotals(CAMPAIGN.filter(chapterVisible));
 
   // 次の任務 = 解放済みの最初の未制圧ミッション(所属章も併せて記憶し、右レールの
   // 「作戦概要」に進行中の章loreを表示する — 常に第1章loreが出る不具合の修正)
@@ -159,16 +172,6 @@ export const mountCampaign: ScreenMount = (host, root) => {
     if (nextMission) break;
   }
 
-  // R55: ★/前章制圧を条件にした章・ミッションのLOCKED表示を撤廃。全章・全ミッションを
-  // 常に選択可能として描画する(ユーザー要望「面倒なので」)。★自体は任意の実績として
-  // starsHtmlで表示だけ継続する。
-  // W-C[18]: 秘匿章(全ミッションが未解放=chB「歴戦の間」)は、ch10全クリアで解放されるまで
-  // 一覧から隠す(ネタバレ/実績先食いの防止)。通常章(ch1-ch10)は⑤どおり常に全解放なので
-  // 必ず可視。解放済み or 1つでもクリア済みの章は表示する。
-  const chapterVisible = (chapter: (typeof CAMPAIGN)[number]): boolean =>
-    chapter.missions.some(
-      (m) => isMissionUnlocked(host.profile, m.id) || camp.clearedMissions.includes(m.id),
-    );
   const chaptersHtml = CAMPAIGN.filter(chapterVisible).map((chapter, ci) => {
     const chClear = chapter.missions.filter((m) => camp.clearedMissions.includes(m.id)).length;
     const rows = chapter.missions

@@ -1077,6 +1077,26 @@ export class Match {
     // RC-XD操縦中(alive=trueのまま)は保護対象外になってしまう(recordFrameのeye/yaw/pitch/fov
     // 保護ゲート=fkLast* が本来の目的を果たさない)。
     isFpsView: () => !this.rcxdActive && !this.killcamCamActive && this.player.alive,
+    // R55 W-C4 [3]: 一人称ファイナルキルカム開始時、スコープADS中に決着キルしていると
+    // ViewModelがY方向へ沈めた「覗き込み退避ポーズ」で凍結しており、一人称再生で武器が
+    // 大きく沈んだまま数秒露出する。adsProgress=0/scopeReveal01=0 の1回updateで中立(hip)
+    // ポーズへ収束させてから表示する(ViewModel.updateは既存公開API、姿勢は次フレーム再生で維持)。
+    resetViewmodelAdsPose: () => {
+      this.viewModel.update(0, {
+        adsProgress: 0,
+        mouseDX: 0,
+        mouseDY: 0,
+        moveFactor: 0,
+        grounded: true,
+        reloadRatio: null,
+        raiseRatio: 0,
+        motionScale: 1,
+        alive: true,
+        scopeReveal01: 0,
+        sprinting: false,
+        scopeWeapon: false,
+      });
+    },
   });
 
   constructor(

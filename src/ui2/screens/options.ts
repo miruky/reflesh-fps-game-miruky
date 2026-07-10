@@ -920,7 +920,11 @@ function mountOptionsImpl(
       }
     };
     const updatePreset = (): void => {
-      optLabel.textContent = layouts[current()]?.label ?? '';
+      const label = layouts[current()]?.label ?? '';
+      optLabel.textContent = label;
+      // R55 W-C4[7]: cycleボタンのaria-labelが固定文字列のままで現在値を読まなかった
+      // (822-829の設定行と同じく現在値込みへ動的化)
+      cycle.setAttribute('aria-label', `配置プリセット: ${label}`);
     };
     const applyLayout = (i: number): void => {
       const n = layouts.length;

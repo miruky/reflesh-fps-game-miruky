@@ -30,6 +30,24 @@ const LOADOUT_KEY = 'hibana.loadout.v1'; // 旧UIと同一キー=兵装選択の
 // ポーズだけは試合画面の上に薄く載る(他は不透明フルスクリーン)
 const OVERLAY_SCREENS: ReadonlySet<Screen2Id> = new Set<Screen2Id>(['pause']);
 
+// R55 W-C4[5]: onKeyのEsc除外はテキスト打鍵系のinput型のみを対象にする
+// (checkbox/radio/range/buttonはEsc=戻るを妨げない)。ui2に現存するのはcheckbox/range/buttonのみだが、
+// 将来text系inputが増えても安全なように型ベースで判定する。
+const TEXT_ENTRY_INPUT_TYPES: ReadonlySet<string> = new Set([
+  'text',
+  'search',
+  'number',
+  'email',
+  'password',
+  'tel',
+  'url',
+  'date',
+  'time',
+  'datetime-local',
+  'month',
+  'week',
+]);
+
 function defaultSelection(): MenuSelection {
   return {
     stageId: STAGES[0]?.id ?? 'kunren',
@@ -59,7 +77,11 @@ export class Menu2 implements MenuApi {
     if (this.root.hidden) return;
     if (ev.key !== 'Escape' || ev.defaultPrevented) return;
     const t = ev.target;
-    if (t instanceof HTMLInputElement || t instanceof HTMLSelectElement) return;
+    // selectはネイティブのEsc処理(ドロップダウンを閉じる)を尊重して素通しする。
+    // inputはテキスト打鍵系の型(text/number/search等)のみ除外し、checkbox/radio/range/button型は
+    // Esc=戻るを通す(R55 W-C4[5]: 特殊/ゾンビ設定のcheckboxフォーカス時にEscでhubへ戻れなかった)。
+    if (t instanceof HTMLSelectElement) return;
+    if (t instanceof HTMLInputElement && TEXT_ENTRY_INPUT_TYPES.has(t.type)) return;
     // タイトル画面は自前でEscを処理する(クレジットモーダル)
     if (this.active?.id === 'title') return;
     ev.preventDefault();

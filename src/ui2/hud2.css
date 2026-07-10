@@ -544,6 +544,19 @@
 #hud.u2-hud .u2h-feed-row--emp[data-emp='raitei'] .u2h-feed-you { color: #bfeaff; }
 #hud.u2-hud .u2h-feed-row--emp[data-emp='raitei'] .u2h-feed-weapon--emp { color: var(--raitei); }
 
+/* R55 W-C4[10]: 頭部/近接キル強調(data-kind)。焔座トークンの左罫線+武器文字色だけで控えめに
+   差別化する(canvas直上のためfilter/backdrop-filter不使用・強い発光も足さない)。
+   帝王キル行(--emp)は専用配色を最優先させたいため、武器文字色の上書きは非--emp限定に絞る。
+   'hs'=頭部(--kogane 金)/'melee'=近接(--sofu 蒼風。定義済みだが未使用だったトークンをここで活用)。 */
+#hud.u2-hud .u2h-feed-row[data-kind='hs'] { border-left: 2px solid var(--kogane); }
+#hud.u2-hud .u2h-feed-row[data-kind='melee'] { border-left: 2px solid var(--sofu); }
+#hud.u2-hud .u2h-feed-row[data-kind='hs']:not(.u2h-feed-row--emp) .u2h-feed-weapon {
+  color: var(--kogane);
+}
+#hud.u2-hud .u2h-feed-row[data-kind='melee']:not(.u2h-feed-row--emp) .u2h-feed-weapon {
+  color: var(--sofu);
+}
+
 /* ════ スコアポップ(+100 撃破 — 聖域の右外、mock実測) ════ */
 #hud.u2-hud .u2h-scorepops {
   position: absolute;

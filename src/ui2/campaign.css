@@ -457,6 +457,38 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
+  /* R55 W-C4[MEDIUM]: 短文ブリーフィング(CH1-1等)だと上詰めの本文だけでは下部が
+     大きく黒く空く。上アンカー(top:300px)は他の計器グリッド(.u2c-meta)と共有し
+     ているため崩さず、代わりに「計器が骨」の密度感を背景テクスチャで敷き詰める。
+     背景は要素自身のborder boxに固定(background-attachment既定=scroll)されて
+     内容と一緒にスクロールしないため、本文が短い時ほど地の模様がそのまま見え、
+     長い時は行間に控えめに覗く。二層構成: ①密度を上げたスキャンライン ②既存の
+     ★菱形(.u2c-star)と同じ45度回転の意匠を踏襲した菱紋格子(ミッションコード欄
+     の意匠を反復)。ともに白熾色を極低alphaに抑え、bloom閾値に触れない発光ゼロ
+     の線画のみ(canvas直上ではないためfilter可だが、ここでは不要=background-image
+     のみで足りる)。 */
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      rgba(232, 227, 216, 0.016) 0px,
+      rgba(232, 227, 216, 0.016) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    repeating-linear-gradient(
+      45deg,
+      rgba(232, 227, 216, 0.032) 0px,
+      rgba(232, 227, 216, 0.032) 1px,
+      transparent 1px,
+      transparent 64px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(232, 227, 216, 0.032) 0px,
+      rgba(232, 227, 216, 0.032) 1px,
+      transparent 1px,
+      transparent 64px
+    );
 }
 .u2c-brief-body > p {
   font-size: 15px;
@@ -868,7 +900,11 @@
 .u2c-reduce *,
 .u2c-reduce *::before,
 .u2c-reduce *::after {
-  animation: none !important;
+  /* R55 W-C4[HIGH]: animation:noneはopacity:0→1の入場アニメ(forwards/both)の
+     終端保持ごと奪い、進捗バー/ブリーフィング本文/XP内訳/★評価がopacity:0のまま
+     消えていた。他画面と同じ「即終端着地」方式(duration極小+1周)に揃える。 */
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
   transition-duration: 0.15s !important;
 }
 

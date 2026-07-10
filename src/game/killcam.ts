@@ -210,6 +210,22 @@ export interface KillcamDeps {
    */
   setViewmodelVisible(v: boolean): void;
   /**
+   * R55 W-C4 [3]: 一人称キルカム開始直前に、武器viewmodelのローカル姿勢(root.position/rotation)を
+   * ADS/スコープ非適用の中立(rest/hip)ポーズへリセットする。
+   * 背景: viewmodel.ts の ViewModel.update() は毎フレーム、スコープ武器のADS覗き込み度
+   * (scopeReveal01)に応じて `pos.y -= 0.55 * scopeReveal01` を適用し、「覗き込み中はDOMスコープに
+   * 隠れるよう銃を画面外へ大きく沈める退避ポーズ」を組む。killcam再生中(advanceFinalKillcam→
+   * killcam.advance())は effects/atmosphere のみを前進させ ViewModel.update() 自体を呼ばない設計
+   * のため、root の position/rotation は「決着キル発生フレーム」の最後のライブ値で凍結されたまま
+   * になる。決着キルの瞬間にスコープADS中だった場合、begin() が setViewmodelVisible(true) で
+   * 再表示すると、この退避ポーズ(画面外へ沈んだ銃)がそのまま再生尺(最大 CK_WIN_PRE+CK_WIN_POST
+   * ≈4s)露出してしまう。begin() の一人称分岐は setViewmodelVisible(true) の直前にこのフックを呼び、
+   * 中立ポーズへ戻してから再表示する。
+   * オプショナル: 未実装(undefined)の場合は何もしない(後方互換フォールバック。このラウンドは
+   * killcam.ts 単独担当のため match.ts 側の実装配線は別工程で行う)。
+   */
+  resetViewmodelAdsPose?(): void;
+  /**
    * R55 W-C2/W-C3 ④: カメラが実際に一人称FPSビュー(通常プレイ/ADS)を描画中かどうか。
    * RC-XD操縦中や旧来の死亡三人称killcam中はカメラ(位置/向き/FOV)を別システムが所有し、
    * eyePosition/yaw/pitch/camera.fov はプレイヤーの実効視点ではない共有値になる。recordFrame は
@@ -359,6 +375,9 @@ export class KillcamController {
     // 一切不要なためスキップし、武器viewmodelを表示して即 return する。
     if (this.fkKillerIsPlayer) {
       this.deps.getCamera().rotation.order = 'YXZ';
+      // R55 W-C4 [3]: 再表示より先に中立化する(スコープADS退避ポーズの露出根治。
+      // resetViewmodelAdsPose の契約は KillcamDeps 参照)。
+      this.deps.resetViewmodelAdsPose?.();
       this.deps.setViewmodelVisible(true);
       this.fkPlaying = true;
       return;

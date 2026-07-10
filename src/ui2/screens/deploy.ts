@@ -9,6 +9,7 @@
 import '../deploy.css';
 
 import { saveProfile } from '../../core/profile';
+import { resolveGraphicsTier } from '../../core/settings';
 import { CHARM_IDS, levelFromXp, rankNameFor, type CharmId } from '../../game/progression';
 import { CHARMS } from '../../game/zombie-economy';
 import { MODE_DEFS, MODE_IDS } from '../../game/modes';
@@ -17,6 +18,18 @@ import { ZOMBIE_MAX_ALIVE, zombieTotal } from '../../game/zombie';
 import { requestStageThumb } from '../../render/stage-thumbs';
 import { readLastZombiePerk, resolveCarriedPerk } from '../../ui/menu';
 import type { Difficulty, GameMode, ScreenMount, Ui2Host } from '../types';
+
+// R55 W-C4[6]: match.ts(renderer.capabilities.isWebGL2)が行う実効グラフィックスtier降格を
+// この画面でも再現するため、main.tsと同じWebGL2検出をモジュールロード時に1回だけ行う
+// (ブラウザのWebGL2対応はセッション中不変。renderLobbyCard等の頻繁な再描画のたびに
+// canvas/contextを生成するとGLコンテキスト数の上限に触れうるため、1回きりに固定する)。
+const DEPLOY_HAS_WEBGL2: boolean = (() => {
+  try {
+    return Boolean(document.createElement('canvas').getContext('webgl2'));
+  } catch {
+    return false;
+  }
+})();
 
 // 旧menu.tsのDIFFICULTIES(モジュール私有のため転記。ラベル・説明は同一)
 const DIFFICULTIES: Array<{ id: Difficulty; label: string; desc: string }> = [
@@ -294,19 +307,18 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     const title = latestTitle(host.profile.titles);
     const isZombie = sel.mode === 'zombie';
     // ゾンビ時はstageDef.botCount(通常対戦用BOT数)を流用せず、zombie.tsの実数値を使う。
-    // 同時生存上限は描画tier依存(deploy画面ではtier未知)のため、確実な範囲(低〜高)で表示。
+    // 同時生存上限は描画tier依存のため、実効tier(WebGL2非対応ならlowへ強制降格。match.tsの
+    // resolveGraphicsTier(settings.graphicsQuality, renderer.capabilities.isWebGL2)相当)で表示。
     // R55 W-C: 超鬼畜ONだとmatch.tsが実スポーンをMath.ceil(botCount*1.5)へ引き上げるため、
     // '最大'ラベルにのみ同じ上限を反映する(row3のAIボット表示は生値のまま=旧仕様維持)。
     const rawHellBotCount = sel.hellMode ? Math.ceil(stageDef.botCount * 1.5) : stageDef.botCount;
-    // R55 W-C3[3]: match.tsは描画tier別に湧き数を頭打ちする(low16/medium28/high無制限)。
-    // それを再現せずに表示すると、既定(medium)でも実際より多い架空人数が出てしまうため、
-    // ここでも同じ式で再クランプする(理想は共有定数だが、当面はここに複製する)。
-    const tierCap =
-      host.settings.graphicsQuality === 'high'
-        ? Infinity
-        : host.settings.graphicsQuality === 'medium'
-          ? 28
-          : 16;
+    // R55 W-C3[3]/W-C4[6]: match.tsは描画tier別に湧き数を頭打ちする(low16/medium28/high無制限)。
+    // それを再現せずに表示すると、既定(medium)でも実際より多い架空人数が出てしまう。さらに
+    // WebGL2非対応環境ではmatch.tsが設定値に関わらずlowへ実効降格するため、settings.graphicsQuality
+    // をそのまま使わずresolveGraphicsTierで同じ降格を経てからクランプする(理想は共有定数だが、
+    // 当面はここに複製する)。
+    const effectiveTier = resolveGraphicsTier(host.settings.graphicsQuality, DEPLOY_HAS_WEBGL2);
+    const tierCap = effectiveTier === 'high' ? Infinity : effectiveTier === 'medium' ? 28 : 16;
     const hellBotCount = Math.min(tierCap, rawHellBotCount);
     const capLabel = isZombie
       ? `同時生存上限 ${ZOMBIE_MAX_ALIVE.low}\u301c${ZOMBIE_MAX_ALIVE.high}体`

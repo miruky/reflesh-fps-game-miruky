@@ -16,7 +16,11 @@
 .u2h-cta:hover {
   background: linear-gradient(180deg, #ff9861, #f26722 60%, #dd5a1e);
 }
-.u2h-cta:focus-visible {
+/* R55 W-C4[4]: 単一クラス(0,2,0)はui2.cssの#menu .u2-stage button:focus-visible(1,2,1)に
+   IDの有無で必ず負け、実際は熾火アンバー(#ffa061)で描画される常時デッド宣言だった
+   (options.css:140の前例と同根)。CTAは行動色として象牙(#fff4e6)で差別化するため、
+   #menu .u2-stageを前置して詳細度(1,3,1)で確実に上回す。 */
+#menu .u2-stage .u2h-cta:focus-visible {
   outline: 2px solid #fff4e6;
   outline-offset: 3px;
 }

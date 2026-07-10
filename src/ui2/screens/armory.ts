@@ -227,7 +227,9 @@ const TAB_LABELS: Record<WeaponClass, string> = {
   launcher: '発射器',
   exotic: '特殊兵装',
 };
-const CLASS_ORDER: readonly WeaponClass[] = [
+// W-C4[0]: 'pistol' 復帰。PRIMARY_IDS中 class='pistol' のクナイ(fists、常時解放=黒帝/雷帝の
+// 格闘キット)が武器庫タブから恒久的に選択不能だった移植漏れの根治(旧UI src/ui/menu.tsは含む)。
+export const CLASS_ORDER: readonly WeaponClass[] = [
   'ar',
   'smg',
   'br',
@@ -235,6 +237,7 @@ const CLASS_ORDER: readonly WeaponClass[] = [
   'sniper',
   'shotgun',
   'lmg',
+  'pistol',
   'launcher',
   'exotic',
 ];

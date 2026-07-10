@@ -84,7 +84,10 @@
 .u2o-back:hover {
   border-color: rgba(255, 107, 43, 0.7);
 }
-.u2o-back:focus-visible {
+/* R55 W-C4[8]: 単一クラス(0,2,0)はui2.cssの#menu .u2-stage button:focus-visible(1,2,1)に
+   IDの有無で必ず負けるため(u2o-tabと同じ根治)、#menu .u2-stageを前置して詳細度(1,3,0)で
+   確実に上回す。旧セレクタのままでは常時デッドコードだった。 */
+#menu .u2-stage .u2o-back:focus-visible {
   outline: 2px solid #ffa061;
   outline-offset: 2px;
 }
@@ -317,7 +320,9 @@
   border-color: rgba(255, 107, 43, 0.6);
   color: #ffa061;
 }
-.u2o-action:focus-visible {
+/* R55 W-C4[8]: 単一クラス(0,2,0)はui2.cssの#menu .u2-stage button:focus-visible(1,2,1)に
+   必ず負けるため、#menu .u2-stageを前置して詳細度(1,3,0)で確実に上回す。 */
+#menu .u2-stage .u2o-action:focus-visible {
   outline: 2px solid #ffa061;
   outline-offset: -3px;
 }
@@ -370,7 +375,9 @@
   color: #ffa061;
   border-color: rgba(255, 107, 43, 0.5);
 }
-.u2o-rebind-btn:focus-visible {
+/* R55 W-C4[8]: 単一クラス(0,2,0)はui2.cssの#menu .u2-stage button:focus-visible(1,2,1)に
+   必ず負けるため、#menu .u2-stageを前置して詳細度(1,3,0)で確実に上回す。 */
+#menu .u2-stage .u2o-rebind-btn:focus-visible {
   outline: 2px solid #ffa061;
   outline-offset: -3px;
 }
@@ -516,7 +523,9 @@
   top: 8%;
   width: 6px;
   height: 118px;
-  background: linear-gradient(180deg, #ff7e3f, #c2451a);
+  /* R55 W-C4[9]: 参照モックに無い常時橙グラデを消費(u2o-accentと同型修正の取りこぼし。
+     熾火橙は行動/選択/達成のみに予約) */
+  background: linear-gradient(180deg, rgba(232, 234, 236, 0.16), rgba(232, 234, 236, 0.04));
 }
 .u2p-wrap {
   position: absolute;
@@ -571,8 +580,13 @@
     color 0.12s ease,
     transform 0.12s ease;
 }
+/* R55 W-C4[8]: :focus-visibleは単一クラス(0,2,0)のままだとui2.cssの
+   #menu .u2-stage button:focus-visible(1,2,1)に負け、outline:noneが効かず
+   意図しない橙アウトラインボックスが被る。#menu .u2-stageを前置して(1,3,0)へ
+   引き上げ、border-color/transformの独自インジケータを確実に勝たせる。
+   :hoverは競合しないため据え置き。 */
 .u2p-btn:hover,
-.u2p-btn:focus-visible {
+#menu .u2-stage .u2p-btn:focus-visible {
   border-color: rgba(255, 107, 43, 0.55);
   color: #ffa061;
   transform: translateX(8px);
