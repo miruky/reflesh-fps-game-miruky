@@ -43,6 +43,10 @@ import { ENEMY_TEAM } from './modes';
 import { PLAYER_FEET_OFFSET, PLAYER_NAME, ULT_ON_DAMAGE_PER_HP, hitToi, type ColliderTag, type RayHitLike } from './match';
 
 const MIASMA_TICK_S = 0.5; // 毒雲DPSの離散ティック間隔(FIRE_TICK_Sと同じ流儀)
+// R55 ⑧: プロップに嵌まって動けないゾンビの最終安全弁スキャン間隔(秒)。bot.ts側の
+// hardStuckS(1s間隔サンプリング)より低頻度でよい — 全ゾンビの走査コストを抑えつつ、
+// 「倒せずラウンドが永久に進まない」の実害(体感の遅延)は十分小さく保てる。
+const ZOMBIE_UNSTUCK_SCAN_S = 1.0;
 // ── R16 ゾンビモード ──
 const ZOMBIE_MOVE_MUL = 1.44; // 基準速度に対するシャンブル倍率(走行個体は updateZombie で×1.6)
 const ZOMBIE_MELEE_GLOBAL_GAP = 0.35; // 何体いても近接ダメージはこの間隔以上(同フレーム多段一撃回避)
@@ -122,6 +126,7 @@ export class ZombieDirector {
   zombieSpawnColor = 0x4c5a30; // ゾンビ本体の腐敗色(setupで確定)
   playerDowns = 0;
   private hordeDensityTimer = 0; // R54 音響2: setHordeDensity() 間欠発火(0.5s周期)
+  private zombieUnstuckScanTimer = 0; // R55 ⑧: 最終安全弁スキャン間欠発火(ZOMBIE_UNSTUCK_SCAN_S周期)
   // ── ゾンビ経済(R??) ──
   zombieShopLayout: ShopLayout | null = null;
   readonly zombieShopGroups: THREE.Group[] = [];
@@ -684,6 +689,27 @@ export class ZombieDirector {
         sum += b.position.distanceTo(this.h.player.position);
       }
       this.h.sounds.setHordeDensity(Math.min(1, n / 36), n > 0 ? sum / n : 0);
+    }
+
+    // ── R55 ⑧ 最終安全弁: プロップに嵌まって動けないゾンビをテレポート救済する ──────
+    // bot.ts側のupdateZombieが1s間隔で位置ドリフトをサンプリングし、5秒以上「本当に
+    // 前進できていない」個体を zombieHardStuck=true としてマークする(短周期の迂回
+    // ロジックとは独立した絶対タイマー)。ここではその個体をスポーンリング上の有効点
+    // (プレイヤー視界外・地上・他ゾンビと1.2m以上離れている)へ再配置し、「倒せずラウンドが
+    // 永久に進まない」を構造的に防ぐ。有効点が無い/視界内で先送りした場合はqueueのように
+    // 減らさず次周期に再試行するだけなので、この処理自体が新たなスタックを生むことはない。
+    // プレイヤーが見続けて視界内判定が続く場合でも、zombieHardStuckForce(9秒)到達後は
+    // 視界内チェックをバイパスして強制的に再配置し、ラウンド進行の絶対保証を優先する。
+    this.zombieUnstuckScanTimer -= dt;
+    if (this.zombieUnstuckScanTimer <= 0) {
+      this.zombieUnstuckScanTimer = ZOMBIE_UNSTUCK_SCAN_S;
+      for (const b of this.h.bots) {
+        if (b.kind !== 'zombie' || !b.alive || !b.zombieHardStuck) continue;
+        if (!b.zombieHardStuckForce && this.h.isInView(b.position)) continue; // 視界内は先送り
+        const spawn = this.zombieSpawnPoint();
+        if (!spawn) continue; // 有効点が無ければ次周期に再試行
+        b.blinkTo(spawn.x, spawn.y, spawn.z);
+      }
     }
 
     // R54-F5 輪廻: 供物選択中はラウンド進行を完全凍結(台座の演出/タイマーのみ進む)

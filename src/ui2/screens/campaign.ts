@@ -157,41 +157,38 @@ export const mountCampaign: ScreenMount = (host, root) => {
     if (nextMission) break;
   }
 
+  // R55: ★/前章制圧を条件にした章・ミッションのLOCKED表示を撤廃。全章・全ミッションを
+  // 常に選択可能として描画する(ユーザー要望「面倒なので」)。★自体は任意の実績として
+  // starsHtmlで表示だけ継続する。
   const chaptersHtml = CAMPAIGN.map((chapter, ci) => {
-    const unlocked = camp.unlockedChapters.includes(chapter.id);
     const chClear = chapter.missions.filter((m) => camp.clearedMissions.includes(m.id)).length;
-    const rows = unlocked
-      ? chapter.missions
-          .map((mission) => {
-            const mUnlocked = isMissionUnlocked(host.profile, mission.id);
-            const best = camp.missionBests[mission.id];
-            const stars = best ? best.stars : 0;
-            const reward = missionRewardLabel(mission.rewardId);
-            // 報酬バッジ有無でbuttonの子要素数が3/4にブレるとGrid暗黙配置で★列がズレるため、
-            // 常に単一のtail要素へ包んでbuttonの子を3つ(code/name/tail)に固定する
-            const tail = mUnlocked
-              ? `${reward ? `<span class="u2c-mission-reward">特別報酬 ${esc(reward)}</span>` : ''}${starsHtml(stars, false)}`
-              : '<span class="u2c-mission-lock">LOCKED</span>';
-            return `
-              <button type="button" class="u2c-mission" data-mission="${esc(mission.id)}" ${mUnlocked ? '' : 'disabled'}>
-                <span class="u2c-mission-code">${missionCode(mission)}</span>
-                <span class="u2c-mission-name">${esc(mission.title)}<small>${esc(mission.subtitle)}</small></span>
-                <span class="u2c-mission-tail">${tail}</span>
-              </button>`;
-          })
-          .join('')
-      : '';
+    const rows = chapter.missions
+      .map((mission) => {
+        const best = camp.missionBests[mission.id];
+        const stars = best ? best.stars : 0;
+        const reward = missionRewardLabel(mission.rewardId);
+        // 報酬バッジ有無でbuttonの子要素数が3/4にブレるとGrid暗黙配置で★列がズレるため、
+        // 常に単一のtail要素へ包んでbuttonの子を3つ(code/name/tail)に固定する
+        const tail = `${reward ? `<span class="u2c-mission-reward">特別報酬 ${esc(reward)}</span>` : ''}${starsHtml(stars, false)}`;
+        return `
+          <button type="button" class="u2c-mission" data-mission="${esc(mission.id)}">
+            <span class="u2c-mission-code">${missionCode(mission)}</span>
+            <span class="u2c-mission-name">${esc(mission.title)}<small>${esc(mission.subtitle)}</small></span>
+            <span class="u2c-mission-tail">${tail}</span>
+          </button>`;
+      })
+      .join('');
     return `
-      <section class="u2c-chapter${unlocked ? '' : ' locked'}" style="--i:${ci}">
+      <section class="u2c-chapter" style="--i:${ci}">
         <div class="u2c-chapter-head">
           <span class="u2c-chapter-no">${esc(chapter.id.toUpperCase())}</span>
           <span class="u2c-chapter-title">${esc(chapter.title)}</span>
-          <span class="u2c-chapter-sub">${unlocked ? esc(chapter.subtitle) : '機密 — 前章の制圧で解放'}</span>
+          <span class="u2c-chapter-sub">${esc(chapter.subtitle)}</span>
           <span class="u2c-chapter-prog"><b>${chClear}</b>/${chapter.missions.length}
             <span class="u2c-growbar"><i style="transform:scaleX(${(chClear / Math.max(1, chapter.missions.length)).toFixed(3)})"></i></span>
           </span>
         </div>
-        ${unlocked ? `<div class="u2c-missions">${rows}</div>` : ''}
+        <div class="u2c-missions">${rows}</div>
       </section>`;
   }).join('');
 

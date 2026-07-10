@@ -767,6 +767,38 @@ function camoPatternGLSL(v: CamoVisual): string {
   }
 }
 
+// R55: ダイヤ迷彩「超ギラギラ」強化(sparkle>0のカモのみ。他カモは分岐ごと省略されコスト0)。
+// (1) 面ごとの疑似法線擾乱(高周波セルノイズでnormalを僅かに傾け、envMap/直接光の
+//     スペキュラハイライトが面ごとに散る=微細ファセットの煌めき。法線マップ非使用)。
+// (2) 視野角フレネル項で虹色(iridescence風)を薄く加算 + 疎らな高輝度グリッター点。
+//     いずれも totalEmissiveRadiance への加算(乗算diffuseへは触れない)なので
+//     emissiveIntensity(≤0.5の白飛び鉄則)とは別枠 — 加算量はfresnel/step/sparkleで
+//     絞り込み、bloom閾値0.9を超えないよう控えめな係数に留める。
+function camoSparkleNormalGLSL(sparkle: number): string {
+  const jitter = (sparkle * 0.35).toFixed(3);
+  return `
+{
+  vec3 nCell = floor(vCamoPos * 340.0);
+  vec3 nJit = vec3(camoHash(nCell), camoHash(nCell + 91.7), camoHash(nCell + 183.1)) - 0.5;
+  normal = normalize(normal + nJit * ${jitter});
+}`;
+}
+function camoSparkleEmissiveGLSL(sparkle: number): string {
+  const iridAmt = (sparkle * 0.30).toFixed(3);
+  const glitAmt = (sparkle * 0.30).toFixed(3);
+  return `
+{
+  vec3 camoViewDir = normalize(vViewPosition);
+  float camoNdv = clamp(dot(normal, camoViewDir), 0.0, 1.0);
+  float camoFres = pow(1.0 - camoNdv, 3.0);
+  vec3 camoIrid = 0.5 + 0.5 * cos(6.2832 * (vec3(0.0, 0.33, 0.67) + camoFres * 1.4 + uCamoTime * 0.06));
+  vec3 camoGlitCell = floor(vCamoPos * 900.0);
+  float camoGlit = step(0.986, camoHash(camoGlitCell + 7.0));
+  camoGlit *= 0.5 + 0.5 * sin(uCamoTime * 3.0 + camoHash(camoGlitCell) * 6.2832);
+  totalEmissiveRadiance += camoIrid * camoFres * ${iridAmt} + vec3(1.0) * camoGlit * camoNdv * ${glitAmt};
+}`;
+}
+
 // 頂点カラーで焼いた擬似AO(下暗上明)を保ったままアルベドをカモ柄へ差し替える。
 // 位置は銃ローカル(vCamoPos)なので柄は武器に固定され、決定論で再現される。
 function camoShaderPatch(
@@ -774,6 +806,7 @@ function camoShaderPatch(
   v: CamoVisual,
 ): void {
   shader.uniforms.uCamoTime = CAMO_TIME;
+  const sparkle = v.sparkle ?? 0;
   shader.vertexShader = shader.vertexShader
     .replace('#include <common>', '#include <common>\nvarying vec3 vCamoPos;')
     .replace('#include <begin_vertex>', '#include <begin_vertex>\nvCamoPos = position;');
@@ -814,9 +847,15 @@ ${camoPatternGLSL(v)}
 }`,
     )
     .replace(
+      '#include <normal_fragment_maps>',
+      sparkle > 0
+        ? `#include <normal_fragment_maps>\n${camoSparkleNormalGLSL(sparkle)}`
+        : '#include <normal_fragment_maps>',
+    )
+    .replace(
       '#include <emissivemap_fragment>',
       `#include <emissivemap_fragment>
-totalEmissiveRadiance *= camoEmissiveMul;`,
+totalEmissiveRadiance *= camoEmissiveMul;${sparkle > 0 ? camoSparkleEmissiveGLSL(sparkle) : ''}`,
     );
 }
 
@@ -836,6 +875,9 @@ export class CamoStandardMaterial extends THREE.MeshStandardMaterial {
     this.roughness = visual.roughness;
     this.emissive = new THREE.Color(visual.emissive);
     this.emissiveIntensity = visual.emissiveIntensity;
+    // R55: diamond等の「鏡面ギラつき」カモのみ envMapIntensity を引き上げる。未指定なら
+    // base(metalVC, 0.3)からの継承をそのまま使う=他の全カモは無変更
+    if (visual.envMapIntensity !== undefined) this.envMapIntensity = visual.envMapIntensity;
     this.onBeforeCompile = (shader) => camoShaderPatch(shader, visual);
   }
 
@@ -2771,6 +2813,88 @@ function getKatanaVeinMat(): THREE.MeshBasicMaterial {
   return katanaVeinMat;
 }
 
+// R55根治(ユーザー報告「黒雷帝/雷帝の刀の周りの雷がダサい直線二本」):
+// 雷帝/黒雷帝の刀身沿い電気ライン(_buildLightningBladeMeshes)・白芯雷脈(_addKatanaVeins)は
+// いずれも「刀身に沿う直線(BoxGeometry/PlaneGeometry)を2-3本並べる」実装で、本当にただの
+// まっすぐな棒にしか見えなかった(R51/R52で稲妻ジグザグ化したのは別系統の5本TubeGeometry
+// アーク_buildLightningArcMeshesであり、しかもkokuraitei中はdarkMode優先でその5本は非表示
+// になる=常時見えていたのはこの直線の方だった)。
+// 以下はランダムウォーク+両端テーパーで「不規則に折れ曲がり、付け根/切先で自然に収束する」
+// 稲妻/脈の中心線を作る共通ヘルパー(交互+/-のジグザグではなく累積ランダムウォークなので
+// 構造的に左右非対称になる)。z軸に沿った3D中心線(電気アーク/白芯雷脈=TubeGeometry用)と、
+// ローカルXY平面のみの2D中心線(ビルボード稲妻リボン用)の双方から使う。
+function buildZigzagCenterline(
+  zStart: number, zEnd: number, baseX: number, baseY: number,
+  ampX: number, ampY: number, segs: number,
+): THREE.Vector3[] {
+  const pts: THREE.Vector3[] = [];
+  let driftX = 0;
+  let driftY = 0;
+  for (let s = 0; s <= segs; s += 1) {
+    const t = s / segs;
+    const taper = Math.sin(Math.PI * t); // 付け根(t=0)/切先(t=1)で0へ収束
+    driftX = THREE.MathUtils.clamp(driftX + (Math.random() - 0.5) * ampX, -ampX, ampX);
+    driftY = THREE.MathUtils.clamp(driftY + (Math.random() - 0.5) * ampY, -ampY, ampY);
+    pts.push(new THREE.Vector3(
+      baseX + driftX * taper,
+      baseY + driftY * taper,
+      THREE.MathUtils.lerp(zStart, zEnd, t),
+    ));
+  }
+  return pts;
+}
+
+// 3D折れ線点列 → 直線(LineCurve3)連結の CurvePath から極細 TubeGeometry を生成する
+// (CatmullRomではなく折れの効いた稲妻/脈の見た目にするための共通処理)。
+function zigzagPointsToTube(pts: THREE.Vector3[], radius: number, radialSegments = 3): THREE.TubeGeometry {
+  const path = new THREE.CurvePath<THREE.Vector3>();
+  for (let s = 0; s < pts.length - 1; s += 1) {
+    const a = pts[s];
+    const b = pts[s + 1];
+    if (a && b) path.add(new THREE.LineCurve3(a, b));
+  }
+  return new THREE.TubeGeometry(path, Math.max(1, pts.length - 1), radius, radialSegments, false);
+}
+
+// カメラ正対ビルボード上の稲妻リボン(2D)を生成する。ローカルXY平面内で
+// ランダムウォーク+両端テーパーの中心線を作り、その両側へ厚み分オフセットした
+// 三角ストリップを張る。onBeforeRenderでメッシュ全体をカメラへ正対させれば、
+// 平面内に描いたジグザグ形状はそのまま画面上でジグザグに見える(=「棒状ノイズ根治の
+// ビルボード」という既存手法を維持したまま、直線ではなく稲妻の形そのものを作れる)。
+function buildBoltRibbonGeometry(length: number, thickness: number, segs: number): THREE.BufferGeometry {
+  const half = length / 2;
+  const amp = length * (0.05 + Math.random() * 0.05); // 稲妻: 中心線からの振れ幅
+  const centerline = buildZigzagCenterline(-half, half, 0, 0, 0, amp, segs)
+    .map((p) => ({ x: p.z, y: p.y })); // z成分をリボンの長さ軸(ローカルX相当)として使い回す
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const w = thickness / 2;
+  for (let i = 0; i < centerline.length; i += 1) {
+    const p = centerline[i]!;
+    const prev = centerline[Math.max(0, i - 1)]!;
+    const next = centerline[Math.min(centerline.length - 1, i + 1)]!;
+    const dx = next.x - prev.x;
+    const dy = next.y - prev.y;
+    const invLen = 1 / (Math.hypot(dx, dy) || 1);
+    const nx = -dy * invLen;
+    const ny = dx * invLen;
+    positions.push(p.x + nx * w, p.y + ny * w, 0);
+    positions.push(p.x - nx * w, p.y - ny * w, 0);
+  }
+  for (let i = 0; i < segs; i += 1) {
+    const a = i * 2;
+    const b = i * 2 + 1;
+    const c = (i + 1) * 2;
+    const d = (i + 1) * 2 + 1;
+    indices.push(a, b, c, b, d, c);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
 // カメラ直付けの一人称武器モデル。procedural な銃本体に一人称腕を足し、
 // スウェイ・ボブ・リコイルキック・リロードを手続きで動かす。
 export class ViewModel {
@@ -4114,8 +4238,12 @@ export class ViewModel {
     }
   }
 
-  // 白芯雷脈本体: 刀身に沿う極細の白青ライン2本(僅かな傾き差で「脈」の揺らぎを示す)。
-  // 共有マテリアル(userData.shared=true)なので個体/オーバーレイのdispose経路で保護される。
+  // 白芯雷脈本体: 刀身に沿う極細の白青ライン2本(「脈」の揺らぎを示す)。
+  // R55根治: 旧実装はBoxGeometryの完全な直線2本(僅かな傾き差のみ)で「直線二本」に
+  // 見えていた。ランダムウォーク+両端テーパーの折れ線TubeGeometryに変え、刀身に
+  // 沿って自然にうねる血管状の脈にする(振幅は稲妻アークよりずっと小さく=脈らしい
+  // 微細な揺らぎに留める)。共有マテリアル(userData.shared=true)なので
+  // 個体/オーバーレイのdispose経路で保護される。
   private _addKatanaVeins(bladeGroup: THREE.Group, isDark: boolean): void {
     const veins = new THREE.Group();
     veins.name = 'vm:katanaVeins';
@@ -4123,13 +4251,16 @@ export class ViewModel {
     const len = isDark ? 0.86 : 0.30;
     const cz = isDark ? -0.62 : -0.34;
     const y = isDark ? 0.012 : 0.008;
+    const mat = getKatanaVeinMat();
     for (let i = 0; i < 2; i += 1) {
-      const vein = new THREE.Mesh(
-        new THREE.BoxGeometry(0.0035, 0.0015, len * (1 - i * 0.18)),
-        getKatanaVeinMat(),
-      );
-      vein.position.set((i === 0 ? 0.006 : -0.005), y + i * 0.006, cz + i * 0.03);
-      vein.rotation.x = (i === 0 ? 1 : -1) * 0.015; // 微傾差=雷脈の揺らぎ
+      const segLen = len * (1 - i * 0.18);
+      const half = segLen / 2;
+      const baseX = i === 0 ? 0.006 : -0.005;
+      const baseY = y + i * 0.006;
+      const ampX = segLen * 0.012; // 脈の揺らぎ: 稲妻より小振幅
+      const ampY = segLen * 0.008;
+      const pts = buildZigzagCenterline(cz - half, cz + half, baseX, baseY, ampX, ampY, 6);
+      const vein = new THREE.Mesh(zigzagPointsToTube(pts, 0.0016), mat);
       vein.renderOrder = 9;
       veins.add(vein);
     }
@@ -4186,12 +4317,31 @@ export class ViewModel {
     mesh.visible = opacity > 0;
   }
 
+  // R55根治(ユーザー報告「黒雷帝/雷帝の刀の周りの雷がダサい直線二本で超変」):
+  // 旧実装は PlaneGeometry(0.90×0.005) の完全な直線ビルボードを3枚、刀の実寸を無視した
+  // 固定位置(z=-0.63・全長0.90)に貼っていた。小刀(雷刀, 実長0.30m)の場合は切先(-0.504)
+  // をはるかに超えて浮いた直線になり、黒刀(1.4m大太刀)でもただの真っすぐな棒にしか
+  // 見えなかった(稲妻ジグザグ化されていた_buildLightningArcMeshesの5本は別系統かつ
+  // kokuraitei中はdarkMode優先で非表示になるため、常時見えていたのはこちらの直線だった)。
+  // 今回: (1) 表示中の刀身実寸(darkMode=黒刀0.86m/通常=雷刀0.30m。白芯雷脈と同じ実測値)
+  // に長さ・中心zを追従させ「浮き」を解消、(2) buildBoltRibbonGeometry のランダムウォーク
+  // 折れ線ビルボードへ差し替え、直線ではなく不規則な稲妻ジグザグにする(ビルボードは
+  // カメラへ正対する平面内に形状を描くため、稲妻ジグザグはそのまま平面内の形として維持
+  // され「棒状ノイズ根治」のビルボード手法とも両立する)。
   private _buildLightningBladeMeshes(kunai: THREE.Object3D, isKokuraitei: boolean): void {
     const group = new THREE.Group();
     group.name = 'vm:lightningBlade';
-    const makeArcLine = (color: number, opacity: number, posY: number, _h: number): THREE.Mesh => {
-      // PlaneGeometry + onBeforeRender ビルボードで棒状ノイズを根治する
-      const geo = new THREE.PlaneGeometry(0.90, 0.005);
+    // darkMode中は黒刀(vm:darkBlade, 全長0.86m実効/中心z-0.62)が表示中の刀身、
+    // それ以外は雷刀=小刀(全長0.30m/中心z-0.34)が表示中の刀身(白芯雷脈と同じ実測値)。
+    const bladeLen = this._darkMode ? 0.86 : 0.30;
+    const bladeCenterZ = this._darkMode ? -0.62 : -0.34;
+    const makeArcLine = (color: number, opacity: number, posY: number): THREE.Mesh => {
+      // 刀身長の78-95%をカバーする範囲でランダム化した稲妻リボン(3本が同一形状に
+      // ならないようにする)。onBeforeRender ビルボードで常にカメラへ正対
+      const len = bladeLen * (0.78 + Math.random() * 0.17);
+      const thickness = 0.006 + Math.random() * 0.004;
+      const segs = 9 + Math.floor(Math.random() * 4); // 9-12分割の折れ線稲妻
+      const geo = buildBoltRibbonGeometry(len, thickness, segs);
       const mat = new THREE.MeshBasicMaterial({
         color,
         transparent: true,
@@ -4203,7 +4353,7 @@ export class ViewModel {
       mat.userData.shared = false;
       mat.userData.isArcLine = true;
       const arcMesh = new THREE.Mesh(geo, mat);
-      arcMesh.position.set(0, posY, -0.63);
+      arcMesh.position.set(0, posY, bladeCenterZ);
       arcMesh.renderOrder = 8;
       arcMesh.onBeforeRender = (_r2, _s2, cam): void => {
         cam.getWorldQuaternion(_bbCamQ);
@@ -4218,18 +4368,18 @@ export class ViewModel {
       return arcMesh;
     };
     if (isKokuraitei) {
-      group.add(makeArcLine(0x7700cc, 0.55, -0.028, 0.003));
-      group.add(makeArcLine(0x5500aa, 0.40, -0.027, 0.004));
-      group.add(makeArcLine(0x88aaff, 0.35, 0.034, 0.003));
+      group.add(makeArcLine(0x7700cc, 0.55, -0.030));
+      group.add(makeArcLine(0x5500aa, 0.40, -0.020));
+      group.add(makeArcLine(0x88aaff, 0.35, 0.034));
     } else if (this._kuroganeStyleOn) {
       // R54-F8' E5: クロガネ套装 — 赤亀裂ライン(氷青の代替、輝度は同等以下)
-      group.add(makeArcLine(0xdd2233, 0.60, -0.028, 0.003));
-      group.add(makeArcLine(0xff5544, 0.40, -0.027, 0.002));
-      group.add(makeArcLine(0xcc1122, 0.35, 0.034, 0.003));
+      group.add(makeArcLine(0xdd2233, 0.60, -0.030));
+      group.add(makeArcLine(0xff5544, 0.40, -0.020));
+      group.add(makeArcLine(0xcc1122, 0.35, 0.034));
     } else {
-      group.add(makeArcLine(0x88ddff, 0.60, -0.028, 0.003));
-      group.add(makeArcLine(0xaaeeff, 0.45, -0.027, 0.002));
-      group.add(makeArcLine(0x66ccff, 0.35, 0.034, 0.003));
+      group.add(makeArcLine(0x88ddff, 0.60, -0.030));
+      group.add(makeArcLine(0xaaeeff, 0.45, -0.020));
+      group.add(makeArcLine(0x66ccff, 0.35, 0.034));
     }
     // R53 恒久報酬: 雷脈が解放済みなら雷刀にも白芯ラインを乗せる
     if (this._katanaVeinsOn) this._addKatanaVeins(group, false);

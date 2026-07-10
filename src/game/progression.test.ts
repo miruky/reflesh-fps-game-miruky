@@ -355,11 +355,17 @@ describe('キャンペーン進行', () => {
   const m1 = ch1.missions[0]!;
   const m2 = ch1.missions[1]!;
 
-  it('新規プロフィールはch1の第1ミッションのみ解放', () => {
+  // R55: ★(スター)獲得や「前章を全制圧しないと次章に触れない」というゲートはユーザー要望
+  // (「★を取らないとストーリー解放されないシステムを廃止してください。面倒なので」)により撤廃。
+  // 新規プロフィールでも全章・全ミッションが最初から選択可能(旧: ch1の第1ミッションのみ解放)。
+  it('新規プロフィールでも全章・全ミッションが最初から選択可能(★/前章制圧ゲート撤廃)', () => {
     const p = emptyProfile();
     expect(isMissionUnlocked(p, m1.id)).toBe(true);
-    expect(isMissionUnlocked(p, m2.id)).toBe(false);
-    expect(isMissionUnlocked(p, CAMPAIGN[1]!.missions[0]!.id)).toBe(false);
+    expect(isMissionUnlocked(p, m2.id)).toBe(true);
+    expect(isMissionUnlocked(p, CAMPAIGN[1]!.missions[0]!.id)).toBe(true);
+    expect(isMissionUnlocked(p, CAMPAIGN[CAMPAIGN.length - 1]!.missions[0]!.id)).toBe(true);
+    // 実在しないmissionIdだけはfalse(存在チェックとしては維持)
+    expect(isMissionUnlocked(p, 'not-a-real-mission-id')).toBe(false);
   });
 
   it('初クリアで記録追加+初制圧ボーナス、再クリアは重複なし', () => {
@@ -368,13 +374,16 @@ describe('キャンペーン進行', () => {
     expect(first.firstClear).toBe(true);
     expect(p.campaign.clearedMissions).toContain(m1.id);
     expect(first.xpBreakdown.some((e) => e.label === '初制圧ボーナス')).toBe(true);
-    expect(isMissionUnlocked(p, m2.id)).toBe(true); // 次が解放
+    expect(isMissionUnlocked(p, m2.id)).toBe(true); // ゲート撤廃済みなのでクリア前後を問わず常に解放
     const again = applyCampaignMission(p, missionSummary(m1.id, ch1.id, true, 40));
     expect(again.firstClear).toBe(false);
     expect(p.campaign.clearedMissions.filter((x) => x === m1.id)).toHaveLength(1);
   });
 
-  it('章を全クリアすると次章が解放される', () => {
+  // R55: 章の全クリアで次章がunlockedChaptersへ積まれる内部簿記自体は維持する(結果画面の
+  // 「新章解放!」演出/報酬カモ判定=chapterFullyClearedが引き続き使う)。ただしisMissionUnlocked
+  // はこの配列を見なくなったため、この状態はもはやミッションへのアクセス可否を左右しない。
+  it('章を全クリアすると次章がunlockedChaptersへ積まれる(アクセス制御には使われない内部簿記)', () => {
     const p = emptyProfile();
     for (const m of ch1.missions) {
       applyCampaignMission(p, missionSummary(m.id, ch1.id, true, 30));

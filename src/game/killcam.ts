@@ -70,6 +70,36 @@ export function ckCamPos(
   return new THREE.Vector3(ax + perpX * d, ay + height, az + perpZ * d);
 }
 
+// ── R55 ④: ラストキルカム一人称化 ────────────────────────────────────────
+/** fkFirstPersonCam の戻り値(カメラ姿勢の純データ)。THREE.Camera へは呼び出し側が適用する。 */
+export interface FkFirstPersonPose {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly rotY: number; // yaw
+  readonly rotX: number; // pitch
+  readonly rotZ: number; // 常に0(微小leanは無視でよい設計合意)
+  readonly fov: number;
+}
+
+/**
+ * 一人称ファイナルキルカム用カメラ姿勢(純粋関数)。録画済みの眼位置/yaw/pitch/実効FOVを、
+ * ゲーム通常カメラの規約(rotation.order='YXZ', position=eye, rotation.y=yaw, rotation.x=pitch,
+ * rotation.z=0, fov=実効fov — match.ts syncCamera の通常分岐と同一)でそのまま返す。
+ * 録画値の忠実な再現のみを行い、ckFovAt 等の演出的な人工ランプは一切加えない
+ * (「プレイヤーが見ていた画そのもの」を再現するため=クロスヘアは必ず被害者に乗る)。
+ */
+export function fkFirstPersonCam(
+  eyeX: number,
+  eyeY: number,
+  eyeZ: number,
+  yaw: number,
+  pitch: number,
+  fov: number,
+): FkFirstPersonPose {
+  return { x: eyeX, y: eyeY, z: eyeZ, rotY: yaw, rotX: pitch, rotZ: 0, fov };
+}
+
 /**
  * シネマティックキルカム再生速度ランプ(純粋関数)。
  * キル -0.4s から急減速 → 0.2× ホールド → キル後 0.6s から復帰。
@@ -162,6 +192,12 @@ export interface KillcamDeps {
   tracer(from: THREE.Vector3, to: THREE.Vector3, color: number): void;
   /** rayOrg→toMid方向distまでに boundary 以外の遮蔽があるか(壁チェック)。 */
   blockedToMid(rayOrg: THREE.Vector3, toMid: THREE.Vector3, dist: number): boolean;
+  /**
+   * R55 ④: 武器viewmodel(カメラ子)の可視状態を切り替える。一人称キルカム(killer=プレイヤー)
+   * 中は表示、三人称シネマ(killer=bot)中は非表示(viewModelはカメラの子のため、三人称の
+   * カメラ位置に銃が浮いて映るのを防ぐ)。begin()で分岐設定し、再生終了/dispose で復元する。
+   */
+  setViewmodelVisible(v: boolean): void;
 }
 
 export { FK_WIN_POST };
@@ -203,6 +239,11 @@ export class KillcamController {
   /** 再生中か(スナップショットの fkCinematicActive)。 */
   get playing(): boolean {
     return this.fkPlaying;
+  }
+
+  /** R55 ④: 現在(直近)の再生が一人称か(killer=プレイヤー)。hud2のクロスヘア表示制御に使う。 */
+  get firstPerson(): boolean {
+    return this.fkKillerIsPlayer;
   }
 
   /** 最終キルのゲーム時刻(-Infinity=未発生)。trailing window 判定に使う。 */
@@ -277,6 +318,18 @@ export class KillcamController {
     this._ckHitSoundPlayed = false;
     this._ckFreezeLeft = 0;
     this.fkDisposePlayerAvatar();
+
+    // R55 ④: killer=プレイヤーのときは一人称(fkSetCamera が毎フレーム録画値から直接
+    // カメラ姿勢を組む)。三人称基底(ckCamPos/ドリー方向/壁チェック)とアバター生成は
+    // 一切不要なためスキップし、武器viewmodelを表示して即 return する。
+    if (this.fkKillerIsPlayer) {
+      this.deps.getCamera().rotation.order = 'YXZ';
+      this.deps.setViewmodelVisible(true);
+      this.fkPlaying = true;
+      return;
+    }
+    this.deps.setViewmodelVisible(false);
+
     // キラー/ビクティム位置を初期フレームから取得してカメラ基底を計算する
     const [iA0, iB0, t0] = this.fkFindFrames(this.fkCursor);
     if (iA0 >= 0) {
@@ -340,7 +393,8 @@ export class KillcamController {
       this._ckCamBase.set(0, CK_HEIGHT, 10);
       this._ckDollyDir.set(0, 0, 1);
     }
-    // プレイヤーアバター(三人称: killerがプレイヤーのとき表示)
+    // プレイヤーアバター(三人称=killerがbotのときのみ到達。victimは常にプレイヤー — R55 ④で
+    // killer=プレイヤーの一人称パスは上の early-return へ分離済み)
     this.fkAvatarGroup = this.fkCreatePlayerAvatar();
     this.fkAvatarGroup.visible = false;
     this.deps.getScene().add(this.fkAvatarGroup);
@@ -449,6 +503,7 @@ export class KillcamController {
     if (cursor >= this.fkWinEnd) {
       this.fkPlaying = false;
       this.fkDisposePlayerAvatar();
+      this.deps.setViewmodelVisible(true); // R55 ④: 一人称/三人称どちらでも通常表示へ復元
       return true;
     }
     const [iA, iB, t] = this.fkFindFrames(cursor);
@@ -554,9 +609,44 @@ export class KillcamController {
     }
   }
 
+  /**
+   * R55 ④: 一人称ファイナルキルカムのカメラ姿勢適用(killer=プレイヤーのときのみ)。
+   * 録画済みの眼位置/yaw/pitch/実効FOVを fkFirstPersonCam(純粋関数)へ渡し、その戻り値を
+   * そのままカメラへ適用する。lookAt は使わない(rotation直接=通常カメラ規約と同一)。
+   */
+  private fkSetCameraFirstPerson(offA: number, offB: number, t: number): void {
+    const eyeX = this.fkBuf[offA]!     + (this.fkBuf[offB]!     - this.fkBuf[offA]!)     * t;
+    const eyeY = this.fkBuf[offA + 1]! + (this.fkBuf[offB + 1]! - this.fkBuf[offA + 1]!) * t;
+    const eyeZ = this.fkBuf[offA + 2]! + (this.fkBuf[offB + 2]! - this.fkBuf[offA + 2]!) * t;
+    const ya = this.fkBuf[offA + 3]!; const yb = this.fkBuf[offB + 3]!;
+    let yd = yb - ya;
+    if (yd >  Math.PI) yd -= Math.PI * 2;
+    if (yd < -Math.PI) yd += Math.PI * 2;
+    const yaw   = ya + yd * t;
+    const pitch = this.fkBuf[offA + 4]! + (this.fkBuf[offB + 4]! - this.fkBuf[offA + 4]!) * t;
+    const fov   = this.fkBuf[offA + 7]! + (this.fkBuf[offB + 7]! - this.fkBuf[offA + 7]!) * t;
+    const pose = fkFirstPersonCam(eyeX, eyeY, eyeZ, yaw, pitch, fov);
+    const camera = this.deps.getCamera();
+    camera.rotation.order = 'YXZ';
+    camera.position.set(pose.x, pose.y, pose.z);
+    camera.rotation.y = pose.rotY;
+    camera.rotation.x = pose.rotX;
+    camera.rotation.z = pose.rotZ;
+    if (Math.abs(camera.fov - pose.fov) > 0.01) {
+      camera.fov = pose.fov;
+      camera.updateProjectionMatrix();
+    }
+  }
+
   private fkSetCamera(iA: number, iB: number, t: number): void {
     const offA = iA * FK_FRAME_STRIDE;
     const offB = iB * FK_FRAME_STRIDE;
+
+    // R55 ④: killer=プレイヤーは一人称専用パスへ(以下の三人称シネマ計算は bot killer 専用)
+    if (this.fkKillerIsPlayer) {
+      this.fkSetCameraFirstPerson(offA, offB, t);
+      return;
+    }
     const cursor = this.fkCursor;
 
     // ── キラー位置を補間 ──
@@ -673,5 +763,6 @@ export class KillcamController {
   /** アバター等の解放(Match.dispose から)。 */
   dispose(): void {
     this.fkDisposePlayerAvatar();
+    this.deps.setViewmodelVisible(true); // R55 ④: 一人称キルカム中の非表示上書きを復元
   }
 }

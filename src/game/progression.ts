@@ -1016,15 +1016,16 @@ export function nextChapterId(chapterId: string): string | null {
   return CAMPAIGN[i + 1]!.id;
 }
 
-// ミッションが選択可能か: 所属章が解放済み かつ (先頭 or 直前ミッションがクリア済み)
+// R55: ★(スター)獲得や「前章を全制圧しないと次章が触れない」というゲートはユーザー要望
+// (「★を取らないとストーリー解放されないシステムを廃止してください。面倒なので」)により撤廃。
+// 全章・全ミッションを最初から自由に選択できる — ここは missionId が実在するかどうかの
+// 存在チェックのみを行う純関数へ縮退した。profile引数は ui2/ui1 双方の既存呼び出し規約
+// (isMissionUnlocked(profile, missionId))との互換のために残す(将来ミッション単位の個別
+// ロックを復活させたくなった場合の拡張点)。★自体は任意の実績評価として引き続き記録・表示
+// する(starRate/missionBests/progression結果画面は無改変)。
 export function isMissionUnlocked(profile: Profile, missionId: string): boolean {
-  const m = missionById(missionId);
-  if (!m) return false;
-  if (!profile.campaign.unlockedChapters.includes(m.chapterId)) return false;
-  if (m.index === 0) return true;
-  const ch = CAMPAIGN.find((c) => c.id === m.chapterId);
-  const prev = ch?.missions[m.index - 1];
-  return prev ? profile.campaign.clearedMissions.includes(prev.id) : true;
+  void profile;
+  return missionById(missionId) !== null;
 }
 
 const SCORE_RECORD_CAP = 64; // localStorage肥大化を防ぐ件数上限

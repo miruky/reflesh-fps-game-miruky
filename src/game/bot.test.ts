@@ -811,6 +811,8 @@ describe('Bot blinkTo(R53-W2 ボス演出: 即時転移)', () => {
       unstuckSteerS: number;
       unstuckStrafeOverride: number | null;
       climbing: boolean;
+      zombieUnstuckAttempts: number;
+      hardStuckS: number;
     };
     internal.prevZombieMoved.x = 5;
     internal.prevZombieMoved.y = -1;
@@ -823,6 +825,8 @@ describe('Bot blinkTo(R53-W2 ボス演出: 即時転移)', () => {
     internal.unstuckSteerS = 0.5;
     internal.unstuckStrafeOverride = 1;
     internal.climbing = true;
+    internal.zombieUnstuckAttempts = 3;
+    internal.hardStuckS = 7; // R55: zombieHardStuck=trueの状態から転移した想定
 
     fixture.bot.blinkTo(0, 0, 0);
 
@@ -833,6 +837,148 @@ describe('Bot blinkTo(R53-W2 ボス演出: 即時転移)', () => {
     expect(internal.unstuckSteerS).toBe(0);
     expect(internal.unstuckStrafeOverride).toBeNull();
     expect(internal.climbing).toBe(false);
+    expect(internal.zombieUnstuckAttempts).toBe(0);
+    expect(internal.hardStuckS).toBe(0);
+    // R55: リセット後は救済対象フラグも即falseへ戻る(無限再テレポートループ防止)
+    expect(fixture.bot.zombieHardStuck).toBe(false);
+    expect(fixture.bot.zombieHardStuckForce).toBe(false);
+  });
+});
+
+// R55 ⑧: ゾンビがプロップ/障害物に挟まって永久に停止し「倒せずラウンドが変わらない」
+// バグの最終安全弁。stuckTimer/unstuckSteerS(短周期の迂回試行)とは独立に、実位置の
+// ドリフトを1s間隔でサンプリングし、5秒以上「本当に前進できていない」個体を
+// zombieHardStuck、9秒以上を zombieHardStuckForce として立てる(zombie-director側が
+// これを読んでテレポート救済する。配線テストは zombie-director-audio-wiring.test.ts 系の
+// フィクスチャを流用する専用ファイルを参照)。
+describe('Bot ゾンビ zombieHardStuck/zombieHardStuckForce(R55 ⑧ 最終安全弁のしきい値契約)', () => {
+  it('hardStuckSが5s未満ではzombieHardStuck=false、5s以上でtrueになる', () => {
+    const fixture = makeFixture();
+    const internal = fixture.bot as unknown as { hardStuckS: number };
+    internal.hardStuckS = 4.999;
+    expect(fixture.bot.zombieHardStuck).toBe(false);
+    internal.hardStuckS = 5;
+    expect(fixture.bot.zombieHardStuck).toBe(true);
+  });
+
+  it('hardStuckSが9s未満ではzombieHardStuckForce=false、9s以上でtrueになる', () => {
+    const fixture = makeFixture();
+    const internal = fixture.bot as unknown as { hardStuckS: number };
+    internal.hardStuckS = 8.999;
+    expect(fixture.bot.zombieHardStuck).toBe(true); // 5s閾値は既に超えている
+    expect(fixture.bot.zombieHardStuckForce).toBe(false);
+    internal.hardStuckS = 9;
+    expect(fixture.bot.zombieHardStuckForce).toBe(true);
+  });
+});
+
+describe('Bot ゾンビ hardStuckサンプリング(R55 ⑧: 実位置ドリフトの1s間隔検出)', () => {
+  // 完全に4方向を囲む箱(高さ6m=登坂上限2.4mより十分高く登坂でも越えられない・
+  // 内寸0.9m四方=カプセル半径0.35を差し引いても中心の可動域は最大±0.1m=対角でも
+  // 0.28m未満)に閉じ込める。迂回(横ステア)を試みても箱の中で跳ね返るだけで
+  // ZOMBIE_HARD_STUCK_MOVE_M(0.4m)を上回るサンプル間ドリフトを起こし得ないため、
+  // 「本当に前進できない個体」を物理シミュレーションで決定論的に再現できる。
+  function makeBoxedZombie(): { world: RAPIER.World; zombie: Bot } {
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    const floorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(50, 0.5, 50).setTranslation(0, -0.5, 0),
+      floorBody,
+    );
+    const wallsBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    // 前(-z, ターゲット方向)/後/左/右の4枚で完全に囲む。角に隙間が出ないよう厚みを重ねる
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(0.6, 3, 0.15).setTranslation(0, 3, -0.6),
+      wallsBody,
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(0.6, 3, 0.15).setTranslation(0, 3, 0.6),
+      wallsBody,
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(0.15, 3, 0.6).setTranslation(-0.6, 3, 0),
+      wallsBody,
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(0.15, 3, 0.6).setTranslation(0.6, 3, 0),
+      wallsBody,
+    );
+    const tuning = { ...DIFFICULTY.normal };
+    const zombie = new Bot(
+      world,
+      'ゾンビ',
+      new THREE.Vector3(0, 0, 0),
+      0x39d465,
+      tuning,
+      2,
+      'normal',
+      'zombie',
+    );
+    zombie.hordeRank = 0; // 先頭集団扱いでKCCを毎フレームフル解決させ、検知タイミングを決定論的にする
+    world.step();
+    return { world, zombie };
+  }
+
+  it('4方向を完全に囲まれ迂回しても抜けられないと、やがてzombieHardStuckが真になる', () => {
+    const { world, zombie } = makeBoxedZombie();
+    const ctx: BotContext = {
+      targetEye: new THREE.Vector3(0, 1.5, -10), // 箱の外。プレイヤーまでの距離はmeleeRangeより十分遠い
+      objective: null,
+      tuning: { ...DIFFICULTY.normal },
+      rand: () => 0.5,
+      onShoot: () => {},
+      onMelee: () => {},
+    };
+    const dt = 1 / 60;
+    // 登坂試行(最大2.5s)→クールダウン(1.2s)のサイクルを何周かカバーする余裕を持って
+    // 20s分シミュレートする(1200 step。物理計算のみで軽量、テスト時間への影響は無視できる)
+    let becameHardStuck = false;
+    for (let i = 0; i < 1200 && !becameHardStuck; i += 1) {
+      zombie.update(dt, ctx);
+      world.step();
+      if (zombie.zombieHardStuck) becameHardStuck = true;
+    }
+    expect(becameHardStuck).toBe(true);
+  });
+
+  it('近接交戦距離(meleeRange以内)では意図的低速を停滞と誤検知しない', () => {
+    const { world, zombie } = makeBoxedZombie();
+    const ctx: BotContext = {
+      // meleeRange(2.3m)未満の至近距離を維持
+      targetEye: new THREE.Vector3(0, 1.5, -1.2),
+      objective: null,
+      tuning: { ...DIFFICULTY.normal },
+      rand: () => 0.5,
+      onShoot: () => {},
+      onMelee: () => {},
+    };
+    const dt = 1 / 60;
+    for (let i = 0; i < 90; i += 1) {
+      zombie.update(dt, ctx);
+      world.step();
+    }
+    const hardStuckS = (zombie as unknown as { hardStuckS: number }).hardStuckS;
+    expect(hardStuckS).toBe(0);
+    expect(zombie.zombieHardStuck).toBe(false);
+  });
+
+  it('目標喪失中(徘徊)は停滞と誤検知しない', () => {
+    const { world, zombie } = makeBoxedZombie();
+    const ctx: BotContext = {
+      targetEye: null,
+      objective: null,
+      tuning: { ...DIFFICULTY.normal },
+      rand: () => 0.5,
+      onShoot: () => {},
+      onMelee: () => {},
+    };
+    const dt = 1 / 60;
+    for (let i = 0; i < 90; i += 1) {
+      zombie.update(dt, ctx);
+      world.step();
+    }
+    const hardStuckS = (zombie as unknown as { hardStuckS: number }).hardStuckS;
+    expect(hardStuckS).toBe(0);
   });
 });
 

@@ -492,6 +492,10 @@ const loop = new GameLoop(
           mode = 'finalkillcam';
           // R54-F7: シネマ帯バナー(最終キルの武器名+距離)を供給
           hud.showFinalKillcam(match.fkWeaponName, match.fkKillDistM);
+          // R55 ④: 一人称キルカム(killer=プレイヤー)かをHud2へ通知しクロスヘア表示を切替
+          // (classic hud.ts は三人称固定のため対象外。既存の showFinalKillcam/updateFinalKillcam
+          // 共有シグネチャは変更しない=Hud|Hud2ユニオン呼び出しの型互換を保つ)
+          if (hud instanceof Hud2) hud.setFinalKillcamFirstPerson(match.fkFirstPerson);
           letterboxEl.style.opacity = '1';
         } else {
           showResult();
@@ -581,3 +585,14 @@ const loop = new GameLoop(
   (dt) => input.pollGamepad(dt, gamepadCfg(settings)),
 );
 loop.start();
+
+// R55 ④ 実機目視用デバッグフック(本番無影響)。URLに ?fkdemo を付けて対戦中に devtools
+// コンソールで __fkDemo() を呼ぶと、直近の生存botをプレイヤーが倒したことにして試合を
+// 即座に終了させ、既存の over 検出経路でファイナルキルカム(一人称)を強制発火できる。
+// ?fkdemo が無ければ window.__fkDemo は一切登録されない(完全に無害)。
+if (new URLSearchParams(location.search).has('fkdemo')) {
+  (window as unknown as { __fkDemo?: () => boolean }).__fkDemo = () => {
+    if (mode !== 'playing' || !match) return false;
+    return match.debugForceFinalKill();
+  };
+}

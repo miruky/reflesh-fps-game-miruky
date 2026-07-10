@@ -2494,6 +2494,23 @@ export class Hud2 {
     this.fkcFlashEl.style.opacity = String(flash > 0.001 ? flash : 0);
   }
 
+  /**
+   * R55 ④: ファイナルキルカムが一人称(killer=プレイヤー)かを通知する。killcam開始直後に
+   * main.ts から一度だけ呼ばれる(Hud2限定 — classic hud.ts は三人称固定のまま対象外)。
+   * hud.update() は killcam 再生中呼ばれない(main.ts の二重update防止ゲート)ため、
+   * クロスヘアは直近の 'playing' フレームの状態で凍結される。一人称時は「きちんとエイム
+   * して当てた」ことを見せるため、画面中央のクロスヘアを明示的に可視化して固定する
+   * (ADSで消えていた/フェードしていた場合の上書きも兼ねる)。三人称時は何もしない
+   * (既存の凍結挙動を変えない)。
+   */
+  setFinalKillcamFirstPerson(firstPerson: boolean): void {
+    if (!firstPerson) return;
+    const crosshair = this.el['crosshair'];
+    if (!crosshair) return;
+    crosshair.style.opacity = '1';
+    crosshair.style.setProperty('--ads', '0');
+  }
+
   private updateZombieShopHud(snap: MatchSnapshot): void {
     const inZombie = snap.zombieRound !== undefined;
 

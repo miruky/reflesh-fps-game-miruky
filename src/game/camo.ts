@@ -427,6 +427,15 @@ export interface CamoVisual {
   roughness: number;
   emissive: number;
   emissiveIntensity: number;
+  // R55: 任意フィールド(既定なし=他カモは無変更)。指定した迷彩だけ挙動が変わる。
+  // envMapIntensity: IBL反射の強さ。未指定時は viewmodel 側の既定(近接Bloom回避の抑えめ値)
+  // を継承する。diamond のような「鏡面ギラつき」を狙うカモだけ引き上げる想定
+  envMapIntensity?: number;
+  // sparkle: 0-1。指定時のみ viewmodel が高周波の擬似法線擾乱(面ごとの微細ハイライト)+
+  // 視野角フレネルの虹色煌めき+疎らなグリッターを onBeforeCompile で焼き込む
+  // (法線マップ非使用・アセットレス。emissiveIntensity とは別枠の加算なので白飛び鉄則を
+  // 破らない範囲でこの値だけ大きくできる)。0/未指定なら完全に無コスト(分岐ごと省略)。
+  sparkle?: number;
 }
 
 export const CAMO_VISUALS: Record<CamoId, CamoVisual> = {
@@ -476,11 +485,15 @@ export const CAMO_VISUALS: Record<CamoId, CamoVisual> = {
     pattern: 'solid', scale: 10, metalness: 1.0, roughness: 0.24,
     emissive: 0x8a5f14, emissiveIntensity: 0.22,
   },
-  // ダイヤ = 氷青の結晶ノイズ + 強スペキュラ(低roughness)
+  // ダイヤ = 氷青の結晶ノイズ + ほぼ鏡面(高metalness/低roughness) + 強反射(envMapIntensity)
+  // + 面ごとの微細ファセット煌めき+虹色フレネル(sparkle。R55: 参照画像のような
+  // 「クロム/ダイヤ板が激しく反射する」超ギラギラ質感へ強化。gold=金属金/dark-matter=
+  // 宇宙脈動とは質感で差別化: diamond だけが鏡のような強反射+煌めきを持つ)
   diamond: {
-    id: 'diamond', colorA: 0xbfe4ff, colorB: 0x5da4e8, colorC: 0xf2faff,
-    pattern: 'facet', scale: 12, metalness: 0.85, roughness: 0.12,
-    emissive: 0x9fd0ff, emissiveIntensity: 0.25,
+    id: 'diamond', colorA: 0xd6f0ff, colorB: 0x4a90d9, colorC: 0xffffff,
+    pattern: 'facet', scale: 16, metalness: 0.95, roughness: 0.05,
+    emissive: 0xbfe4ff, emissiveIntensity: 0.3,
+    envMapIntensity: 1.8, sparkle: 0.8,
   },
   // ダークマター = 暗紫の脈動ノイズ(uTimeアニメ)
   'dark-matter': {

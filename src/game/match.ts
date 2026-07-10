@@ -1062,6 +1062,9 @@ export class Match {
       const hit = this.castRay(rayOrg, toMid, dist, null);
       return hit !== null && this.tags.get(hit.collider.handle)?.kind !== 'boundary';
     },
+    // R55 ④: 一人称キルカム(killer=プレイヤー)は武器を表示、三人称シネマ(killer=bot)は
+    // 非表示(viewModelはカメラの子のため、カメラが三人称位置へ動くと銃が浮いて映るのを防ぐ)
+    setViewmodelVisible: (v: boolean) => { this.viewModel.root.visible = v; },
   });
 
   constructor(
@@ -9423,6 +9426,33 @@ export class Match {
 
   get fkKillDistM(): number {
     return this.killcam.killDistM;
+  }
+
+  /** R55 ④: 直近のファイナルキルカムが一人称か(killer=プレイヤー)。
+   * main.ts が Hud2.setFinalKillcamFirstPerson へ渡し、クロスヘア表示を切り替える。 */
+  get fkFirstPerson(): boolean {
+    return this.killcam.firstPerson;
+  }
+
+  /**
+   * R55 ④ デバッグ専用フック: 直近の生存botをプレイヤーが倒したことにし、試合を即座に
+   * 終了させる(=最終キルカム一人称分岐の実機目視確認用)。本番の通常導線からは呼ばれない
+   * ── main.ts が URL に `?fkdemo` を含むときのみ window.__fkDemo() 経由で呼ぶ想定。
+   * ゾンビ/既にover/生存bot不在なら何もせず false を返す。
+   */
+  debugForceFinalKill(): boolean {
+    if (this.config.mode === 'zombie' || this.over) return false;
+    const victim = this.bots.find((b) => b.alive);
+    if (!victim) return false;
+    const distM = Math.round(
+      Math.hypot(
+        victim.position.x - this.player.position.x,
+        victim.position.z - this.player.position.z,
+      ),
+    );
+    this.killcam.noteKill(true, -1, this.bots.indexOf(victim), this.elapsed, this.activeWeapon.def.name, distM);
+    this.over = true;
+    return true;
   }
 
   /** R54-F7 フォトモード: ステージ一辺(m)。自由飛行カメラのAABBクランプ基準。 */
