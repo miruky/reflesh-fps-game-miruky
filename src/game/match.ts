@@ -5,8 +5,8 @@ import { Input } from '../core/input';
 import { mulberry32, type Rand } from '../core/rng';
 import { RADAR_RANGE_M, resolveGraphicsTier, type GraphicsQuality, type Settings } from '../core/settings';
 import { Effects } from '../render/effects';
-import { ViewModel, buildGunBody, CamoStandardMaterial } from '../render/viewmodel';
-import { ZombieCrowdRenderer, ZOMBIE_CROWD_INSTANCED } from '../render/zombie-crowd';
+import { ViewModel, CamoStandardMaterial } from '../render/viewmodel';
+import { ZombieDirector } from './zombie-director';
 import {
   ACQUIRE_CONE_DEG,
   adsSensScale,
@@ -61,7 +61,7 @@ import {
   type BotKind,
   type BotTier,
   type BotTuning,
-  type ZombieCrowdPose,
+  
 } from './bot';
 import type { BossPhase, EnemyWaveDef, MissionDef, ObjectiveDef, RadioLine, RadioSpeaker } from './campaign';
 import {
@@ -121,53 +121,39 @@ import {
 } from './modes';
 import { CAPSULE_RADIUS, Player } from './player';
 import {
-  ZOMBIE_MAX_ALIVE,
-  zombieEliteRate,
-  zombieHp,
-  zombieRunRate,
-  zombieTotal,
-  isBossRound,
-  zombieBossHp,
-  zombieBossSpeedMul,
-  zombieBossDamage,
-  specialRoundKind,
-  RUSH_HP_MUL,
-  RUSH_CLEAR_BONUS_PT,
-} from './zombie';
-import {
-  generateShopLayout,
-  purchasePerk,
-  buyResult,
-  rollMysteryBox,
-  canBuy,
-  composeZombieWeaponDef,
-  PERKS,
+  
+  
+  
+  
+  
+  
+  
   POINTS,
-  MYSTERY_BOX_COST,
-  PAP_COST,
-  PAP_REFILL_COST,
-  DOOR_COST,
+  
+  
+  
+  
   rollPowerUp,
   POWERUP_ROUND_CAP,
-  POWERUP_DURATION_S,
-  POWERUP_DESPAWN_S,
-  NUKE_BONUS_PT,
-  CARPENTER_BONUS_PT,
-  rollZombieVariant,
-  BLAST_RADIUS_M,
-  BLAST_DMG,
-  MIASMA_RADIUS_M,
-  MIASMA_DURATION_S,
-  MIASMA_DPS,
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   SHELL_FRONT_REDUCTION,
-  getCharmEffect,
-  type ShopLayout,
-  type ShopSlot,
+  
+  
+  
   type ZombiePerkId,
-  type PapTier,
-  type PowerUpKind,
-  type CharmEffect,
-  LAST_ZOMBIE_PERK_KEY,
+  
+  
+  
+  
 } from './zombie-economy';
 import { weaponIdByName, equippedCamoFor, CAMO_VISUALS } from './camo';
 import { loadProfile } from '../core/profile';
@@ -241,23 +227,23 @@ import {
   bowChargeMultiplier,
   fanPelletYaw,
   minigunNextRpm,
-  EXT_MAG_EXCLUDED_IDS,
-  PAP_CAMO_BY_TIER,
-  applyHellTuning,
-  papInteractSealed,
+  
+  
+  
+  
   ninjaHp300Eligible,
   permanentDarkEmperorEligible,
   instaKillApplies,
-  papTierAfterWallBuy,
+  
   applyHellTierTuning,
   emperorChargeStageFor,
-  isCrowdEligible,
-  crowdSlotAction,
+  
+  
   applyMissionDifficultyTuning,
   splitRadioLines,
   resolveNaturalBotKind,
   shadowLodFlags,
-  zombieHordeRanks,
+  
   refundRound,
   shurikenDiscLife,
 } from './match-helpers';
@@ -304,7 +290,6 @@ const MACRO_NOISE_GLSL = /* glsl */ `
 
 const DEG = Math.PI / 180;
 const EXOTIC_HOLD_FIRE_IDS = new Set(['banjin-smg', 'fujin-fan', 'gouen-musket', 'shinkirou-sniper']);
-const MIASMA_TICK_S = 0.5; // 毒雲DPSの離散ティック間隔(FIRE_TICK_Sと同じ流儀)
 const LOOK_BASE = 0.0022;
 // ゲームパッドのヒップファイア時アシストゲート(マウスはADS時のみ、パッドは常時BO3準拠)
 const HIP_GATE = 0.4;
@@ -326,13 +311,13 @@ const SHAKE_ROLL = 0.07;
 const ULT_PASSIVE_PER_S = 1 / 110; // 何もしなくても約110秒で満タン
 const ULT_ON_KILL = 0.12;
 const ULT_ON_CAPTURE = 0.12;
-const ULT_ON_DAMAGE_PER_HP = 0.0015; // 被弾で溜まる逆転要素
+export const ULT_ON_DAMAGE_PER_HP = 0.0015; // 被弾で溜まる逆転要素
 const OVERDRIVE_DURATION = 6;
 const OVERDRIVE_SPEED_MUL = 1.35;
 const OVERDRIVE_RESIST = 0.5;
 const SLAM_RADIUS = 8;
 const SLAM_DAMAGE = 220;
-const PLAYER_FEET_OFFSET = 0.95; // カプセル中心から足元まで(CAPSULE_HALF+CAPSULE_RADIUS)
+export const PLAYER_FEET_OFFSET = 0.95; // カプセル中心から足元まで(CAPSULE_HALF+CAPSULE_RADIUS)
 // 本体中心がこのYを下回ったら「床を抜けた」とみなし救済する。床下面は-2(厚化後)、
 // 正規地形は Y>=0 のみ。-8 は足元≈-9mで誤検出余地ゼロ(無限落下の構造的封じ込め)
 const VOID_Y = -8;
@@ -407,7 +392,7 @@ const BOT_ALERT_CONE_COS = Math.cos((95 * Math.PI) / 180);
 // スプリント/スライドの足音が聞こえる距離。しゃがみ/歩きは無音=背後忍び寄りが可能
 const FOOTSTEP_HEAR_DIST = 8;
 const BOT_FALLOFF = { start: 14, end: 40, minFactor: 0.6 };
-const PLAYER_NAME = 'あなた';
+export const PLAYER_NAME = 'あなた';
 const ZONE_RADIUS = 3.5;
 const SPECTATE_RADIUS = 5.5;
 const SPECTATE_HEIGHT = 3;
@@ -431,13 +416,6 @@ const PLAYER_UID = -2; // 発見候補のプレイヤー識別(-1はBot既定の
 const ALERT_SPOT_MUL = 3.5; // 銃声を聞いた(alert)時の発見加速。既存モードの初弾遅延を+0.3s以内に保つ
 const PAIN_SPOT_MUL = 5; // 撃たれた(pain)時は基準×この係数で即発見に近づける
 
-// ── R16 ゾンビモード ──
-const ZOMBIE_MOVE_MUL = 1.44; // 基準速度に対するシャンブル倍率(走行個体は updateZombie で×1.6)
-const ZOMBIE_MELEE_GLOBAL_GAP = 0.35; // 何体いても近接ダメージはこの間隔以上(同フレーム多段一撃回避)
-const ZOMBIE_IFRAME = 0.5; // 近接被弾後のプレイヤー無敵時間
-const ZOMBIE_ROUND_COOLDOWN = 0.8; // ラウンドクリア後、次ラウンドまで(即次波: ジングルのみ)
-const ZOMBIE_SPAWN_RING_MIN = 18; // 湧きリング内径(プレイヤーからの距離)
-const ZOMBIE_SPAWN_RING_MAX = 32; // 湧きリング外径
 
 // キルカメラの「KILLED BY」カードに出す、倒した相手の武器/機種ラベル
 function killcamWeaponFor(killer: Bot): string {
@@ -470,8 +448,6 @@ function killcamWeaponFor(killer: Bot): string {
 const SHADOW_CASTER_CAP = 8;
 // ★8 アニメLOD発動距離(この距離を超えたbotはsyncMeshのsin群をスキップ)
 const ANIM_LOD_DIST_M = 50;
-// ★ ゾンビメッシュプール: high tierの最大同時生存数までプールを事前確保(108体)
-const ZOMBIE_POOL_MAX = ZOMBIE_MAX_ALIVE.high;
 // F8 手裏剣discの飛行速度(m/s)。fireShurikenDiscのvelと寿命クランプの単一の真実
 const SHURIKEN_DISC_SPEED = 60;
 // ★4a aimAssistTarget粗ゲート用: AIM_PARTS/DRONE/TANK/TURRET全kindのdy絶対値の最大。
@@ -496,12 +472,6 @@ function zombieAimPartsForScale(scale: number): readonly PartOffset[] {
 }
 // ★5 ホットパス用スクラッチ(bot.getPositionInto の受け皿。逐次利用のみ=エイリアス無し)
 const BOT_POS_SCRATCH = new THREE.Vector3();
-// R53-W3 M3: ゾンビ群feed用の姿勢スクラッチ(pose()が値を読み切るため使い回し可)
-const CROWD_POSE_SCRATCH: ZombieCrowdPose = {
-  x: 0, y: 0, z: 0, visualLift: 0, rigLiftY: 0, scale: 1, heading: 0,
-  walkPhase: 0, walkAmp: 0, anim: 0, bobPhase: 0, deathTilt: 0, dying01: 0,
-  visible: true, elite: false,
-};
 // T7 ホットループGC節約: bot.position系の一時差分ベクトル(足音オクルージョン判定・スタン
 // スパーク位置)専用スクラッチ。他の用途と時分割共有しない(同フレーム内で使い切って捨てる値のみ)
 // ★V-D修正: 黒転フォグlerp用スクラッチ(per-frameアロケ排除)
@@ -549,7 +519,7 @@ import type {
   MatchSnapshot,
 } from './match-types';
 
-interface RayHitLike {
+export interface RayHitLike {
   collider: RAPIER.Collider;
   toi?: number;
   timeOfImpact?: number;
@@ -559,11 +529,11 @@ interface RayNormalHitLike extends RayHitLike {
   normal?: { x: number; y: number; z: number };
 }
 
-function hitToi(hit: RayHitLike): number {
+export function hitToi(hit: RayHitLike): number {
   return hit.toi ?? hit.timeOfImpact ?? 0;
 }
 
-type ColliderTag =
+export type ColliderTag =
   | { kind: 'world' }
   | { kind: 'boundary' }   // ghost 壁専用(弾/視線/斬撃が素通り, ブリンク/KCCは止まる)
   | { kind: 'player' }
@@ -663,6 +633,8 @@ export class Match {
   private readonly tags = new Map<number, ColliderTag>();
   private readonly player: Player;
   private readonly bots: Bot[] = [];
+  // R54-F2: ゾンビ系サブシステム(状態+進行はZombieDirectorが単独所有)
+  private zombie!: ZombieDirector;
   private readonly weapons: [Weapon, Weapon];
   private activeIndex = 0;
   private readonly effects: Effects;
@@ -961,14 +933,12 @@ export class Match {
   private sndBombMesh: THREE.Mesh | null = null; // ドロップ/設置ボムの可視化
   private sndPlantTickTimer = 0; // 設置ビープの周期
   private sndFuseTickTimer = 0; // ヒューズ鼓動の周期
-  private zombieFirstPerkSaved = false; // perkcarry供給側: 初回パーク保存の単発ガード
   // ── R53-W3 M3: MK.III HUD/黒雷帝層/InstancedMesh配線 ──
   private uiHeat = 0; // snapshot.uiHeat(setCombatHeatと同値の露出)
   private moments: MomentEvent[] = []; // snapshot.moments(ドレイン方式)
   private chargeStage: 0 | 1 | 2 | 3 = 0; // 溜め段(0.5/1.2/2.2s閾値)
   private blinkComboUntil = -Infinity; // ブリンク後0.6sの雷転斬ウィンドウ(elapsed基準)
   private blinkChain: number[] = []; // 3s内3連ブリンク検知(elapsed記録)
-  private zombieCrowd: ZombieCrowdRenderer | null = null; // ゾンビ群InstancedMesh
   private skyFogBase: { color: number; density: number } | null = null; // 黒転前のfog退避
   private katanaVeinsOn = false; // 刀身雷脈(kokurai累計100キル)の適用済みフラグ
   private incoming: number[] = [];
@@ -1051,80 +1021,8 @@ export class Match {
   private scoreboardDirty = true;
   private scoreboardNextAt = 0;
   private scoreboardCache: ScoreRow[] = [];
-  // ── R16 ゾンビディレクタ(mode==='zombie'のみ稼働。matchが唯一の状態保持者)──
-  private zombieRound = 0;
-  private zombieKills = 0;
-  private zombiePoints = 0;
-  private zombieQueue = 0; // このラウンドの残り湧き数(一斉湧き: alive<cap のたびに即補充)
-  private zombieRoundCooldown = 0; // ラウンド間の小休止
-  private zombieTierCap = ZOMBIE_MAX_ALIVE.medium; // 同時生存上限(tier連動)
-  private readonly zombiePool: Bot[] = []; // ★ メッシュプール: 死亡済み通常ゾンビを再利用(buildZombieMesh削減)
-  private zombieMeleeGlobal = 0; // 近接ダメージのグローバル次回許可時刻(elapsed基準)
-  private zombieMeleeIframe = 0; // プレイヤーi-frameの終了時刻(elapsed基準)
   private botShadowLodTimer = 0; // ★1 近接影LODの周期トグル(全モード共通。0.25s)
-  private zombieSpawnColor = 0x4c5a30; // ゾンビ本体の腐敗色(setupで確定)
   private playerDowns = 0;
-  // ── ゾンビ経済(R??) ──
-  private zombieShopLayout: ShopLayout | null = null;
-  private readonly zombieShopGroups: THREE.Group[] = [];
-  private zombieBoxPositions: THREE.Vector3[] = [];
-  private zombieBoxCurrentIdx = 0;
-  private zombieBoxGroupIdx = -1; // ミステリーボックスのzombieShopGroups内index(R53-W2: 末尾決め打ちバグの根治)
-  private zombiePerkStacks = new Map<ZombiePerkId, number>();
-  private zombiePerkMoveMul = 1;
-  private zombieQuickReviveCharges = 0;
-  private zombieBossBot: Bot | null = null;
-  private zombieBossFlash = 0;
-  private zombieShopPrompt: { label: string; canAfford: boolean; cost: number } | null = null;
-  private zombiePointFloats: Array<{ amount: number; world: THREE.Vector3 }> = [];
-  private zombieReviveFlash = 0;
-  private zombieBoxAnimTimer = 0;
-  private zombieBoxAnimMesh: THREE.Mesh | null = null;
-  private zombieBoxPendingWeapon: string | null = null;
-  private zombieBoxPendingMove = false; // boxMovesロール中(演出終了時に箱を移動+アナウンス)
-
-  // ── R53-W2 Pack-a-Punch(武器ごとのtier。壁/箱で買い直すとMap削除=tier0リセット) ──
-  private readonly zombiePapTiers = new Map<string, PapTier>();
-  private zombiePapAnyDone = false; // 'pap-first'メダル用: 試合内で初めて鍛神したか
-
-  // ── R53-W2 特殊ゾンビ変種 ──
-  private zombieVariantKillCount = 0; // 'variant-100'メダル用
-  private zombieBossKillCount = 0; // charm(bossdmg)解放条件用: summary.zombieBossKillsへ供給
-
-  // ── R53-W2 パワーアップ(ドロップ+時限効果) ──
-  private zombiePowerUpRoundCount = 0; // ラウンド内ドロップ数(POWERUP_ROUND_CAPで抑止)
-  // ★V-A修正(TODO消化): ドロップ視覚はB-FX2の powerUpBeacon(共有マテリアル・呼び出し側管理型)。
-  // 回転/浮遊は group.userData.spinSpeed / bobAmplitude をmatch側updateが適用する契約
-  private readonly zombiePowerUpDrops: Array<{
-    kind: PowerUpKind;
-    pos: THREE.Vector3;
-    remainS: number;
-    mesh: THREE.Group;
-  }> = [];
-  private zombieInstaKillTimer = 0;
-  private zombieDoublePointsTimer = 0;
-
-  // ── R53-W2 毒霧(miasma variant死亡時に発生)。★V-A修正: 視覚はeffects.miasmaCloudの
-  // プールへ委譲済み — matchはDPS判定用の位置/残時間エンティティのみ保持する ──
-  private readonly zombieMiasmaClouds: Array<{ pos: THREE.Vector3; remainS: number; tickIn: number }> = [];
-  private zombiePoison01 = 0; // HUDビネット用(0..1、雲内で1へ・それ以外は減衰)
-
-  // ── R53-W2 特殊ラウンド(rush) ──
-  private zombieSpecialRound: 'rush' | null = null;
-
-  // ── R53-W2 ドア(バリケード。購入でコライダー+ビジュアルを除去) ──
-  private zombieDoorOpen = false;
-  // ★V-A MEDIUM修正: 鍛神台の封印制(ドア開放で解除)。ビジュアル暗転/復帰用のマテリアル参照
-  private zombieHasDoor = false;
-  private zombiePapCrystalMat: THREE.MeshStandardMaterial | null = null;
-  private zombiePapRingMat: THREE.MeshBasicMaterial | null = null;
-  private zombieDoorBody: RAPIER.RigidBody | null = null;
-  private zombieDoorCollider: RAPIER.Collider | null = null;
-  private zombieDoorVisual: { group: THREE.Group; geos: THREE.BufferGeometry[]; mats: THREE.Material[] } | null = null;
-
-  // ── R53-W2 お守り(charm) ──
-  private zombieCharmEffect: CharmEffect | null = null;
-  private zombieCharmReviveAvailable = false;
 
   // ── BO2 スコアストリーク ──
   private readonly streakManager = new StreakManager();
@@ -1289,11 +1187,61 @@ export class Match {
     this.modeDef = MODE_DEFS[config.mode];
     this.scores = new ScoreBoard(this.modeDef.scoreTarget);
 
+    // R54-F2: ZombieDirector を接続(host=遅延getter/委譲メソッドの束。移動のみ・挙動不変)
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const self = this;
+    this.zombie = new ZombieDirector({
+      get player() { return self.player; },
+      get sounds() { return self.sounds; },
+      get announcements() { return self.announcements; },
+      get config() { return self.config; },
+      get bots() { return self.bots; },
+      get scene() { return self.scene; },
+      get tags() { return self.tags; },
+      get tracker() { return self.tracker; },
+      get weapons() { return self.weapons; },
+      get rand() { return self.rand; },
+      get effects() { return self.effects; },
+      get settings() { return self.settings; },
+      get activeWeapon() { return self.activeWeapon; },
+      get incoming() { return self.incoming; },
+      get feed() { return self.feed; },
+      get elapsed() { return self.elapsed; },
+      get moments() { return self.moments; },
+      get physics() { return self.physics; },
+      get viewModel() { return self.viewModel; },
+      get renderer() { return self.renderer; },
+      get over() { return self.over; },
+      get input() { return self.input; },
+      get activeIndex() { return self.activeIndex; },
+      addShake: (a) => self.addShake(a),
+      notePlayerDeath: (k) => self.notePlayerDeath(k ?? null),
+      applyBotDamage: (bot, damage, point, headshot, weaponName, grantUlt, scopeKill, srcClass) =>
+        self.applyBotDamage(bot, damage, point, headshot, weaponName, grantUlt, scopeKill, srcClass),
+      spawnBot: (name, spawn, color, team, tuning, tier, kind) =>
+        self.spawnBot(name, spawn, color, team, tuning, tier, kind),
+      emitMedals: (ev) => self.emitMedals(ev),
+      castRay: (o, d, t, e, p) => self.castRay(o, d, t, e, p),
+      refillGrenades: () => self.refillGrenades(),
+      isInView: (p) => self.isInView(p),
+      haptic: (d, w, s) => self.haptic(d, w, s),
+      addUltCharge: (a) => self.addUltCharge(a),
+      snapToGround: (o) => self.snapToGround(o),
+      incomingAngle: (s) => self.incomingAngle(s),
+      setTookDamage: (v) => { self.tookDamage = v; },
+      setShakeTrauma: (v) => { self.shakeTrauma = v; },
+      setDeathPos: (v) => { self.deathPos = v; },
+      setKiller: (v) => { self.killer = v; },
+      setKillcamTimer: (v) => { self.killcamTimer = v; },
+      setDeathVeil: (v) => { self.deathVeil = v; },
+      setAdsLatch: (v) => { self.adsLatch = v; },
+    });
+
     if (this.mission) {
       this.setupMission(this.mission);
     } else if (config.mode === 'zombie') {
       // ゾンビ: 通常のBOTは湧かせず、ディレクタが初回updateでラウンド1を開始する
-      this.setupZombie();
+      this.zombie.setupZombie();
     } else if (config.mode === 'training') {
       // 訓練場: ボットなし。的エンティティを生成する
       this.trainingStats = new TrainingStats();
@@ -1405,10 +1353,6 @@ export class Match {
     if ((config.kokuraiKillsBase ?? 0) >= 100) {
       this.katanaVeinsOn = true;
       this.viewModel.setKatanaVeins(true);
-    }
-    // R53-W3 M3: ゾンビ群InstancedMesh(972DC→79の軽量化本命。kill-switchはzombie-crowd.ts)
-    if (this.config.mode === 'zombie' && ZOMBIE_CROWD_INSTANCED) {
-      this.zombieCrowd = new ZombieCrowdRenderer(this.scene);
     }
 
     this.buildComposer(_graphicsTier);
@@ -3456,7 +3400,7 @@ export class Match {
 
     this.handleWeaponSwitch();
     this.handleMelee();
-    if (this.config.mode === 'zombie') this.handleZombieInteract();
+    if (this.config.mode === 'zombie') this.zombie.handleZombieInteract();
     this.handleGrenadeInput(dt);
 
     // ── 素手(武器なし)の技: コンボ窓の減衰と、空中しゃがみ→ダイブスラム ──
@@ -3783,7 +3727,7 @@ export class Match {
     // 遷移黒幕/突入フラッシュは死亡ゲート外で無条件減衰(リスポーン後の黒画面固着を防ぐ)
     this.deathVeil = Math.max(0, this.deathVeil - dt * 4);
     this.killcamFlash = Math.max(0, this.killcamFlash - dt * 5.5);
-    this.zombieReviveFlash = Math.max(0, this.zombieReviveFlash - dt * 2.5);
+    this.zombie.zombieReviveFlash = Math.max(0, this.zombie.zombieReviveFlash - dt * 2.5);
     // キルカメラのカメラ姿勢を固定dtで前進(時間前進はここ1箇所に集約=冪等)
     this.advanceKillcam(dt);
 
@@ -3818,16 +3762,16 @@ export class Match {
     if (this.botShadowLodTimer <= 0) {
       this.updateBotShadowLOD();
       // R51-4e: 群衆ランクも同じ0.25s周期に相乗り(ゾンビモードのみ意味を持つ)
-      if (this.config.mode === 'zombie') this.updateZombieHordeRank();
+      if (this.config.mode === 'zombie') this.zombie.updateZombieHordeRank();
       this.botShadowLodTimer = 0.25;
     }
-    if (this.config.mode === 'zombie') this.updateZombieDirector(dt);
+    if (this.config.mode === 'zombie') this.zombie.updateZombieDirector(dt);
     if (this.config.mode === 'training') this.updateTrainingTargets(dt);
     if (this.config.mode === 'zombie') {
-      this.updateZombieShopProximity();
-      this.updateZombieBoxAnim(dt);
-      this.updateZombiePowerUps(dt);
-      this.updateMiasmaClouds(dt);
+      this.zombie.updateZombieShopProximity();
+      this.zombie.updateZombieBoxAnim(dt);
+      this.zombie.updateZombiePowerUps(dt);
+      this.zombie.updateMiasmaClouds(dt);
     }
 
     // ファイナルキルカム: 3 tick ごと 20 Hz でキーフレームをリングバッファへ記録
@@ -3841,13 +3785,13 @@ export class Match {
       // クイックリバイブ: ゾンビモードでチャージがあれば即その場復活
       // (position はカプセル中心。respawnAt は足元座標を期待するため足元へ変換して
       // 「その場」復活させる=中心のまま渡すと約1m浮いた位置に湧いて落下する)
-      if (this.config.mode === 'zombie' && this.zombieQuickReviveCharges > 0) {
-        this.zombieQuickReviveCharges -= 1;
-        this.zombieRevivePlayerInPlace('クイックリバイブ');
-      } else if (this.config.mode === 'zombie' && this.zombieCharmReviveAvailable) {
+      if (this.config.mode === 'zombie' && this.zombie.zombieQuickReviveCharges > 0) {
+        this.zombie.zombieQuickReviveCharges -= 1;
+        this.zombie.zombieRevivePlayerInPlace('クイックリバイブ');
+      } else if (this.config.mode === 'zombie' && this.zombie.zombieCharmReviveAvailable) {
         // R53-W2: revive charm(不屈の守り札) — quick-reviveが尽きている場合のみのフォールバック
-        this.zombieCharmReviveAvailable = false;
-        this.zombieRevivePlayerInPlace('守り札の加護で復活！');
+        this.zombie.zombieCharmReviveAvailable = false;
+        this.zombie.zombieRevivePlayerInPlace('守り札の加護で復活！');
       }
     }
     this.lastAlive = this.player.alive;
@@ -3869,11 +3813,11 @@ export class Match {
     heat += Math.min(1, this.shakeTrauma) * 0.3;
     heat += Math.min(1, 1 - this.player.hp / this.player.maxHp) * 0.3;
     // ゾンビ: ラウンドが進むほど恐怖から高揚へ。最低でも 0.2+round/12 の底上げで常時緊張感を出す
-    if (this.config.mode === 'zombie') heat = Math.max(heat, 0.2 + this.zombieRound / 12);
+    if (this.config.mode === 'zombie') heat = Math.max(heat, 0.2 + this.zombie.zombieRound / 12);
     this.uiHeat = Math.min(1, heat); // R53-W3 M3: MK.III Adaptive HUDへ露出(snapshot.uiHeat)
     this.sounds.setCombatHeat(this.uiHeat);
     // R53-W3 M3: ゾンビ群InstancedMeshへ姿勢を反映(tick末尾=全bot更新後に1回)
-    this.feedZombieCrowd();
+    this.zombie.feedZombieCrowd();
     // 瀕死の聴覚こもり(差分ガードはSoundKit側。死亡中は解除して観戦を明瞭に)
     this.sounds.setHealthState(this.player.alive ? this.player.hp / this.player.maxHp : 1);
   }
@@ -5529,15 +5473,15 @@ export class Match {
     // compose一本化で撤去。double-tap/PaPのダメージ倍率は武器def.damage自体に
     // 焼き込み済みなのでここでは触れない=二重計上を避ける)
     if (bot.kind === 'zombie') {
-      if (bot.tier === 'boss' && this.zombieCharmEffect?.bossDamageMultiplier) {
-        finalDamage *= this.zombieCharmEffect.bossDamageMultiplier;
+      if (bot.tier === 'boss' && this.zombie.zombieCharmEffect?.bossDamageMultiplier) {
+        finalDamage *= this.zombie.zombieCharmEffect.bossDamageMultiplier;
       }
       if (bot.zombieVariant === 'shell' && !headshot && bot.facingDot(toShooter) > 0.3) {
         finalDamage *= 1 - SHELL_FRONT_REDUCTION;
         this.sounds.shellHit();
       }
       // ★V-A MEDIUM修正: インスタキルはボス非適用(instaKillApplies参照。nukeと対称)
-      if (instaKillApplies(this.zombieInstaKillTimer, bot.tier)) {
+      if (instaKillApplies(this.zombie.zombieInstaKillTimer, bot.tier)) {
         finalDamage = Math.max(finalDamage, bot.hp + 1);
       }
     }
@@ -5545,14 +5489,14 @@ export class Match {
     // ゾンビ経済: 命中+10 / キル+60 / HSキル+110 / 近接キル+130 / ボスキル+500ボーナス
     if (bot.kind === 'zombie') {
       if (died) {
-        this.zombieKills += 1;
+        this.zombie.zombieKills += 1;
         // ★V一括修正: charm解放条件(bossdmg=ボス10体)の入力。summary.zombieBossKillsへ供給
-        if (bot.tier === 'boss') this.zombieBossKillCount += 1;
+        if (bot.tier === 'boss') this.zombie.zombieBossKillCount += 1;
         const isMelee = ['近接', 'ブリンク斬撃', 'ダイブスラム', '黒帝斬撃', '雷帝斬撃'].includes(weaponName);
         let gain = isMelee ? POINTS.melee : headshot ? POINTS.hskill : POINTS.kill;
         if (bot.tier === 'boss') gain += 500;
-        this.addZombiePoints(gain);
-        this.zombiePointFloats.push({ amount: gain, world: point.clone() });
+        this.zombie.addZombiePoints(gain);
+        this.zombie.zombiePointFloats.push({ amount: gain, world: point.clone() });
         // ボス撃破: 大演出
         if (bot.tier === 'boss') {
           const bossPos = bot.position.clone();
@@ -5564,32 +5508,32 @@ export class Match {
           this.effects.explosion(bossPos, 2.5);
           this.addShake(0.8);
           this.announcements.push('巨躯を撃破！');
-          if (this.zombieBossBot === bot) this.zombieBossBot = null;
+          if (this.zombie.zombieBossBot === bot) this.zombie.zombieBossBot = null;
         }
         // R53-W2: 特殊ゾンビ変種の死亡演出+累計メダル
         if (bot.zombieVariant === 'blast') {
-          this.zombieVariantBlastExplode(bot.position.clone());
+          this.zombie.zombieVariantBlastExplode(bot.position.clone());
         } else if (bot.zombieVariant === 'miasma') {
-          this.zombieVariantMiasmaBurst(bot.position.clone());
+          this.zombie.zombieVariantMiasmaBurst(bot.position.clone());
         }
         if (bot.zombieVariant) {
-          this.zombieVariantKillCount += 1;
-          if (this.zombieVariantKillCount === 100) {
+          this.zombie.zombieVariantKillCount += 1;
+          if (this.zombie.zombieVariantKillCount === 100) {
             const variantOut: MedalEvent[] = [];
             this.tracker.emitManual('variant-100', variantOut);
             this.emitMedals(variantOut);
           }
         }
         // R53-W2: キル時パワーアップドロップ判定(ラウンド内上限あり)
-        if (this.zombiePowerUpRoundCount < POWERUP_ROUND_CAP) {
+        if (this.zombie.zombiePowerUpRoundCount < POWERUP_ROUND_CAP) {
           const kind = rollPowerUp(Math.random);
           if (kind) {
-            this.zombiePowerUpRoundCount += 1;
-            this.spawnZombiePowerUp(kind, bot.position.clone());
+            this.zombie.zombiePowerUpRoundCount += 1;
+            this.zombie.spawnZombiePowerUp(kind, bot.position.clone());
           }
         }
       } else {
-        this.addZombiePoints(POINTS.hit);
+        this.zombie.addZombiePoints(POINTS.hit);
       }
     }
     this.effects.hitPuff(point);
@@ -5811,265 +5755,6 @@ export class Match {
 
   // ゾンビ経済のポイント加算を一箇所に集約(double powerup中は×2)。
   // 命中/キル/ボスボーナス/rushクリア/nuke/carpenterの全てがここを通る。
-  private addZombiePoints(amount: number): void {
-    // ★V-A修正: ヌーク中のキルはノーポイント(BO2準拠 — 100体×満額60ptで6000pt超の
-    // 過剰供給を防ぐ。定額 NUKE_BONUS_PT のみ zombieNuke() が抑制フラグの外で付与する)
-    if (this.zombieNukeSuppressPoints) return;
-    const mul = this.zombieDoublePointsTimer > 0 ? 2 : 1;
-    this.zombiePoints += Math.round(amount * mul);
-  }
-
-  // ── Pack-a-Punch/パーク: composeZombieWeaponDefへの一本化 ──────────────────
-  // WEAPON_DEFSの基礎値から常に再計算する(現在値への乗算は禁止。R53-W2契約)。
-  // fists(クナイ)はcompose自体が素通しするが、papCamo付与も無意味なため早期returnする。
-  private recomposeWeapon(w: Weapon): void {
-    if (EXT_MAG_EXCLUDED_IDS.has(w.def.id)) return;
-    const baseDef = WEAPON_DEFS[w.def.id];
-    if (!baseDef) return;
-    const papTier = (this.zombiePapTiers.get(w.def.id) ?? 0) as PapTier;
-    const composed = composeZombieWeaponDef(baseDef, {
-      papTier,
-      extMagStacks: this.zombiePerkStacks.get('ext-mag') ?? 0,
-      doubleTapStacks: this.zombiePerkStacks.get('double-tap') ?? 0,
-      speedColaStacks: this.zombiePerkStacks.get('speed-cola') ?? 0,
-    });
-    w.def.damage = composed.damage;
-    w.def.rpm = composed.rpm;
-    w.def.reloadTacticalMs = composed.reloadTacticalMs;
-    w.def.reloadEmptyMs = composed.reloadEmptyMs;
-    w.def.name = composed.name;
-    w.def.papCamo = PAP_CAMO_BY_TIER[papTier];
-    w.def.magazineSize = composed.magazineSize;
-    // 容量が変わらない場合でも need=0 のno-opになるだけなので常に呼んで安全
-    // (副次効果: パーク購入のたびに現在弾を最大容量まで無償で継ぎ足す=害のない気持ちよさ)
-    w.magazine.setCapacity(composed.magazineSize, true);
-  }
-
-  private recomposeAllWeapons(): void {
-    for (const w of this.weapons) this.recomposeWeapon(w);
-  }
-
-  // Pack-a-Punch台/HUDプロンプトが参照する実効コスト(スロット定義のcost=0はダミー)
-  private zombiePapEffectiveCost(): number {
-    const weapon = this.activeWeapon;
-    if (EXT_MAG_EXCLUDED_IDS.has(weapon.def.id)) return Infinity;
-    const curTier = (this.zombiePapTiers.get(weapon.def.id) ?? 0) as PapTier;
-    if (curTier >= 3) return PAP_REFILL_COST;
-    return PAP_COST[(curTier + 1) as PapTier];
-  }
-
-  // ショッププロンプト用: pack-a-punchのみ動的コストへ差し替え、他は素通し
-  private zombieSlotEffectiveCost(slot: ShopSlot): number {
-    return slot.kind === 'pack-a-punch' ? this.zombiePapEffectiveCost() : slot.cost;
-  }
-
-  // ── 特殊ゾンビ変種: 死亡演出 ─────────────────────────────────────────────────
-  private aliveMiasmaCount(): number {
-    let n = 0;
-    for (const b of this.bots) if (b.kind === 'zombie' && b.alive && b.zombieVariant === 'miasma') n += 1;
-    return n;
-  }
-
-  private zombieVariantBlastExplode(pos: THREE.Vector3): void {
-    // ★V-A修正(TODO消化): B-FX2の専用FX(小型爆発+緑破片、既存プール流用)へ置換
-    this.effects.variantBlastFx(pos.x, pos.y, pos.z);
-    this.sounds.variantBlastExplode();
-    if (this.player.alive) {
-      const d = this.player.position.distanceTo(pos);
-      if (d < BLAST_RADIUS_M) {
-        const falloff = 1 - d / BLAST_RADIUS_M;
-        const dmg = Math.round(BLAST_DMG * Math.max(0.3, falloff));
-        const died = this.player.takeDamage(dmg);
-        this.tookDamage = true;
-        this.addShake(0.3);
-        this.incoming.push(this.incomingAngle(pos));
-        this.sounds.hurt();
-        this.tracker.onPlayerDamaged();
-        if (died) {
-          this.feed.push({ killer: '自爆ゾンビ', victim: PLAYER_NAME, weapon: '自爆ゾンビ', headshot: false });
-          this.sounds.death();
-          this.notePlayerDeath(null);
-        }
-      }
-    }
-    // 周囲ゾンビも巻き込む(BO2らしい連鎖爆発。既存の範囲ダメージ処理と同じくapplyBotDamage経由で
-    // 経済/メダル/他variantの連鎖演出を一貫させる。HK/Lightning Strike等と同一の既存パターン)
-    for (const other of this.bots) {
-      if (other.kind !== 'zombie' || !other.alive) continue;
-      const d = other.position.distanceTo(pos);
-      if (d >= BLAST_RADIUS_M) continue;
-      this.applyBotDamage(other, BLAST_DMG, other.position.clone(), false, '自爆ゾンビ', false);
-    }
-  }
-
-  private zombieVariantMiasmaBurst(pos: THREE.Vector3): void {
-    this.sounds.variantMiasmaBurst();
-    if (this.zombieMiasmaClouds.length >= 4) return; // 同時上限(task仕様)
-    // ★V-A修正(TODO消化): 視覚はB-FX2のプール実装(effects.miasmaCloud、多層スプライト+粒子、
-    // 上限4は effects側でも保証)へ委譲。matchはDPS判定用の位置/残時間エンティティのみ保持
-    this.effects.miasmaCloud(pos.x, pos.y, pos.z, this.settings.reduceMotion);
-    this.zombieMiasmaClouds.push({ pos: pos.clone(), remainS: MIASMA_DURATION_S, tickIn: 0 });
-  }
-
-  private updateMiasmaClouds(dt: number): void {
-    this.zombiePoison01 = Math.max(0, this.zombiePoison01 - dt / 1.2);
-    for (let i = this.zombieMiasmaClouds.length - 1; i >= 0; i -= 1) {
-      const cloud = this.zombieMiasmaClouds[i]!;
-      cloud.remainS -= dt;
-      if (cloud.remainS <= 0) {
-        // 視覚はeffects側プールが同じ寿命(6s)で自然消滅する — match側はエンティティ除去のみ
-        this.zombieMiasmaClouds.splice(i, 1);
-        continue;
-      }
-      const inside = this.player.alive && this.player.position.distanceTo(cloud.pos) < MIASMA_RADIUS_M;
-      if (inside) this.zombiePoison01 = 1;
-      cloud.tickIn -= dt;
-      if (cloud.tickIn <= 0) {
-        cloud.tickIn = MIASMA_TICK_S;
-        // このメソッドはmode==='zombie'時のみ呼ばれる(update()側のガード)ためtraining除外は不要
-        if (inside) {
-          const tickDamage = MIASMA_DPS * MIASMA_TICK_S;
-          const died = this.player.takeDamage(tickDamage);
-          this.tookDamage = true;
-          this.addShake(0.04);
-          this.incoming.push(this.incomingAngle(cloud.pos));
-          this.sounds.hurt();
-          this.tracker.onPlayerDamaged();
-          if (died) {
-            this.feed.push({ killer: '毒霧', victim: PLAYER_NAME, weapon: '毒霧', headshot: false });
-            this.sounds.death();
-            this.notePlayerDeath(null);
-          }
-        }
-      }
-    }
-  }
-
-  // ── パワーアップ: ドロップ管理+収集効果(ドロップ視覚/色はeffects.powerUpBeacon側) ──
-
-  private spawnZombiePowerUp(kind: PowerUpKind, pos: THREE.Vector3): void {
-    // ★V-A修正(TODO消化): B-FX2のビーコン(八面体+リング、kind別共有マテリアル)を使用。
-    // scene.add/位置更新/despawnはmatch側管理(呼び出し側管理型の契約)
-    const mesh = this.effects.powerUpBeacon(kind, this.settings.reduceMotion);
-    mesh.position.copy(pos);
-    mesh.position.y += 0.4;
-    this.scene.add(mesh);
-    this.zombiePowerUpDrops.push({ kind, pos: mesh.position.clone(), remainS: POWERUP_DESPAWN_S, mesh });
-  }
-
-  private updateZombiePowerUps(dt: number): void {
-    if (this.zombieInstaKillTimer > 0) {
-      this.zombieInstaKillTimer = Math.max(0, this.zombieInstaKillTimer - dt);
-      if (this.zombieInstaKillTimer === 0) {
-        this.sounds.powerUpExpire();
-        this.announcements.push('インスタキル終了');
-      }
-    }
-    if (this.zombieDoublePointsTimer > 0) {
-      this.zombieDoublePointsTimer = Math.max(0, this.zombieDoublePointsTimer - dt);
-      if (this.zombieDoublePointsTimer === 0) {
-        this.sounds.powerUpExpire();
-        this.announcements.push('2倍ポイント終了');
-      }
-    }
-    for (let i = this.zombiePowerUpDrops.length - 1; i >= 0; i -= 1) {
-      const drop = this.zombiePowerUpDrops[i]!;
-      // ビーコンの回転/浮遊パラメタはeffects側がuserDataで供給(reduceMotion時 bob=0)
-      const spin = (drop.mesh.userData.spinSpeed as number | undefined) ?? 2.2;
-      const bob = (drop.mesh.userData.bobAmplitude as number | undefined) ?? 0.08;
-      drop.mesh.rotation.y += dt * spin;
-      drop.mesh.position.y = drop.pos.y + Math.sin(this.elapsed * 2 + i) * bob;
-      drop.remainS -= dt;
-      let picked = false;
-      if (this.player.alive && this.player.position.distanceTo(drop.pos) < 1.6) {
-        picked = true;
-        this.zombieCollectPowerUp(drop.kind);
-      }
-      if (picked || drop.remainS <= 0) {
-        this.scene.remove(drop.mesh);
-        this.effects.disposePowerUpBeacon(drop.mesh); // parentから外すのみ(共有マテリアル保護)
-        this.zombiePowerUpDrops.splice(i, 1);
-      }
-    }
-  }
-
-  private zombieNukeSuppressPoints = false;
-
-  private zombieNuke(): void {
-    // ★V-A修正: キルループ中は per-kill ポイントを抑制(定額のみ。BO2準拠)
-    this.zombieNukeSuppressPoints = true;
-    try {
-      for (const bot of this.bots) {
-        if (bot.kind !== 'zombie' || !bot.alive || bot.tier === 'boss') continue;
-        this.applyBotDamage(bot, bot.hp + 1, bot.position.clone(), false, 'ヌーク', false);
-      }
-    } finally {
-      this.zombieNukeSuppressPoints = false;
-    }
-    this.addZombiePoints(NUKE_BONUS_PT);
-  }
-
-  private zombieCollectPowerUp(kind: PowerUpKind): void {
-    this.sounds.powerUpPickup(kind);
-    switch (kind) {
-      case 'insta':
-        this.zombieInstaKillTimer = POWERUP_DURATION_S;
-        this.announcements.push('インスタキル！');
-        break;
-      case 'double':
-        this.zombieDoublePointsTimer = POWERUP_DURATION_S;
-        this.announcements.push('2倍ポイント！');
-        break;
-      case 'nuke':
-        this.zombieNuke();
-        this.announcements.push('ヌーク！');
-        break;
-      case 'maxammo':
-        for (const w of this.weapons) w.resupply();
-        this.refillGrenades();
-        this.announcements.push('弾薬満タン！');
-        break;
-      case 'carpenter':
-        // R53-W2: R31破壊カバーの復元(handle再生成+destroyedPropHandlesからの除去+
-        // breakableProps再登録)は本タスクのスコープ外と判断(専用の永続レジストリが
-        // 別途必要で影響範囲が大きい)。ボーナスポイントのみ付与する(判断は報告済み)。
-        this.addZombiePoints(CARPENTER_BONUS_PT);
-        this.announcements.push('カーペンター(修復対象なし、ボーナスのみ)');
-        break;
-      default: {
-        const _exhaustive: never = kind;
-        return _exhaustive;
-      }
-    }
-  }
-
-  private zombieActivePowerUpsSnap(): Array<{ kind: PowerUpKind; remainS: number }> {
-    const out: Array<{ kind: PowerUpKind; remainS: number }> = [];
-    if (this.zombieInstaKillTimer > 0) out.push({ kind: 'insta', remainS: this.zombieInstaKillTimer });
-    if (this.zombieDoublePointsTimer > 0) out.push({ kind: 'double', remainS: this.zombieDoublePointsTimer });
-    return out;
-  }
-
-  // ── お守り(charm): 死亡edgeでの自動復活を quick-revive と共有ロジックで処理 ──
-  private zombieRevivePlayerInPlace(message: string): void {
-    const revivePos = this.player.position.clone();
-    revivePos.y -= PLAYER_FEET_OFFSET;
-    this.player.respawnAt(revivePos);
-    this.player.hp = Math.max(1, Math.floor(this.player.maxHp * 0.5));
-    this.zombieMeleeIframe = this.elapsed + 2;
-    for (const weapon of this.weapons) weapon.resupply();
-    this.activeWeapon.raise();
-    this.shakeTrauma = 0;
-    this.deathPos = null;
-    this.killer = null;
-    this.killcamTimer = 0;
-    this.deathVeil = 0;
-    this.zombieReviveFlash = 1;
-    this.announcements.push(message);
-    this.sounds.announceMedal(1, this.settings.announcerVolume);
-  }
-
-  // 視線の途中にスモークがあれば互いに見えない
   private smokeBlocks(a: THREE.Vector3, b: THREE.Vector3): boolean {
     for (const zone of this.smokeZones) {
       if (segmentDistance(a, b, zone.pos) < zone.radius * 0.75) return true;
@@ -6651,7 +6336,7 @@ export class Match {
         tuning: effectiveTuning,
         rand: this.rand,
         onShoot: (origin, dir) => this.botShoot(bot, origin, dir),
-        onMelee: (b) => this.zombieMelee(b),
+        onMelee: (b) => this.zombie.zombieMelee(b),
       });
       // 死亡ボットの足音フェーズを即解放(生存ボットのみが足音を持つ)
       if (!bot.alive) {
@@ -7422,7 +7107,7 @@ export class Match {
     // タイマー減算は updateDarkEmperor が死亡ゲート外で継続する)
     if (!this.player.alive) {
       this.ultActive = 0;
-      this.player.speedMul = this.zombiePerkMoveMul;
+      this.player.speedMul = this.zombie.zombiePerkMoveMul;
       this.player.damageResist = 0;
       return;
     }
@@ -7485,10 +7170,10 @@ export class Match {
     const shuraKourinSpeedMul = this.shuraKourinTimer > 0 ? 1.3 : 1; // 阿修羅降臨: 移動+30%
     if (this.ultActive > 0) {
       this.ultActive = Math.max(0, this.ultActive - dt);
-      this.player.speedMul = OVERDRIVE_SPEED_MUL * this.zombiePerkMoveMul * kokuraiSpeedMul * shuraKourinSpeedMul;
+      this.player.speedMul = OVERDRIVE_SPEED_MUL * this.zombie.zombiePerkMoveMul * kokuraiSpeedMul * shuraKourinSpeedMul;
       this.player.damageResist = Math.max(OVERDRIVE_RESIST, kokuraiResist);
     } else {
-      this.player.speedMul = this.zombiePerkMoveMul * kokuraiSpeedMul * shuraKourinSpeedMul;
+      this.player.speedMul = this.zombie.zombiePerkMoveMul * kokuraiSpeedMul * shuraKourinSpeedMul;
       this.player.damageResist = kokuraiResist;
     }
 
@@ -9377,262 +9062,6 @@ export class Match {
   // ── R16 BO2式ラウンド制ゾンビディレクタ ─────────────────────────
   // 同時生存上限をtierへ連動させる(多数描画/物理予算を守る主レバー)
   // tier別パフォーマンスクランプ: low上限40/medium上限84/high=設定値のまま(Math.minで保護)
-  private setupZombie(): void {
-    const tier = resolveGraphicsTier(
-      this.settings.graphicsQuality,
-      this.renderer.capabilities.isWebGL2,
-    );
-    const rawCap =
-      tier === 'high'
-        ? ZOMBIE_MAX_ALIVE.high
-        : tier === 'medium'
-          ? ZOMBIE_MAX_ALIVE.medium
-          : ZOMBIE_MAX_ALIVE.low;
-    // low:40/medium:84/high:rawCap(108)。ZOMBIE_MAX_ALIVE増員(54/84/108)に対する描画/物理上限
-    this.zombieTierCap =
-      tier === 'high'
-        ? rawCap
-        : tier === 'medium'
-          ? Math.min(84, rawCap)
-          : Math.min(40, rawCap);
-    this.buildZombieShop();
-
-    // R53-W2: お守り(charm)効果の解決+開幕適用
-    this.zombieCharmEffect = this.config.charm ? getCharmEffect(this.config.charm) : null;
-    if (this.zombieCharmEffect?.bonusStartPoints) {
-      this.addZombiePoints(this.zombieCharmEffect.bonusStartPoints);
-    }
-    this.zombieCharmReviveAvailable = (this.zombieCharmEffect?.autoReviveCharges ?? 0) > 0;
-    // perkcarry: 引き継ぎパークを1種、購入と同じ経路(applyZombiePerk)で無償付与する
-    if (this.config.carriedPerk) {
-      this.zombiePerkStacks.set(this.config.carriedPerk, 1);
-      this.applyZombiePerk(this.config.carriedPerk, 1);
-    }
-  }
-
-  private aliveZombieCount(): number {
-    let n = 0;
-    for (const b of this.bots) if (b.kind === 'zombie' && b.alive) n += 1;
-    return n;
-  }
-
-  private startZombieRound(r: number): void {
-    this.zombieRound = r;
-    this.zombieQueue = zombieTotal(r); // 一斉湧き: 次フレームから即バッチ充填開始
-    this.zombiePowerUpRoundCount = 0; // R53-W2: ラウンドごとのドロップ上限リセット
-    this.zombieSpecialRound = specialRoundKind(r); // R53-W2: rush判定(ボスラウンドとは排他。zombie.ts契約)
-    this.announcements.push(`ラウンド ${r}`);
-    this.tracker.onZombieRoundStart(); // R45a
-    // R53-W3 M3: MK.IIIモーメント(ラウンド遷移=BO2の象徴的瞬間)
-    this.moments.push({ kind: 'round', title: String(r), sub: 'ROUND' });
-    if (this.zombieSpecialRound === 'rush') {
-      this.announcements.push('餓鬼の大群、来襲'); // W4C I-1: バナー/モーメントと呼称統一
-      this.sounds.specialRoundStart();
-      this.moments.push({ kind: 'special', title: '餓鬼の大群', tone: 'ember' });
-    }
-    if (isBossRound(r)) {
-      this.spawnBossZombie(r);
-      this.announcements.push('BOSS ROUND');
-      this.announcements.push('巨躯来襲');
-      this.addShake(0.4);
-      this.sounds.heartbeat(); // R45a: 咆哮代替SE
-      this.addShake(1.5);
-      this.sounds.hurt();
-      this.zombieBossFlash = 1.0;
-    }
-  }
-
-  private spawnBossZombie(r: number): void {
-    const spawn = this.zombieSpawnPoint();
-    if (!spawn) return;
-    const hp = zombieBossHp(r);
-    const dmg = zombieBossDamage(r);
-    const speedMul = zombieBossSpeedMul(r);
-    const base = tuningFor('normal', this.config.difficulty);
-    const tuning: BotTuning = {
-      ...base,
-      maxHp: hp,
-      moveSpeedMul: ZOMBIE_MOVE_MUL * speedMul,
-    };
-    const bot = this.spawnBot('巨躯', spawn, 0x3a1a0d, ENEMY_TEAM, tuning, 'boss', 'zombie');
-    // R51バグ根治: spawnBot 内で hellMode 補正済みの damage を、この直後の代入が生値 dmg で
-    // 無条件上書きしていた(hellMode でもボスの攻撃力×2.5が一切効かない状態だった)
-    bot.tuning.damage = this.config.hellMode ? Math.round(dmg * 2.5) : dmg;
-    bot.zombieRunMul = speedMul;
-    this.zombieBossBot = bot;
-  }
-
-  // 毎フレーム(handleRespawns後): 死体解放→影LOD→ラウンド進行(ドリップ湧き/クリア判定)
-  private updateZombieDirector(dt: number): void {
-    // 死体解放を最初に(Rapier handle再利用でnewゾンビが無敵化するのを防ぐ)
-    this.cleanupDeadZombies();
-    // ボス出現フラッシュ減衰
-    if (this.zombieBossFlash > 0) {
-      this.zombieBossFlash = Math.max(0, this.zombieBossFlash - dt * 3.0);
-    }
-    // (影LODは★1で全モード共通化し update() 側で駆動。ここでの個別運用は廃止)
-    if (this.over) return;
-
-    if (this.zombieRoundCooldown > 0) {
-      this.zombieRoundCooldown -= dt;
-      if (this.zombieRoundCooldown <= 0) this.startZombieRound(this.zombieRound + 1);
-      return;
-    }
-    if (this.zombieRound === 0) {
-      // R27: 任意ラウンド開始。開始ラウンド>1 の場合は装備差を補う開始ポイントを付与
-      const startRound = Math.max(1, Math.min(999, this.config.zombieStartRound ?? 1));
-      if (startRound > 1) {
-        const ZOMBIE_CATCHUP_BASE = 500;
-        const ZOMBIE_CATCHUP_PER_ROUND = 300;
-        const ZOMBIE_CATCHUP_CAP = 8000;
-        this.zombiePoints = Math.min(ZOMBIE_CATCHUP_CAP, ZOMBIE_CATCHUP_BASE + ZOMBIE_CATCHUP_PER_ROUND * (startRound - 1));
-      }
-      this.startZombieRound(startRound);
-      return;
-    }
-    const aliveZ = this.aliveZombieCount();
-    // 一斉湧き: フレームあたり最大8体まで高速充填(スパイク抑制。体感は即時湧き)
-    // alive < tierCap のスロットが出来た瞬間に補充するため、倒した直後も即湧きする。
-    if (this.zombieQueue > 0 && aliveZ < this.zombieTierCap) {
-      const batchMax = 8;
-      let batched = 0;
-      // ★4c: 生存ゾンビ位置配列をバッチ開始時に1回だけ構築(毎spawnOneZombie呼び出しでの
-      // bots.filter().map()再構築を排除。最大8回/フレームの重複走査を1回へ)
-      const aliveZombiePos = this.bots
-        .filter((b) => b.kind === 'zombie' && b.alive)
-        .map((b) => b.position);
-      while (this.zombieQueue > 0 && aliveZ + batched < this.zombieTierCap && batched < batchMax) {
-        if (this.spawnOneZombie(aliveZombiePos)) {
-          this.zombieQueue -= 1;
-          batched += 1;
-        } else {
-          break; // 有効な湧き点がなければ次フレーム再試行
-        }
-      }
-    }
-    // ラウンドクリア: 湧き残0 && 生存0 → 短ジングル後に即次ラウンド
-    if (this.zombieQueue === 0 && aliveZ === 0) {
-      if (this.zombieRoundCooldown <= 0) {
-        // R45a: ラウンドクリアコールバック(遷移初フレームのみ)
-        const roundEndOut: MedalEvent[] = [];
-        this.tracker.onZombieRoundEnd(roundEndOut);
-        this.emitMedals(roundEndOut);
-        // R53-W2: 特殊ラウンド(rush)クリア報酬 — 遷移初フレームのみ1回発火
-        if (this.zombieSpecialRound === 'rush') {
-          this.addZombiePoints(RUSH_CLEAR_BONUS_PT);
-          for (const w of this.weapons) w.resupply();
-          this.sounds.specialRoundClear();
-          this.announcements.push('大群を殲滅！');
-        }
-      }
-      this.zombieRoundCooldown = ZOMBIE_ROUND_COOLDOWN;
-    }
-  }
-
-  // 湧きリング(プレイヤーの18〜32m外周・フラスタム外)へ1体。HP/速度は tuning に載せて渡す
-  // (KIND_TUNING.zombieに maxHp/moveSpeedMul を入れると spawnBot merge で後勝ち上書きされる致命バグ回避)
-  // ★ 通常tierはプール優先: resetForZombieReuse で再利用し buildZombieMesh コストをゼロにする。
-  // R51: allGiantMode は視覚 scale ×1.35(HP×1.5含む)。collider/meleeReachの拡大はbot.ts側の
-  // コンストラクタ時決定が必要なため今回は対象外(master同様、視覚のみ拡大する既存パターンに準拠)。
-  // R51-4c: aliveZombiePos はバッチ呼び出し元(updateZombieDirector)が1回だけ構築して渡す
-  // 生存ゾンビ位置の共有配列。zombieSpawnPoint内で新規スポーン点をpushし、同一バッチ内の
-  // 後続呼び出しからも重なり回避対象として見える(挙動維持)
-  private spawnOneZombie(aliveZombiePos: THREE.Vector3[]): boolean {
-    const spawn = this.zombieSpawnPoint(aliveZombiePos);
-    if (!spawn) return false; // 有効な湧き点が無ければ次フレーム再試行(queueは減らさない)
-    const r = this.zombieRound;
-    const isRush = this.zombieSpecialRound === 'rush';
-    const elite = this.rand() < zombieEliteRate(r);
-    // R53-W2: rushラウンドは全個体が走者になる(zombieRunRateの抽選をバイパス)
-    const run = isRush ? true : this.rand() < zombieRunRate(r);
-    const giant = this.config.allGiantMode ?? false;
-    const base = tuningFor('normal', this.config.difficulty);
-    const tuning: BotTuning = {
-      ...base,
-      maxHp: zombieHp(r) * (elite ? 1.6 : 1) * (giant ? 1.5 : 1) * (isRush ? RUSH_HP_MUL : 1),
-      moveSpeedMul: ZOMBIE_MOVE_MUL * (elite ? 1.15 : 1),
-      scale: giant ? 1.35 : 1,
-    };
-    const color = elite ? 0x6d7d3a : this.zombieSpawnColor;
-    const name = BOT_NAMES[Math.floor(this.rand() * BOT_NAMES.length)] ?? 'ゾンビ';
-    // R53-W2: 特殊ゾンビ変種(spawnOneZombieの新規/プール再利用の両経路に適用)
-    const variant = rollZombieVariant(r, () => this.rand(), this.aliveMiasmaCount());
-
-    // ★ メッシュプール: 通常tier(=elite でない)かつプールに再利用可能インスタンスがあれば流用
-    if (!elite && this.zombiePool.length > 0) {
-      const bot = this.zombiePool.pop()!;
-      // R51バグ根治: プール再利用は spawnBot の合成漏斗(KIND_TUNING+hellMode)を経由しないため、
-      // 従来はプール個体に KIND_TUNING.zombie.damage(22) も hellMode 倍率も一切効いていなかった
-      // (常に難度基礎damage=11のまま)。ここで spawnBot と同じ合成を明示的に再現する。
-      const merged: BotTuning = { ...tuning, ...KIND_TUNING.zombie };
-      const poolTuning = this.config.hellMode ? applyHellTuning(merged) : merged;
-      bot.resetForZombieReuse(poolTuning, spawn);
-      bot.zombieRunMul = run ? 1.6 : 1;
-      if (variant) bot.applyZombieVariantVisual(variant);
-      this.assignCrowdSlot(bot); // R53-W3 M3: variant決定後にInstancedMeshスロット割当(協定)
-      // tags 再登録(cleanupDeadZombies で削除済み → 新しいcollider handleで再登録)
-      this.tags.set(bot.bodyCollider.handle, { kind: 'bot', bot, part: 'body' });
-      this.tags.set(bot.headCollider.handle, { kind: 'bot', bot, part: 'head' });
-      this.scene.add(bot.group);
-      this.bots.push(bot);
-      return true;
-    }
-
-    const bot = this.spawnBot(name, spawn, color, ENEMY_TEAM, tuning, 'normal', 'zombie');
-    bot.zombieRunMul = run ? 1.6 : 1; // 走行個体はローカル倍率で加速(moveSpeedはreadonly)
-    if (variant) bot.applyZombieVariantVisual(variant);
-    this.assignCrowdSlot(bot); // R53-W3 M3: 新規生成経路も同じ協定で割当
-    return true;
-  }
-
-  // R53-W3 M3: ゾンビ群InstancedMeshのスロット割当(zombie-crowd.ts冒頭ドキュメントの協定)。
-  // eligible = kill-switch ON かつ 非boss かつ variant無し。最近接8体(hordeRank<8)は
-  // 高忠実度(実articulated影+個体マテリアル)のため除外 — spawn直後はhordeRank=99なので
-  // 遠方湧きは即instanced、0.25s後のランク更新で近接だけObject3Dへ戻る
-  private assignCrowdSlot(bot: Bot): void {
-    if (!this.zombieCrowd) return;
-    const eligible = isCrowdEligible(bot.tier, bot.zombieVariant, bot.hordeRank);
-    bot.setCrowdSlot(eligible ? this.zombieCrowd.acquire() : -1);
-  }
-
-  // 地面Yを下向きレイで確定し、フラスタム外の湧き点を返す(目前でのポップインを避ける)。
-  // R21修正: 生存中ゾンビとの最小間隔(1.2m)も確保し、リング湧きでの重なりスタックを防ぐ。
-  // R51-4c: aliveZombiePos省略時(ボス湧き等の非バッチ経路)は従来どおり内部で1回構築する。
-  // バッチ経路(spawnOneZombie)は呼び出し元が共有配列を渡し、採用したスポーン点をここでpushして
-  // 同一バッチ内の以降の試行からも重なり回避対象として見えるようにする(挙動維持)
-  private zombieSpawnPoint(aliveZombiePos?: THREE.Vector3[]): THREE.Vector3 | null {
-    const size = this.config.stage.size;
-    const bound = size / 2 - 2;
-    const around = this.player.alive ? this.player.position : new THREE.Vector3();
-    const down = new THREE.Vector3(0, -1, 0);
-    // 生存中ゾンビの現在位置(近接スポーンで重なるのを防ぐ)
-    const positions =
-      aliveZombiePos ??
-      this.bots.filter((b) => b.kind === 'zombie' && b.alive).map((b) => b.position);
-    const MIN_ZOMBIE_GAP = 1.2;
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      const ang = this.rand() * Math.PI * 2;
-      const rad =
-        ZOMBIE_SPAWN_RING_MIN + this.rand() * (ZOMBIE_SPAWN_RING_MAX - ZOMBIE_SPAWN_RING_MIN);
-      const x = THREE.MathUtils.clamp(around.x + Math.cos(ang) * rad, -bound, bound);
-      const z = THREE.MathUtils.clamp(around.z + Math.sin(ang) * rad, -bound, bound);
-      const hit = this.castRay(new THREE.Vector3(x, 8, z), down, 20, null);
-      const groundY = hit ? 8 - hitToi(hit) : 0;
-      // A1-F05: キャットウォーク/建物1Fヒットで上層(y>0.6)に湧くのを防ぐ
-      if (groundY > 0.6) continue;
-      const p = new THREE.Vector3(x, groundY + 0.05, z);
-      if (attempt < 10) {
-        // フラスタム内(=プレイヤーの目前)はポップインになるので避ける
-        if (this.isInView(p)) continue;
-        // 直近スポーンゾンビとの重なりを避ける(最終2試行は妥協)
-        if (positions.some((zp) => zp.distanceTo(p) < MIN_ZOMBIE_GAP)) continue;
-      }
-      positions.push(p); // 同一バッチ内の後続呼び出しへ即反映(呼び出し元が共有配列を渡した場合)
-      return p;
-    }
-    return null;
-  }
-
   private isInView(pos: THREE.Vector3): boolean {
     const m = new THREE.Matrix4().multiplyMatrices(
       this.camera.projectionMatrix,
@@ -9644,82 +9073,6 @@ export class Match {
   // ゾンビ近接: 何体密着していても、グローバル間隔 + プレイヤーi-frameで律速し、
   // 同フレームに5体×22=110で即死させない(BO2の複数被弾でも一撃死しない設計)
   // (b)垂直差・(c)LOSチェック追加: オブジェクト上のプレイヤーへの誤ヒットを防ぐ
-  private zombieMelee(bot: Bot): void {
-    if (bot.kind !== 'zombie' && bot.kind !== 'giant' && bot.kind !== 'master') return;
-    if (!this.player.alive) return;
-    const now = this.elapsed;
-    if (now < this.zombieMeleeIframe || now < this.zombieMeleeGlobal) return;
-    // (b) 垂直差チェック: プレイヤーが1.5m以上高い/低い位置にいたら届かない
-    if (Math.abs(this.player.position.y - bot.position.y) > 1.5) return;
-    // (c) LOS チェック: ゾンビ目線からプレイヤーへのレイが world/プロップに遮られていたら届かない
-    const zombieEye = bot.position.clone();
-    zombieEye.y += 1.5;
-    const toPlayer = this.player.position.clone().sub(zombieEye);
-    const meleeDist = toPlayer.length();
-    if (meleeDist > 0.3) {
-      const losHit = this.castRay(zombieEye, toPlayer.clone().normalize(), meleeDist - 0.3, bot.body);
-      if (losHit) {
-        const tag = this.tags.get(losHit.collider.handle);
-        // undefined(タグなし)= 静的コライダー、world/boundary = 地形/プロップ → LOS遮断
-        if (tag === undefined || tag.kind === 'world' || tag.kind === 'boundary') return;
-      }
-    }
-    const dmg = bot.tuning.damage;
-    if (this.config.mode === 'training') return;
-    const died = this.player.takeDamage(dmg);
-    this.tookDamage = true;
-    this.haptic(90, 0.5, 0.6);
-    this.addShake(0.18);
-    this.addUltCharge(dmg * ULT_ON_DAMAGE_PER_HP);
-    this.incoming.push(this.incomingAngle(bot.position));
-    this.sounds.hurt();
-    this.tracker.onPlayerDamaged();
-    this.sounds.playerBodyHit(Math.sin(this.incomingAngle(bot.position)), Math.min(1, dmg / 100));
-    this.zombieMeleeGlobal = now + ZOMBIE_MELEE_GLOBAL_GAP;
-    this.zombieMeleeIframe = now + ZOMBIE_IFRAME;
-    if (died) {
-      const meleeWeapon = bot.kind === 'giant' ? '巨躯の一撃' : bot.kind === 'master' ? '達人の刃' : 'ゾンビの爪';
-      this.feed.push({ killer: bot.name, victim: PLAYER_NAME, weapon: meleeWeapon, headshot: false });
-      this.sounds.death();
-      this.notePlayerDeath(bot);
-    }
-  }
-
-  // 死んで演出も終わったゾンビを解放する。厳密順序: tags削除 → dispose/pool → scene除去 → splice。
-  // tagsを先に消さないと解放済みhandleの再利用で旧タグが新ゾンビのcolliderを旧Botへ解決する。
-  // ★ 通常tier(normal)ゾンビはプールへ退避してbuildZombieMeshの再実行を避ける。
-  // elite/bossは色が異なるため dispose して毎回生成する(出現頻度が低いので許容)。
-  private cleanupDeadZombies(): void {
-    for (let i = this.bots.length - 1; i >= 0; i -= 1) {
-      const b = this.bots[i]!;
-      if (b.kind !== 'zombie' || !b.corpseCleared) continue;
-      this.tags.delete(b.bodyCollider.handle);
-      this.tags.delete(b.headCollider.handle);
-      for (const c of b.extraColliders) this.tags.delete(c.handle);
-      // R53-W3 M3: InstancedMeshスロットを先に返却(協定: release→setCrowdSlot(-1)の順)
-      if (b.crowdSlot >= 0 && this.zombieCrowd) {
-        this.zombieCrowd.release(b.crowdSlot);
-        b.setCrowdSlot(-1);
-      }
-      // 通常tierかつプール未満ならプールへ退避(再利用でbuildZombieMesh削減)
-      if (b.tier === 'normal' && this.zombiePool.length < ZOMBIE_POOL_MAX) {
-        this.scene.remove(b.group);
-        this.zombiePool.push(b);
-      } else {
-        b.dispose();
-        this.scene.remove(b.group);
-      }
-      this.bots.splice(i, 1);
-    }
-    // ボスbot参照が解放済みなら null へ
-    if (this.zombieBossBot && !this.bots.includes(this.zombieBossBot)) {
-      this.zombieBossBot = null;
-    }
-  }
-
-  // ★1 近接≤8体のみ影を落とす距離LOD(多数の影パス/mapSize churnを抑える)。
-  // ゾンビ専用だった運用を全モード/全kindへ一般化(全巨躯54体で影DC162→24)。
-  // aliveのみ再判定し、死亡演出中の個体は直近フラグを維持する(従来と同じ)
   private updateBotShadowLOD(): void {
     const alive: Bot[] = [];
     const d2: number[] = [];
@@ -9736,53 +9089,6 @@ export class Match {
   // ★5 群衆ランク書き込み(R100高密度対策・R51-4e): ★1影LODと同じ0.25s周期で、生存ゾンビを
   // プレイヤー距離の近い順に bot.hordeRank へ書き込む(0=最近接)。死亡/非ゾンビは99固定。
   // distToPlayer は updateBots と同型のアロケーション最小パターン(BOT_POS_SCRATCH再利用)を踏襲
-  private updateZombieHordeRank(): void {
-    const playerPos = this.player.position;
-    const zAlive: Bot[] = [];
-    const d2: number[] = [];
-    for (const b of this.bots) {
-      if (b.kind !== 'zombie' || !b.alive) {
-        b.hordeRank = 99;
-        continue;
-      }
-      zAlive.push(b);
-      d2.push(b.getPositionInto(BOT_POS_SCRATCH).distanceToSquared(playerPos)); // ★5 割り当てゼロ
-    }
-    const ranks = zombieHordeRanks(d2);
-    for (let i = 0; i < zAlive.length; i += 1) zAlive[i]!.hordeRank = ranks[i]!;
-    // R53-W3 M3: 最近接8体⇔群の動的切替(両経路は式同一=ポップなし)。
-    // rank<8はObject3D(実articulated影+個体忠実度)、rank>=8はInstancedMeshへ
-    if (this.zombieCrowd) {
-      for (const b of zAlive) {
-        // R54-W1 Q8: ヒステリシス判定(rank7-9はデッドバンド=チャタリング防止)
-        const action = crowdSlotAction(
-          b.hordeRank,
-          b.crowdSlot >= 0,
-          isCrowdEligible(b.tier, b.zombieVariant, b.hordeRank),
-        );
-        if (action === 'release') {
-          this.zombieCrowd.release(b.crowdSlot);
-          b.setCrowdSlot(-1);
-        } else if (action === 'acquire') {
-          b.setCrowdSlot(this.zombieCrowd.acquire());
-        }
-      }
-    }
-  }
-
-  // R53-W3 M3: ゾンビ群InstancedMeshの毎フレームfeed(updateBots後に1回)。
-  // crowdSlot>=0の個体(生存+死亡演出中)の姿勢をpose→commit。スクラッチ使い回しでアロケゼロ
-  private feedZombieCrowd(): void {
-    if (!this.zombieCrowd) return;
-    for (const b of this.bots) {
-      if (b.crowdSlot < 0) continue;
-      b.getCrowdPose(CROWD_POSE_SCRATCH);
-      this.zombieCrowd.pose(b.crowdSlot, CROWD_POSE_SCRATCH);
-    }
-    this.zombieCrowd.commit();
-  }
-
-  // ミッション開始時の準備: 濃霧・脱出地点・第1波
   private setupMission(mission: MissionDef): void {
     if (this.modifierSet.has('dense-fog') && this.scene.fog instanceof THREE.FogExp2) {
       // R13: 濃霧modifierも「意図的な霧」に留める。係数2.6/上限0.12は白飛びしすぎるため緩和
@@ -10585,8 +9891,8 @@ export class Match {
       waveTotal: this.mission ? this.mission.waves.length : undefined,
       bossHp01: (() => {
         if (this.mission) return this.bossHp01();
-        if (this.config.mode === 'zombie' && this.zombieBossBot?.alive) {
-          return this.zombieBossBot.hp / this.zombieBossBot.maxHp;
+        if (this.config.mode === 'zombie' && this.zombie.zombieBossBot?.alive) {
+          return this.zombie.zombieBossBot.hp / this.zombie.zombieBossBot.maxHp;
         }
         return undefined;
       })(),
@@ -10617,24 +9923,24 @@ export class Match {
       sndProgressKind: this.sndPlayerHolding ?? undefined,
       sndCarrierIsPlayer: this.sndRound ? this.sndRound.carrierUid === -1 : undefined,
       // ── R16 ゾンビ(mode!=='zombie'では undefined)──
-      zombieRound: this.config.mode === 'zombie' ? this.zombieRound : undefined,
-      zombieKills: this.config.mode === 'zombie' ? this.zombieKills : undefined,
-      zombiePoints: this.config.mode === 'zombie' ? this.zombiePoints : undefined,
+      zombieRound: this.config.mode === 'zombie' ? this.zombie.zombieRound : undefined,
+      zombieKills: this.config.mode === 'zombie' ? this.zombie.zombieKills : undefined,
+      zombiePoints: this.config.mode === 'zombie' ? this.zombie.zombiePoints : undefined,
       playerDowns: this.config.mode === 'zombie' ? this.playerDowns : undefined,
-      zombieShopPrompt: this.config.mode === 'zombie' ? (this.zombieShopPrompt ?? undefined) : undefined,
-      zombiePerks: this.config.mode === 'zombie' ? Array.from(this.zombiePerkStacks.keys()) : undefined,
-      zombiePerkStacks: this.config.mode === 'zombie' ? (Object.fromEntries(this.zombiePerkStacks.entries()) as Partial<Record<ZombiePerkId, number>>) : undefined,
-      zombieQuickReviveCharges: this.config.mode === 'zombie' ? this.zombieQuickReviveCharges : undefined,
-      zombieBossFlash: this.config.mode === 'zombie' && this.zombieBossFlash > 0 ? this.zombieBossFlash : undefined,
-      zombiePointFloats: this.config.mode === 'zombie' ? this.zombiePointFloats : undefined,
-      zombieReviveFlash: this.config.mode === 'zombie' && this.zombieReviveFlash > 0 ? this.zombieReviveFlash : undefined,
+      zombieShopPrompt: this.config.mode === 'zombie' ? (this.zombie.zombieShopPrompt ?? undefined) : undefined,
+      zombiePerks: this.config.mode === 'zombie' ? Array.from(this.zombie.zombiePerkStacks.keys()) : undefined,
+      zombiePerkStacks: this.config.mode === 'zombie' ? (Object.fromEntries(this.zombie.zombiePerkStacks.entries()) as Partial<Record<ZombiePerkId, number>>) : undefined,
+      zombieQuickReviveCharges: this.config.mode === 'zombie' ? this.zombie.zombieQuickReviveCharges : undefined,
+      zombieBossFlash: this.config.mode === 'zombie' && this.zombie.zombieBossFlash > 0 ? this.zombie.zombieBossFlash : undefined,
+      zombiePointFloats: this.config.mode === 'zombie' ? this.zombie.zombiePointFloats : undefined,
+      zombieReviveFlash: this.config.mode === 'zombie' && this.zombie.zombieReviveFlash > 0 ? this.zombie.zombieReviveFlash : undefined,
       // ── R53-W2 Pack-a-Punch/パワーアップ/特殊ラウンド/毒霧 ──
-      papTier: this.config.mode === 'zombie' ? (this.zombiePapTiers.get(this.activeWeapon.def.id) ?? 0) : undefined,
+      papTier: this.config.mode === 'zombie' ? (this.zombie.zombiePapTiers.get(this.activeWeapon.def.id) ?? 0) : undefined,
       // W4D: zombiePowerUps は HUD が意図的に未描画(3Dビーコンで視認)のため供給を停止
       // (毎レンダフレームの配列アロケ浪費を根絶。snapshot型のoptionalフィールドは温存)
-      activePowerUps: this.config.mode === 'zombie' ? this.zombieActivePowerUpsSnap() : undefined,
-      specialRound: this.config.mode === 'zombie' ? this.zombieSpecialRound : undefined,
-      poison01: this.config.mode === 'zombie' ? this.zombiePoison01 : undefined,
+      activePowerUps: this.config.mode === 'zombie' ? this.zombie.zombieActivePowerUpsSnap() : undefined,
+      specialRound: this.config.mode === 'zombie' ? this.zombie.zombieSpecialRound : undefined,
+      poison01: this.config.mode === 'zombie' ? this.zombie.zombiePoison01 : undefined,
       darkEmperorS: this.isNinja && this.darkEmperorTimer > 0 && isFinite(this.darkEmperorTimer) ? Math.ceil(this.darkEmperorTimer) : (this.isNinja && this.darkEmperorTimer > 0 ? 1 : undefined),
       darkEmperorPermanent: this.isNinja && !isFinite(this.darkEmperorTimer) ? true : undefined,
       raiteiMode: this.isNinja && this.raiteiMode ? true : undefined,
@@ -10701,7 +10007,7 @@ export class Match {
     this.scoreEvents = [];
     this.medals = [];
     this.moments = []; // R53-W3 M3: medalsと同じドレイン(snapshot渡し→次tickでクリア)
-    this.zombiePointFloats = [];
+    this.zombie.zombiePointFloats = [];
     this.kcEvent = null;
     this.ggRankUpFlash = false;
     this.ggSetback = false;
@@ -11000,19 +10306,19 @@ export class Match {
         medalXp: this.medalXpTotal,
         // ★V一括修正: ゾンビ統計(charm解放)+黒雷帝キル実数(刀身雷脈)を summary へ供給。
         // progression.accumulateMatch がこれらを profile へ積算する(未供給時は0扱いだった)
-        zombieRound: this.config.mode === 'zombie' ? this.zombieRound : undefined,
-        zombieBossKills: this.config.mode === 'zombie' ? this.zombieBossKillCount : undefined,
+        zombieRound: this.config.mode === 'zombie' ? this.zombie.zombieRound : undefined,
+        zombieBossKills: this.config.mode === 'zombie' ? this.zombie.zombieBossKillCount : undefined,
         kokuraiKills: this.tracker.kokuraiKillCount > 0 ? this.tracker.kokuraiKillCount : undefined,
       },
       // R45a: ゾンビモード結果
-      zombieRound: this.config.mode === 'zombie' ? this.zombieRound : undefined,
-      zombiePoints: this.config.mode === 'zombie' ? this.zombiePoints : undefined,
+      zombieRound: this.config.mode === 'zombie' ? this.zombie.zombieRound : undefined,
+      zombiePoints: this.config.mode === 'zombie' ? this.zombie.zombiePoints : undefined,
       // R53-W2 M2b: ゾンビAAR用の追加行(menu側が消費)
       papTierMax:
-        this.config.mode === 'zombie' && this.zombiePapTiers.size > 0
-          ? Math.max(...this.zombiePapTiers.values())
+        this.config.mode === 'zombie' && this.zombie.zombiePapTiers.size > 0
+          ? Math.max(...this.zombie.zombiePapTiers.values())
           : undefined,
-      specialZombieKills: this.config.mode === 'zombie' ? this.zombieVariantKillCount : undefined,
+      specialZombieKills: this.config.mode === 'zombie' ? this.zombie.zombieVariantKillCount : undefined,
       sndScore: this.sndMatch
         ? [this.sndMatch.scoreOf(PLAYER_TEAM), this.sndMatch.scoreOf(ENEMY_TEAM)]
         : undefined,
@@ -11033,62 +10339,6 @@ export class Match {
   }
 
   // ── ゾンビ経済: ショップ構築 ──────────────────────────────────────────
-  private buildZombieShop(): void {
-    const layout = generateShopLayout(this.config.stage.seed);
-    this.zombieShopLayout = layout;
-    const total = layout.slots.length;
-    const size = this.config.stage.size;
-
-    // ミステリーボックス移動先候補を5点生成(種ベース+オフセット)
-    this.zombieBoxPositions = [];
-    const boxAngles = [0.1, 1.3, 2.5, 3.8, 5.1];
-    for (const a of boxAngles) {
-      this.zombieBoxPositions.push(
-        this.findShopGroundPos(a + this.config.stage.seed * 0.01, size * 0.15),
-      );
-    }
-
-    this.zombieBoxGroupIdx = -1;
-    for (const slot of layout.slots) {
-      const baseAngle = (slot.slotIndex / total) * Math.PI * 2 + this.config.stage.seed * 0.01;
-      let radius: number;
-      if (slot.kind === 'wall-buy') radius = size * 0.36;
-      // R53-W2: ドアは建物入口に見立て、壁武器と同程度の外周へ独立ゲートとして配置する
-      // (PaP台と座標的に結びつける生成側ロジックは無く、無理に近接させると不自然になるため。
-      // 判断は報告参照: 「実装の単純さ優先」でPaP台は従来のmystery-box同様の内周に据え置く)
-      else if (slot.kind === 'door') radius = size * 0.4;
-      else if (slot.kind === 'perk-machine') radius = size * 0.26;
-      else radius = size * 0.16; // mystery-box / pack-a-punch
-
-      const group = this.buildShopVisual(slot);
-      group.position.copy(this.findShopGroundPos(baseAngle, radius));
-      this.scene.add(group);
-      this.zombieShopGroups.push(group);
-      if (slot.kind === 'mystery-box') this.zombieBoxGroupIdx = this.zombieShopGroups.length - 1;
-      if (slot.kind === 'door') {
-        // R53-W2: ドアのバリケードコライダー(world扱い=移動を阻む。弾/視線はcastRay側のタグ判定で
-        // 個別に扱われるため通常のworldプロップと同じ挙動=弾は当たる。購入で除去する)
-        const body = this.physics.createRigidBody(
-          RAPIER.RigidBodyDesc.fixed().setTranslation(group.position.x, group.position.y + 1.0, group.position.z),
-        );
-        const collider = this.physics.createCollider(RAPIER.ColliderDesc.cuboid(0.8, 1.05, 0.15), body);
-        this.tags.set(collider.handle, { kind: 'world' });
-        this.zombieDoorBody = body;
-        this.zombieDoorCollider = collider;
-      }
-    }
-
-    // ミステリーボックス: 初期位置を最後の boxPositions[0] に設定
-    // R53-W2バグ修正: 旧実装は「ミステリーボックスは常に末尾スロット」前提でlayout.slots.length-1を
-    // 直接参照していたが、pack-a-punch/doorが末尾に追加されたため崩壊していた(末尾はdoorになる)。
-    // 生成時に記録したkind一致indexを使う。
-    this.zombieBoxCurrentIdx = 0;
-    if (this.zombieBoxGroupIdx >= 0 && this.zombieBoxPositions[0]) {
-      const grp = this.zombieShopGroups[this.zombieBoxGroupIdx];
-      if (grp) grp.position.copy(this.zombieBoxPositions[0]);
-    }
-  }
-
   private snapToGround(origin: THREE.Vector3): number {
     const down = new THREE.Vector3(0, -1, 0);
     const hit = this.castRay(origin, down, 40, this.player.body);
@@ -11098,502 +10348,6 @@ export class Match {
   // 決定論的な接地点探索: 基準角の周辺(±0.22/±0.44rad)を走査し、最も低い接地Yの候補を選ぶ。
   // 障害物の天面(高所)にラック/自販機が乗って実質購入不能になるのを避ける。
   // レイキャストのみでコライダーは一切足さない=ゾンビのナビ/スタックに影響ゼロ
-  private findShopGroundPos(baseAngle: number, radius: number): THREE.Vector3 {
-    const offsets = [0, 0.22, -0.22, 0.44, -0.44];
-    let best: THREE.Vector3 | null = null;
-    for (const off of offsets) {
-      const x = Math.cos(baseAngle + off) * radius;
-      const z = Math.sin(baseAngle + off) * radius;
-      const y = this.snapToGround(new THREE.Vector3(x, 20, z));
-      if (y <= 0.5) return new THREE.Vector3(x, y, z); // 床レベル=即採用
-      if (!best || y < best.y) best = new THREE.Vector3(x, y, z);
-    }
-    return best ?? new THREE.Vector3(Math.cos(baseAngle) * radius, 0, Math.sin(baseAngle) * radius);
-  }
-
-  private buildShopVisual(slot: ShopSlot): THREE.Group {
-    const group = new THREE.Group();
-    (group as unknown as { _shopSlotIndex: number })._shopSlotIndex = slot.slotIndex;
-
-    if (slot.kind === 'wall-buy') {
-      // ラック本体(暗いパネル)
-      const rackGeo = new THREE.BoxGeometry(1.0, 1.6, 0.12);
-      const rackMat = new THREE.MeshStandardMaterial({ color: 0x1a2030, roughness: 0.8, metalness: 0.3 });
-      const rack = new THREE.Mesh(rackGeo, rackMat);
-      rack.position.y = 0.8;
-      group.add(rack);
-      // 発光リムライト(枠線エミッシブ)
-      const rimGeo = new THREE.BoxGeometry(1.02, 1.62, 0.08);
-      const rimMat = new THREE.MeshBasicMaterial({ color: 0x4a9eff, wireframe: true });
-      const rim = new THREE.Mesh(rimGeo, rimMat);
-      rim.position.y = 0.8;
-      group.add(rim);
-      // 本物の武器モデル(buildGunBody)
-      const wdef = WEAPON_DEFS[slot.weaponId ?? ''];
-      if (wdef) {
-        try {
-          const { gun } = buildGunBody(wdef);
-          gun.scale.setScalar(0.7);
-          gun.position.set(0, 1.1, 0.09);
-          gun.rotation.set(0, Math.PI, -Math.PI / 2);
-          group.add(gun);
-        } catch {
-          const barGeo = new THREE.BoxGeometry(0.65, 0.06, 0.06);
-          const barMat = new THREE.MeshBasicMaterial({ color: 0x88ddff });
-          const bar = new THREE.Mesh(barGeo, barMat);
-          bar.position.set(0, 1.1, 0.07);
-          group.add(bar);
-        }
-      }
-      const ringGeo = new THREE.RingGeometry(0.3, 0.35, 16);
-      const ringMat = new THREE.MeshBasicMaterial({ color: 0x4a9eff, side: THREE.DoubleSide });
-      const ring = new THREE.Mesh(ringGeo, ringMat);
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.02;
-      group.add(ring);
-    } else if (slot.kind === 'perk-machine') {
-      const perkColors: Record<ZombiePerkId, number> = {
-        juggernog: 0xff2222,
-        'speed-cola': 0x22ffdd,
-        'double-tap': 0xff8822,
-        'stamin-up': 0xffee22,
-        'quick-revive': 0x2244ff,
-        'ext-mag': 0x88ff44,
-      };
-      const col = perkColors[slot.perkId as ZombiePerkId] ?? 0xffffff;
-      const bodyGeo = new THREE.BoxGeometry(0.65, 1.9, 0.55);
-      const bodyMat = new THREE.MeshStandardMaterial({
-        color: col,
-        emissive: new THREE.Color(col),
-        emissiveIntensity: 0.35,
-        roughness: 0.6,
-        metalness: 0.3,
-      });
-      const body = new THREE.Mesh(bodyGeo, bodyMat);
-      body.position.y = 0.95;
-      group.add(body);
-      const panelGeo = new THREE.BoxGeometry(0.5, 0.08, 0.01);
-      const panelMat = new THREE.MeshBasicMaterial({ color: col });
-      for (let i = 0; i < 3; i++) {
-        const panel = new THREE.Mesh(panelGeo, panelMat);
-        panel.position.set(0, 0.6 + i * 0.4, 0.28);
-        group.add(panel);
-      }
-    } else if (slot.kind === 'mystery-box') {
-      const crateGeo = new THREE.BoxGeometry(0.82, 0.62, 0.62);
-      const crateMat = new THREE.MeshStandardMaterial({
-        color: 0xffd700,
-        emissive: new THREE.Color(0xffaa00),
-        emissiveIntensity: 0.7,
-        roughness: 0.4,
-        metalness: 0.5,
-      });
-      const crate = new THREE.Mesh(crateGeo, crateMat);
-      crate.position.y = 0.31;
-      group.add(crate);
-      const lidGeo = new THREE.BoxGeometry(0.82, 0.06, 0.62);
-      const lid = new THREE.Mesh(lidGeo, crateMat.clone());
-      lid.position.set(0, 0.62, -0.15);
-      lid.rotation.x = 0.25;
-      group.add(lid);
-      const ringGeo = new THREE.RingGeometry(0.28, 0.34, 20);
-      const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd700, side: THREE.DoubleSide });
-      const ring = new THREE.Mesh(ringGeo, ringMat);
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.02;
-      group.add(ring);
-    } else if (slot.kind === 'pack-a-punch') {
-      // 鍛神台(Pack-a-Punch): 鉄床本体+4本柱+橙の發光クリスタル(emissiveIntensity 0.5 ≤0.55上限)
-      const anvilGeo = new THREE.BoxGeometry(0.9, 0.5, 0.7);
-      const anvilMat = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.55, metalness: 0.75 });
-      const anvil = new THREE.Mesh(anvilGeo, anvilMat);
-      anvil.position.y = 0.25;
-      group.add(anvil);
-      const pillarGeo = new THREE.BoxGeometry(0.16, 0.9, 0.16);
-      const pillarMat = new THREE.MeshStandardMaterial({ color: 0x22262f, roughness: 0.6, metalness: 0.6 });
-      for (const [px, pz] of [[-0.32, -0.24], [0.32, -0.24], [-0.32, 0.24], [0.32, 0.24]] as const) {
-        const pillar = new THREE.Mesh(pillarGeo, pillarMat);
-        pillar.position.set(px, 0.95, pz);
-        group.add(pillar);
-      }
-      const crystalGeo = new THREE.OctahedronGeometry(0.28, 0);
-      const crystalMat = new THREE.MeshStandardMaterial({
-        color: 0x341400,
-        emissive: new THREE.Color(0xff6a00),
-        emissiveIntensity: 0.5,
-        roughness: 0.3,
-        metalness: 0.2,
-      });
-      const crystal = new THREE.Mesh(crystalGeo, crystalMat);
-      crystal.position.y = 1.55;
-      group.add(crystal);
-      const ringGeo = new THREE.RingGeometry(0.34, 0.42, 20);
-      const ringMat = new THREE.MeshBasicMaterial({ color: 0xff6a00, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
-      const ring = new THREE.Mesh(ringGeo, ringMat);
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.02;
-      group.add(ring);
-      // ★V-A MEDIUM修正: 鍛神台はゲート(door)開放までの封印制 — ドアに機能的意味を持たせる。
-      // 封印中はクリスタル/リングを暗転(発光0.1/透明0.15)し、開放時に papSealDim(false) で復帰
-      this.zombiePapCrystalMat = crystalMat;
-      this.zombiePapRingMat = ringMat;
-      if (papInteractSealed(true, this.zombieDoorOpen)) this.papSealDim(true);
-    } else if (slot.kind === 'door') {
-      // ドア(バリケード板): 暗色木材のクロス板2枚+フレーム2本。購入時に個別disposeするため
-      // ジオメトリ/マテリアルをzombieDoorVisualへ記録する(match.tsが唯一のオーナー)。
-      this.zombieHasDoor = true; // 鍛神台の封印判定(papInteractSealed)の入力
-      const boardMat = new THREE.MeshStandardMaterial({ color: 0x2a1f14, roughness: 0.9, metalness: 0.05 });
-      const boardGeo = new THREE.BoxGeometry(1.5, 0.22, 0.06);
-      const board1 = new THREE.Mesh(boardGeo, boardMat);
-      board1.position.set(0, 1.1, 0);
-      board1.rotation.z = 0.35;
-      group.add(board1);
-      const board2 = new THREE.Mesh(boardGeo, boardMat);
-      board2.position.set(0, 1.1, 0);
-      board2.rotation.z = -0.35;
-      group.add(board2);
-      const frameMat = new THREE.MeshStandardMaterial({ color: 0x1c140c, roughness: 0.85 });
-      const frameGeo = new THREE.BoxGeometry(0.12, 2.1, 0.12);
-      const frameL = new THREE.Mesh(frameGeo, frameMat);
-      frameL.position.set(-0.75, 1.05, 0);
-      group.add(frameL);
-      const frameR = new THREE.Mesh(frameGeo, frameMat);
-      frameR.position.set(0.75, 1.05, 0);
-      group.add(frameR);
-      this.zombieDoorVisual = { group, geos: [boardGeo, frameGeo], mats: [boardMat, frameMat] };
-    }
-    return group;
-  }
-
-  private updateZombieShopProximity(): void {
-    if (!this.zombieShopLayout || !this.player.alive) {
-      this.zombieShopPrompt = null;
-      return;
-    }
-    const ppos = this.player.position;
-    let bestDist = 2.2;
-    let bestSlot: ShopSlot | null = null;
-
-    for (let i = 0; i < this.zombieShopGroups.length; i++) {
-      const grp = this.zombieShopGroups[i];
-      if (!grp) continue;
-      const slot = this.zombieShopLayout.slots[i];
-      if (!slot) continue;
-      if (slot.kind === 'door' && this.zombieDoorOpen) continue; // 開放済みドアは対象外
-      const dist = grp.position.distanceTo(ppos);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestSlot = slot;
-      }
-    }
-
-    if (!bestSlot) {
-      this.zombieShopPrompt = null;
-      return;
-    }
-
-    const label = this.zombieShopSlotLabel(bestSlot);
-    const cost = this.zombieSlotEffectiveCost(bestSlot);
-    const canAfford = canBuy(this.zombiePoints, cost);
-    this.zombieShopPrompt = { label, canAfford, cost };
-  }
-
-  private zombieShopSlotLabel(slot: ShopSlot): string {
-    if (slot.kind === 'wall-buy') {
-      const wdef = WEAPON_DEFS[slot.weaponId ?? ''];
-      const name = wdef?.name ?? slot.weaponId ?? '?';
-      return `[E] ${name}  ${slot.cost}pt`;
-    }
-    if (slot.kind === 'perk-machine') {
-      const perkDef = slot.perkId ? PERKS[slot.perkId] : null;
-      let label = `[E] ${perkDef?.name ?? slot.perkId ?? '?'}  ${slot.cost}pt`;
-      if (slot.perkId === 'stamin-up' && this.zombiePerkMoveMul >= 1.5) {
-        label += ' (速度上限)';
-      }
-      const stackN = slot.perkId ? (this.zombiePerkStacks.get(slot.perkId) ?? 0) : 0;
-      if (stackN > 0 && slot.perkId !== 'quick-revive') {
-        label += ` ×${stackN + 1}目`;
-      }
-      return label;
-    }
-    if (slot.kind === 'pack-a-punch') {
-      // ★V-A MEDIUM修正: 封印中は誘導プロンプト(ドア開放が解錠条件)
-      if (papInteractSealed(this.zombieHasDoor, this.zombieDoorOpen)) {
-        return '鍛神台は封印されている — ゲートを開放せよ';
-      }
-      const weapon = this.activeWeapon;
-      if (EXT_MAG_EXCLUDED_IDS.has(weapon.def.id)) return '[E] 鍛神台(クナイは対象外)';
-      const curTier = (this.zombiePapTiers.get(weapon.def.id) ?? 0) as PapTier;
-      const isMaxed = curTier >= 3;
-      const cost = this.zombiePapEffectiveCost();
-      return isMaxed ? `[E] 鍛神台(補充)  ${cost}pt` : `[E] 鍛神台 改${curTier + 1}  ${cost}pt`;
-    }
-    if (slot.kind === 'door') {
-      return `[E] ドアを開放  ${DOOR_COST}pt`;
-    }
-    return `[E] ミステリーボックス  ${slot.cost}pt`;
-  }
-
-  // 鍛神台の封印ビジュアル(クリスタル/床リング)の暗転/復帰。封印中=発光0.1/リング0.15、
-  // 開放=ビルド時の定数(0.5/0.5)へ戻す。bloom閾値0.9には両状態とも遠く及ばない
-  private papSealDim(sealed: boolean): void {
-    if (this.zombiePapCrystalMat) this.zombiePapCrystalMat.emissiveIntensity = sealed ? 0.1 : 0.5;
-    if (this.zombiePapRingMat) this.zombiePapRingMat.opacity = sealed ? 0.15 : 0.5;
-  }
-
-  private handleZombieInteract(): void {
-    if (!this.input.wasPressed('interact')) return;
-    if (!this.player.alive || !this.zombieShopLayout) return;
-    if (this.zombieBoxAnimTimer > 0) return;
-
-    const ppos = this.player.position;
-    let bestDist = 2.2;
-    let bestSlotIdx = -1;
-
-    for (let i = 0; i < this.zombieShopGroups.length; i++) {
-      const grp = this.zombieShopGroups[i];
-      if (!grp) continue;
-      const s = this.zombieShopLayout.slots[i];
-      if (s?.kind === 'door' && this.zombieDoorOpen) continue; // 開放済みドアは対象外
-      const dist = grp.position.distanceTo(ppos);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestSlotIdx = i;
-      }
-    }
-
-    if (bestSlotIdx < 0) return;
-    const slot = this.zombieShopLayout.slots[bestSlotIdx];
-    if (!slot) return;
-
-    if (!canBuy(this.zombiePoints, slot.cost)) {
-      return;
-    }
-
-    if (slot.kind === 'wall-buy') {
-      try {
-        this.zombiePoints = buyResult(this.zombiePoints, slot.cost);
-      } catch {
-        return;
-      }
-      this.switchPrimaryWeapon(slot.weaponId ?? '');
-      this.sounds.uiClick();
-    } else if (slot.kind === 'perk-machine') {
-      if (!slot.perkId) return;
-      const stacksRecord = Object.fromEntries(this.zombiePerkStacks.entries()) as Partial<Record<ZombiePerkId, number>>;
-      const result = purchasePerk(stacksRecord, slot.perkId, this.zombiePoints, this.zombieQuickReviveCharges);
-      if (!result.ok) return;
-      this.zombiePoints = result.remainingPoints;
-      if (slot.perkId !== 'quick-revive') {
-        this.zombiePerkStacks.set(slot.perkId, result.stackCount);
-      }
-      this.applyZombiePerk(slot.perkId, result.stackCount);
-      // R53-W2 M2b: 継承の守り札(perkcarry)の供給側 — この試合で「最初に買ったパーク」を
-      // 次試合へ引き継げるよう保存する(menu側 readLastZombiePerk / キー名はMN2凍結契約)
-      if (!this.zombieFirstPerkSaved) {
-        this.zombieFirstPerkSaved = true;
-        try {
-          localStorage.setItem(LAST_ZOMBIE_PERK_KEY, slot.perkId);
-        } catch {
-          /* localStorage不可(プライベートモード等)は静かに無視 */
-        }
-      }
-      const stackSuffix = result.stackCount > 1 ? ` ×${result.stackCount}` : '';
-      this.announcements.push(PERKS[slot.perkId].name + stackSuffix + ' 取得');
-      // R53-W3 M3: MK.IIIモーメント(パーク取得)
-      this.moments.push({ kind: 'perk', title: PERKS[slot.perkId].name, sub: stackSuffix ? `×${result.stackCount}` : undefined });
-      this.sounds.uiClick();
-    } else if (slot.kind === 'mystery-box') {
-      try {
-        this.zombiePoints = buyResult(this.zombiePoints, MYSTERY_BOX_COST);
-      } catch {
-        return;
-      }
-      const result = rollMysteryBox(Math.random.bind(Math));
-      this.zombieBoxPendingWeapon = result.weaponId;
-      this.zombieBoxAnimTimer = 1.2;
-      const grp = this.zombieShopGroups[bestSlotIdx];
-      if (grp) {
-        const pillarGeo = new THREE.CylinderGeometry(0.08, 0.08, 5, 8, 1, true);
-        const pillarMat = new THREE.MeshBasicMaterial({
-          color: 0xffd700,
-          transparent: true,
-          opacity: 0.55,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        });
-        this.zombieBoxAnimMesh = new THREE.Mesh(pillarGeo, pillarMat);
-        this.zombieBoxAnimMesh.position.set(grp.position.x, grp.position.y + 2.5, grp.position.z);
-        this.scene.add(this.zombieBoxAnimMesh);
-      }
-      if (result.boxMoves) {
-        // 移動は演出(1.2s)終了時に適用する。フラグを立てないと毎ロールで
-        // 「移動した」アナウンスが誤発火する
-        this.zombieBoxCurrentIdx = (this.zombieBoxCurrentIdx + 1) % this.zombieBoxPositions.length;
-        this.zombieBoxPendingMove = true;
-      }
-      this.sounds.uiClick();
-    } else if (slot.kind === 'pack-a-punch') {
-      // ★V-A MEDIUM修正: ドア未開放の間は封印(ドアに機能的意味を付与)
-      if (papInteractSealed(this.zombieHasDoor, this.zombieDoorOpen)) {
-        this.sounds.papDeny();
-        this.announcements.push('鍛神台は封印されている — ゲートを開放せよ');
-        return;
-      }
-      const weapon = this.activeWeapon;
-      if (EXT_MAG_EXCLUDED_IDS.has(weapon.def.id)) {
-        this.sounds.papDeny(); // クナイ(近接)は鍛神対象外
-        return;
-      }
-      const curTier = (this.zombiePapTiers.get(weapon.def.id) ?? 0) as PapTier;
-      const isMaxed = curTier >= 3;
-      const nextTier = (isMaxed ? 3 : curTier + 1) as PapTier;
-      const cost = isMaxed ? PAP_REFILL_COST : PAP_COST[nextTier];
-      if (!canBuy(this.zombiePoints, cost)) {
-        this.sounds.papDeny();
-        return;
-      }
-      this.zombiePoints = buyResult(this.zombiePoints, cost);
-      if (!isMaxed) this.zombiePapTiers.set(weapon.def.id, nextTier);
-      this.recomposeWeapon(weapon);
-      this.viewModel.setWeapon(weapon.def);
-      this.viewModel.playPapUpgradeAnim(this.settings.reduceMotion);
-      this.sounds.papUpgrade();
-      // ★V-A修正(TODO消化): 鍛神台の改造演出FX(B-FX2、火花+光条2.5s、既存プール流用)
-      {
-        const g = this.zombieShopGroups[bestSlotIdx];
-        if (g) this.effects.papMachineGlow(g.position.x, g.position.y, g.position.z);
-      }
-      this.announcements.push(`${weapon.def.name} を鍛神！`);
-      const medalOut: MedalEvent[] = [];
-      if (!this.zombiePapAnyDone) {
-        this.zombiePapAnyDone = true;
-        this.tracker.emitManual('pap-first', medalOut);
-      }
-      if (!isMaxed && nextTier === 3) {
-        this.tracker.emitManual('pap-max', medalOut);
-      }
-      this.emitMedals(medalOut);
-    } else if (slot.kind === 'door') {
-      if (this.zombieDoorOpen) return;
-      try {
-        this.zombiePoints = buyResult(this.zombiePoints, DOOR_COST);
-      } catch {
-        return;
-      }
-      this.zombieDoorOpen = true;
-      // R31と同じ順序: tags削除 → removeRigidBody → ビジュアル除去
-      if (this.zombieDoorCollider) this.tags.delete(this.zombieDoorCollider.handle);
-      if (this.zombieDoorBody) this.physics.removeRigidBody(this.zombieDoorBody);
-      this.zombieDoorBody = null;
-      this.zombieDoorCollider = null;
-      if (this.zombieDoorVisual) {
-        this.scene.remove(this.zombieDoorVisual.group);
-        for (const g of this.zombieDoorVisual.geos) g.dispose();
-        for (const m of this.zombieDoorVisual.mats) m.dispose();
-        this.zombieDoorVisual = null;
-      }
-      this.announcements.push('ドアを開放した！ — 鍛神台の封印が解けた');
-      // ★V-A MEDIUM修正: 鍛神台の封印解除(ビジュアル復帰)
-      this.papSealDim(false);
-      this.sounds.doorUnlock(); // W4D: 1750ptの解錠に相応しい重ラッチ+チャイム
-    }
-  }
-
-  private updateZombieBoxAnim(dt: number): void {
-    if (this.zombieBoxAnimTimer <= 0) return;
-    this.zombieBoxAnimTimer = Math.max(0, this.zombieBoxAnimTimer - dt);
-
-    if (this.zombieBoxAnimMesh) {
-      const t = this.zombieBoxAnimTimer / 1.2;
-      (this.zombieBoxAnimMesh.material as THREE.MeshBasicMaterial).opacity = 0.55 * Math.sin(t * Math.PI);
-    }
-
-    if (this.zombieBoxAnimTimer <= 0) {
-      if (this.zombieBoxPendingWeapon) {
-        // 期待感の答え合わせ: 排出武器名をアナウンス(BO2のロール演出の締め)
-        const wname =
-          WEAPON_DEFS[this.zombieBoxPendingWeapon]?.name ?? this.zombieBoxPendingWeapon;
-        this.switchPrimaryWeapon(this.zombieBoxPendingWeapon);
-        this.announcements.push(`${wname} を引き当てた！`);
-        this.zombieBoxPendingWeapon = null;
-      }
-      if (this.zombieBoxAnimMesh) {
-        this.scene.remove(this.zombieBoxAnimMesh);
-        (this.zombieBoxAnimMesh.geometry as THREE.BufferGeometry).dispose();
-        (this.zombieBoxAnimMesh.material as THREE.Material).dispose();
-        this.zombieBoxAnimMesh = null;
-      }
-      // boxMoves のロールだった時だけ箱を次候補へ移す(元位置は消灯=グループごと移動)
-      // R53-W2バグ修正: 末尾決め打ちではなくbuildZombieShopが記録したindexを使う
-      if (this.zombieBoxPendingMove) {
-        this.zombieBoxPendingMove = false;
-        const boxGrp = this.zombieShopGroups[this.zombieBoxGroupIdx];
-        const newPos = this.zombieBoxPositions[this.zombieBoxCurrentIdx];
-        if (boxGrp && newPos) {
-          boxGrp.position.copy(newPos);
-          this.announcements.push('ミステリーボックスが移動した！');
-        }
-      }
-    }
-  }
-
-  private applyZombiePerk(perkId: ZombiePerkId, stackCount: number): void {
-    if (perkId === 'juggernog') {
-      if (stackCount === 1) {
-        // 初回: ×2.5。現在HPの割合を保持して逆転を防ぐ(300→750)
-        const ratio = this.player.maxHp > 0 ? this.player.hp / this.player.maxHp : 1;
-        const newMax = Math.round(this.player.maxHp * 2.5);
-        this.player.maxHp = newMax;
-        this.player.hp = Math.max(1, Math.round(newMax * ratio));
-      } else {
-        // 2回目以降: +150HP/スタック
-        this.player.maxHp += 150;
-        this.player.hp = Math.min(this.player.hp + 150, this.player.maxHp);
-      }
-    } else if (perkId === 'stamin-up') {
-      // +5%/スタック、上限×1.5。上限でも購入はできる(ポイントシンク)
-      this.zombiePerkMoveMul = Math.min(1.5, this.zombiePerkMoveMul * 1.05);
-    } else if (perkId === 'quick-revive') {
-      this.zombieQuickReviveCharges += 1;
-    } else {
-      // R53-W2: speed-cola/double-tap/ext-mag は個別のdef直接変異(旧: 現在値への
-      // 複利/加算)を撤去し、composeZombieWeaponDefへ一本化。常にWEAPON_DEFSの基礎値
-      // から全武器を再合成する(PaP tierとの組み合わせも自動的に正しく反映される)。
-      this.recomposeAllWeapons();
-    }
-  }
-
-  private switchPrimaryWeapon(weaponId: string): void {
-    // ★V-A修正: 「今まさに所持している改造済み武器」を壁で再購入した場合は弾補給扱いにして
-    // PaP tierを維持する(BO2の壁弾補給準拠 — 改造が消える体験劣化の根治)。
-    // 非所持武器への切替(=新品取得)は従来どおりtier0リセット。
-    const currentlyHeld = this.weapons.some((w) => w.def.id === weaponId);
-    const papTier = papTierAfterWallBuy(
-      currentlyHeld,
-      (this.zombiePapTiers.get(weaponId) ?? 0) as PapTier,
-    );
-    if (papTier === 0) this.zombiePapTiers.delete(weaponId);
-    const baseDef = WEAPON_DEFS[weaponId] ?? WEAPON_DEFS['kaede-ar']!;
-    // R53-W2: per-matchクローン(applyAttachments)→composeZombieWeaponDef の順で一本化。
-    // composeは自身でfists(クナイ)をガードして素通しするため、呼び出し側での分岐は不要。
-    const cloned = applyAttachments(baseDef, []);
-    const composed = composeZombieWeaponDef(cloned, {
-      papTier,
-      extMagStacks: this.zombiePerkStacks.get('ext-mag') ?? 0,
-      doubleTapStacks: this.zombiePerkStacks.get('double-tap') ?? 0,
-      speedColaStacks: this.zombiePerkStacks.get('speed-cola') ?? 0,
-    });
-    // ★V-A修正: tier維持の再購入では鍛神カモも維持(composeはカモを扱わないため明示設定)
-    composed.papCamo = PAP_CAMO_BY_TIER[papTier];
-    const newWeapon = new Weapon(composed);
-    newWeapon.raise();
-    // BO2式: 構えているスロット(activeIndex)を置換し、アクティブスロットは変えない
-    (this.weapons as Weapon[])[this.activeIndex] = newWeapon;
-    this.viewModel.setWeapon(newWeapon.def);
-    this.adsLatch = false;
-  }
-
   dispose(): void {
     // BO2 ストリーク: HK エンティティを解放(scene.traverse前に手動removeが必要)
     for (const hk of this.hkEntities) {
@@ -11635,8 +10389,8 @@ export class Match {
     this.sounds.setLightningHum(false); // 雷帝ハムのループ音を停止(リスタート時の残留防止)
     this.sounds.stopKokuraiThunder();   // R33: 遠雷スケジューラ停止
     this.sounds.setEmperorBgm(null);    // R53-W3 M3: 帝王BGM層を通常へ復帰(試合終了/quit)
-    this.zombieCrowd?.dispose(this.scene); // R53-W3 M3: ゾンビ群InstancedMeshの解放
-    this.zombieCrowd = null;
+    this.zombie.dispose(); // R54-F2: ゾンビ系リソース解放(crowd/ショップ/ドア/毒霧/ドロップ/プール/箱演出)
+    this.zombie.zombieCrowd = null;
     this.kokuraiTrailTimer = 0;         // R33
     this.kokuraiThunderTimer = 0;       // R33
     this.kokuraiBlackInTimer = 0;       // R33
@@ -11679,38 +10433,6 @@ export class Match {
       this.rainPoints = null;
       this.rainTimeUniform = null;
     }
-    // ゾンビショップオブジェクトを解放
-    for (const grp of this.zombieShopGroups) {
-      this.scene.remove(grp);
-      grp.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) {
-          obj.geometry.dispose();
-          if (Array.isArray(obj.material)) {
-            for (const m of obj.material) m.dispose();
-          } else {
-            obj.material.dispose();
-          }
-        }
-      });
-    }
-    this.zombieShopGroups.length = 0;
-    this.zombieBossBot = null;
-    // R53-W2: 未購入ドアの参照だけ後始末(メッシュ自体は上のzombieShopGroups一括disposeで解放済み)
-    this.zombieDoorVisual = null;
-    this.zombieDoorBody = null;
-    this.zombieDoorCollider = null;
-    // R53-W2: 毒霧/パワーアップドロップを解放(zombieShopGroupsとは別系統のscene常駐エンティティ)
-    this.zombieMiasmaClouds.length = 0;
-    // ★V-A修正: 毒霧/ドロップの視覚はeffects側プール(effects.dispose)が解放する
-    for (const drop of this.zombiePowerUpDrops) {
-      this.scene.remove(drop.mesh);
-      this.effects.disposePowerUpBeacon(drop.mesh);
-    }
-    this.zombiePowerUpDrops.length = 0;
-
-    // ★ ゾンビプールをフラッシュ(match終了時=プールBotはsceneに追加されていないのでdisposeのみ)
-    for (const b of this.zombiePool) b.dispose();
-    this.zombiePool.length = 0;
     // ドッグタグエンティティを解放(scene.traverse前に削除してからgeometry/material解放)
     for (const entity of this.kcDogTagEntities) {
       this.scene.remove(entity.group);
@@ -11722,12 +10444,6 @@ export class Match {
       });
     }
     this.kcDogTagEntities.length = 0;
-    if (this.zombieBoxAnimMesh) {
-      this.scene.remove(this.zombieBoxAnimMesh);
-      (this.zombieBoxAnimMesh.geometry as THREE.BufferGeometry).dispose();
-      (this.zombieBoxAnimMesh.material as THREE.Material).dispose();
-      this.zombieBoxAnimMesh = null;
-    }
     // ── R22 新パスの解放 ──
     // AdsDofPass/GodRaysPass は composer.passes ループで一括 dispose されるため明示呼び出し不要
     this._adsDofPass = null;
@@ -11822,10 +10538,10 @@ export class Match {
     });
     this.disposeTrainingTargets();
     // ★ ゾンビメッシュプールを解放(scene.traverseの外にいるため明示的に dispose が必要)
-    for (const bot of this.zombiePool) {
+    for (const bot of this.zombie.zombiePool) {
       bot.dispose();
     }
-    this.zombiePool.length = 0;
+    this.zombie.zombiePool.length = 0;
     this.botGhostUpdateBucket.clear();
     this.botGhostPos.clear();
     this.physics.free();

@@ -21,6 +21,10 @@ const GOLDEN_EXPORTS = [
   "EXT_MAG_EXCLUDED_IDS",
   "Match",
   "PAP_CAMO_BY_TIER",
+  // R54-F2 意図的追加: ZombieDirectorと共有する4シンボル(移動でなく共有のためexport化)
+  "PLAYER_FEET_OFFSET",
+  "PLAYER_NAME",
+  "ULT_ON_DAMAGE_PER_HP",
   "applyHellTierTuning",
   "applyHellTuning",
   "applyMissionDifficultyTuning",
@@ -34,6 +38,7 @@ const GOLDEN_EXPORTS = [
   "fanPelletYaw",
   "fkIsStale",
   "floorDetailEligible",
+  "hitToi", // R54-F2 意図的追加(同上)
   "hotspotEma",
   "instaKillApplies",
   "isCrowdEligible",
