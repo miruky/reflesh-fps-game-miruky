@@ -30,7 +30,8 @@ const spaceCanvas = document.getElementById('space-bg') as HTMLCanvasElement | n
 if (!appRoot || !hudRoot || !menuRoot) throw new Error('マウント先の要素が見つからない');
 
 // W-ENZA2: ?ui2 で新UI層(モック正典)を使用。検証完了後に既定反転+?classicフォールバック予定
-const USE_UI2 = new URLSearchParams(location.search).has('ui2');
+// W-ENZA2: 焔座v2(Claude Designモック1:1移植)を既定UIへ。旧UI(src/ui)は ?classic でフォールバック。
+const USE_UI2 = !new URLSearchParams(location.search).has('classic');
 
 // WebGLも物理エンジンも無い環境では黒画面で詰まらせず、理由を示して止める。
 function showFatal(message: string): void {

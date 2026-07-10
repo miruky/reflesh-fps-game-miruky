@@ -35,7 +35,7 @@ const PORT = Number(val('--port', '5199'));
 // ui2側の画面が未実装(セレクタ不在)の場合、その画面のチェックはSKIPになる。
 const SELECTORS = {
   classic: {
-    query: '', // URLに付けるクエリ
+    query: 'classic', // 既定=ui2へ反転済みのため、旧UIは ?classic で明示
     menuRoot: '#menu:not([hidden])',
     hudRoot: '#hud:not([hidden])',
     screens: [
