@@ -320,8 +320,10 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     const effectiveTier = resolveGraphicsTier(host.settings.graphicsQuality, DEPLOY_HAS_WEBGL2);
     const tierCap = effectiveTier === 'high' ? Infinity : effectiveTier === 'medium' ? 28 : 16;
     const hellBotCount = Math.min(tierCap, rawHellBotCount);
+    // R55 W-C5[2]: 実ランタイム(zombie-director)はtierごとに単一値(low40/medium84/high108)
+    // であり範囲ではない。上で算出済みのeffectiveTierをそのまま流用して単一値表示に統一する。
     const capLabel = isZombie
-      ? `同時生存上限 ${ZOMBIE_MAX_ALIVE.low}\u301c${ZOMBIE_MAX_ALIVE.high}体`
+      ? `同時生存上限 ${ZOMBIE_MAX_ALIVE[effectiveTier]}体`
       : `最大${hellBotCount + 1}人`;
     // R55 W-C2: 輪廻(ローグラン)はR1固定で始まるため、開始ラウンド設定値ではなく
     // 常にR1を表示する(rogueRun中はzrWrapもロックされ設定値は無視される)

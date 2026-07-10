@@ -1130,8 +1130,17 @@ export function applyCampaignMission(profile: Profile, summary: MissionSummary, 
   if (chapterFullyCleared) {
     const next = nextChapterId(summary.chapterId);
     if (next && !camp.unlockedChapters.includes(next)) {
+      // R55 W-C5[LOW-16]: unlockedChaptersへのpushはchB連鎖ゲート(isMissionUnlocked/
+      // SECRET_CHAPTER_IDS)に必須の簿記なので維持する。一方でUIへ返すchapterUnlockedは
+      // 演出専用フィールド — ★ゲート撤廃(R55)で章は自由順に遊べるため、次章を先に
+      // 遊び終えてから(章クリア順が前後して)当該前章を今クリアするケースでは、next側は
+      // 実際には既にクリア済みで「新規に遊べるようになった章」ではない。そのまま
+      // chapterUnlocked=nextを返すと、既にクリア済みの章に対しても「新章解放!」通知が
+      // 誤発火する(簿記push=非破壊の内部状態と、UI演出=一度だけ見せたい通知を分離)。
       camp.unlockedChapters.push(next);
-      chapterUnlocked = next;
+      if (!chapterCleared(profile, next)) {
+        chapterUnlocked = next;
+      }
     }
   }
   // R53-W2: 帝王編(ch9/ch10)報酬。章IDはcamo.tsのREWARD_CAMO_CHAPTERが真実源

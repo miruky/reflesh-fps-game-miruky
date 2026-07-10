@@ -204,13 +204,16 @@ function silInner(spec: SilSpec, tracer: string): string {
   return `<g fill="currentColor">${body}</g><g>${accent}</g>`;
 }
 
-function weaponSilSVG(shape: ViewModelShape, tracerColor: number): string {
-  const key = `${shape}|${tracerColor}`;
-  const hit = silCache.get(key);
+// R55 W-C5[3]: 武器庫リストのシルエットは色規律(95%無彩色)対象。武器ごとの多色トレーサー色
+// (赤/緑/水/橙/紫)をアクセントへ焼き込むと一覧全体がカラフルに見えてしまうため、
+// リストアイコン用途ではtracer色を渡さずcurrentColor(呼び出し側のCSS color継承・無彩色)に
+// 固定する(選択行の橙背景等の強調はCSS側の.u2a-row.onで維持=このSVG自体は無色のまま)。
+function weaponSilSVG(shape: ViewModelShape): string {
+  const hit = silCache.get(shape);
   if (hit !== undefined) return hit;
   const spec = SHAPE_SIL[shape] ?? SHAPE_SIL.rifle;
-  const svg = `<svg viewBox="0 0 128 44" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${silInner(spec, tracerHex(tracerColor))}</svg>`;
-  silCache.set(key, svg);
+  const svg = `<svg viewBox="0 0 128 44" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${silInner(spec, 'currentColor')}</svg>`;
+  silCache.set(shape, svg);
   return svg;
 }
 
@@ -281,15 +284,19 @@ function derived(def: WeaponDef): { dps: number; shots: number; ttk: number; rpm
 }
 
 // 実スペックのみから導出する説明文(架空の口径/逸話は書かない)
+// R55 W-C5[0]: 到達距離判定の誤フィールド根治。def.rangeはA2-4パッチで全クラス
+// 一律220-620(着弾到達距離)のため、実効射程を表すdef.falloff.end(射程バーの
+// computeWeaponBarsと同一フィールド)へ差し替え、閾値も実分布に合わせて再調整する
+// (SMG/散弾銃/拳銃~20-30, AR/BR~48-72, marksman~135-165, sniper999)。
 function descFor(def: WeaponDef): string {
   const d = derived(def);
   const cls = TAB_LABELS[def.class];
   const reach =
-    def.range >= 200
+    def.falloff.end >= 150
       ? '長距離'
-      : def.range >= 60
+      : def.falloff.end >= 60
         ? '中距離'
-        : def.range >= 25
+        : def.falloff.end >= 25
           ? '近中距離'
           : '近距離';
   return (
@@ -357,7 +364,7 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
         </div>
         <div class="u2a-band">
           <span class="u2a-band-status" data-id="band"></span>
-          <div class="u2a-band-hints"><span>▲▼ 選択</span><span>LB / RB カテゴリ</span><span><b>Ⓑ</b> 戻る</span></div>
+          <div class="u2a-band-hints"><span>▲▼ 選択</span><span class="u2a-hint-cat">LB / RB カテゴリ</span><span><b>Ⓑ</b> 戻る</span></div>
         </div>
       </div>
     </div>`;
@@ -570,7 +577,7 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
       ? ''
       : '<svg width="15" height="17" viewBox="0 0 16 18" aria-hidden="true"><rect x="1" y="8" width="14" height="9" fill="none" stroke="#6E747C" stroke-width="1.4"></rect><path d="M4 8 V5.5 A4 4 0 0 1 12 5.5 V8" fill="none" stroke="#6E747C" stroke-width="1.4"></path></svg>';
     row.innerHTML =
-      `<span class="u2a-sil">${weaponSilSVG(shape, def.tracerColor)}</span>` +
+      `<span class="u2a-sil">${weaponSilSVG(shape)}</span>` +
       `<span class="u2a-wtext"><span class="u2a-wname">${def.name}</span><span class="u2a-wsub">${sub}</span></span>` +
       (mark
         ? `<span class="u2a-mark u2a-mark--${mark}" title="${mark === 'gold' ? 'ゴールドカモ取得済' : mark === 'diamond' ? 'ダイヤカモ取得済' : '常闇取得済'}"></span>`
@@ -836,6 +843,14 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
           }
           wrap.appendChild(pop);
           openPop = pop;
+          // R55 W-C5[4]: Tab/D-padでフォーカスがポップ外へ移動しても閉じ残る事故の根治。
+          // フォーカス遷移先(relatedTarget)がpop.parentElement(=wrap)の外の実要素なら閉じる。
+          // relatedTarget===nullは対象外(closePop自身のremove()による同期focusoutが再帰的に
+          // closePopを呼ぶ事故を避けるため)。枠外クリック/Escape/ゲームパッドBackの既存3経路と併用。
+          pop.addEventListener('focusout', (e) => {
+            const related = e.relatedTarget;
+            if (related instanceof Node && !wrap.contains(related)) closePop();
+          });
           pop.querySelector<HTMLElement>('button:not(:disabled)')?.focus({ preventScroll: true });
         });
         wrap.appendChild(btn);

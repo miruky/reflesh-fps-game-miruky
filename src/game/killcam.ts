@@ -15,11 +15,15 @@ const FK_TICK_INT     = 3;   // 60 Hz の何 tick おきに記録(→ 20 Hz)
 const FK_WIN_PRE      = 3.5; // キル前の窓 (s) — 3.5s of pre-kill context
 const FK_WIN_POST     = 1.2; // キル後の窓 (s) — 1.2s for death animation
 const FK_MAX_SHOTS    = 48;
-// player slot : eyeX,eyeY,eyeZ, yaw, pitch, alive, adsRatio, adsFov = 8 floats
-const FK_P            = 8;
+// player slot : eyeX,eyeY,eyeZ, yaw, pitch, alive, adsRatio, adsFov, isFpsView = 9 floats
+// R55 W-C5 [6]: isFpsView(スロット8)はそのフレームが「生きたFPS視点」(recordFrame内の
+// fpsView判定=isFpsView()またはalive代替)だったか(1)/でなかったか(0)のライブビット。
+// eye/yaw/pitch/fov(スロット0-4,7)は非FPS視点の間フリーズ保持値を書くため単体では
+// 「このフレームは記録が有効か」を区別できない — begin()のキル瞬間フレーム判定に使う。
+const FK_P            = 9;
 // bot slot    : posX,posY,posZ, headY, yaw, alive  = 6 floats
 const FK_B            = 6;
-const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 224
+const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 225
 // shot slot   : from(3) + to(3) + color(1) + time(1) = 8 floats
 const FK_S            = 8;
 // R55 W-C2 ④: recordFrame が player slot の初回記録前(まず起こらないが保険)に使う既定FOV。
@@ -221,10 +225,16 @@ export interface KillcamDeps {
    * 再表示すると、この退避ポーズ(画面外へ沈んだ銃)がそのまま再生尺(最大 CK_WIN_PRE+CK_WIN_POST
    * ≈4s)露出してしまう。begin() の一人称分岐は setViewmodelVisible(true) の直前にこのフックを呼び、
    * 中立ポーズへ戻してから再表示する。
-   * オプショナル: 未実装(undefined)の場合は何もしない(後方互換フォールバック。このラウンドは
-   * killcam.ts 単独担当のため match.ts 側の実装配線は別工程で行う)。
+   * R55 W-C5 [15]: 引数 adsRatio(0..1, 省略時undefined)は決着キル瞬間の記録済みADS率
+   * (fkBuf player slot6を線形補間した値)。再生カメラFOV(fkLastFov)はキル瞬間の実ADSズーム値の
+   * ままのため、ここでヒップ(0)へ丸め込むと「望遠画なのに銃はヒップ構え」という不整合が出る。
+   * 実装側(match.ts)はこの値で ViewModel.update 相当を叩き、FOVと整合したADS/構えポーズへ
+   * 復元することが期待される契約。
+   * オプショナル: 未実装(undefined)の場合、または実装が引数を無視する場合は何もしない/常に
+   * ヒップへ戻す(後方互換フォールバック。このラウンドは killcam.ts 単独担当のため match.ts 側の
+   * 実装配線は別工程で行う — 未対応でも既存挙動=ヒップ扱いのまま安全に動作する)。
    */
-  resetViewmodelAdsPose?(): void;
+  resetViewmodelAdsPose?(adsRatio?: number): void;
   /**
    * R55 W-C2/W-C3 ④: カメラが実際に一人称FPSビュー(通常プレイ/ADS)を描画中かどうか。
    * RC-XD操縦中や旧来の死亡三人称killcam中はカメラ(位置/向き/FOV)を別システムが所有し、
@@ -252,6 +262,13 @@ export class KillcamController {
   private fkShotHead = 0;
   private fkShotFill = 0;
   private fkKillerIsPlayer    = false;
+  // R55 W-C5 [6]: 実際にこの再生セッションが一人称カメラで再生されているか。noteKill直後は
+  // fkKillerIsPlayer(生の「誰が倒したか」)をそのまま反映するが、begin()でキル瞬間フレームの
+  // ライブビット(isFpsView)を検査した結果、非FPS視点(RC-XD操縦中の決着キル等)だったと判明
+  // した場合はfalseへ確定し、三人称シネマへフォールバックする。getter firstPerson / fkSetCamera
+  // の実際のカメラ分岐はこのフィールドを見る(fkKillerIsPlayer生値はavatar配置等の
+  // 「誰が撃ったか」判定に引き続き使う=カメラモードとは独立)。
+  private fkFirstPersonActive = false;
   private fkKillerBotIdx      = -1;
   private fkVictimBotIdx      = -1; // キルカムの被害者BOT index(-1=プレイヤーが被害者)
   private fkKillElapsed       = -Infinity;
@@ -292,9 +309,14 @@ export class KillcamController {
     return this.fkPlaying;
   }
 
-  /** R55 ④: 現在(直近)の再生が一人称か(killer=プレイヤー)。hud2のクロスヘア表示制御に使う。 */
+  /**
+   * R55 ④: 現在(直近)の再生が一人称か(killer=プレイヤー)。hud2のクロスヘア表示制御に使う。
+   * R55 W-C5 [6]: noteKill直後(begin()前)はfkKillerIsPlayer相当の即時値を返し、begin()後は
+   * 実際に採用されたカメラモード(キル瞬間フレームが非FPS視点だった場合の三人称フォールバック
+   * を含む)を返す(fkFirstPersonActive参照)。
+   */
   get firstPerson(): boolean {
-    return this.fkKillerIsPlayer;
+    return this.fkFirstPersonActive;
   }
 
   /** 最終キルのゲーム時刻(-Infinity=未発生)。trailing window 判定に使う。 */
@@ -323,6 +345,9 @@ export class KillcamController {
     distM?: number,
   ): void {
     this.fkKillerIsPlayer = killerIsPlayer;
+    // R55 W-C5 [6]: begin()前の即時反映(既存契約を維持)。begin()がキル瞬間フレームの
+    // ライブビットを検査した結果、非FPS視点だった場合はこの値をfalseへ上書きする。
+    this.fkFirstPersonActive = killerIsPlayer;
     this.fkKillerBotIdx   = killerBotIdx;
     this.fkVictimBotIdx   = victimBotIdx;
     this.fkKillElapsed    = elapsed;
@@ -370,18 +395,33 @@ export class KillcamController {
     this._ckFreezeLeft = 0;
     this.fkDisposePlayerAvatar();
 
-    // R55 ④: killer=プレイヤーのときは一人称(fkSetCamera が毎フレーム録画値から直接
-    // カメラ姿勢を組む)。三人称基底(ckCamPos/ドリー方向/壁チェック)とアバター生成は
-    // 一切不要なためスキップし、武器viewmodelを表示して即 return する。
-    if (this.fkKillerIsPlayer) {
+    // R55 W-C5 [6]: killer=プレイヤーでも、キル瞬間フレームが「生きたFPS視点」でなかった場合
+    // (RC-XD操縦中の決着キル等、recordFrameが録画したeye/yaw/pitch/fovはfkLast*の凍結保持値の
+    // ままで「実際に見ていた画」と無関係)は一人称パスへ分岐しない。fkFindFrames(killT)で
+    // キル瞬間を挟む記録フレームのライブビット(スロット8)を検査し、両フレームともFPS視点
+    // だったときだけ一人称を確定する(安全側=フォールバックは常に三人称シネマ)。
+    const [kfA, kfB, kfT] = this.fkFindFrames(killT);
+    const killFrameWasFpsView = this.fkFrameIsFpsView(kfA) && this.fkFrameIsFpsView(kfB);
+    // R55 ④: killer=プレイヤーかつキル瞬間が一人称視点だったときは一人称(fkSetCamera が
+    // 毎フレーム録画値から直接カメラ姿勢を組む)。三人称基底(ckCamPos/ドリー方向/壁チェック)と
+    // アバター生成は一切不要なためスキップし、武器viewmodelを表示して即 return する。
+    if (this.fkKillerIsPlayer && killFrameWasFpsView) {
+      this.fkFirstPersonActive = true;
       this.deps.getCamera().rotation.order = 'YXZ';
-      // R55 W-C4 [3]: 再表示より先に中立化する(スコープADS退避ポーズの露出根治。
+      // R55 W-C5 [15]: キル瞬間のADS率(fkBuf slot6を補間)を渡し、resetViewmodelAdsPose側で
+      // ヒップへ丸め込まず実際の構え(ADS/スコープ度合い)へ復元できるようにする。
+      // FOV(fkLastFov)はキル瞬間の実ADSズーム値のまま再生されるため、銃のポーズもそれに
+      // 整合させる(望遠画なのにヒップ構え、という不整合の根治)。
+      const offKA = kfA * FK_FRAME_STRIDE; const offKB = kfB * FK_FRAME_STRIDE;
+      const adsAtKill = this.fkBuf[offKA + 6]! + (this.fkBuf[offKB + 6]! - this.fkBuf[offKA + 6]!) * kfT;
+      // R55 W-C4 [3]: 再表示より先に中立化/整合させる(スコープADS退避ポーズの露出根治。
       // resetViewmodelAdsPose の契約は KillcamDeps 参照)。
-      this.deps.resetViewmodelAdsPose?.();
+      this.deps.resetViewmodelAdsPose?.(adsAtKill);
       this.deps.setViewmodelVisible(true);
       this.fkPlaying = true;
       return;
     }
+    this.fkFirstPersonActive = false;
     this.deps.setViewmodelVisible(false);
 
     // キラー/ビクティム位置を初期フレームから取得してカメラ基底を計算する
@@ -517,6 +557,7 @@ export class KillcamController {
     this.fkBuf[off + 5] = this.deps.getPlayer().alive ? 1 : 0;
     this.fkBuf[off + 6] = this.deps.getAdsProgress();    // ADS率(0..1)
     this.fkBuf[off + 7] = this.fkLastFov;                              // 実効FOV(ADS縮小を含む)
+    this.fkBuf[off + 8] = fpsView ? 1 : 0;               // R55 W-C5 [6]: ライブビット(このフレームがFPS視点だったか)
     const nb = Math.min(bots.length, FK_MAX_BOTS);
     this.fkBotCnt[h] = nb;
     for (let i = 0; i < nb; i++) {
@@ -603,6 +644,12 @@ export class KillcamController {
     return false;
   }
 
+
+  /** R55 W-C5 [6]: フレームindex(fkFindFrames由来)のライブビット(スロット8)を読む。idx<0はfalse。 */
+  private fkFrameIsFpsView(idx: number): boolean {
+    if (idx < 0) return false;
+    return this.fkBuf[idx * FK_FRAME_STRIDE + 8]! > 0.5;
+  }
 
   private fkFindFrames(cursor: number): [number, number, number] {
     if (this.fkFill === 0) return [-1, -1, 0];
@@ -714,8 +761,10 @@ export class KillcamController {
     const offA = iA * FK_FRAME_STRIDE;
     const offB = iB * FK_FRAME_STRIDE;
 
-    // R55 ④: killer=プレイヤーは一人称専用パスへ(以下の三人称シネマ計算は bot killer 専用)
-    if (this.fkKillerIsPlayer) {
+    // R55 ④/W-C5 [6]: 一人称専用パスへは実際に採用されたカメラモード(fkFirstPersonActive)で
+    // 分岐する(fkKillerIsPlayer生値ではない — begin()がキル瞬間フレームの非FPS視点を検出した
+    // 場合、fkKillerIsPlayer===trueのまま三人称シネマへフォールバックしているため)。
+    if (this.fkFirstPersonActive) {
       this.fkSetCameraFirstPerson(offA, offB, t);
       return;
     }

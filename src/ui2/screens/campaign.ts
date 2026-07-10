@@ -31,9 +31,13 @@ export function missionCode(m: Pick<MissionDef, 'chapterId' | 'index'>): string 
 }
 
 // PAR秒 → 「m:ss」
+// R55 W-C5[14]: 旧実装は端数秒を分離後に丸めており、s=119.6のようなケースで
+// 秒側が60に達し「1:60」を出力しうるバグがあった。先に全体を丸めてから分秒へ
+// 分解することで繰り上げが必ず分側へ反映されるようにする。
 export function fmtPar(s: number): string {
-  const m = Math.floor(s / 60);
-  const r = Math.max(0, Math.round(s - m * 60));
+  const total = Math.max(0, Math.round(s));
+  const m = Math.floor(total / 60);
+  const r = total % 60;
   return `${m}:${String(r).padStart(2, '0')}`;
 }
 

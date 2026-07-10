@@ -24,6 +24,14 @@ describe('u2 campaign 純関数', () => {
     expect(fmtPar(59)).toBe('0:59');
   });
 
+  it('fmtPar: 端数秒の丸め繰り上げは分側へ反映される(「m:60」を出力しない)', () => {
+    // R55 W-C5[14]: 旧実装は分離後に秒を丸めており、59.6のような値が
+    // 「1:60」になるバグがあった。先に全体を丸めてから分解する。
+    expect(fmtPar(119.6)).toBe('2:00');
+    expect(fmtPar(59.6)).toBe('1:00');
+    expect(fmtPar(0.4)).toBe('0:00');
+  });
+
   it('campaignTotals: 実CAMPAIGNに追従(星=ミッション×3)', () => {
     const { missions, starsMax } = campaignTotals(CAMPAIGN);
     expect(missions).toBeGreaterThanOrEqual(60);

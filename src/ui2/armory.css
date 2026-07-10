@@ -847,6 +847,12 @@
 .u2a-stage[data-view='secondary'] .u2a-slotwrap {
   display: none;
 }
+/* R55 W-C5[11]: 下段『LB / RB カテゴリ』ヒントはメインタブ帯(クラス切替)専用。
+   サブ武器/投擲物ビューはタブ帯がLB/RBで機能しない単一固定表示のため、無機能表示を消す。 */
+.u2a-stage[data-view='secondary'] .u2a-hint-cat,
+.u2a-stage[data-view='grenade'] .u2a-hint-cat {
+  display: none;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .u2-armory * {

@@ -139,9 +139,6 @@
   clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
   padding: 16px 20px 14px 20px;
 }
-.u2c-chapter.locked {
-  opacity: 0.55;
-}
 .u2c-chapter-head {
   display: flex;
   align-items: baseline;
@@ -210,10 +207,6 @@
   transform: translateX(8px);
   border-left-color: rgba(255, 107, 43, 0.7);
 }
-.u2c-mission:disabled {
-  opacity: 0.42;
-  cursor: default;
-}
 .u2c-mission-code {
   font-family: ui-monospace, 'SF Mono', Consolas, monospace;
   font-size: 12px;
@@ -239,12 +232,6 @@
   color: #f5d06b;
   border: 1px solid rgba(184, 134, 46, 0.5);
   padding: 1px 8px;
-}
-.u2c-mission-lock {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
-  font-size: 10px;
-  letter-spacing: 0.2em;
-  color: #77705f;
 }
 /* 報酬バッジ+★を単一Grid列にまとめる箱(子要素数のブレによる★列ズレ防止) */
 .u2c-mission-tail {

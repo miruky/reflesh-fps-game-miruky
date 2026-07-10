@@ -1270,8 +1270,17 @@ export class Menu {
     const camp = this.profile.campaign;
     const totalStars = Object.values(camp.missionBests).reduce((s, b) => s + b.stars, 0);
     const cleared = camp.clearedMissions.length;
+    // R55 W-C5[LOW-17]: chapterVisible(隠し章chBの可視性判定)をcampaignTotals()より前に
+    // 定義し、campaignTotals(CAMPAIGN.filter(chapterVisible))として可視章のみを集計する。
+    // 従来はCAMPAIGN全体(chB含む)を無条件集計していたため、ch10クリア前でも戦績ヘッダーの
+    // 合計ミッション数/★上限にchBの1ミッション/★3点が常時漏れていた(ui2/campaign.tsは
+    // R55 W-C4で修正済み・classic側のみ未修正だった回帰)。判定はui2と同型。
+    const chapterVisible = (chapter: (typeof CAMPAIGN)[number]): boolean =>
+      chapter.missions.some(
+        (m) => isMissionUnlocked(this.profile, m.id) || camp.clearedMissions.includes(m.id),
+      );
     // R53-W2: 48/144のハードコードをCAMPAIGN駆動へ根治(ch9/ch10追加で60ミッション/★180点)
-    const { missions: totalMissions, starsMax } = campaignTotals(CAMPAIGN);
+    const { missions: totalMissions, starsMax } = campaignTotals(CAMPAIGN.filter(chapterVisible));
     host.innerHTML = `
       <div class="campaign-head">
         <div class="campaign-title"><em class="campaign-op">OPERATION <i>//</i> CINDER</em><strong>軌道に灯る火種</strong><span>CINDER 鎮圧作戦</span></div>
@@ -1292,10 +1301,7 @@ export class Menu {
     // (全ミッションが isMissionUnlocked=false かつ未クリア)はチャプター名義から丸ごとDOM
     // 描画をスキップする。通常章(ch1-ch10)はR55で全ミッション常時解放済みのため
     // chapterVisible は常にtrueで、可視性は変わらない。
-    const chapterVisible = (chapter: (typeof CAMPAIGN)[number]): boolean =>
-      chapter.missions.some(
-        (m) => isMissionUnlocked(this.profile, m.id) || camp.clearedMissions.includes(m.id),
-      );
+    // (chapterVisible の定義はcampaignTotals呼び出しより前=関数冒頭側にある。R55 W-C5[LOW-17])
     for (const chapter of CAMPAIGN.filter(chapterVisible)) {
       const chClear = chapter.missions.filter((m) => camp.clearedMissions.includes(m.id)).length;
       const card = document.createElement('div');

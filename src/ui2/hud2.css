@@ -111,6 +111,7 @@
   font-size: 11px;
   color: var(--hagane-3);
   letter-spacing: 0.2em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
 }
 
 /* ════ 上中央下: モードプレート(mine | モード名+残時間 | enemy) ════ */
@@ -1333,7 +1334,8 @@ body.killcam-active #hud.u2-hud .u2h-zperks,
 body.killcam-active #hud.u2-hud .u2h-scorepops,
 body.killcam-active #hud.u2-hud .u2h-announce,
 body.killcam-active #hud.u2-hud .u2h-zbuy,
-body.killcam-active #hud.u2-hud .u2h-statebar {
+body.killcam-active #hud.u2-hud .u2h-statebar,
+body.killcam-active #hud.u2-hud .u2h-emp-frame {
   opacity: 0;
   transition: opacity 0.25s ease;
 }

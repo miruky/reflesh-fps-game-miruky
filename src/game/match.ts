@@ -1081,9 +1081,12 @@ export class Match {
     // ViewModelがY方向へ沈めた「覗き込み退避ポーズ」で凍結しており、一人称再生で武器が
     // 大きく沈んだまま数秒露出する。adsProgress=0/scopeReveal01=0 の1回updateで中立(hip)
     // ポーズへ収束させてから表示する(ViewModel.updateは既存公開API、姿勢は次フレーム再生で維持)。
-    resetViewmodelAdsPose: () => {
+    // R55 W-C5 [15]: キル瞬間のADS率(killcamが補間して渡す)で武器を構える。これにより
+    // 一人称再生の望遠FOV(録画fov=ADSズーム)と銃の構えが整合する。scopeReveal01は0固定
+    // (スコープ武器を再び沈めて隠さない=DOMスコープはkillcam開始時に閉じている前提)。
+    resetViewmodelAdsPose: (adsRatio = 0) => {
       this.viewModel.update(0, {
-        adsProgress: 0,
+        adsProgress: Math.max(0, Math.min(1, adsRatio)),
         mouseDX: 0,
         mouseDY: 0,
         moveFactor: 0,

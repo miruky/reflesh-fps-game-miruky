@@ -85,7 +85,9 @@
   height: 100%;
 }
 .u2d-bg-banner-a {
-  left: 61%;
+  /* R55 W-C5[10]: 61%だと出撃CTA帯(x≈680-1240 @1920幅)の右上角に破片が刺さって見える。
+     CTA帯フットプリント外(67%)へ退避。 */
+  left: 67%;
   height: 562px;
   animation: u2d-sway 9s ease-in-out infinite alternate;
 }

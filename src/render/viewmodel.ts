@@ -768,28 +768,28 @@ function camoPatternGLSL(v: CamoVisual): string {
 }
 
 // R55: ダイヤ迷彩「超ギラギラ」強化(sparkle>0のカモのみ。他カモは分岐ごと省略されコスト0)。
-// (1) 面ごとの疑似法線擾乱(高周波セルノイズでnormalを僅かに傾け、envMap/直接光の
-//     スペキュラハイライトが面ごとに散る=微細ファセットの煌めき。法線マップ非使用)。
-// (2) 視野角フレネル項で虹色(iridescence風)を薄く加算 + 疎らな高輝度グリッター点。
-//     いずれも totalEmissiveRadiance への加算(乗算diffuseへは触れない)なので
-//     emissiveIntensity(≤0.5の白飛び鉄則)とは別枠 — 加算量はfresnel/step/sparkleで
-//     絞り込み、bloom閾値0.9を超えないよう控えめな係数に留める。
-function camoSparkleNormalGLSL(sparkle: number): string {
-  const jitter = (sparkle * 0.35).toFixed(3);
-  return `
-{
-  vec3 nCell = floor(vCamoPos * 340.0);
-  vec3 nJit = vec3(camoHash(nCell), camoHash(nCell + 91.7), camoHash(nCell + 183.1)) - 0.5;
-  normal = normalize(normal + nJit * ${jitter});
-}`;
-}
+// R55確証finding[8]根治: 旧実装は面ごとの疑似法線擾乱を実シェーディングnormal(BRDFの鏡面
+// ローブが直接読む変数)へ書き戻していたため、near-mirror(metalness0.95/roughness0.05)×
+// 実DirectionalLight(sun1.1-1.8)の直接/間接スペキュラへ高周波法線が素通しになり、
+// envMapIntensity低減(既存のR55-WC根治)だけでは防げない白飛びリスクを抱えていた。
+// 今回: geometry/normal-mapの実normalは一切変更せず、ファセット煌めき用の疑似法線擾乱は
+// このブロック内のローカル変数(camoFacetN)にのみ閉じ込め、(1)視野角フレネル項の虹色
+// (iridescence風)加算 + (2)疎らな高輝度グリッター点、の2つとも totalEmissiveRadiance への
+// 加算(乗算diffuseへは触れない・実BRDFのnormalにも触れない)だけで表現する。
+// emissiveIntensity(≤0.5の白飛び鉄則)とは別枠 — 加算量はfresnel/step/sparkleで絞り込み、
+// bloom閾値0.9を超えないよう控えめな係数に留める。
 function camoSparkleEmissiveGLSL(sparkle: number): string {
+  const jitter = (sparkle * 0.35).toFixed(3);
   const iridAmt = (sparkle * 0.30).toFixed(3);
   const glitAmt = (sparkle * 0.30).toFixed(3);
   return `
 {
+  vec3 camoCell = floor(vCamoPos * 340.0);
+  vec3 camoJit = vec3(camoHash(camoCell), camoHash(camoCell + 91.7), camoHash(camoCell + 183.1)) - 0.5;
+  // 実BRDFのnormalは不変。煌めき計算専用のローカル法線(camoFacetN)としてのみ使う。
+  vec3 camoFacetN = normalize(normal + camoJit * ${jitter});
   vec3 camoViewDir = normalize(vViewPosition);
-  float camoNdv = clamp(dot(normal, camoViewDir), 0.0, 1.0);
+  float camoNdv = clamp(dot(camoFacetN, camoViewDir), 0.0, 1.0);
   float camoFres = pow(1.0 - camoNdv, 3.0);
   vec3 camoIrid = 0.5 + 0.5 * cos(6.2832 * (vec3(0.0, 0.33, 0.67) + camoFres * 1.4 + uCamoTime * 0.06));
   vec3 camoGlitCell = floor(vCamoPos * 900.0);
@@ -845,12 +845,6 @@ ${camoPatternGLSL(v)}
   float camoShade = clamp(camoLum * 3.6, 0.35, 1.3);
   diffuseColor.rgb = camoCol * camoShade;
 }`,
-    )
-    .replace(
-      '#include <normal_fragment_maps>',
-      sparkle > 0
-        ? `#include <normal_fragment_maps>\n${camoSparkleNormalGLSL(sparkle)}`
-        : '#include <normal_fragment_maps>',
     )
     .replace(
       '#include <emissivemap_fragment>',
@@ -4238,6 +4232,10 @@ export class ViewModel {
     if (stage > 0 && this._chargeGlowMats.length === 0 && this.gun) {
       // 段3域の発光ブースト対象を1回だけ収集: 黒刀エッジ/コア+雷刀ビルボードライン。
       // R52のTubeアークは専用フリッカーが opacity を書くため対象外(二重書き込み禁止)。
+      // R55確証[7]根治: R55新設の雷刀ビルボードリボン(makeArcLine, mat.userData.isArcLine=true。
+      // 電弧フリッカー(_updateLightningArcFlicker系, 0.05-0.09sごとにopacity乱数上書き)が専有)
+      // も同じ理由で対象外にする(実マーキングは material.userData 側。viewmodel.test.ts の
+      // arcLineHexes ヘルパも同じ material.userData.isArcLine を参照)。
       for (const name of ['vm:darkBlade', 'vm:lightningBlade']) {
         const g = this.gun.getObjectByName(name);
         if (!g) continue;
@@ -4247,6 +4245,7 @@ export class ViewModel {
           if (!(mat instanceof THREE.MeshBasicMaterial) || !mat.transparent) return;
           if (node.parent?.name === 'vm:katanaVeins') return; // 雷脈は常時一定輝度
           if (this._lightningArcMeshes.includes(node as THREE.Mesh)) return;
+          if (mat.userData.isArcLine === true) return; // 電弧フリッカーが専有(二重書き込み禁止)
           this._chargeGlowMats.push({ mat, base: mat.opacity });
         });
       }

@@ -221,7 +221,7 @@ export function mountTitle(host: TitleHost, root: HTMLElement, onStart: () => vo
     `<div class="u2-title__hints"><span><i class="u2-title__key">A</i> 決定</span><span>▲▼ 選択</span></div>` +
     `</div>` +
     `<div class="u2-title__credits" hidden>` +
-    `<div class="u2-title__credits-panel" role="dialog" aria-label="クレジット">` +
+    `<div class="u2-title__credits-panel" role="dialog" aria-modal="true" aria-label="クレジット">` +
     `<h2>クレジット</h2>` +
     `<p>FPS-reFlesh — 焔座 ENZA INTERFACE 2.0</p>` +
     `<p>© 2026 MIRUKY WORKS</p>` +
