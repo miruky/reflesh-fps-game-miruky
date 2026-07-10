@@ -2638,8 +2638,8 @@ export class Bot {
               // 安全弁が担保するため、ここで完全解を求める必要はない)。
               const diagL = !this.probeDirection(pos, this.heading + (Math.PI * 3) / 4);
               const diagR = !this.probeDirection(pos, this.heading - (Math.PI * 3) / 4);
-              if (diagR && !diagL) sign = -1;
-              else if (diagL && !diagR) sign = 1;
+              if (diagR && !diagL) sign = 1;
+              else if (diagL && !diagR) sign = -1;
               else sign = ctx.rand() < 0.5 ? 1 : -1;
             }
             this.unstuckStrafeOverride = sign;

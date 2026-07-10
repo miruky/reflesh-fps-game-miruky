@@ -1011,8 +1011,15 @@ function mountOptionsImpl(
       }
     }
     const first = tab.rows[0];
-    if (first && firstWrap) selectRow(firstWrap, first);
-    else if (first) renderDetail(first);
+    if (first && firstWrap) {
+      selectRow(firstWrap, first);
+      // O-MED: menu2.open()は[data-autofocus]を最優先で拾う(既存画面フォーカス尊重の次点)。
+      // 未宣言だと汎用フォールバック(focusables()[0])が先頭に置かれた「戻る」ボタンを
+      // 拾ってしまう(armory等と同型の再発)ため、先頭行の実コントロールへ宣言的に付与する。
+      firstWrap
+        .querySelector<HTMLElement>('input.u2o-range, button.u2o-cycle, button.u2o-action')
+        ?.setAttribute('data-autofocus', '');
+    } else if (first) renderDetail(first);
   };
   const setTab = (id: string): void => {
     lastTabId = id;
@@ -1138,6 +1145,9 @@ export const mountPause: ScreenMount = (host, root) => {
     optLayer = el('div', 'u2p-options-layer');
     root.appendChild(optLayer);
     optHandle = mountOptionsImpl(host, optLayer, { onBack: closeOptions });
+    // ポーズ内オーバーレイはmenu2.open()を経由しない(オーバーレイ直接マウント)ため、
+    // 同等のフォールバックが無い。renderTab()が宣言した先頭コントロールへ明示フォーカスする。
+    optLayer.querySelector<HTMLElement>('[data-autofocus]')?.focus({ preventScroll: true });
   };
 
   buttons.get('resume')?.addEventListener('click', () => callbacks.onResume());

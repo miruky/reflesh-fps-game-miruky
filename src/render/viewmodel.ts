@@ -4059,7 +4059,9 @@ export class ViewModel {
       if (this.gun) {
         const kunai = this.gun.getObjectByName(FIST_KUNAI);
         if (kunai && !kunai.getObjectByName('vm:lightningBlade')) {
-          this._buildLightningBladeMeshes(kunai, true);
+          // R55-WC2根治(LOW①): isKokuraitei決め打ち(true固定)を共通判定
+          // _effectiveKokuraitei() に置換(_applyLightningModeVisuals側と一致させる)。
+          this._buildLightningBladeMeshes(kunai, this._effectiveKokuraitei());
         }
       }
     }
@@ -4080,13 +4082,34 @@ export class ViewModel {
     }
   }
 
+  // R55-WC2根治(LOW②): 黒帝/雷帝の「実質的にkokuraitei扱いすべきか」の判定を
+  // 一箇所に集約する。_kokuraiteiMode(明示的な黒雷帝発動フラグ)に加え、
+  // dark + lightning が併存(黒帝と雷帝が別経路で同時発動)している場合も
+  // 見た目上は黒雷帝と同じ紫系ビジュアルにする。setKunaiDarkMode の決め打ち(true固定)と
+  // _applyLightningModeVisuals の _kokuraiteiMode 直読みがそれぞれ独立に判定していたため、
+  // 武器切替でどちらの経路が再適用されるかによって色が反転するバグがあった。
+  private _effectiveKokuraitei(): boolean {
+    return this._kokuraiteiMode || (this._darkMode && this._lightningMode);
+  }
+
   // 雷帝モード API: match.ts 側から呼ぶ(raiteiMode 発動時 active=true)。
   // kokuraitei=true のとき黒刀 + 紫/青縁の黒雷帝ビジュアル。
   setKunaiLightningMode(active: boolean, kokuraitei = false): void {
     if (this._lightningMode === active && this._kokuraiteiMode === kokuraitei) return;
+    const wasActive = this._lightningMode;
     this._lightningMode = active;
     this._kokuraiteiMode = kokuraitei;
     if (active) {
+      // R55-WC2根治(MEDIUM): トリプルN経由で雷帝→黒雷帝へ遷移する等、稼働中に
+      // kokuraitei判定だけが変わるケースでは、_applyLightningModeVisuals が
+      // 「vm:lightningBladeが既にあれば再構築しない/kunaiGlowが既に着色済みなら
+      // 再着色しない」という冪等ガードを持つため、旧モード色(氷青)のリボンが
+      // そのまま残ってしまう。稼働中の切替(wasActive=true)では一旦クリーンに
+      // 撤去してから再構築し、新しい _effectiveKokuraitei() 判定の色を必ず反映させる。
+      if (wasActive) {
+        this._removeLightningOverlay();
+        this._restoreKunaiGlowLightning();
+      }
       this._applyLightningModeVisuals();
     } else {
       this._removeLightningOverlay();
@@ -4098,7 +4121,9 @@ export class ViewModel {
     if (!this.gun) return;
     const kunai = this.gun.getObjectByName(FIST_KUNAI);
     if (!kunai) return;
-    const isKokuraitei = this._kokuraiteiMode;
+    // R55-WC2根治(LOW②): _kokuraiteiMode直読みではなく共通判定 _effectiveKokuraitei() を使う
+    // (setKunaiDarkMode 経由の決め打ちと一致させ、武器切替での色反転を防ぐ)。
+    const isKokuraitei = this._effectiveKokuraitei();
     if (!isKokuraitei && !this._darkMode) {
       kunai.traverse((node) => {
         if (!(node instanceof THREE.Mesh) || !node.userData.kunaiGlow) return;
@@ -4256,7 +4281,8 @@ export class ViewModel {
   private _addKatanaVeins(bladeGroup: THREE.Group, isDark: boolean): void {
     const veins = new THREE.Group();
     veins.name = 'vm:katanaVeins';
-    // 黒刀は全長1.4m(z -0.19..-1.59)、雷刀(クナイ)は z -0.175..-0.504
+    // R55-WC2根治(LOW④): コメントを実装値に一致させる。
+    // 黒刀は全長0.86m(z -0.19..-1.05, 中心z-0.62)、雷刀(クナイ)は全長0.30m(z -0.19..-0.49, 中心z-0.34)
     const len = isDark ? 0.86 : 0.30;
     const cz = isDark ? -0.62 : -0.34;
     const y = isDark ? 0.012 : 0.008;
@@ -4391,10 +4417,15 @@ export class ViewModel {
       group.add(makeArcLine(0x66ccff, 0.35, 0.034));
     }
     // R53 恒久報酬: 雷脈が解放済みなら雷刀にも白芯ラインを乗せる。
-    // R55-WC根治(LOW③): isDark は bladeLen/bladeCenterZ と同じ _darkMode 述語に
-    // 一致させる(黒帝+雷帝併存中は黒刀サイズ0.86m/z-0.62、それ以外は雷刀0.30m/z-0.34)。
-    // 旧実装は常に false 固定で、黒帝中は白芯雷脈だけ小サイズのまま追従しなかった。
-    if (this._katanaVeinsOn) this._addKatanaVeins(group, this._darkMode);
+    // R55-WC2根治(LOW③・二重描画): darkMode中(黒帝+雷帝併存)は vm:darkBlade 側の
+    // _buildDarkBladeMeshes が既に同寸法(isDark=true, 0.86m/z-0.62)の白芯雷脈を
+    // 追加済みのため、ここで vm:lightningBlade 側にも同一寸法・同一位置で追加すると
+    // 完全に重なる二重描画になる。darkMode中は lightningBlade 側の追加をスキップし、
+    // 通常時(!darkMode)のみ雷刀サイズ(0.30m/z-0.34)で追加する。黒帝解除時は
+    // vm:lightningBlade が再構築される経路(setKunaiDarkMode→_restoreKunaiGlow→
+    // _applyLightningModeVisuals)を通るため、その時点で _darkMode=false となり
+    // 正しく再生成される。
+    if (this._katanaVeinsOn && !this._darkMode) this._addKatanaVeins(group, false);
     kunai.add(group);
     this._lightningOverlayMeshes.push(group);
   }

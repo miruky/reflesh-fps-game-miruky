@@ -114,11 +114,17 @@
 }
 
 /* ════ 上中央下: モードプレート(mine | モード名+残時間 | enemy) ════ */
-#hud.u2-hud .u2h-modeplate {
+/* R55 W-C2: 位置決め(wrap)とclip-path描画(plate)を分離。先取ラベル(u2h-mp-target)は
+   wrap直下の兄弟に置くため、plateのclip-pathで切り抜かれず常に描画される */
+#hud.u2-hud .u2h-modeplate-wrap {
   position: absolute;
   left: 50%;
   top: 96px;
   transform: translateX(-50%);
+  z-index: 12;
+  pointer-events: none;
+}
+#hud.u2-hud .u2h-modeplate {
   display: flex;
   align-items: stretch;
   gap: 1px;
@@ -126,8 +132,6 @@
   border: 1px solid rgba(232, 227, 216, 0.14);
   clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 100%, 0 100%);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-  z-index: 12;
-  pointer-events: none;
 }
 #hud.u2-hud .u2h-teamscore {
   display: contents;
@@ -146,9 +150,11 @@
 }
 #hud.u2-hud .u2h-mp-mine { order: 1; color: var(--hibana-pale); }
 #hud.u2-hud .u2h-mp-mid { order: 2; }
-#hud.u2-hud .u2h-mp-enemy { order: 3; color: #9fc4e8; }
+/* 敵チームは--teki(赤)系。ミニマップ/拠点ピルの敵色と統一(旧#9fc4e8は味方=青に寄っていた誤配色) */
+#hud.u2-hud .u2h-mp-enemy { order: 3; color: #f2a8a8; }
+/* R55 W-C2: u2h-modeplate-wrap 直下の兄弟(clip-path対象外)。plate下部に沿う見た目は
+   wrapの自動高さ(=plateの高さのみ、absoluteのtargetは高さに寄与しない)で従来どおり保たれる */
 #hud.u2-hud .u2h-mp-target {
-  order: 4;
   position: absolute;
   left: 50%;
   top: calc(100% + 4px);
@@ -170,7 +176,7 @@
   box-shadow: 0 0 10px rgba(255, 107, 43, 0.8);
 }
 #hud.u2-hud .u2h-dia--enemy {
-  background: #7fa8c9;
+  background: var(--teki);
 }
 #hud.u2-hud .u2h-mp-mid {
   display: flex;
@@ -193,9 +199,9 @@
   font-weight: 400;
   color: #f2ede2;
 }
-/* ゾンビ/訓練ではモードプレートを畳む(専用表示が別にある) */
-#hud.u2-hud[data-zombie] .u2h-modeplate,
-#hud.u2-hud[data-training] .u2h-modeplate {
+/* ゾンビ/訓練ではモードプレートを畳む(専用表示が別にある。先取ラベルも同じwrapで畳む) */
+#hud.u2-hud[data-zombie] .u2h-modeplate-wrap,
+#hud.u2-hud[data-training] .u2h-modeplate-wrap {
   display: none;
 }
 
@@ -1199,15 +1205,90 @@
 }
 #hud.u2-hud .u2h-emp-frame[data-state='kokuraitei'] .u2h-ef-wm::before { content: '黒雷'; }
 
+/* ════ R55 W-C2: 帝王転調(:root[data-emperor])の配線 ════
+   updateMk3()がemperorThemeAttr()経由で document.documentElement.dataset.emperor へ
+   'kotei'/'raitei'/'kokurai' を三重保証で書き込むが、旧enza-core.css撤去後は消費側が無く
+   ハリボテ化していた。ここで実際に消費し、HUD全体のアクセント語彙(--hibana系トークン。
+   コンパス針/自陣ダイヤ/主目標バー/兵装プレート枠/ウルトリング/キルフィード自分行 等、
+   var(--hibana*)を参照する計器一式)を帝王の状態色へ丸ごと転調させる(=「世界が染まる」)。
+   加えて主要プレートへ状態色の外周グローを薄く重ねる(帝王枠=枠灯り)。
+   キルフィード帝王行(data-emp='kotei'|'raitei', 既定=kokurai)と同じ3値・同じ配色源。
+   filter/backdrop-filter不使用、box-shadowの重畳とCSS変数再定義のみ(新規発光なし)。 */
+:root[data-emperor='kotei'] #hud.u2-hud {
+  --hibana-deep: #5b3aa8;
+  --hibana: var(--kotei);
+  --hibana-bright: #a78bfa;
+  --hibana-pale: #dcd0ff;
+}
+:root[data-emperor='raitei'] #hud.u2-hud {
+  --hibana-deep: #1f7a99;
+  --hibana: var(--raitei);
+  --hibana-bright: #bdeeff;
+  --hibana-pale: #e4f8ff;
+}
+:root[data-emperor='kokurai'] #hud.u2-hud {
+  --hibana-deep: #6a1a99;
+  --hibana: var(--kokurai);
+  --hibana-bright: #e0a6ff;
+  --hibana-pale: #f3ddff;
+}
+/* 枠灯り: 主要プレート4面へ状態色のグローを既存box-shadowに重畳(各要素の元の陰影レイヤーは
+   維持したまま先頭にグロー項を1本追加する — 置換ではなく加算) */
+:root[data-emperor='kotei'] #hud.u2-hud .u2h-modeplate {
+  box-shadow: 0 0 24px rgba(139, 92, 246, 0.22), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+:root[data-emperor='kotei'] #hud.u2-hud .u2h-vitals-num {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.22), 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+:root[data-emperor='kotei'] #hud.u2-hud .u2h-mmframe {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 24px rgba(139, 92, 246, 0.22), 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+:root[data-emperor='kotei'] #hud.u2-hud .u2h-w-plate {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 24px rgba(139, 92, 246, 0.22), 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+:root[data-emperor='raitei'] #hud.u2-hud .u2h-modeplate {
+  box-shadow: 0 0 24px rgba(143, 219, 255, 0.22), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+:root[data-emperor='raitei'] #hud.u2-hud .u2h-vitals-num {
+  box-shadow: 0 0 20px rgba(143, 219, 255, 0.22), 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+:root[data-emperor='raitei'] #hud.u2-hud .u2h-mmframe {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 24px rgba(143, 219, 255, 0.22), 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+:root[data-emperor='raitei'] #hud.u2-hud .u2h-w-plate {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 24px rgba(143, 219, 255, 0.22), 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+:root[data-emperor='kokurai'] #hud.u2-hud .u2h-modeplate {
+  box-shadow: 0 0 28px rgba(196, 77, 255, 0.26), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+:root[data-emperor='kokurai'] #hud.u2-hud .u2h-vitals-num {
+  box-shadow: 0 0 24px rgba(196, 77, 255, 0.26), 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+:root[data-emperor='kokurai'] #hud.u2-hud .u2h-mmframe {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 28px rgba(196, 77, 255, 0.26), 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+:root[data-emperor='kokurai'] #hud.u2-hud .u2h-w-plate {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 28px rgba(196, 77, 255, 0.26), 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
 /* ════ 死亡幕: 明朝儀式化(FQA裁定「戦死」) ════ */
 #hud.u2-hud .hud-death-title {
   font-family: var(--u2h-ritual);
   letter-spacing: 0.3em;
 }
 
+/* ════ R55 W-C2: スコアボード(Tabホールド)は自分+bot最大37行まで無制限生成のため
+   max-height/overflowが無いと縦解像度の低い画面(1280x720等)で画面外へ溢れる。
+   style.cssの素の.hud-scoreboard(position:absolute; top:50%; translate centering)を
+   id込みの高詳細度で上書きし、中央固定のまま縦だけスクロール可能にする ════ */
+#hud.u2-hud .hud-scoreboard {
+  max-height: 82vh;
+  overflow-y: auto;
+}
+
 /* ════ Adaptive Presence(calm時にクロームが沈む — 旧data-calm契約の焔座版) ════ */
 #hud.u2-hud .u2h-compass-wrap,
-#hud.u2-hud .u2h-modeplate,
+#hud.u2-hud .u2h-modeplate-wrap,
 #hud.u2-hud .u2h-topleft,
 #hud.u2-hud .u2h-weapon,
 #hud.u2-hud .u2h-vitals,
@@ -1216,7 +1297,7 @@
   transition: opacity 0.6s ease;
 }
 #hud.u2-hud[data-calm] .u2h-compass-wrap,
-#hud.u2-hud[data-calm] .u2h-modeplate,
+#hud.u2-hud[data-calm] .u2h-modeplate-wrap,
 #hud.u2-hud[data-calm] .u2h-topleft,
 #hud.u2-hud[data-calm] .u2h-streaks {
   opacity: 0.55;
@@ -1228,7 +1309,7 @@
 
 /* ════ キルカム/ファイナルキルカム中はクロームを退避(シネマ帯の主役化) ════ */
 body.killcam-active #hud.u2-hud .u2h-compass-wrap,
-body.killcam-active #hud.u2-hud .u2h-modeplate,
+body.killcam-active #hud.u2-hud .u2h-modeplate-wrap,
 body.killcam-active #hud.u2-hud .u2h-topleft,
 body.killcam-active #hud.u2-hud .u2h-feed,
 body.killcam-active #hud.u2-hud .u2h-vitals,

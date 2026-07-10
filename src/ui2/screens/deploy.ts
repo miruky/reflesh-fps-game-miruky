@@ -197,6 +197,9 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
   const ac = new AbortController();
   const sig = { signal: ac.signal };
   const sel = host.loadout;
+  // R55 W-C2: ゾンビ設定タブ未訪問のまま出撃すると装備中お守りが未反映になるため、
+  // 画面構築時に profile.charms.equipped を同期する(旧menu.tsのモード切替時同期の代替)
+  sel.charm = host.profile.charms?.equipped ?? undefined;
   let active: SectionId = 'mode';
   // hubからの直行導線: ステージ選択/ゾンビ(=モードごと切替して開く)
   if (opts?.section === 'stages') active = 'stage';
@@ -294,7 +297,9 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     const capLabel = isZombie
       ? `同時生存上限 ${ZOMBIE_MAX_ALIVE.low}\u301c${ZOMBIE_MAX_ALIVE.high}体`
       : `最大${hellBotCount + 1}人`;
-    const zRound = sel.zombieStartRound ?? 1;
+    // R55 W-C2: 輪廻(ローグラン)はR1固定で始まるため、開始ラウンド設定値ではなく
+    // 常にR1を表示する(rogueRun中はzrWrapもロックされ設定値は無視される)
+    const zRound = sel.rogueRun ? 1 : (sel.zombieStartRound ?? 1);
     const row3 = isZombie
       ? `ゾンビ ${zombieTotal(zRound)}体/R${zRound}\u3000—\u3000参戦準備完了`
       : `AIボット ${stageDef.botCount}体\u3000—\u3000参戦準備完了`;
@@ -315,7 +320,7 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     q('squad-note').innerHTML =
       '<span>あなたが分隊長です</span>' +
       `<span>難易度: ${esc(DIFFICULTIES.find((d) => d.id === sel.difficulty)?.label ?? '-')}\u3000·\u3000` +
-      `${sel.mode === 'zombie' ? `開始ラウンド: R${sel.zombieStartRound ?? 1}` : `ステージ: ${esc(stageDef.name)}`}</span>`;
+      `${sel.mode === 'zombie' ? `開始ラウンド: R${zRound}` : `ステージ: ${esc(stageDef.name)}`}</span>`;
   };
 
   // ── 下帯: 次のステージ(実選択値) ──────────────────────────────────────
@@ -356,6 +361,9 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     // R16の流儀: モード別ステージ集合が変わるため選択の妥当性を回復する
     const list = stagesForMode(id);
     if (!list.some((s) => s.id === sel.stageId)) sel.stageId = list[0]?.id ?? sel.stageId;
+    // R55 W-C2: ゾンビ設定タブを開かずにモードだけ切り替えても装備中お守りが
+    // sel.charmへ反映されるよう、active判定に関わらず毎回同期する
+    sel.charm = host.profile.charms?.equipped ?? undefined;
     if (active === 'zombie' && id !== 'zombie') active = 'mode';
     renderNav(); // ゾンビ設定項の出没
     refreshShared();
@@ -443,6 +451,9 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
       () => {
         sel[key] = input.checked;
         host.saveLoadout();
+        // R55 W-C2: 超鬼畜トグルは右上ロビーカードの「最大◯人」表示に影響するため、
+        // トグル直後にロビーカード/次ステージ帯を再描画する
+        refreshShared();
       },
       sig,
     );
@@ -504,7 +515,10 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     const zrWrap = document.createElement('div');
     zone.appendChild(zrWrap);
     const ZR_PRESETS = [1, 10, 25, 50, 100, 200, 300, 500, 999] as const;
-    const renderZr = (refocus?: string): void => {
+    // R55 W-C2: 輪廻ONの間はpointer-events:noneのみだとTab/gamepadで依然フォーカス可能
+    // なため(hellMode/allGiantModeのdisabled属性方式と不一致)、lockedを明示的に受け取り
+    // 配下の全button/inputへdisabledを設定する
+    const renderZr = (locked: boolean, refocus?: string): void => {
       const cur = sel.zombieStartRound ?? 1;
       zrWrap.innerHTML = `
         <div class="u2d-zr-stepper">
@@ -519,7 +533,7 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
       const setRound = (v: number, focusSel?: string): void => {
         sel.zombieStartRound = Math.max(1, Math.min(999, v));
         host.saveLoadout();
-        renderZr(focusSel);
+        renderZr(locked, focusSel);
         refreshShared();
       };
       zrWrap
@@ -543,10 +557,17 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
           sig,
         );
       });
+      if (locked) {
+        zrWrap
+          .querySelectorAll<HTMLButtonElement | HTMLInputElement>('button, input')
+          .forEach((el) => {
+            el.disabled = true;
+          });
+      }
       // V27の教訓: innerHTML置換でフォーカスがbodyへ落ちるため同じ操作子へ戻す
       if (refocus) zrWrap.querySelector<HTMLElement>(refocus)?.focus();
     };
-    renderZr();
+    renderZr(locked);
 
     // お守り(旧renderCharmSelector移植: profile.charms.equippedと同期・即保存)
     const charmHead = document.createElement('div');
@@ -556,7 +577,9 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     zone.appendChild(charmHead);
     const charmGrid = document.createElement('div');
     zone.appendChild(charmGrid);
-    const renderCharms = (): void => {
+    // R55 W-C2: renderZrと同様、輪廻ON時はlockedを受け取り配下の全button/inputを
+    // disabled化してTab/gamepadフォーカスも遮断する
+    const renderCharms = (locked: boolean): void => {
       if (!host.profile.charms) host.profile.charms = { unlocked: [], equipped: null };
       const charms = host.profile.charms;
       sel.charm = charms.equipped ?? undefined;
@@ -568,7 +591,7 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
         const hadFocus = charmGrid.contains(document.activeElement);
         charms.equipped = id;
         saveProfile(host.profile);
-        renderCharms();
+        renderCharms(locked);
         if (hadFocus)
           charmGrid.querySelector<HTMLElement>('.u2d-opt.selected')?.focus({ preventScroll: true });
       };
@@ -600,8 +623,15 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
         }
         charmGrid.appendChild(b);
       }
+      if (locked) {
+        charmGrid
+          .querySelectorAll<HTMLButtonElement | HTMLInputElement>('button, input')
+          .forEach((el) => {
+            el.disabled = true;
+          });
+      }
     };
-    renderCharms();
+    renderCharms(locked);
   };
 
   const renderPanel = (): void => {

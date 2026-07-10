@@ -21,7 +21,7 @@ import {
   rankNameFor,
 } from '../../game/progression';
 import { PRIMARY_IDS, WEAPON_DEFS } from '../../game/weapons';
-import type { MatchProgress, ScreenMount, Ui2Host } from '../types';
+import type { CampaignProgress, ScreenMount, Ui2Host } from '../types';
 
 // ── 純関数(テスト対象) ────────────────────────────────────────────────────
 
@@ -137,6 +137,8 @@ function backdropHtml(): string {
 // ── 戦役(章・ミッション一覧) ──────────────────────────────────────────────
 export const mountCampaign: ScreenMount = (host, root) => {
   root.classList.add('u2-campaign');
+  // R55 W-C2[MEDIUM]: 他画面(hub/result/options等)同型の省モーション連動クラス。
+  root.classList.toggle('u2c-reduce', host.reducedMotion());
   const camp = host.profile.campaign;
   const totalStars = Object.values(camp.missionBests).reduce((s, b) => s + b.stars, 0);
   const cleared = camp.clearedMissions.length;
@@ -255,7 +257,7 @@ export const mountCampaign: ScreenMount = (host, root) => {
 
   return {
     dispose: () => {
-      root.classList.remove('u2-campaign');
+      root.classList.remove('u2-campaign', 'u2c-reduce');
       root.innerHTML = '';
     },
   };
@@ -273,6 +275,8 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
     return { dispose: () => undefined };
   }
   root.classList.add('u2-campaign');
+  // R55 W-C2[MEDIUM]: 他画面同型の省モーション連動クラス。
+  root.classList.toggle('u2c-reduce', host.reducedMotion());
 
   const mods = mission.modifiers.map((m) => MOD_LABELS[m] ?? m).join(' / ') || 'なし';
   const briefLines = mission.brief.map((b, i) => `<p style="--i:${i}">${esc(b)}</p>`).join('');
@@ -281,7 +285,7 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
     : '';
   const cast = radioCast(mission.radio);
   const castHtml = cast.length
-    ? `<div class="u2c-cast"><span class="u2c-plate-kicker" style="margin:0">無線劇\u3000${mission.radio?.length ?? 0}本</span>${cast
+    ? `<div class="u2c-cast"><span class="u2c-plate-kicker u2c-cast-kicker" style="margin:0">無線劇\u3000${mission.radio?.length ?? 0}本</span>${cast
         .map(
           (s) =>
             `<span><i style="background:${SPEAKERS[s].color}"></i>${esc(SPEAKERS[s].name)}</span>`,
@@ -341,6 +345,9 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
   const renderDiff = (): void => {
     if (!diffHost) return;
     const cur = host.loadout.missionDifficulty ?? 'normal';
+    // R55 W-C2[HIGH]: innerHTML丸ごと再構築で押した本人がDOMから消え、フォーカスがbodyへ
+    // 落ちる(gamepad/キーボードで先頭へ飛ぶ)。deploy.ts renderCharmsのhadFocusパターンと同型。
+    const hadFocus = diffHost.contains(document.activeElement);
     diffHost.innerHTML = DIFFICULTIES.map(
       (d) =>
         `<button type="button" class="u2c-chip${d.id === cur ? ' selected' : ''}" data-diff="${d.id}" aria-pressed="${d.id === cur}">${d.label}</button>`,
@@ -352,6 +359,8 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
         renderDiff();
       });
     });
+    if (hadFocus)
+      diffHost.querySelector<HTMLElement>('.u2c-chip.selected')?.focus({ preventScroll: true });
   };
   renderDiff();
 
@@ -377,7 +386,7 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
 
   return {
     dispose: () => {
-      root.classList.remove('u2-campaign');
+      root.classList.remove('u2-campaign', 'u2c-reduce');
       root.innerHTML = '';
     },
   };
@@ -385,7 +394,7 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
 
 // ── 戦役リザルト ─────────────────────────────────────────────────────────
 // 進行(XP/レベル/解放)節 — 旧menu.ts progressHtmlの移植(mock06右列の言語で再構成)
-function progressCardHtml(host: Ui2Host, progress: MatchProgress): string {
+function progressCardHtml(host: Ui2Host, progress: CampaignProgress): string {
   const xpRows = progress.xpBreakdown
     .map((entry, i) => {
       const daily = entry.label.startsWith('デイリー達成！');
@@ -405,8 +414,18 @@ function progressCardHtml(host: Ui2Host, progress: MatchProgress): string {
     .map((u) => `<li>${u.kind === 'weapon' ? '武器' : 'アタッチメント'}解放: ${esc(u.name)}</li>`)
     .join('');
   const camoRows = progress.newCamos.map((c) => `<li>カモ解除: ${esc(c.label)}</li>`).join('');
+  // R55 W-C2[LOW]: 帝王編の章クリア報酬(特別カモ/称号)が未描画だった穴埋め。
+  // 既存のunlockRows/camoRowsと同じ<li>並びへ連結するだけ(架空値は足さない)。
+  const rewardCamoRows = (progress.newRewardCamos ?? [])
+    .map((id) => `<li>特別報酬解除: ${esc(camoName(id))}</li>`)
+    .join('');
+  const titleRows = (progress.newTitles ?? [])
+    .map((t) => `<li>称号解除: ${esc(t)}</li>`)
+    .join('');
   const unlocks =
-    unlockRows || camoRows ? `<ul class="u2c-unlocks">${unlockRows}${camoRows}</ul>` : '';
+    unlockRows || camoRows || rewardCamoRows || titleRows
+      ? `<ul class="u2c-unlocks">${unlockRows}${camoRows}${rewardCamoRows}${titleRows}</ul>`
+      : '';
   const records = progress.newRecords.length
     ? `<p class="u2c-progress-note rec">自己ベスト更新 ${esc(progress.newRecords.join(' / '))}</p>`
     : '';
@@ -445,6 +464,8 @@ export const mountMissionResult: ScreenMount = (host, root, opts) => {
     return { dispose: () => undefined };
   }
   root.classList.add('u2-campaign');
+  // R55 W-C2[MEDIUM]: 他画面同型の省モーション連動クラス。
+  root.classList.toggle('u2c-reduce', host.reducedMotion());
   const mission = missionById(progress.missionId);
   const won = result.won;
   const stars = progress.stars;
@@ -537,7 +558,7 @@ export const mountMissionResult: ScreenMount = (host, root, opts) => {
 
   return {
     dispose: () => {
-      root.classList.remove('u2-campaign');
+      root.classList.remove('u2-campaign', 'u2c-reduce');
       root.innerHTML = '';
     },
   };

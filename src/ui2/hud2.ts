@@ -536,14 +536,19 @@ export class Hud2 {
         <i class="u2h-compass-needle"></i>
         <span class="u2h-hdg"><span data-id="hdg">000</span>°</span>
       </div>
-      <!-- 上中央下: モードプレート(味方|モード名+残時間|敵) -->
-      <div class="u2h-modeplate">
-        <div class="u2h-teamscore" data-id="teamscore">
-          <span class="u2h-mp-cell u2h-mp-mine"><i class="u2h-dia u2h-dia--mine"></i><span data-id="scoremine">0</span></span>
-          <span class="u2h-mp-target" data-id="scoretarget"></span>
-          <span class="u2h-mp-cell u2h-mp-enemy"><span data-id="scoreenemy">0</span><i class="u2h-dia u2h-dia--enemy"></i></span>
+      <!-- 上中央下: モードプレート(味方|モード名+残時間|敵)。
+           R55 W-C2: 先取ラベル(u2h-mp-target)は u2h-modeplate の clip-path 描画対象に
+           含まれると top:calc(100%+4px) の位置が丸ごと切り抜かれ不可視になるため、
+           clip-pathの掛からないwrapの直下(modeplateの兄弟)へ退避する -->
+      <div class="u2h-modeplate-wrap">
+        <div class="u2h-modeplate">
+          <div class="u2h-teamscore" data-id="teamscore">
+            <span class="u2h-mp-cell u2h-mp-mine"><i class="u2h-dia u2h-dia--mine"></i><span data-id="scoremine">0</span></span>
+            <span class="u2h-mp-cell u2h-mp-enemy"><span data-id="scoreenemy">0</span><i class="u2h-dia u2h-dia--enemy"></i></span>
+          </div>
+          <div class="u2h-mp-mid"><span class="u2h-mp-mode" data-id="modename">フリーフォーオール</span><strong class="u2h-mp-timer" data-id="timer">5:00</strong></div>
         </div>
-        <div class="u2h-mp-mid"><span class="u2h-mp-mode" data-id="modename">フリーフォーオール</span><strong class="u2h-mp-timer" data-id="timer">5:00</strong></div>
+        <span class="u2h-mp-target" data-id="scoretarget"></span>
       </div>
       <div class="u2h-announce" data-id="announce"></div>
       <!-- 左上: ミニマップ+主目標カード+戦績行 -->
@@ -972,7 +977,7 @@ export class Hud2 {
         <span class="hud-fkc-label"><span class="hud-fkc-scan"></span>FINAL KILLCAM</span>
         <span class="hud-fkc-hairline"></span>
       </div>
-      <div class="hud-fkc-skip">SKIP : クリック / SPACE</div>
+      <div class="hud-fkc-skip">SKIP : SPACE / Ⓐ</div>
       <div class="p2-fkc-weapon" hidden></div>
     `;
     document.body.appendChild(this.fkcRoot);
@@ -1180,8 +1185,7 @@ export class Hud2 {
     if (inZombie) this.root.dataset.zombie = '';
     else delete this.root.dataset.zombie;
     if (inZombie) {
-      const teamscore = this.el['teamscore'];
-      if (teamscore) teamscore.hidden = true;
+      this.setTeamscoreHidden(true);
     }
 
     // 訓練場: タイマー/チームスコア/ミニマップを隠し、計測HUDを表示する
@@ -1196,8 +1200,7 @@ export class Hud2 {
       this.text('tr-acc', `${Math.round(ts.accuracy * 100)}%`);
       this.text('tr-hs', `${Math.round(ts.hsRate * 100)}%`);
       this.text('tr-streak', String(ts.streak));
-      const teamscore = this.el['teamscore'];
-      if (teamscore) teamscore.hidden = true;
+      this.setTeamscoreHidden(true);
     }
 
     // ミニマップ: ゾンビ/訓練場モードでは非表示にしてK/Dパネルとの重なりを解消する。
@@ -1323,6 +1326,16 @@ export class Hud2 {
   // 生文字列化すると '先取 Infinity' の壊れ表示になる — 有限のときだけ出す。
   private formatScoreGoal(scoreTarget: number): string {
     return Number.isFinite(scoreTarget) ? `先取 ${scoreTarget}` : '';
+  }
+
+  // R55 W-C2: teamscore(mine/enemy診断セル)とscoretarget(先取ラベル)はDOM上は
+  // 兄弟の別要素(clip-path回避でwrap直下へ分離済み)だが、常に同じ条件で出し分けるため
+  // hidden切替を一箇所へ集約する(呼び出し漏れによる「片方だけ残る」退行を防ぐ)。
+  private setTeamscoreHidden(hidden: boolean): void {
+    const teamscore = this.el['teamscore'];
+    if (teamscore) teamscore.hidden = hidden;
+    const target = this.el['scoretarget'];
+    if (target) target.hidden = hidden;
   }
 
   private updateCompass(yaw: number, _width: number): void {
@@ -1769,8 +1782,7 @@ export class Hud2 {
 
     const isMission = snap.missionId !== undefined;
     // ストーリーは先取スコアを隠し、目的・進捗・波・ボスHPを出す
-    const teamscore = this.el['teamscore'];
-    if (teamscore) teamscore.hidden = isMission;
+    this.setTeamscoreHidden(isMission);
     this.text('scoremine', String(snap.scoreMine));
     this.text('scoreenemy', String(snap.scoreEnemy));
     // 先取ラベルは有限のときだけ('先取 Infinity'の壊れ表示を防ぐ)

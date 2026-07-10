@@ -433,8 +433,15 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
   };
 
   const closePop = (): void => {
-    openPop?.remove();
+    if (!openPop) return;
+    // R55 W-C2: 枠外クリック/Escape/ゲームパッドBackの3経路すべてでポップ削除により
+    // フォーカスがdocument.bodyへ落ちる(次のD-padで先頭へ飛ぶ)ため、ポップ内に
+    // フォーカスがあれば削除前にトリガーの.u2a-slotへ戻す(deploy.tsのhadFocusパターンと同型)
+    const wrap = openPop.parentElement;
+    const hadFocus = openPop.contains(document.activeElement);
+    openPop.remove();
     openPop = null;
+    if (hadFocus) wrap?.querySelector<HTMLElement>('.u2a-slot')?.focus({ preventScroll: true });
   };
   const onDocDown = (e: PointerEvent): void => {
     if (openPop && e.target instanceof Node && !openPop.parentElement?.contains(e.target))

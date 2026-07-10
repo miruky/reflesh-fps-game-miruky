@@ -296,6 +296,13 @@
   display: block;
   margin-bottom: 10px;
 }
+/* R55 W-C2[MEDIUM]: 無線劇キッカーは本数の算用数字を含むため、Latin monospaceの中で
+   CJKがブラウザ既定フォントへフォールバックし、ベースラインずれ+数字が極小に見えていた。
+   この項目だけ和文UIフォント(.u2-stage既定)で描画し、数字の可読性を回復する
+   (.u2c-plate-kickerと同じ詳細度=単一クラスなので、CSS内で後勝ちさせている)。 */
+.u2c-cast-kicker {
+  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+}
 .u2c-plate p {
   font-size: 13px;
   line-height: 1.8;
@@ -522,8 +529,9 @@
   min-width: 0;
 }
 .u2c-meta-row dd.num {
+  /* R55 W-C2[LOW]: 橙は行動/選択/達成のみの鉄則違反(規定時間は単なる情報表示)。
+     等幅で数値性は保ちつつ、他ddと同じ無彩色へ揃える。 */
   font-family: ui-monospace, 'SF Mono', Consolas, monospace;
-  color: #ffb98a;
 }
 .u2c-select {
   width: 100%;
@@ -850,6 +858,15 @@
   gap: 5px;
   font-size: 12px;
   color: #f5d06b;
+}
+
+/* ═══ 省モーション(R55 W-C2[MEDIUM]: hub/result/options等と同型。u2c-reduceは
+   host.reducedMotion()(設定値 or OS prefers-reduced-motion)連動でJS側が付与する) ═══ */
+.u2c-reduce *,
+.u2c-reduce *::before,
+.u2c-reduce *::after {
+  animation: none !important;
+  transition-duration: 0.15s !important;
 }
 
 /* ═══ keyframes(u2c名前空間 — 他画面と衝突しない) ═══ */

@@ -1284,7 +1284,19 @@ export class Menu {
     // R55-W-C: ★/前章制圧を条件にした「章まるごとLOCKED」表示を撤廃し、ui2と同方針へ揃える。
     // 全章を常にmission-grid付きで描画し、ロック判定はmissionChip内のisMissionUnlockedのみに
     // 委譲する(隠し章chBの解放待ちもmissionChip側のLOCKED表示で自動的に反映される)。
-    for (const chapter of CAMPAIGN) {
+    //
+    // R55-W-C2[MEDIUM確証finding]: 上記のmissionChip委譲だけでは不十分だった — chBが未解放でも
+    // chapter-card-head(章名/サブタイトル)とmissionChip自体(ミッション名/サブタイトル)は
+    // 常にDOMへ出力されており、LOCKEDバッジは★欄を差し替えるだけなのでネタバレ/実績先食いが
+    // 破れていた。ui2/screens/campaign.ts の chapterVisible と同型の判定で、隠し章
+    // (全ミッションが isMissionUnlocked=false かつ未クリア)はチャプター名義から丸ごとDOM
+    // 描画をスキップする。通常章(ch1-ch10)はR55で全ミッション常時解放済みのため
+    // chapterVisible は常にtrueで、可視性は変わらない。
+    const chapterVisible = (chapter: (typeof CAMPAIGN)[number]): boolean =>
+      chapter.missions.some(
+        (m) => isMissionUnlocked(this.profile, m.id) || camp.clearedMissions.includes(m.id),
+      );
+    for (const chapter of CAMPAIGN.filter(chapterVisible)) {
       const chClear = chapter.missions.filter((m) => camp.clearedMissions.includes(m.id)).length;
       const card = document.createElement('div');
       card.className = 'chapter-card';

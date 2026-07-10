@@ -58,7 +58,8 @@
   top: 0;
   width: 6px;
   height: 118px;
-  background: linear-gradient(180deg, #ff7e3f, #c2451a);
+  /* O-LOW: 参照モックに無い常時橙グラデを消費(熾火橙は行動/選択/達成のみに予約) */
+  background: linear-gradient(180deg, rgba(232, 234, 236, 0.16), rgba(232, 234, 236, 0.04));
 }
 .u2o-head {
   position: absolute;

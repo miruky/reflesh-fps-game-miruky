@@ -217,8 +217,12 @@
 }
 /* W-C: 角丸ボックス型outlineは撤去(モックに無い)。フォーカス指標は.sel(橙文字+21px/800+
    発光菱ブレット)を流用し、focus-visibleでも同一の見た目になるようにしてアクセシビリティを維持する。 */
-.u2-title__nav-item:focus-visible {
+/* ui2.css の #menu .u2-stage button:focus-visible/:focus(=熾火outline)を両方とも上回す
+   詳細度(1,3,x)で撤去する。タイトルナビの指標は .sel(橙文字+発光菱)が担うのでボックス不要。 */
+#menu .u2-stage .u2-title__nav-item:focus-visible,
+#menu .u2-stage .u2-title__nav-item:focus {
   outline: none;
+  border-radius: 0;
 }
 .u2-title__nav-item:focus-visible,
 .u2-title__nav-item.sel {

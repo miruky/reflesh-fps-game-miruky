@@ -22,6 +22,17 @@ const FK_B            = 6;
 const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 224
 // shot slot   : from(3) + to(3) + color(1) + time(1) = 8 floats
 const FK_S            = 8;
+// R55 W-C2 ④: recordFrame が player slot の初回記録前(まず起こらないが保険)に使う既定FOV。
+// core/settings.ts DEFAULT_SETTINGS.fov(78)に合わせた仮値で、通常は最初のtickで即上書きされる。
+const FK_DEFAULT_FOV  = 78;
+// R55 W-C2 ④: fkSetCameraFirstPerson の防御的クランプ境界(度)。
+// settings.fov 可動域[60,110](core/settings.ts)× 最小 adsFovScale 0.3(optics.ts 最強スコープ)
+// × breathZoom 0.9(息止め時) ≈16.2 を下限余裕込みで12へ、
+// settings.fov上限110 + FOV_SPEED_KICK(match.ts)12 ≈122 を上限余裕込みで130へ設定。
+// この範囲は正規のADS/移動FOVを一切削らない「物理的にありえない値」だけを弾く保険であり、
+// RC-XD固定80や旧来三人称killcamの46は範囲内のため実際の対策は主にrecordFrame側のゲート。
+const FK_FP_FOV_MIN   = 12;
+const FK_FP_FOV_MAX   = 130;
 // ── シネマティックキルカム(CK) 再生窓・カメラ定数 ──
 const CK_WIN_PRE   = 2.5;  // 再生窓: キル前(s)
 const CK_WIN_POST  = 1.5;  // 再生窓: キル後(s)
@@ -198,6 +209,15 @@ export interface KillcamDeps {
    * カメラ位置に銃が浮いて映るのを防ぐ)。begin()で分岐設定し、再生終了/dispose で復元する。
    */
   setViewmodelVisible(v: boolean): void;
+  /**
+   * R55 W-C2 ④: カメラが実際に一人称FPSビュー(通常プレイ/ADS)を描画中かどうか。
+   * RC-XD操縦中や旧来の死亡三人称killcam中はカメラを別システムが所有し、その camera.fov は
+   * プレイヤーの実効FOVではない共有値になる。recordFrame はこれが false の間、player slot の
+   * FOV(スロット7)を直前の有効値のまま保持し、他システム由来の値を録画しない。
+   * オプショナル: 未実装(undefined)の場合は getPlayer().alive のみで後方互換フォールバックする
+   * (RC-XD中はalive=trueのままのため完全な判定ではないが、既存挙動を壊さず最小の防御になる)。
+   */
+  isFpsView?(): boolean;
 }
 
 export { FK_WIN_POST };
@@ -217,6 +237,9 @@ export class KillcamController {
   private fkKillerBotIdx      = -1;
   private fkVictimBotIdx      = -1; // キルカムの被害者BOT index(-1=プレイヤーが被害者)
   private fkKillElapsed       = -Infinity;
+  // R55 W-C2 ④: recordFrame が player slot の FOV(スロット7)を最後に「一人称FPSビュー中」に
+  // 記録した値。isFpsView()===false の間はこの値を保持して録画する(他システム所有fov排除)。
+  private fkLastFov           = FK_DEFAULT_FOV;
   private fkPlaying           = false;
   fkFlash                     = 0;
   private fkCursor            = 0; // 再生中のゲーム時刻カーソル(begin で窓先頭へ初期化)
@@ -447,7 +470,13 @@ export class KillcamController {
     this.fkBuf[off + 4] = this.deps.getPlayer().pitch;
     this.fkBuf[off + 5] = this.deps.getPlayer().alive ? 1 : 0;
     this.fkBuf[off + 6] = this.deps.getAdsProgress();    // ADS率(0..1)
-    this.fkBuf[off + 7] = this.deps.getCamera().fov;                  // 実効FOV(ADS縮小を含む)
+    // R55 W-C2 ④: camera.fov はRC-XD操縦中/旧来の死亡三人称killcam中に他システムが一時的に
+    // 所有する共有値。isFpsView()(未実装なら getPlayer().alive で代替)が true の間だけ
+    // 実効FOV(ADS縮小を含む)を記録し、false の間は直前の有効値を保持する
+    // (fkSetCameraFirstPersonが他システム由来のfovを再生してしまうFrankensteinフレーム防止)。
+    const fpsView = this.deps.isFpsView ? this.deps.isFpsView() : this.deps.getPlayer().alive;
+    if (fpsView) this.fkLastFov = this.deps.getCamera().fov;
+    this.fkBuf[off + 7] = this.fkLastFov;                              // 実効FOV(ADS縮小を含む)
     const nb = Math.min(bots.length, FK_MAX_BOTS);
     this.fkBotCnt[h] = nb;
     for (let i = 0; i < nb; i++) {
@@ -624,7 +653,10 @@ export class KillcamController {
     if (yd < -Math.PI) yd += Math.PI * 2;
     const yaw   = ya + yd * t;
     const pitch = this.fkBuf[offA + 4]! + (this.fkBuf[offB + 4]! - this.fkBuf[offA + 4]!) * t;
-    const fov   = this.fkBuf[offA + 7]! + (this.fkBuf[offB + 7]! - this.fkBuf[offA + 7]!) * t;
+    const fovRaw = this.fkBuf[offA + 7]! + (this.fkBuf[offB + 7]! - this.fkBuf[offA + 7]!) * t;
+    // R55 W-C2 ④: 防御的クランプ(recordFrame側のisFpsViewゲートが主対策)。物理的にありえない
+    // 範囲外の値(将来の未知バグ等)だけを弾く保険で、正規のADS/移動FOV(12-130度)は削らない。
+    const fov = THREE.MathUtils.clamp(fovRaw, FK_FP_FOV_MIN, FK_FP_FOV_MAX);
     const pose = fkFirstPersonCam(eyeX, eyeY, eyeZ, yaw, pitch, fov);
     const camera = this.deps.getCamera();
     camera.rotation.order = 'YXZ';
@@ -763,6 +795,6 @@ export class KillcamController {
   /** アバター等の解放(Match.dispose から)。 */
   dispose(): void {
     this.fkDisposePlayerAvatar();
-    this.deps.setViewmodelVisible(true); // R55 ④: 一人称キルカム中の非表示上書きを復元
+    this.deps.setViewmodelVisible(true); // R55 ④: 三人称キルカム中の非表示上書き(false)を通常表示へ復元(一人称時は既にtrue)
   }
 }

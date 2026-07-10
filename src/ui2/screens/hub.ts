@@ -188,10 +188,9 @@ function earthSvg(): string {
         <stop offset="100%" stop-color="#122C63"/>
       </radialGradient>
       <radialGradient id="u2h-sun" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stop-color="#FFE0B0"/>
-        <stop offset="42%" stop-color="#F5A55C"/>
-        <stop offset="78%" stop-color="#E88A3C"/>
-        <stop offset="100%" stop-color="rgba(232,138,60,0)"/>
+        <stop offset="0%" stop-color="#FFF6E4"/>
+        <stop offset="25%" stop-color="rgba(255,214,150,0.3)"/>
+        <stop offset="100%" stop-color="rgba(255,214,150,0)"/>
       </radialGradient>
       <radialGradient id="u2h-flarecore" cx="50%" cy="50%" r="50%">
         <stop offset="0%" stop-color="#FFF6E4"/>
@@ -213,7 +212,7 @@ function earthSvg(): string {
       <filter id="u2h-soft2" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="16"/></filter>
     </defs>
     <!-- 太陽(リムの陰から) -->
-    <circle cx="1180" cy="52" r="108" fill="url(#u2h-sun)"/>
+    <circle cx="1180" cy="52" r="60" fill="url(#u2h-sun)"/>
     <rect x="720" y="126" width="700" height="3" fill="url(#u2h-flare)"/>
     <circle cx="1208" cy="146" r="64" fill="url(#u2h-flarecore)"/>
     <!-- 球体 -->
