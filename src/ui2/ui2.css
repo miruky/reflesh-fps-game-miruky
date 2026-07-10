@@ -33,8 +33,11 @@
   pointer-events: auto;
 }
 
-/* ボタンの素地リセット(モックはa/divで組まれている — 実装はbuttonで組み直すため) */
-.u2-stage button {
+/* ボタンの素地リセット(モックはa/divで組まれている — 実装はbuttonで組み直すため)。
+   :where() で詳細度0扱いにし、単一クラスの .u2X-* コンポーネント様式が必ず上書きできるようにする
+   (素の .u2-stage button は詳細度(0,1,1)で単一クラス(0,1,0)に勝ってしまい、CTA/カード/選択行の
+   background/border/padding を軒並み剥ぎ取る「ハリボテ化」バグの根本原因だった)。 */
+:where(.u2-stage) button {
   appearance: none;
   border: 0;
   margin: 0;
@@ -46,7 +49,10 @@
   text-align: inherit;
   cursor: pointer;
 }
-.u2-stage button:focus-visible {
+/* #menu 配下のグローバル focus 規則(#menu button:focus-visible=詳細度1,1,1、色=コーラル#ff574f)より
+   強い詳細度で焔座の熾火アウトラインを上書きする(#menu .u2-stage button:focus-visible=1,2,1)。 */
+#menu .u2-stage button:focus-visible,
+#menu .u2-stage button:focus {
   outline: 2px solid #ffa061;
   outline-offset: 3px;
 }
