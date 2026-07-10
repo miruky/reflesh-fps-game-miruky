@@ -160,6 +160,18 @@ async function checkScroll(page, containerSel, label) {
 }
 
 
+// ui2: 既知状態(hub)へ戻す。画面表示中ならback-to-hubを押す。
+async function ensureHub(page) {
+  if (PROFILE !== 'ui2') return;
+  const onHub = await page.$(S.hubRoot);
+  if (onHub && (await onHub.isVisible())) return;
+  const back = await q(page, S.backToHub, 1500);
+  if (back) {
+    await back.click();
+    await q(page, S.hubRoot, 3000);
+  }
+}
+
 // 節ごとの隔離: 例外でスイート全体を殺さない
 async function section(id, fn) {
   try {
@@ -258,17 +270,19 @@ try {
       const t = await q(page, '.mfd-tab[data-page="armory"]', 2000);
       if (t) await t.click();
     } else {
+      await ensureHub(page);
       const t = await q(page, '[data-id="hub-nav-armory"]', 1500);
-      if (t) {
-        await t.click();
-      }
+      if (t) await t.click();
+      await q(page, '[data-id="scr-armory"]', 3000); // 画面表示待ち
+      await q(page, S.weaponItem, 3000); // リスト充填待ち
     }
     const all = await page.$$(S.weaponItem);
     const items = [];
     for (const it of all) if (await it.isVisible()) items.push(it);
-    if (items.length >= 2) {
-      await items[1].scrollIntoViewIfNeeded().catch(() => {});
-      await items[1].click({ timeout: 2500, force: true });
+    if (items.length >= 1) {
+      const pick = items[items.length >= 2 ? 1 : 0]; // 2個以上あれば非選択の2番目
+      await pick.scrollIntoViewIfNeeded().catch(() => {});
+      await pick.click({ timeout: 2500, force: true });
       await page.waitForTimeout(200);
       const marked = await page.evaluate(
         (sel) =>
@@ -277,8 +291,8 @@ try {
           ),
         S.weaponItem,
       );
-      record('armory:select', marked ? 'PASS' : 'WARN', marked ? '' : '選択状態のマークを検出できず(クラス規約差?)');
-    } else record('armory:select', PROFILE === 'ui2' ? 'SKIP' : 'WARN', `武器ボタン${items.length}個`);
+      record('armory:select', marked ? 'PASS' : 'WARN', marked ? `${items.length}武器/選択反映` : '選択状態のマークを検出できず(クラス規約差?)');
+    } else record('armory:select', PROFILE === 'ui2' ? 'FAIL' : 'WARN', `武器ボタン${items.length}個`);
   });
 
   // 4) 出撃 → 試合開始 → ポーズ → 再開 → 退出
@@ -288,15 +302,14 @@ try {
       const t = await q(page, '.mfd-tab[data-page="deploy"]', 2000);
       if (t) await t.click();
     } else {
-      const hub = await q(page, S.hubRoot, 1500);
-      if (hub) {
-        const t = await q(page, '[data-id="hub-nav-deploy"]', 1500);
-        if (t) await t.click();
-      }
+      await ensureHub(page);
+      const t = await q(page, '[data-id="hub-nav-deploy"]', 1500);
+      if (t) await t.click();
+      await q(page, '[data-id="scr-deploy"]', 3000); // 画面表示待ち
     }
     const start = await q(page, S.startButton, 3000);
     if (!start) {
-      record('deploy:launch', PROFILE === 'ui2' ? 'SKIP' : 'FAIL', 'startボタン不在');
+      record('deploy:launch', 'FAIL', 'startボタン不在');
     } else {
       await start.focus();
       await page.keyboard.press('Enter'); // click detail===0 → 即時発火(hold不要)
@@ -369,8 +382,20 @@ try {
         if (t) await t.click();
       }
     }
-    const slider = await q(page, S.slider, 2500);
-    if (!slider) record('options:slider', PROFILE === 'ui2' ? 'SKIP' : 'WARN', 'スライダー不在');
+    let slider = await q(page, S.slider, 2500);
+    if (!slider && PROFILE === 'ui2') {
+      // 既定タブ(一般)にrangeが無い場合、オーディオ/映像タブへ切替えて探す
+      for (const label of ['オーディオ', '映像']) {
+        const tab = page.locator('.u2o-tab', { hasText: label }).first();
+        if (await tab.count()) {
+          await tab.click();
+          await page.waitForTimeout(200);
+          slider = await q(page, S.slider, 1500);
+          if (slider) break;
+        }
+      }
+    }
+    if (!slider) record('options:slider', PROFILE === 'ui2' ? 'FAIL' : 'WARN', 'スライダー不在');
     else {
       const before = await slider.evaluate((e) => e.value);
       await slider.focus();
