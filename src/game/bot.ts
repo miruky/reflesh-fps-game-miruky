@@ -4,6 +4,10 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { wrapAngle } from './aimassist';
 import type { Rand } from '../core/rng';
 import { applyGravityStep } from './player';
+// R53-W2契約: 特殊ゾンビ変種の識別子はzombie-economy.ts側が単一の真実として定義する
+// (経済/報酬ロジックとの結び付きが強いため)。並行実装中は一時的にtscが赤くなり得る
+// (report参照)。
+import type { ZombieVariant } from './zombie-economy';
 
 // 胴体カプセルは首までの高さに留め、頭の判定球をカプセルの外に出す。
 // 全身を覆うカプセルにすると水平レイが常に胴体へ先に当たり、
@@ -250,6 +254,11 @@ export interface BotContext {
   // ゾンビの近接ヒット通知(match側でグローバルrate-limit + i-frameを適用して多段一撃を防ぐ)
   onMelee?: (bot: Bot) => void;
 }
+
+// R53 黒雷帝の怯え: feared中のbot命中率係数(0.5=半減)。★V-D修正(コメント訂正):
+// 実効spreadの拡散(spread / fearAccuracyMul = 2倍)は bot.ts 内の updateShooting
+// (fearMul適用点)で行う — match側は applyEmperorFear で _fearS を設定するだけ。
+export const fearAccuracyMul = 0.5;
 
 // ★2 巨躯KCC距離LOD: プレイヤー30m超はuid%2バケットの担当フレームのみ
 // computeColliderMovement(衝突解決)を実行する。60Hzで1フレーム分の並進差は
@@ -515,6 +524,214 @@ function getSharedZombieDarkMat(darkColor: THREE.Color): THREE.MeshStandardMater
   return mat;
 }
 
+// ── R53-W2 特殊ゾンビ変種の共有マテリアル(R51 dark共有キャッシュと同じ流儀)──
+// variant追加パーツの見た目はtierGlow等の個体差を持たないため、キー(変種+役割)で
+// 1体につき1マテリアルを使い回す。dispose保護は ZOMBIE_DARK_MAT_CACHE と同じく
+// userData.shared=true。ジオメトリは各Botインスタンスがprivate variantMeshesに
+// 追加した個体別プリミティブ(安価なSphere/Box)なので、そちらは通常どおり
+// dispose/除去してよい(共有はマテリアルのみ・個体クローン禁止の対象は色/発光設定)。
+const ZOMBIE_VARIANT_MAT_CACHE = new Map<string, THREE.MeshStandardMaterial>();
+function getSharedVariantMat(
+  key: string,
+  factory: () => THREE.MeshStandardMaterial,
+): THREE.MeshStandardMaterial {
+  let mat = ZOMBIE_VARIANT_MAT_CACHE.get(key);
+  if (!mat) {
+    mat = factory();
+    mat.userData.shared = true;
+    ZOMBIE_VARIANT_MAT_CACHE.set(key, mat);
+  }
+  return mat;
+}
+// blast: 腹部の発光パスチュール(橙赤、emissive 0.5 ≤ 0.55 上限/bloom閾値0.9未満)
+const BLAST_PUSTULE_SPECS: readonly [number, number, number, number][] = [
+  [-0.06, 0.1, -0.12, 0.07],
+  [0.05, 0.05, -0.13, 0.06],
+  [0.0, 0.18, -0.11, 0.05],
+];
+
+// ═══ R53-W3: ゾンビ群InstancedMesh化(src/render/zombie-crowd.ts)との共有定義 ═══
+// 部位ルート(body/arm/thigh/shin)のパーツ構成は、個体Object3D経路(buildZombieMesh)と
+// 群レンダラの正準ジオメトリ(buildZombieCrowdGeometries)の両方が下の zombie*Root を
+// 通る=単一定義。両経路の見た目乖離は構造的に起きない(行列レベルの等価性は
+// zombie-crowd.test.ts が固定する)。boss専用装飾(裂け目/rig.scale2.3)と variant装飾は
+// buildZombieMesh 側にのみ存在し、群レンダラの対象外(boss/variantは常にObject3D経路)。
+
+// 変形ノードの静止オフセット(buildZombieMeshと群レンダラの行列合成が共有する唯一の値)
+export const ZOMBIE_NODE_REST = {
+  armRigY: 0.4,
+  legX: 0.11,
+  legY: -0.16,
+  kneeY: -0.3,
+} as const;
+
+// 群レンダラの正準マテリアル生成に必要なスタイル値(buildZombieMeshの実値の鏡写し。
+// instanceColor は diffuse にのみ乗るため、armor/dark は白ベース+instanceColor=スキン色、
+// glow(眼)は固定emissiveで全個体共通)
+export const ZOMBIE_CROWD_STYLE = {
+  skinNormal: ZOMBIE_SKIN_NORMAL,
+  skinElite: ZOMBIE_SKIN_ELITE,
+  darkMul: 0.4, // dark系の色 = スキン色×0.4(getSharedZombieDarkMatへの引数と同じ)
+  armorRoughness: 0.85,
+  armorMetalness: 0.05,
+  darkRoughness: 0.9,
+  darkMetalness: 0.02,
+  glowColor: 0x0a0d07,
+  eyeColor: ZOMBIE_EYE_COLOR,
+  eyeIntensity: ZOMBIE_EYE_INTENSITY,
+  glowRoughness: 0.4,
+} as const;
+
+interface ZombiePartMats {
+  armor: THREE.Material;
+  dark: THREE.Material;
+  glow: THREE.Material;
+}
+
+// buildZombieMesh 旧ローカルP()の module 版(構成の単一定義点として共有)
+function zPart(
+  root: THREE.Object3D,
+  geo: THREE.BufferGeometry,
+  mat: THREE.Material,
+  x: number,
+  y: number,
+  z: number,
+  cast: boolean,
+  rx = 0,
+  ry = 0,
+  rz = 0,
+): void {
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  if (rx !== 0 || ry !== 0 || rz !== 0) m.rotation.set(rx, ry, rz);
+  m.castShadow = cast;
+  root.add(m);
+}
+
+// ── 胴・頭(影を落とすシルエット + no-shadowディテール)──
+function zombieBodyRoot(m: ZombiePartMats): THREE.Group {
+  const root = new THREE.Group();
+  zPart(root, taperPrism(0.24, 0.2, 0.58, 7, 0.66), m.armor, 0, 0.16, 0, true); // やせ細った胴
+  zPart(root, chamferBox(0.34, 0.24, 0.13, 0.03), m.armor, 0, 0.31, -0.05, true); // 露出した肋骨帯
+  zPart(root, taperPrism(0.2, 0.16, 0.18, 7, 0.7), m.dark, 0, -0.2, 0, false); // 腰
+  zPart(root, new THREE.CylinderGeometry(0.055, 0.07, 0.14, 8), m.dark, 0.02, 0.56, -0.02, false, 0.18, 0, 0.12); // 傾いた首
+  zPart(root, new THREE.SphereGeometry(0.16, 12, 10), m.dark, 0.03, 0.72, -0.05, false); // うなだれた頭
+  zPart(root, chamferBox(0.16, 0.05, 0.05, 0.02), m.dark, 0.03, 0.7, -0.18, false); // 顎
+  // 落ちくぼんだ眼光(左右)
+  zPart(root, new THREE.SphereGeometry(0.026, 8, 6), m.glow, -0.05, 0.74, -0.17, false);
+  zPart(root, new THREE.SphereGeometry(0.026, 8, 6), m.glow, 0.1, 0.74, -0.17, false);
+  zPart(root, new THREE.BoxGeometry(0.16, 0.03, 0.02), m.glow, 0.02, 0.22, -0.16, false); // 胸の腐敗発光帯
+  return root;
+}
+
+// ── 前へ垂らした両腕(armRigローカル。銃は持たない。左右非対称の伸ばし)──
+function zombieArmRoot(m: ZombiePartMats): THREE.Group {
+  const root = new THREE.Group();
+  const buildArm = (sx: number, reach: number): void => {
+    const g = new THREE.Group();
+    g.position.set(sx * 0.26, 0.05, -0.02);
+    g.rotation.x = -1.35 - reach; // ほぼ水平に前へ突き出す
+    g.rotation.z = -sx * 0.12;
+    zPart(g, chamferBox(0.09, 0.27, 0.09, 0.02), m.armor, 0, -0.13, 0, false); // 上腕
+    zPart(g, chamferBox(0.075, 0.27, 0.075, 0.02), m.dark, 0, -0.36, 0.01, false); // 前腕
+    zPart(g, chamferBox(0.07, 0.06, 0.11, 0.02), m.dark, 0, -0.5, 0.03, false); // 手
+    root.add(g);
+  };
+  buildArm(-1, 0.18);
+  buildArm(1, 0.05);
+  return root;
+}
+
+// ── 腿(股関節ピボットローカル。影シルエット)──
+function zombieThighRoot(m: ZombiePartMats): THREE.Group {
+  const root = new THREE.Group();
+  zPart(root, chamferBox(0.13, 0.32, 0.14, 0.03), m.armor, 0, -0.15, 0, true); // 腿(影)
+  return root;
+}
+
+// ── 脛+足(膝ピボットローカル)──
+function zombieShinRoot(m: ZombiePartMats): THREE.Group {
+  const root = new THREE.Group();
+  zPart(root, chamferBox(0.11, 0.3, 0.12, 0.03), m.dark, 0, -0.15, 0, false); // 脛
+  zPart(root, chamferBox(0.13, 0.08, 0.24, 0.03), m.dark, 0, -0.3, -0.04, false); // 足(底≈-0.80)
+  return root;
+}
+
+// 群レンダラ(InstancedMesh 7本)の正準ジオメトリ。ノードローカル空間で
+// buildZombieMesh と同一のパイプ(mergeByMaterial→applyAO)を通した結果を返す。
+// モジュール1回だけ呼び全個体で共有する想定(zombie-crowd.tsがキャッシュする)。
+export interface ZombieCrowdGeometries {
+  bodyArmor: THREE.BufferGeometry;
+  bodyDark: THREE.BufferGeometry;
+  bodyGlow: THREE.BufferGeometry;
+  armArmor: THREE.BufferGeometry;
+  armDark: THREE.BufferGeometry;
+  thigh: THREE.BufferGeometry;
+  shin: THREE.BufferGeometry;
+}
+
+export function buildZombieCrowdGeometries(): ZombieCrowdGeometries {
+  // マーカー材(家族识别のためだけの使い捨て。ジオメトリ確定後にdispose)
+  const armor = new THREE.MeshBasicMaterial();
+  const dark = new THREE.MeshBasicMaterial();
+  const glow = new THREE.MeshBasicMaterial();
+  const mats: ZombiePartMats = { armor, dark, glow };
+  // buildZombieMesh の finalize と同一のAO引数(restY = 各ノードの静止オフセット)
+  const pick = (root: THREE.Group, restY: number): Map<THREE.Material, THREE.BufferGeometry> => {
+    const out = new Map<THREE.Material, THREE.BufferGeometry>();
+    for (const mesh of mergeByMaterial(root)) {
+      applyAO(mesh.geometry, -0.85 - restY, 1.1 - restY, 0.55);
+      out.set(mesh.material as THREE.Material, mesh.geometry);
+    }
+    return out;
+  };
+  const body = pick(zombieBodyRoot(mats), 0);
+  const arm = pick(zombieArmRoot(mats), ZOMBIE_NODE_REST.armRigY);
+  const thigh = pick(zombieThighRoot(mats), ZOMBIE_NODE_REST.legY);
+  const shin = pick(zombieShinRoot(mats), ZOMBIE_NODE_REST.legY + ZOMBIE_NODE_REST.kneeY);
+  armor.dispose();
+  dark.dispose();
+  glow.dispose();
+  const need = (
+    map: Map<THREE.Material, THREE.BufferGeometry>,
+    mat: THREE.Material,
+    label: string,
+  ): THREE.BufferGeometry => {
+    const g = map.get(mat);
+    if (!g) throw new Error(`buildZombieCrowdGeometries: ${label} 家族が空`);
+    return g;
+  };
+  return {
+    bodyArmor: need(body, armor, 'bodyArmor'),
+    bodyDark: need(body, dark, 'bodyDark'),
+    bodyGlow: need(body, glow, 'bodyGlow'),
+    armArmor: need(arm, armor, 'armArmor'),
+    armDark: need(arm, dark, 'armDark'),
+    thigh: need(thigh, armor, 'thigh'),
+    shin: need(shin, dark, 'shin'),
+  };
+}
+
+// 群レンダラへ毎フレーム渡す姿勢パラメタ(Bot.getCrowdPoseが埋める)。
+// syncMesh/updateDyingの式の入力そのもの — 合成式はzombie-crowd.tsのcompose側が持つ。
+export interface ZombieCrowdPose {
+  x: number;
+  y: number;
+  z: number;
+  visualLift: number;
+  rigLiftY: number;
+  scale: number;
+  heading: number;
+  walkPhase: number;
+  walkAmp: number;
+  anim: number;
+  bobPhase: number;
+  dying01: number; // 0=生存。(0,1]=updateDyingの進行t(死亡演出)
+  deathTilt: number;
+  visible: boolean; // false=死亡演出終了(スケール0行列で非表示)
+  elite: boolean;
+}
+
 let botUidSeq = 0;
 
 export class Bot {
@@ -568,6 +785,19 @@ export class Bot {
   // ★5 群衆ランクKCC LOD契約: matchが0.25s毎に近い順ランクを書き込む(0=最近接)。
   // 既定99=未算出/非上位(zombieKccActive/zombieKccSkipFactorが参照する契約フィールド)
   hordeRank = 99;
+  // ── R53-W3 ゾンビ群InstancedMesh化 ──
+  // 群スロット(-1=非インスタンス=従来のObject3D描画)。割当/解放は match 側
+  // (ZombieCrowdRenderer.acquire/release → setCrowdSlot)が行う。対象は
+  // kind==='zombie' && tier!=='boss' && zombieVariant===null のみ(ハイブリッド協定)。
+  crowdSlot = -1;
+  // ── R53-W2 特殊ゾンビ変種(zombie-economy.ts ZombieVariant契約) ──
+  // spawn/プール再利用時にmatchが設定する。挙動(前面軽減/死亡時効果)はmatch側が
+  // facingDot()/この値を見て発火するため、Bot自身は保持と見た目適用のみ担う。
+  zombieVariant: ZombieVariant | null = null;
+  // applyZombieVariantVisualが追加した装飾メッシュ(共有マテリアル+個体別ジオメトリ)。
+  // resetForZombieReuse(プール再利用)で必ず除去+空配列化し、旧variantの残留を防ぐ
+  // (R51の合成漏斗罠と同型の再発防止対象)。
+  private readonly variantMeshes: THREE.Mesh[] = [];
   // V51: 中心基準の視覚スケール(全巨躯ゾンビ等)で足が沈むのを防ぐ持ち上げ量(見た目のみ)
   private visualLift = 0;
   // R53-T1: rig(剛体中心基準の等比拡大)自身の足沈み補正。visualLiftとは別経路(groupではなく
@@ -586,6 +816,46 @@ export class Bot {
   private stuckTimer = 0;         // 前進不能の累積時間(HUMANOID_STUCK_TH 超えで発動)
   private unstuckSteerS = 0;      // 横ステア/heading転換のラッチ残り時間
   private unstuckStrafeOverride: number | null = null; // 戦闘中の strafe 方向上書き(null=通常)
+
+  // ── R53-W2 ストーリー(campaign.ts BossPhase契約/追跡・護衛ミッション) ──
+  // true の間、humanoid の非戦闘移動 wish を「target から離れる」方向へ固定する
+  // (追跡ミッションで敵が逃走するボス/NPCの演出)。戦闘AI(狙い/heading)自体は変えず、
+  // update() の wish計算(approach項)だけに分岐する。既定false=非回帰。
+  fleeMode = false;
+  // R53 黒雷帝の怯え(帝威): applyFear(durationS) で設定される残り秒数(update内で減衰)。
+  // M3配線: 黒雷帝の降臨時+25m以内での黒雷キル時に、周辺humanoid系へ applyFear(1.2〜2.0)、
+  // zombieへ applyFear(0.4)(よろめき)。humanoid系=後退(approach反転)+命中率低下、
+  // zombie=移動×0.2の硬直。★V-D修正(コメント訂正): 命中率低下は bot.ts 内の
+  // updateShooting(fearMul適用点)で実効spreadを 1/fearAccuracyMul 倍(=2倍)へ広げる。
+  private _fearS = 0;
+  applyFear(durationS: number): void {
+    this._fearS = Math.max(this._fearS, durationS);
+  }
+  get feared(): boolean {
+    return this._fearS > 0;
+  }
+  // 味方(team=player想定)が歩く経由点リスト。設定中はctx.objectiveより優先して
+  // 先頭の未到達waypointへ向かい、到達半径3m(既存objective-seekと同じ閾値)で
+  // 次のwaypointへ進む。配列を再代入すると内部進捗(escortIdx)を自動で0へ戻す。
+  // 末尾到達後(escortIdx>=length)は通常のobjective-seek/徘徊へフォールバックする
+  // (最小実装。ループ待機等が要る場合はmatch側でwaypoints自体を再設定すること)。
+  private _escortWaypoints: THREE.Vector3[] | null = null;
+  private escortIdx = 0;
+  get escortWaypoints(): THREE.Vector3[] | null {
+    return this._escortWaypoints;
+  }
+  set escortWaypoints(wps: THREE.Vector3[] | null) {
+    this._escortWaypoints = wps;
+    this.escortIdx = 0;
+  }
+  // ストーリーボスの現在フェーズが許可する演出フラグ(黒斬撃/ブリンク/柱)。発火自体は
+  // match側(effects流用)が行い、Botはcampaign.ts BossPhase遷移時にsetBossPhaseFlags()
+  // 経由で書き込まれた現在値を保持するだけ(読み取りは公開readonlyフィールド)。
+  readonly bossPhaseFlags: { blackSlash: boolean; blink: boolean; pillars: boolean } = {
+    blackSlash: false,
+    blink: false,
+    pillars: false,
+  };
   // horizSpeedMps 用
   private _prevBodyPos = new THREE.Vector3(); // 前フレームの剛体位置
   private _horizSpeed = 0;        // 直近フレームの水平速度(m/s)
@@ -1000,24 +1270,6 @@ export class Bot {
     });
     this.glowMats.push({ mat: glow, base: eyeIntensity });
 
-    const P = (
-      root: THREE.Object3D,
-      geo: THREE.BufferGeometry,
-      mat: THREE.Material,
-      x: number,
-      y: number,
-      z: number,
-      cast: boolean,
-      rx = 0,
-      ry = 0,
-      rz = 0,
-    ): void => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, z);
-      if (rx !== 0 || ry !== 0 || rz !== 0) m.rotation.set(rx, ry, rz);
-      m.castShadow = cast;
-      root.add(m);
-    };
     // 畳んで縦AOを焼き、no-cast片には noShadow を記録(setCastShadowのLODが尊重する)
     const finalize = (root: THREE.Object3D, target: THREE.Object3D, restY: number): void => {
       const meshes = mergeByMaterial(root);
@@ -1028,56 +1280,28 @@ export class Bot {
       }
     };
 
-    // ── 胴・頭(影を落とすシルエット + no-shadowディテール)──
-    const bodyRoot = new THREE.Group();
-    P(bodyRoot, taperPrism(0.24, 0.2, 0.58, 7, 0.66), armor, 0, 0.16, 0, true); // やせ細った胴
-    P(bodyRoot, chamferBox(0.34, 0.24, 0.13, 0.03), armor, 0, 0.31, -0.05, true); // 露出した肋骨帯
-    P(bodyRoot, taperPrism(0.2, 0.16, 0.18, 7, 0.7), dark, 0, -0.2, 0, false); // 腰
-    P(bodyRoot, new THREE.CylinderGeometry(0.055, 0.07, 0.14, 8), dark, 0.02, 0.56, -0.02, false, 0.18, 0, 0.12); // 傾いた首
-    P(bodyRoot, new THREE.SphereGeometry(0.16, 12, 10), dark, 0.03, 0.72, -0.05, false); // うなだれた頭
-    P(bodyRoot, chamferBox(0.16, 0.05, 0.05, 0.02), dark, 0.03, 0.7, -0.18, false); // 顎
-    // 落ちくぼんだ眼光(左右)
-    P(bodyRoot, new THREE.SphereGeometry(0.026, 8, 6), glow, -0.05, 0.74, -0.17, false);
-    P(bodyRoot, new THREE.SphereGeometry(0.026, 8, 6), glow, 0.1, 0.74, -0.17, false);
-    P(bodyRoot, new THREE.BoxGeometry(0.16, 0.03, 0.02), glow, 0.02, 0.22, -0.16, false); // 胸の腐敗発光帯
-    finalize(bodyRoot, this.rig, 0);
+    // ── 部位構築(R53-W3: zombie*Root = 群InstancedMesh経路と共有の唯一定義点) ──
+    const partMats: ZombiePartMats = { armor, dark, glow };
+    finalize(zombieBodyRoot(partMats), this.rig, 0);
 
     // ── 前へ垂らした両腕(armRig。銃は持たない)──
     const armRig = new THREE.Group();
-    armRig.position.set(0, 0.4, 0);
+    armRig.position.set(0, ZOMBIE_NODE_REST.armRigY, 0);
     this.armRig = armRig;
-    const armRoot = new THREE.Group();
-    const buildArm = (sx: number, reach: number): void => {
-      const g = new THREE.Group();
-      g.position.set(sx * 0.26, 0.05, -0.02);
-      g.rotation.x = -1.35 - reach; // ほぼ水平に前へ突き出す
-      g.rotation.z = -sx * 0.12;
-      P(g, chamferBox(0.09, 0.27, 0.09, 0.02), armor, 0, -0.13, 0, false); // 上腕
-      P(g, chamferBox(0.075, 0.27, 0.075, 0.02), dark, 0, -0.36, 0.01, false); // 前腕
-      P(g, chamferBox(0.07, 0.06, 0.11, 0.02), dark, 0, -0.5, 0.03, false); // 手
-      armRoot.add(g);
-    };
-    buildArm(-1, 0.18);
-    buildArm(1, 0.05); // 左右非対称の伸ばしで不気味さを出す
-    finalize(armRoot, armRig, armRig.position.y);
+    finalize(zombieArmRoot(partMats), armRig, armRig.position.y);
     this.rig.add(armRig);
 
     // ── 脚(股関節ピボット + 膝ピボット)。humanoidと同じ骨格でシャンブル歩容 ──
     const buildLeg = (pivot: THREE.Group, knee: THREE.Group, sx: number): void => {
-      pivot.position.set(sx, -0.16, 0);
-      knee.position.set(0, -0.3, 0);
-      const thighRoot = new THREE.Group();
-      P(thighRoot, chamferBox(0.13, 0.32, 0.14, 0.03), armor, 0, -0.15, 0, true); // 腿(影)
-      finalize(thighRoot, pivot, pivot.position.y);
-      const shinRoot = new THREE.Group();
-      P(shinRoot, chamferBox(0.11, 0.3, 0.12, 0.03), dark, 0, -0.15, 0, false); // 脛
-      P(shinRoot, chamferBox(0.13, 0.08, 0.24, 0.03), dark, 0, -0.3, -0.04, false); // 足(底≈-0.80)
-      finalize(shinRoot, knee, pivot.position.y + knee.position.y);
+      pivot.position.set(sx, ZOMBIE_NODE_REST.legY, 0);
+      knee.position.set(0, ZOMBIE_NODE_REST.kneeY, 0);
+      finalize(zombieThighRoot(partMats), pivot, pivot.position.y);
+      finalize(zombieShinRoot(partMats), knee, pivot.position.y + knee.position.y);
       pivot.add(knee);
       this.rig.add(pivot);
     };
-    buildLeg(this.legL, this.kneeL, -0.11);
-    buildLeg(this.legR, this.kneeR, 0.11);
+    buildLeg(this.legL, this.kneeL, -ZOMBIE_NODE_REST.legX);
+    buildLeg(this.legR, this.kneeR, ZOMBIE_NODE_REST.legX);
 
     // ── ボス専用: 視覚スケール2.3× + 体表の発光裂け目 ──
     if (isBoss) {
@@ -1107,6 +1331,148 @@ export class Bot {
     }
 
     this.group.add(this.rig);
+  }
+
+  // ── R53-W2 特殊ゾンビ変種の見た目適用 ──────────────────────────────────────
+  // buildZombieMesh() 完了後にmatchが呼ぶ(spawn直後 or プール再利用でのreapply)。
+  // 追加パーツは this.rig 配下へぶら下げるので、通常のsyncMesh(rig基準の位置/向き)や
+  // dispose()のgroup.traverseへ自然に乗る。マテリアルはgetSharedVariantMatで
+  // 変種×役割ごとに1つを使い回し(個体クローン禁止)、ジオメトリのみ個体別(安価な
+  // Sphere/Boxなのでmerge対象にせず直接disposeしてよい)。呼び出し前に必ず
+  // 旧variantの装飾を除去する(多重適用/reapplyでの残留・二重描画を防ぐ)。
+  applyZombieVariantVisual(variant: ZombieVariant): void {
+    this.clearZombieVariantVisual();
+    this.zombieVariant = variant;
+    const add = (mesh: THREE.Mesh, cast: boolean): void => {
+      mesh.castShadow = cast;
+      mesh.userData.noShadow = !cast;
+      this.rig.add(mesh);
+      this.variantMeshes.push(mesh);
+    };
+    if (variant === 'blast') {
+      // 腹部の発光パスチュール(橙赤、球2-3個)
+      const mat = getSharedVariantMat('blast-pustule', () => new THREE.MeshStandardMaterial({
+        color: 0x2a0800,
+        roughness: 0.55,
+        metalness: 0.05,
+        emissive: new THREE.Color(0xff5522),
+        emissiveIntensity: 0.5, // ≤0.55上限・bloom閾値0.9未満
+      }));
+      for (const [x, y, z, r] of BLAST_PUSTULE_SPECS) {
+        add(new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6).translate(x, y, z), mat), false);
+      }
+    } else if (variant === 'miasma') {
+      // 緑の半透明オーラシェル(胴を包む)+頭部の緑発光ハロー
+      const shellMat = getSharedVariantMat('miasma-shell', () => new THREE.MeshStandardMaterial({
+        color: 0x1c5c33,
+        roughness: 0.4,
+        metalness: 0,
+        emissive: new THREE.Color(0x2ee06a),
+        emissiveIntensity: 0.32,
+        transparent: true,
+        opacity: 0.3,
+        depthWrite: false,
+      }));
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 8).translate(0, 0.16, 0), shellMat), false);
+      const headGlowMat = getSharedVariantMat('miasma-head-glow', () => new THREE.MeshStandardMaterial({
+        color: 0x123018,
+        roughness: 0.4,
+        emissive: new THREE.Color(0x39ff7a),
+        emissiveIntensity: 0.5,
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+      }));
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8).translate(0.03, 0.72, -0.05), headGlowMat), false);
+    } else if (variant === 'shell') {
+      // 前面の骨甲板(胸+顔)。発光なしの灰白マテリアル
+      const plateMat = getSharedVariantMat('shell-plate', () => new THREE.MeshStandardMaterial({
+        color: 0xcdc7b6,
+        roughness: 0.8,
+        metalness: 0.04,
+      }));
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.06).translate(0, 0.3, -0.12), plateMat), true);
+      add(new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.11, 0.04).translate(0.03, 0.74, -0.19), plateMat), false);
+    }
+  }
+
+  // プール再利用時に旧variantの装飾メッシュを除去する(R51合成漏斗罠の再発防止)。
+  // マテリアルは共有(userData.shared)なのでdisposeしない。ジオメトリは個体別のため
+  // 通常どおりdisposeしてよい(最終dispose()でも二重disposeは安全なno-op)。
+  private clearZombieVariantVisual(): void {
+    for (const mesh of this.variantMeshes) {
+      this.rig.remove(mesh);
+      mesh.geometry.dispose();
+    }
+    this.variantMeshes.length = 0;
+    this.zombieVariant = null;
+  }
+
+  // 前面被弾判定: heading(向き)と被弾方向の内積を返す(-1..1)。shotDir は
+  // takeDamage(fromDir) と同じ「本体→射手」方向の慣例(未正規化/Y成分ありでも可、
+  // 内部でY0化+正規化する)。+1に近いほど射手が正面(=前面からの被弾)、-1で背面。
+  // shell変種の前面ダメージ軽減判定にmatch側(applyBotDamage)が使う想定。
+  facingDot(shotDir: THREE.Vector3): number {
+    if (shotDir.lengthSq() < 1e-8) return 0;
+    const d = shotDir.clone();
+    d.y = 0;
+    if (d.lengthSq() < 1e-8) return 0;
+    d.normalize();
+    return this.facing().dot(d);
+  }
+
+  // ── R53-W2 ストーリー用ボスフェーズ/演出API(campaign.ts BossPhase契約) ──
+  // フェーズは hp01 の単調減少に沿って一方向へ進行し後戻りしないため、基礎値からの
+  // 再計算ではなく「現在の実効値へ乗算」でよい(前フェーズの効果に重ねがけしてよい)。
+  // speedMul: tuning.moveSpeedMul と実効moveSpeed(construction時にtuningから一度だけ
+  // 焼かれるprivateフィールド。以後のtuning変更だけでは移動に反映されない)の両方へ
+  // 同じ倍率をかけ、両者の対応関係(moveSpeed = MOVE_SPEED * tuning.moveSpeedMul)を保つ。
+  // damageMul: tuning.damage へ乗算(match側の全ダメージ経路がbot.tuning.damageを直接
+  // 参照する既存の流儀。例: hellMode倍率 `bot.tuning.damage = ...` / damageAtDistance
+  // (tuning.damage, ...) 呼び出し)。
+  applyBossPhase(speedMul?: number, damageMul?: number): void {
+    if (speedMul !== undefined && speedMul !== 1) {
+      this.tuning.moveSpeedMul *= speedMul;
+      this.moveSpeed *= speedMul;
+    }
+    if (damageMul !== undefined && damageMul !== 1) {
+      this.tuning.damage *= damageMul;
+    }
+  }
+
+  // ボス演出: 指定座標(respawnAtのspawnと同じ「足元/地面基準」のY)へ即時転移する。
+  // setNextKinematicTranslationで次のworld.step()時に反映される(通常移動と同じ経路)。
+  // ★2/★5 KCC距離LODのprevZombieMoved/prevGiantMoved(前回movedキャッシュ)や
+  // climbing/stuckTimer等「前フレームからの連続移動」を前提にした内部状態は、瞬間移動で
+  // 物理的に無関係な値になる(古い小さな移動量の再利用/詰まり誤検知)ため、
+  // respawnAt/resetForZombieReuseと同じ一連のリセットをここでも行う。
+  blinkTo(x: number, y: number, z: number): void {
+    const by = y + this.feetOffset;
+    this.body.setNextKinematicTranslation({ x, y: by, z });
+    this._prevBodyPos.set(x, by, z);
+    this._horizSpeed = 0;
+    this.prevZombieMoved.x = 0;
+    this.prevZombieMoved.y = 0;
+    this.prevZombieMoved.z = 0;
+    this.prevZombieGrounded = false;
+    this.prevGiantMoved.x = 0;
+    this.prevGiantMoved.y = 0;
+    this.prevGiantMoved.z = 0;
+    this.climbing = false;
+    this.climbBaseY = by;
+    this.climbCooldownS = 0;
+    this.climbMinS = 0;
+    this.climbElapsedS = 0;
+    this.stuckTimer = 0;
+    this.unstuckSteerS = 0;
+    this.unstuckStrafeOverride = null;
+  }
+
+  // ボスフェーズ遷移時にmatchが呼ぶ。省略したキーは現状維持(部分更新)。
+  setBossPhaseFlags(flags: { blackSlash?: boolean; blink?: boolean; pillars?: boolean }): void {
+    if (flags.blackSlash !== undefined) this.bossPhaseFlags.blackSlash = flags.blackSlash;
+    if (flags.blink !== undefined) this.bossPhaseFlags.blink = flags.blink;
+    if (flags.pillars !== undefined) this.bossPhaseFlags.pillars = flags.pillars;
   }
 
   private buildMasterMesh(color: number, tier: BotTier): void {
@@ -1416,6 +1782,8 @@ export class Bot {
       if (this.dyingTimer > 0) this.updateDying(dt);
       return;
     }
+    // R53 怯えの減衰(全kind共通。movement分岐が _fearS>0 を参照する)
+    if (this._fearS > 0) this._fearS = Math.max(0, this._fearS - dt);
 
     // horizSpeedMps: 全kind共通の水平速度を毎フレーム更新(剛体位置差分。足音実装等が参照)
     {
@@ -1492,8 +1860,10 @@ export class Bot {
       // アンスタック発動中は strafeOverride が strafe 方向を一時乗っ取る(combatのみ)
       const effectiveStrafeSign = this.unstuckStrafeOverride ?? this.strafeSign;
       const side = new THREE.Vector3(-toTarget.z, 0, toTarget.x).multiplyScalar(effectiveStrafeSign);
-      // 9〜20mの交戦距離を保つ
-      const approach = dist > 20 ? 1 : dist < 9 ? -1 : 0;
+      // 9〜20mの交戦距離を保つ。fleeMode時は距離を問わず離脱(approach=-1固定)へ反転する
+      // (R53-W2追跡ミッション: 逃走ボス/NPC。狙い/heading自体は変えず移動方向のみ反転)。
+      // R53 怯え(帝威): feared中も同様に後退のみ(狙いは維持=完全な無力化ではなく威圧)
+      const approach = this.fleeMode || this._fearS > 0 ? -1 : dist > 20 ? 1 : dist < 9 ? -1 : 0;
       wishX = (side.x * 0.8 + toTarget.x * approach) * this.moveSpeed;
       wishZ = (side.z * 0.8 + toTarget.z * approach) * this.moveSpeed;
     } else if (this.alert > 0 && this.alertPos && !ctx.objective) {
@@ -1511,6 +1881,24 @@ export class Bot {
       } else {
         // 音源へ到着。何も見つからなければ調査を終える
         this.alertPos = null;
+      }
+    } else if (this._escortWaypoints && this.escortIdx < this._escortWaypoints.length) {
+      // R53-W2 護衛追従: 既存のobjective-seek(拠点目標)と同じ「近づく→heading更新→歩く」
+      // 形を経由点リストへ適用した最小実装。到達したら次のwaypointへ進む(bot.ts内で完結)。
+      const wp = this._escortWaypoints[this.escortIdx];
+      if (wp) {
+        const toWp = HUMANOID_TO_SCRATCH.copy(wp).sub(pos);
+        toWp.y = 0;
+        const dist = toWp.length();
+        if (dist <= 3) {
+          this.escortIdx += 1; // 到達→次のwaypointへ(末尾到達後は下のobjective/徘徊へ委譲)
+        } else {
+          toWp.normalize();
+          this.heading = Math.atan2(-toWp.x, -toWp.z);
+          const f = this.facing();
+          wishX = f.x * this.moveSpeed * 0.85;
+          wishZ = f.z * this.moveSpeed * 0.85;
+        }
       }
     } else if (ctx.objective && pos.distanceTo(ctx.objective) > 3) {
       // 拠点へ向かう。直進しすぎないよう周期的に揺らす
@@ -1861,7 +2249,10 @@ export class Bot {
       distToPlayer = dist;
       if (dist > 1e-3) to.normalize();
       this.heading = Math.atan2(-to.x, -to.z);
-      const spd = this.moveSpeed * this.zombieRunMul;
+      // R53 怯え: ゾンビは0.4sのよろめき(移動×0.2)。姿勢式(getCrowdPose)は速度非依存の
+      // walkPhase/anim駆動のためInstancedMesh群経路とも自然に整合する(遅く歩くだけ)
+      const fearMul = this._fearS > 0 ? 0.2 : 1;
+      const spd = this.moveSpeed * this.zombieRunMul * fearMul;
       wishX = to.x * spd;
       wishZ = to.z * spd;
       // ── アンスタック: ラッチ中は横バイアスをwishへ直接注入する(humanoidのunstuckStrafeOverride
@@ -2163,7 +2554,10 @@ export class Bot {
     }
 
     const dir = fireDir.clone();
-    const spread = (ctx.tuning.spreadDeg * Math.PI) / 180;
+    // R53-W3 M3: 怯え(帝威)中は実効spreadを 1/fearAccuracyMul(=2倍拡散)へ広げる。
+    // bot は状態(feared)のみ保持し、実効化はこの発砲spread1点で行う(825行の契約コメント)
+    const fearMul = this.feared ? 1 / fearAccuracyMul : 1;
+    const spread = (ctx.tuning.spreadDeg * fearMul * Math.PI) / 180;
     const r = spread * Math.sqrt(ctx.rand());
     const theta = ctx.rand() * Math.PI * 2;
     const right = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
@@ -2327,6 +2721,40 @@ export class Bot {
       this.armRig.rotation.x = Math.sin(this.anim * 1.5) * 0.05 * idle - swing * 0.12;
       this.armRig.rotation.z = Math.sin(this.anim * 0.9 + 1.1) * 0.03 * idle;
     }
+  }
+
+  // ── R53-W3 ゾンビ群InstancedMesh化: 描画経路の切替と姿勢の書き出し ─────────
+  // setCrowdSlot(slot>=0)で自前のrig(Object3D)を非表示にし、以後の見た目は
+  // ZombieCrowdRenderer(src/render/zombie-crowd.ts)のInstancedMeshが担う。
+  // ロジック(group.position/コライダー/AI)は完全に従来どおり。slot=-1で即座に
+  // 従来描画へ戻る(キルスイッチ/最近接高忠実度/variant化のフォールバック)。
+  setCrowdSlot(slot: number): void {
+    this.crowdSlot = slot;
+    this.rig.visible = slot < 0;
+  }
+
+  // 群レンダラへの姿勢書き出し(アロケゼロ。syncMesh/updateDyingの式の「入力」を
+  // そのまま渡す — 合成式はzombie-crowd.tsのcomposeZombieCrowdMatricesが持ち、
+  // その等価性はzombie-crowd.test.tsが行列レベルで固定している)。
+  // 注意: crowdSlot>=0 の間、matchはsyncMesh()の代わりにこれを毎フレーム呼ぶ
+  // (rigは非表示なのでsyncMeshのsin群は無駄仕事になるだけで害はないが、二重コスト回避)。
+  getCrowdPose(out: ZombieCrowdPose): void {
+    const t = this.body.translation();
+    out.x = t.x;
+    out.y = t.y;
+    out.z = t.z;
+    out.visualLift = this.visualLift;
+    out.rigLiftY = this.rigLiftY;
+    out.scale = this.tuning.scale;
+    out.heading = this.heading;
+    out.walkPhase = this.walkPhase;
+    out.walkAmp = this.walkAmp;
+    out.anim = this.anim;
+    out.bobPhase = this.bobPhase;
+    out.deathTilt = this.deathTilt;
+    out.dying01 = this.alive ? 0 : 1 - Math.max(0, this.dyingTimer) / KIND_DEATH_S[this.kind];
+    out.visible = this.group.visible;
+    out.elite = this.tier === 'elite';
   }
 
   // ── R53-T3: ファイナルキルカム公開API(契約凍結) ──────────────────────────
@@ -2567,6 +2995,17 @@ export class Bot {
     this.tuning.damage = newTuning.damage;
     this.animLod = false;
     this.animHalfLod = false;
+    // R53-W2: 旧variantの装飾メッシュを必ず除去+null化する(新調ゾンビが無変種でも
+    // 前個体の変種見た目/フラグを持ち越さない。R51合成漏斗罠の再発防止テスト対象)。
+    // 新しい変種はこの後match側がapplyZombieVariantVisual()を呼んで付与する。
+    this.clearZombieVariantVisual();
+    // ★V-A修正: 怯え/ストーリー系の残留状態もプール再利用でリセット(怯え中に死亡→即再利用
+    // された個体が「生まれつき硬直」する真のリークを塞ぐ。fleeMode等は通常ゾンビに設定され
+    // ないが防御的に初期化)
+    this._fearS = 0;
+    this.fleeMode = false;
+    this.escortWaypoints = null;
+    this.setBossPhaseFlags({ blackSlash: false, blink: false, pillars: false });
     this.respawnAt(spawn);
   }
 

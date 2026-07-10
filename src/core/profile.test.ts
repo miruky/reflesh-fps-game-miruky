@@ -124,4 +124,76 @@ describe('parseProfile', () => {
     expect(restored.campaign.missionBests['badTime']).toBeUndefined();
     expect(restored.scoreRecords).toEqual({ a: 5 });
   });
+
+  // ── R53-W2: ゾンビ統計/charm/titles/unlockedRewardCamos の後方互換 ──────────
+  it('R53-W2フィールド欠落の旧セーブは0/空配列/nullで安全に開始(後方互換)', () => {
+    const restored = parseProfile(JSON.stringify({ xp: 100 }));
+    expect(restored.bestZombieRound).toBe(0);
+    expect(restored.zombieKills).toBe(0);
+    expect(restored.zombieBossKills).toBe(0);
+    // charms/titles/unlockedRewardCamosはoptionalなTS型だが、emptyProfile()由来の
+    // 具体的な既定値(空)で埋まる(メニュー側が`?.`無しで安全に読める設計)
+    expect(restored.charms).toEqual({ unlocked: [], equipped: null });
+    expect(restored.titles).toEqual([]);
+    expect(restored.unlockedRewardCamos).toEqual([]);
+    expect(restored.xp).toBe(100);
+  });
+
+  it('R53-W2フィールドが往復で保存復元される', () => {
+    const profile = emptyProfile();
+    profile.bestZombieRound = 42;
+    profile.zombieKills = 1234;
+    profile.zombieBossKills = 7;
+    profile.charms = { unlocked: ['startpt', 'revive'], equipped: 'startpt' };
+    profile.titles = ['雷帝の後継'];
+    profile.unlockedRewardCamos = ['jingai', 'shinrai'];
+    const restored = parseProfile(serializeProfile(profile));
+    expect(restored).toEqual(profile);
+  });
+
+  it('不正なcharms(未知ID/equippedが未解放)は安全に弾く', () => {
+    const restored = parseProfile(
+      JSON.stringify({
+        charms: {
+          unlocked: ['startpt', 'not-a-charm', 5, 'revive'],
+          equipped: 'bossdmg', // unlockedに含まれない → 無効化してnull
+        },
+      }),
+    );
+    expect(restored.charms).toEqual({ unlocked: ['startpt', 'revive'], equipped: null });
+  });
+
+  it('equippedがunlockedに含まれていれば採用される', () => {
+    const restored = parseProfile(
+      JSON.stringify({
+        charms: { unlocked: ['revive'], equipped: 'revive' },
+      }),
+    );
+    expect(restored.charms).toEqual({ unlocked: ['revive'], equipped: 'revive' });
+  });
+
+  it('不正なtitles(非文字列混入)は文字列のみ採用する', () => {
+    const restored = parseProfile(JSON.stringify({ titles: ['雷帝の後継', 42, null] }));
+    expect(restored.titles).toEqual(['雷帝の後継']);
+  });
+
+  it('unlockedRewardCamosは既知の報酬カモID(jingai/shinrai)のみ採用し、それ以外は弾く', () => {
+    const restored = parseProfile(
+      JSON.stringify({
+        // 'gold'はCAMO_TIERS由来の通常カモ(報酬カモではない)なので弾かれる。
+        // 'not-a-camo'は未知ID、7/falseは非文字列。
+        unlockedRewardCamos: ['jingai', 'gold', 'not-a-camo', 7, false],
+      }),
+    );
+    expect(restored.unlockedRewardCamos).toEqual(['jingai']);
+  });
+
+  it('負のゾンビ統計値は0に丸められる', () => {
+    const restored = parseProfile(
+      JSON.stringify({ bestZombieRound: -5, zombieKills: -1, zombieBossKills: Number.NaN }),
+    );
+    expect(restored.bestZombieRound).toBe(0);
+    expect(restored.zombieKills).toBe(0);
+    expect(restored.zombieBossKills).toBe(0);
+  });
 });

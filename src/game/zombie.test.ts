@@ -10,6 +10,9 @@ import {
   zombieBossHp,
   zombieBossSpeedMul,
   zombieBossDamage,
+  specialRoundKind,
+  RUSH_HP_MUL,
+  RUSH_CLEAR_BONUS_PT,
 } from './zombie';
 
 describe('zombie round curves', () => {
@@ -154,5 +157,55 @@ describe('r=999 クランプ・NaN なし(ラウンド選択1-999対応)', () =>
       expect(Number.isFinite(zombieRunRate(r))).toBe(true);
       expect(Number.isFinite(zombieSpawnGap(r))).toBe(true);
     }
+  });
+});
+
+// ゾンビ特殊バリアント(ZombieVariant/rollZombieVariant/定数)のテストは
+// zombie-economy.test.ts へ移設(R53-W2契約: 識別子は zombie-economy.ts が単一の
+// 真実として定義するため。bot.ts が同ファイルから ZombieVariant 型を輸入している)。
+
+// ─── ラッシュラウンド(R53-W2) ────────────────────────────────────────────────
+
+describe('specialRoundKind', () => {
+  it('7の倍数はrush(ボスと衝突しない場合)', () => {
+    expect(specialRoundKind(7)).toBe('rush');
+    expect(specialRoundKind(14)).toBe('rush');
+    expect(specialRoundKind(21)).toBe('rush');
+    expect(specialRoundKind(28)).toBe('rush');
+  });
+
+  it('7の倍数でもボスでもない通常ラウンドはnull', () => {
+    expect(specialRoundKind(1)).toBeNull();
+    expect(specialRoundKind(6)).toBeNull();
+    expect(specialRoundKind(8)).toBeNull();
+  });
+
+  it('round<=0はnull', () => {
+    expect(specialRoundKind(0)).toBeNull();
+    expect(specialRoundKind(-1)).toBeNull();
+  });
+
+  it('通常のボスラウンド(5の倍数だが35の倍数ではない)はrushにならない', () => {
+    expect(specialRoundKind(5)).toBeNull();
+    expect(specialRoundKind(10)).toBeNull();
+    expect(specialRoundKind(15)).toBeNull();
+    expect(specialRoundKind(20)).toBeNull();
+  });
+
+  it('ボスと衝突する35(5と7の最小公倍数)はrushにならず、+1シフトした36がrushになる', () => {
+    expect(isBossRound(35)).toBe(true); // 前提確認: 35は5の倍数でもある
+    expect(specialRoundKind(35)).toBeNull();
+    expect(specialRoundKind(36)).toBe('rush');
+  });
+
+  it('次の衝突(70)でも同様に+1シフトする', () => {
+    expect(isBossRound(70)).toBe(true);
+    expect(specialRoundKind(70)).toBeNull();
+    expect(specialRoundKind(71)).toBe('rush');
+  });
+
+  it('RUSH定数: HP倍率0.6・クリアボーナス500pt', () => {
+    expect(RUSH_HP_MUL).toBe(0.6);
+    expect(RUSH_CLEAR_BONUS_PT).toBe(500);
   });
 });

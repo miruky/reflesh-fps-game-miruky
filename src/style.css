@@ -10957,3 +10957,674 @@ body.killcam-active .hud-death {
   white-space: pre;
   pointer-events: none;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   R53-W2: match.ts(M2a/M2b)配線待ちの拡張HUD(hud.ts:R53W2Snapshot参照)。
+   PaP段数ピップ / パワーアップチップ / 毒霧ビネット / 特殊ラウンドバナー / 無線字幕 /
+   潜入検知メーター / ボスフェーズpips / S&D HUD。
+   規約: canvas上のパネルにfilter/backdrop-filterを追加しない(本ブロックも不使用)。
+   bloom閾値0.9を超える発光を足さない(text-shadow/box-shadowの輝度は既存の他チップ相当に抑制)。
+   クロスヘア聖域(中心±180px)には常設せず、無線字幕は下部・パワーアップ/検知/S&D/PaPは
+   四隅寄りの既存計器クラスタ内(hud-zombie/hud-mission/hud-boss/hud-weapon-row)に同居させる。
+   すべて #hud の zoom(--ui-scale)を継承する position:absolute 系統内の通常子要素のため、
+   個別のui-scale補正計算は不要(既存の.hud-zbuy/.hud-multikill-banner等と同じ扱い)。
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── PaP(Pack-a-Punch)段数ピップ: 武器名の隣に橙の小菱形×tier ── */
+.w2-weapon-wrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.w2-pap-pips {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.w2-pap-pip {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: #ff8a3c;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  filter: drop-shadow(0 0 3px rgba(255, 138, 60, 0.7));
+}
+
+/* ── パワーアップチップ: hud-zombie列内、横並び(insta/double/nuke/maxammo/carpenter) ── */
+.w2-powerups {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 3px;
+  pointer-events: none;
+}
+.w2-powerups:empty {
+  display: none;
+}
+.w2-pu-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px 2px 5px;
+  background: color-mix(in srgb, var(--pu-color, #fff) 22%, rgba(6, 10, 14, 0.9));
+  border: 1px solid color-mix(in srgb, var(--pu-color, #fff) 55%, transparent);
+  border-radius: 2px;
+  color: var(--pu-color, #fff);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--pu-color, #fff) 45%, transparent);
+}
+.w2-pu-icon {
+  display: inline-flex;
+  width: 13px;
+  height: 13px;
+}
+.w2-pu-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.w2-pu-time {
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  text-shadow: 0 0 5px color-mix(in srgb, var(--pu-color, #fff) 65%, transparent);
+}
+.w2-pu-blink {
+  animation: w2-pu-blink-kf 0.5s ease-in-out infinite;
+}
+@keyframes w2-pu-blink-kf {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .w2-pu-blink { animation: none; }
+}
+
+/* ── 毒霧ビネット: 緑の縁オーバーレイ。.hud-vignette(赤)とは独立要素・独立z層 ── */
+.w2-poison-vignette {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--ui-scale, 1));
+  height: calc(100% / var(--ui-scale, 1));
+  background: radial-gradient(ellipse at center, transparent 46%, rgba(50, 190, 90, 0.55) 100%);
+  opacity: 0;
+  transition: opacity 0.25s;
+  pointer-events: none;
+}
+
+/* ── 特殊ラウンド(餓鬼の大群)突入バナー: CONFIRMEDバナー流儀(中央上寄り・一発表示) ── */
+.w2-special-banner {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%) scale(0.8);
+  pointer-events: none;
+  text-align: center;
+  opacity: 0;
+  z-index: 45;
+}
+.w2-special-banner-label {
+  font-family: var(--display, var(--font-ui));
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-indent: 0.14em;
+  color: #ff3a2c;
+  text-shadow: 0 0 20px rgba(255, 40, 20, 0.75), 0 2px 8px rgba(0, 0, 0, 0.9);
+}
+.w2-special-banner.w2-show {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+  transition: opacity 0.18s var(--ease-out, ease), transform 0.18s var(--ease-out, ease);
+}
+.w2-special-banner.w2-out {
+  opacity: 0;
+  transform: translateX(-50%) scale(1.04);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+/* reduceMotion時はJS側がw2-showを付与しないため直接スケール1で確定表示させる保険 */
+@media (prefers-reduced-motion: reduce) {
+  .w2-special-banner { transition: none; }
+}
+
+/* ラウンド数字の特殊ラウンド強調(既定で血赤 #e8352a のところをより明るい警戒色へ) */
+.hud-zombie-round strong.w2-round-special {
+  color: #ff2a1a;
+  text-shadow: 0 0 18px rgba(255, 40, 20, 0.95), 0 0 34px rgba(255, 20, 0, 0.55);
+}
+.hud-zombie-round strong.w2-round-pulse {
+  animation: w2-round-pulse-kf 0.6s ease-in-out infinite alternate;
+}
+@keyframes w2-round-pulse-kf {
+  from { opacity: 0.8; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hud-zombie-round strong.w2-round-pulse { animation: none; }
+}
+
+/* ── 無線字幕: 下部・クロスヘア聖域(±180px)外・キルフィード(右上)と非衝突 ── */
+.w2-radio {
+  position: absolute;
+  left: 50%;
+  bottom: 24%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  max-width: min(64vw, 560px);
+  padding: 6px 16px;
+  background: var(--glass-heavy, rgba(7, 9, 12, 0.84));
+  border-left: 2px solid var(--radio-color, #9fb8c9);
+  pointer-events: none;
+  opacity: 0;
+  z-index: 30;
+}
+.w2-radio.w2-show {
+  opacity: 1;
+  transition: opacity 0.22s ease;
+}
+.w2-radio.w2-out {
+  opacity: 0;
+  transition: opacity 0.32s ease;
+}
+.w2-radio-speaker {
+  flex: none;
+  font-family: var(--sans, var(--font-ui));
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  text-shadow: 0 0 8px currentColor, 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+.w2-radio-text {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink, #f0f1ee);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── 潜入検知メーター: 目アイコン+半円弧ゲージ(0=白/0.5+=黄/0.9+=赤点滅) ── */
+.w2-detect {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  color: #eef2f6;
+}
+.w2-detect-eye {
+  width: 20px;
+  height: 12px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+.w2-detect-eye circle {
+  fill: currentColor;
+  stroke: none;
+}
+.w2-detect-arc {
+  width: 40px;
+  height: 22px;
+  flex: none;
+}
+.w2-detect-arc-track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 3;
+}
+.w2-detect-arc-fill {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.15s linear;
+}
+.w2-detect.w2-tier-wary {
+  color: #ffc24d;
+}
+.w2-detect.w2-tier-alert {
+  color: #ff3b2f;
+}
+.w2-detect.w2-detect-blink {
+  animation: w2-detect-blink-kf 0.45s ease-in-out infinite;
+}
+@keyframes w2-detect-blink-kf {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .w2-detect.w2-detect-blink { animation: none; }
+}
+
+/* ── ボスフェーズ菱形pips: hud-boss-barの下に小さく並べる ── */
+.w2-boss-phases {
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 4px;
+}
+.w2-boss-phase-pip {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  background: rgba(255, 255, 255, 0.16);
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+.w2-boss-phase-pip.w2-pip-done {
+  background: var(--threat, #ff3b2f);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--threat, #ff3b2f) 65%, transparent);
+}
+.w2-boss-phase-pip.w2-pip-active {
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.85);
+}
+
+/* ── S&D HUD: ラウンドピップ(先取4・チーム色)/フェーズ/ボム/進捗/所持アイコン ── */
+.w2-snd {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.w2-snd-pips {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.w2-snd-pip-row {
+  display: flex;
+  gap: 4px;
+}
+.w2-snd-pip {
+  width: 9px;
+  height: 9px;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  background: rgba(255, 255, 255, 0.14);
+}
+.w2-snd-pip-row--mine .w2-snd-pip.w2-snd-pip-lit {
+  background: var(--ally, #7fb0ff);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--ally, #7fb0ff) 65%, transparent);
+}
+.w2-snd-pip-row--enemy .w2-snd-pip.w2-snd-pip-lit {
+  background: var(--enemy, #ff8a76);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--enemy, #ff8a76) 65%, transparent);
+}
+.w2-snd-phase {
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--ink-soft, #a9afb1);
+  padding: 1px 8px;
+  border: 1px solid var(--rule-strong, #414a52);
+}
+.w2-snd-bomb {
+  font-family: var(--mono, monospace);
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--threat, #ff3b2f);
+  text-shadow: 0 0 14px color-mix(in srgb, var(--threat, #ff3b2f) 60%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.w2-snd-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.w2-snd-progress-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft, #a9afb1);
+}
+.w2-snd-progress-bar {
+  width: 140px;
+  height: 5px;
+  background: var(--hud-track, rgba(7, 9, 12, 0.55));
+  box-shadow: var(--hud-track-edge, inset 0 0 0 1px rgba(255, 255, 255, 0.22));
+}
+.w2-snd-progress-bar i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, var(--ember-deep, #d83b34), var(--ember, #ff574f));
+}
+.w2-snd-carrier {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #ffd700;
+  text-shadow: 0 0 8px rgba(255, 215, 0, 0.6);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   R53-W2 MN2: 帝王編(ch9/ch10)着地の受け皿UI追記。
+   対象: mission-chip の報酬バッジ / ゾンビロードアウトのお守りピッカー /
+        プロフィール・リザルトの称号バッジ / ブリーフィングの報酬行。
+   filter/backdrop-filterは使わない。bloom閾値0.9を超える発光も追加しない。
+   ══════════════════════════════════════════════════════════════ */
+
+/* ミッションチップの報酬バッジ(rewardIdがあるミッションのみ、あれば良い程度の表示) */
+.mission-reward {
+  display: inline-block;
+  margin-top: 3px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ember);
+  border: 1px solid color-mix(in srgb, var(--ember) 55%, transparent);
+  padding: 1px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* ブリーフィングの報酬行(rewardIdがあるミッションのみ) */
+.brief-reward {
+  color: var(--ember-ink);
+  font-weight: 700;
+}
+
+/* 称号バッジ(profile.titles最新)。プロフィール/リザルトの階級表示の隣に小さく出す */
+.profile-title-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--signal);
+  border: 1px solid color-mix(in srgb, var(--signal) 55%, transparent);
+  padding: 1px 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40vw;
+}
+
+/* お守り(charm)ピッカー: ゾンビロードアウトの特殊オプション直下 */
+.charm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.charm-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  text-align: left;
+  padding: 9px 11px;
+  background: var(--base-2);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  min-width: 0;
+}
+.charm-chip:hover:not(:disabled) {
+  border-color: var(--rule-strong);
+}
+.charm-chip:focus-visible {
+  outline: 1px solid var(--signal);
+  outline-offset: 1px;
+}
+.charm-chip.selected {
+  border-color: var(--ember);
+  background: color-mix(in srgb, var(--ember) 10%, transparent);
+}
+.charm-chip.locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.charm-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.charm-desc {
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.charm-sub {
+  font-size: 10px;
+  color: var(--ember-ink);
+}
+.charm-locked-desc {
+  color: var(--ink-soft);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   R53-W3 MK.III「LIVING INSTRUMENT」(mk3-) — 末尾追記レイヤ(既存ブロック編集禁止)
+   P0-1 Adaptive Presence / P0-2 モーメント帯 / P1-1 帝王プレゼンス+チャージ弧
+   規律: backdrop-filter禁止 / keyframeはtransform:noneで終わらせない(R10) /
+   外向きglow禁止(inset) / 全keyframeはmk3-接頭辞 / reduceMotion二重ゲート
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── P0-1 Adaptive Presence: 非戦闘(data-calm)時に計器が静かに沈む。
+   安全域(絶対に沈めない): クロスヘア/ヒットマーカー/ダメージ弧/HP/スコープ/killfeed/
+   目標系(hud-objective配下=ゾンビ経済・S&D・検知・ボス)/無線字幕/弾薬・武器/ウルト。
+   .hud-state-bar と .hud-move は基底が transform: translateX(-50%) を持つため
+   opacityのみ(R10教訓: レイアウト用transformを上書きしない) ── */
+#hud .hud-top-left,
+#hud .hud-compass,
+#hud .hud-heading,
+#hud .hud-timer,
+#hud .hud-minimap,
+#hud .hud-bo2-ss {
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+#hud .hud-state-bar,
+#hud .hud-move {
+  transition: opacity 220ms ease;
+}
+#hud[data-calm] .hud-top-left,
+#hud[data-calm] .hud-compass,
+#hud[data-calm] .hud-heading,
+#hud[data-calm] .hud-timer,
+#hud[data-calm] .hud-minimap,
+#hud[data-calm] .hud-bo2-ss {
+  opacity: 0.45;
+  transform: translateY(4px);
+}
+#hud[data-calm] .hud-state-bar,
+#hud[data-calm] .hud-move {
+  opacity: 0.45;
+}
+:root.reduce-motion #hud .hud-top-left,
+:root.reduce-motion #hud .hud-compass,
+:root.reduce-motion #hud .hud-heading,
+:root.reduce-motion #hud .hud-timer,
+:root.reduce-motion #hud .hud-minimap,
+:root.reduce-motion #hud .hud-bo2-ss,
+:root.reduce-motion #hud .hud-state-bar,
+:root.reduce-motion #hud .hud-move {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  #hud .hud-top-left,
+  #hud .hud-compass,
+  #hud .hud-heading,
+  #hud .hud-timer,
+  #hud .hud-minimap,
+  #hud .hud-bo2-ss,
+  #hud .hud-state-bar,
+  #hud .hud-move {
+    transition: none;
+  }
+}
+
+/* ── P0-2 モーメント帯(下1/3、bottom:31%=無線字幕24%と非衝突。クロスヘア聖域外) ── */
+.mk3-moment {
+  position: absolute;
+  left: 50%;
+  bottom: 31%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 38px 12px;
+  border-top: 2px solid var(--mk3-tone);
+  pointer-events: none;
+  z-index: 38;
+  text-align: center;
+  --mk3-tone: var(--ember);
+}
+.mk3-moment[data-tone='ember'] { --mk3-tone: var(--ember); }
+.mk3-moment[data-tone='gold'] { --mk3-tone: #f3b340; }
+.mk3-moment[data-tone='signal'] { --mk3-tone: var(--signal); }
+.mk3-moment[data-tone='ice'] { --mk3-tone: #55bbff; }
+.mk3-moment[data-tone='violet'] { --mk3-tone: #b07cff; }
+.mk3-moment[data-tone='threat'] { --mk3-tone: var(--threat); }
+.mk3-moment-mark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -52%);
+  font-family: var(--serif);
+  font-size: 96px;
+  line-height: 1;
+  color: var(--mk3-tone);
+  opacity: 0.08;
+  white-space: nowrap;
+  user-select: none;
+}
+.mk3-moment-title {
+  font-family: var(--mono);
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #f2f5f8;
+  text-shadow:
+    0 0 1px rgba(0, 0, 0, 0.9),
+    0 1px 3px rgba(0, 0, 0, 0.75),
+    0 0 14px rgba(0, 0, 0, 0.5);
+  font-variant-numeric: tabular-nums;
+  min-height: 1em;
+}
+.mk3-moment-sub {
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  color: var(--mk3-tone);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+.mk3-moment.mk3-show {
+  animation: mk3-moment-in 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes mk3-moment-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%); /* R10教訓: センタリング用translateXを終端でも保持 */
+  }
+}
+.mk3-moment.mk3-leave {
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+:root.reduce-motion .mk3-moment.mk3-show {
+  animation: none;
+}
+:root.reduce-motion .mk3-moment.mk3-leave {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk3-moment.mk3-show {
+    animation: none;
+  }
+  .mk3-moment.mk3-leave {
+    transition: none;
+  }
+}
+
+/* ── P1-1 帝王プレゼンス枠(1px内枠+四隅ノッチ、inset box-shadowのみ) ── */
+.mk3-emperor-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--ui-scale, 1));
+  height: calc(100% / var(--ui-scale, 1));
+  pointer-events: none;
+  z-index: 12;
+  --mk3-emp: #b07cff;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--mk3-emp) 45%, transparent),
+    inset 0 0 52px -30px var(--mk3-emp);
+}
+.mk3-emperor-frame[data-state='raitei'] { --mk3-emp: #55bbff; }
+.mk3-emperor-frame[data-state='dark'] { --mk3-emp: #8a55d6; }
+.mk3-emperor-frame[data-state='kokuraitei'] { --mk3-emp: #8800ff; }
+.mk3-emperor-frame i {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--mk3-emp);
+  opacity: 0.75;
+}
+.mk3-emperor-frame i:nth-child(1) { top: 10px; left: 10px; border-right: 0; border-bottom: 0; }
+.mk3-emperor-frame i:nth-child(2) { top: 10px; right: 10px; border-left: 0; border-bottom: 0; }
+.mk3-emperor-frame i:nth-child(3) { bottom: 10px; left: 10px; border-right: 0; border-top: 0; }
+.mk3-emperor-frame i:nth-child(4) { bottom: 10px; right: 10px; border-left: 0; border-top: 0; }
+
+/* ── チャージ弧(クロスヘア直下90°、r=56。dasharrayはMK3_CHARGE_ARC_LEN≈87.96と一致) ── */
+.mk3-charge-arc {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 128px;
+  height: 128px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 34;
+  --mk3-arc: var(--ember);
+}
+.mk3-charge-arc[data-state='raitei'] { --mk3-arc: #55bbff; }
+.mk3-charge-arc[data-state='dark'] { --mk3-arc: #8a55d6; }
+.mk3-charge-arc[data-state='kokuraitei'] { --mk3-arc: #8800ff; }
+.mk3-charge-arc svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.mk3-charge-arc path {
+  fill: none;
+  stroke-linecap: round;
+}
+.mk3-arc-track {
+  stroke: rgba(244, 248, 255, 0.14);
+  stroke-width: 3;
+}
+.mk3-arc-fill {
+  stroke: var(--mk3-arc);
+  stroke-width: 3;
+  stroke-dasharray: 87.96;
+  stroke-dashoffset: 87.96;
+}
+.mk3-charge-arc.mk3-arc-full .mk3-arc-fill {
+  stroke-width: 4;
+}
+/* 旧チャージ棒ゲージはMK.III弧へ移設(同一データchargeRatioの二重表示回避)。
+   JS(updateChargeGauge)は無改修=snapshot契約不変で、表示だけを弧に一本化する */
+#hud .hud-charge-gauge {
+  display: none;
+}

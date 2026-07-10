@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildProp, generateStage, generateThemeObjects } from './stage';
-import type { PropKind } from './stage';
+import { buildProp, generateStage, generateThemeObjects, MINI_SCENE_IDS } from './stage';
+import type { PropKind, PropPlacement, StageDef } from './stage';
 import { mulberry32 } from '../core/rng';
 import { STAGES } from './stages';
 
@@ -283,6 +283,144 @@ describe('generateThemeObjects', () => {
     for (const def of STAGES) {
       const rand = mulberry32(def.seed ^ 0x7e57ab1e);
       expect(() => generateThemeObjects(def, [], rand)).not.toThrow();
+    }
+  });
+});
+
+// ── ミニシーン + PropPlacement契約(R53-S2) ────────────────────────────────
+
+describe('ミニシーン(scatter=scene)', () => {
+  it('MINI_SCENE_IDSは5〜8種で全31ステージの少なくとも1箇所に使われている', () => {
+    expect(MINI_SCENE_IDS.length).toBeGreaterThanOrEqual(5);
+    expect(MINI_SCENE_IDS.length).toBeLessThanOrEqual(8);
+    for (const def of STAGES) {
+      const sceneEntries = (def.recipe?.objects ?? []).filter((o) => o.scatter === 'scene');
+      expect(sceneEntries.length, `${def.id}: at least 1 scene entry`).toBeGreaterThanOrEqual(1);
+      for (const e of sceneEntries) {
+        expect(e.sceneId, `${def.id}: sceneId set`).toBeDefined();
+        expect(MINI_SCENE_IDS, `${def.id}: sceneId is known`).toContain(e.sceneId);
+      }
+    }
+  });
+
+  it('シーン散布を追加しても全ステージのプロップbox数は80以下のまま', () => {
+    for (const def of STAGES) {
+      const rand = mulberry32(def.seed ^ 0x7e57ab1e);
+      const boxes = generateThemeObjects(def, [], rand);
+      expect(boxes.length, `${def.id}: DC budget (${boxes.length} boxes)`).toBeLessThanOrEqual(80);
+    }
+  });
+
+  it('決定論: 同じdefからは常に同じシーン配置が出る(placementsOut込み)', () => {
+    for (const def of STAGES.slice(0, 8)) {
+      const r1 = mulberry32(def.seed ^ 0x7e57ab1e);
+      const r2 = mulberry32(def.seed ^ 0x7e57ab1e);
+      const p1: PropPlacement[] = [];
+      const p2: PropPlacement[] = [];
+      const a = generateThemeObjects(def, [], r1, p1);
+      const b = generateThemeObjects(def, [], r2, p2);
+      expect(JSON.stringify(a), `${def.id}: boxes determinism`).toBe(JSON.stringify(b));
+      expect(JSON.stringify(p1), `${def.id}: placements determinism`).toBe(JSON.stringify(p2));
+    }
+  });
+
+  it('既存配置ビット不変: scatter=sceneのエントリを取り除いても、残りの箱は完全に同一(順序込み)', () => {
+    for (const def of STAGES) {
+      const objects = def.recipe?.objects;
+      if (!objects?.length) continue;
+      const sceneCount = objects.filter((o) => o.scatter === 'scene').length;
+      if (sceneCount === 0) continue; // 全ステージにscene追加済みのはずだが念のため
+
+      const legacyOnlyDef: StageDef = {
+        ...def,
+        recipe: { ...def.recipe!, objects: objects.filter((o) => o.scatter !== 'scene') },
+      };
+      const rLegacy = mulberry32(def.seed ^ 0x7e57ab1e);
+      const rFull = mulberry32(def.seed ^ 0x7e57ab1e);
+      const legacyBoxes = generateThemeObjects(legacyOnlyDef, [], rLegacy);
+      const fullBoxes = generateThemeObjects(def, [], rFull);
+
+      // シーンは末尾に追加されるだけ → 先頭 legacyBoxes.length 件は完全一致するはず
+      expect(fullBoxes.length, `${def.id}: full >= legacy`).toBeGreaterThanOrEqual(legacyBoxes.length);
+      expect(
+        JSON.stringify(fullBoxes.slice(0, legacyBoxes.length)),
+        `${def.id}: legacy boxes byte-identical`,
+      ).toBe(JSON.stringify(legacyBoxes));
+    }
+  });
+
+  it('シーン内のプロップも境界内・スポーン離隔・prop:trueを満たす', () => {
+    for (const def of STAGES) {
+      const half = def.size / 2;
+      const layout = generateStage(def);
+      const spawns = [...layout.playerSpawns, ...layout.botSpawns];
+      for (const box of layout.boxes) {
+        if (box.ghost || box.decor) continue;
+        expect(Math.abs(box.x) + box.w / 2, `${def.id}: x bound`).toBeLessThanOrEqual(half + 2);
+        expect(Math.abs(box.z) + box.d / 2, `${def.id}: z bound`).toBeLessThanOrEqual(half + 2);
+        if (box.prop) {
+          for (const [sx, , sz] of spawns) {
+            const dx = Math.max(0, Math.abs(box.x - sx) - box.w / 2);
+            const dz = Math.max(0, Math.abs(box.z - sz) - box.d / 2);
+            expect(Math.hypot(dx, dz), `${def.id}: prop far from spawn`).toBeGreaterThan(1);
+          }
+        }
+      }
+    }
+  });
+});
+
+describe('PropPlacement契約(rotRad/scaleJitter, M2c引き継ぎ)', () => {
+  it('generateStage().propPlacements が recipe.objects を持つ全ステージで非空', () => {
+    for (const def of STAGES) {
+      const layout = generateStage(def);
+      if (def.recipe?.objects?.length) {
+        expect(layout.propPlacements.length, `${def.id}: propPlacements non-empty`).toBeGreaterThan(0);
+      } else {
+        expect(layout.propPlacements).toEqual([]);
+      }
+    }
+  });
+
+  it('rotRadは[0, 2π)、scaleJitterは[0.88, 1.12]の範囲に収まる', () => {
+    for (const def of STAGES) {
+      const layout = generateStage(def);
+      for (const p of layout.propPlacements) {
+        expect(p.rotRad, `${def.id}: rotRad >= 0`).toBeGreaterThanOrEqual(0);
+        expect(p.rotRad, `${def.id}: rotRad < 2π`).toBeLessThan(Math.PI * 2);
+        expect(p.scaleJitter, `${def.id}: scaleJitter lower`).toBeGreaterThanOrEqual(0.88);
+        expect(p.scaleJitter, `${def.id}: scaleJitter upper`).toBeLessThanOrEqual(1.12);
+      }
+    }
+  });
+
+  it('propPlacementsの各インスタンスのkindは有効なPropKindで、cx/czは有限数', () => {
+    const def = STAGES.find((s) => s.id === 'onsengai')!;
+    const layout = generateStage(def);
+    expect(layout.propPlacements.length).toBeGreaterThan(0);
+    for (const p of layout.propPlacements) {
+      expect(typeof p.kind).toBe('string');
+      expect(Number.isFinite(p.cx)).toBe(true);
+      expect(Number.isFinite(p.cz)).toBe(true);
+    }
+  });
+
+  it('propPlacementsの件数はboxesのprop:true件数以下(1インスタンス=1〜3boxのため)', () => {
+    for (const def of STAGES) {
+      const layout = generateStage(def);
+      const propBoxCount = layout.boxes.filter((b) => b.prop).length;
+      expect(layout.propPlacements.length, `${def.id}`).toBeLessThanOrEqual(propBoxCount);
+    }
+  });
+
+  it('rotRad/scaleJitterは既存のBoxSpec(コライダー)側には一切現れない(視覚専用の分離を保証)', () => {
+    for (const def of STAGES.slice(0, 5)) {
+      const layout = generateStage(def);
+      for (const box of layout.boxes) {
+        const rec = box as unknown as Record<string, unknown>;
+        expect(rec.rotRad).toBeUndefined();
+        expect(rec.scaleJitter).toBeUndefined();
+      }
     }
   });
 });

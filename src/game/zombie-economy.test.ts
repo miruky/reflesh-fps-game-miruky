@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { WEAPON_DEFS } from './weapons';
 import {
   type ZombiePerkId,
+  type PapTier,
+  type PowerUpKind,
+  type CharmId,
+  type ZombieVariant,
   BOX_MOVES_CHANCE,
   MYSTERY_BOX_COST,
   MYSTERY_BOX_POOL,
-  PERK_LIMIT,
   PERKS,
   POINTS,
   WALL_BUYS,
@@ -15,6 +19,26 @@ import {
   getPerkEffect,
   purchasePerk,
   rollMysteryBox,
+  composeZombieWeaponDef,
+  PAP_DMG_MUL,
+  PAP_COST,
+  PAP_REFILL_COST,
+  rollPowerUp,
+  POWERUP_DESPAWN_S,
+  POWERUP_ROUND_CAP,
+  POWERUP_DURATION_S,
+  NUKE_BONUS_PT,
+  CARPENTER_BONUS_PT,
+  DOOR_COST,
+  CHARMS,
+  getCharmEffect,
+  rollZombieVariant,
+  BLAST_RADIUS_M,
+  BLAST_DMG,
+  MIASMA_RADIUS_M,
+  MIASMA_DURATION_S,
+  MIASMA_DPS,
+  SHELL_FRONT_REDUCTION,
 } from './zombie-economy';
 
 // ─── POINTS定数 ───────────────────────────────────────────────────────────────
@@ -76,9 +100,8 @@ describe('PERKS', () => {
     expect(p.effect.magCapacityBonusPerStack).toBe(0.5);
   });
 
-  it('PERK_LIMIT は 4', () => {
-    expect(PERK_LIMIT).toBe(4);
-  });
+  // PERK_LIMIT(旧: 所持上限4)はR53-W2で撤廃。quick-revive以外は無限スタックが正式仕様。
+  // purchasePerk のスタック無限購入テストで代替担保する(下記 describe('purchasePerk') 参照)。
 });
 
 // ─── applyExtMagCapacity ────────────────────────────────────────────────────
@@ -488,5 +511,427 @@ describe('generateShopLayout', () => {
       if (perkIds.includes('ext-mag')) { seen = true; break; }
     }
     expect(seen).toBe(true);
+  });
+});
+
+// ─── generateShopLayout: Pack-a-Punch/ドア追加(R53-W2)─────────────────────────
+
+describe('DOOR_COST', () => {
+  it('1750', () => {
+    expect(DOOR_COST).toBe(1750);
+  });
+});
+
+describe('generateShopLayout: pack-a-punch/door 追加後も既存スロットはビット不変', () => {
+  // R53-W1時点(本ラウンド着手直前)の generateShopLayout(seed) の実出力をキャプチャした
+  // 回帰スナップショット。壁武器/パーク自販機/ミステリーボックスの内容・順序が
+  // 一切変化していないことを保証する(「rand消費列の末尾に追加」の実証)。
+  const PRE_R53W2_SNAPSHOT: Record<
+    string,
+    Array<{ kind: string; slotIndex: number; weaponId?: string; perkId?: string; cost: number }>
+  > = JSON.parse(
+    '{"163":[{"kind":"wall-buy","slotIndex":0,"weaponId":"fists","cost":3500},{"kind":"wall-buy","slotIndex":1,"weaponId":"shura-lmg","cost":3000},{"kind":"wall-buy","slotIndex":2,"weaponId":"tenrai-staff","cost":2800},{"kind":"wall-buy","slotIndex":3,"weaponId":"gekkou-bow","cost":2200},{"kind":"wall-buy","slotIndex":4,"weaponId":"hiiragi-sg","cost":500},{"kind":"wall-buy","slotIndex":5,"weaponId":"yamasemi-dmr","cost":2500},{"kind":"wall-buy","slotIndex":6,"weaponId":"miyama-br","cost":1500},{"kind":"wall-buy","slotIndex":7,"weaponId":"gouka-rl","cost":2500},{"kind":"perk-machine","slotIndex":8,"perkId":"ext-mag","cost":1000},{"kind":"perk-machine","slotIndex":9,"perkId":"double-tap","cost":2000},{"kind":"perk-machine","slotIndex":10,"perkId":"speed-cola","cost":3000},{"kind":"mystery-box","slotIndex":11,"cost":950}],"167":[{"kind":"wall-buy","slotIndex":0,"weaponId":"ginyanma-ar","cost":1200},{"kind":"wall-buy","slotIndex":1,"weaponId":"yamasemi-dmr","cost":2500},{"kind":"wall-buy","slotIndex":2,"weaponId":"gekkou-bow","cost":2200},{"kind":"wall-buy","slotIndex":3,"weaponId":"kasasagi-ar","cost":1500},{"kind":"wall-buy","slotIndex":4,"weaponId":"miyama-br","cost":1500},{"kind":"wall-buy","slotIndex":5,"weaponId":"fists","cost":3500},{"kind":"wall-buy","slotIndex":6,"weaponId":"tenrai-staff","cost":2800},{"kind":"wall-buy","slotIndex":7,"weaponId":"shura-lmg","cost":3000},{"kind":"perk-machine","slotIndex":8,"perkId":"ext-mag","cost":1000},{"kind":"perk-machine","slotIndex":9,"perkId":"stamin-up","cost":2000},{"kind":"perk-machine","slotIndex":10,"perkId":"juggernog","cost":2500},{"kind":"perk-machine","slotIndex":11,"perkId":"quick-revive","cost":500},{"kind":"mystery-box","slotIndex":12,"cost":950}],"173":[{"kind":"wall-buy","slotIndex":0,"weaponId":"gekkou-bow","cost":2200},{"kind":"wall-buy","slotIndex":1,"weaponId":"tenrai-staff","cost":2800},{"kind":"wall-buy","slotIndex":2,"weaponId":"fists","cost":3500},{"kind":"wall-buy","slotIndex":3,"weaponId":"miyama-br","cost":1500},{"kind":"wall-buy","slotIndex":4,"weaponId":"yamasemi-dmr","cost":2500},{"kind":"wall-buy","slotIndex":5,"weaponId":"shura-lmg","cost":3000},{"kind":"wall-buy","slotIndex":6,"weaponId":"ginyanma-ar","cost":1200},{"kind":"wall-buy","slotIndex":7,"weaponId":"tsubaki-smg","cost":500},{"kind":"perk-machine","slotIndex":8,"perkId":"quick-revive","cost":500},{"kind":"perk-machine","slotIndex":9,"perkId":"double-tap","cost":2000},{"kind":"perk-machine","slotIndex":10,"perkId":"speed-cola","cost":3000},{"kind":"mystery-box","slotIndex":11,"cost":950}],"179":[{"kind":"wall-buy","slotIndex":0,"weaponId":"miyama-br","cost":1500},{"kind":"wall-buy","slotIndex":1,"weaponId":"shura-lmg","cost":3000},{"kind":"wall-buy","slotIndex":2,"weaponId":"hiiragi-sg","cost":500},{"kind":"wall-buy","slotIndex":3,"weaponId":"kasasagi-ar","cost":1500},{"kind":"wall-buy","slotIndex":4,"weaponId":"kaede-ar","cost":1200},{"kind":"wall-buy","slotIndex":5,"weaponId":"fists","cost":3500},{"kind":"wall-buy","slotIndex":6,"weaponId":"yamasemi-dmr","cost":2500},{"kind":"wall-buy","slotIndex":7,"weaponId":"gekkou-bow","cost":2200},{"kind":"perk-machine","slotIndex":8,"perkId":"speed-cola","cost":3000},{"kind":"perk-machine","slotIndex":9,"perkId":"quick-revive","cost":500},{"kind":"perk-machine","slotIndex":10,"perkId":"juggernog","cost":2500},{"kind":"perk-machine","slotIndex":11,"perkId":"stamin-up","cost":2000},{"kind":"mystery-box","slotIndex":12,"cost":950}],"181":[{"kind":"wall-buy","slotIndex":0,"weaponId":"yamasemi-dmr","cost":2500},{"kind":"wall-buy","slotIndex":1,"weaponId":"tenrai-staff","cost":2800},{"kind":"wall-buy","slotIndex":2,"weaponId":"kasasagi-ar","cost":1500},{"kind":"wall-buy","slotIndex":3,"weaponId":"ginyanma-ar","cost":1200},{"kind":"wall-buy","slotIndex":4,"weaponId":"gouka-rl","cost":2500},{"kind":"wall-buy","slotIndex":5,"weaponId":"fists","cost":3500},{"kind":"wall-buy","slotIndex":6,"weaponId":"tsubaki-smg","cost":500},{"kind":"perk-machine","slotIndex":7,"perkId":"speed-cola","cost":3000},{"kind":"perk-machine","slotIndex":8,"perkId":"ext-mag","cost":1000},{"kind":"perk-machine","slotIndex":9,"perkId":"stamin-up","cost":2000},{"kind":"mystery-box","slotIndex":10,"cost":950}],"191":[{"kind":"wall-buy","slotIndex":0,"weaponId":"gouka-rl","cost":2500},{"kind":"wall-buy","slotIndex":1,"weaponId":"ginyanma-ar","cost":1200},{"kind":"wall-buy","slotIndex":2,"weaponId":"gekkou-bow","cost":2200},{"kind":"wall-buy","slotIndex":3,"weaponId":"tsubaki-smg","cost":500},{"kind":"wall-buy","slotIndex":4,"weaponId":"hiiragi-sg","cost":500},{"kind":"wall-buy","slotIndex":5,"weaponId":"shura-lmg","cost":3000},{"kind":"wall-buy","slotIndex":6,"weaponId":"yamasemi-dmr","cost":2500},{"kind":"wall-buy","slotIndex":7,"weaponId":"fists","cost":3500},{"kind":"perk-machine","slotIndex":8,"perkId":"double-tap","cost":2000},{"kind":"perk-machine","slotIndex":9,"perkId":"stamin-up","cost":2000},{"kind":"perk-machine","slotIndex":10,"perkId":"juggernog","cost":2500},{"kind":"mystery-box","slotIndex":11,"cost":950}],"193":[{"kind":"wall-buy","slotIndex":0,"weaponId":"tenrai-staff","cost":2800},{"kind":"wall-buy","slotIndex":1,"weaponId":"kaede-ar","cost":1200},{"kind":"wall-buy","slotIndex":2,"weaponId":"fists","cost":3500},{"kind":"wall-buy","slotIndex":3,"weaponId":"tsubaki-smg","cost":500},{"kind":"wall-buy","slotIndex":4,"weaponId":"shura-lmg","cost":3000},{"kind":"wall-buy","slotIndex":5,"weaponId":"yamasemi-dmr","cost":2500},{"kind":"perk-machine","slotIndex":6,"perkId":"juggernog","cost":2500},{"kind":"perk-machine","slotIndex":7,"perkId":"quick-revive","cost":500},{"kind":"perk-machine","slotIndex":8,"perkId":"double-tap","cost":2000},{"kind":"perk-machine","slotIndex":9,"perkId":"stamin-up","cost":2000},{"kind":"mystery-box","slotIndex":10,"cost":950}],"197":[{"kind":"wall-buy","slotIndex":0,"weaponId":"yamasemi-dmr","cost":2500},{"kind":"wall-buy","slotIndex":1,"weaponId":"fists","cost":3500},{"kind":"wall-buy","slotIndex":2,"weaponId":"miyama-br","cost":1500},{"kind":"wall-buy","slotIndex":3,"weaponId":"kasasagi-ar","cost":1500},{"kind":"wall-buy","slotIndex":4,"weaponId":"kaede-ar","cost":1200},{"kind":"wall-buy","slotIndex":5,"weaponId":"gouka-rl","cost":2500},{"kind":"perk-machine","slotIndex":6,"perkId":"speed-cola","cost":3000},{"kind":"perk-machine","slotIndex":7,"perkId":"juggernog","cost":2500},{"kind":"perk-machine","slotIndex":8,"perkId":"double-tap","cost":2000},{"kind":"mystery-box","slotIndex":9,"cost":950}],"199":[{"kind":"wall-buy","slotIndex":0,"weaponId":"hiiragi-sg","cost":500},{"kind":"wall-buy","slotIndex":1,"weaponId":"yamasemi-dmr","cost":2500},{"kind":"wall-buy","slotIndex":2,"weaponId":"tsubaki-smg","cost":500},{"kind":"wall-buy","slotIndex":3,"weaponId":"tenrai-staff","cost":2800},{"kind":"wall-buy","slotIndex":4,"weaponId":"gekkou-bow","cost":2200},{"kind":"wall-buy","slotIndex":5,"weaponId":"miyama-br","cost":1500},{"kind":"wall-buy","slotIndex":6,"weaponId":"fists","cost":3500},{"kind":"perk-machine","slotIndex":7,"perkId":"stamin-up","cost":2000},{"kind":"perk-machine","slotIndex":8,"perkId":"juggernog","cost":2500},{"kind":"perk-machine","slotIndex":9,"perkId":"quick-revive","cost":500},{"kind":"perk-machine","slotIndex":10,"perkId":"ext-mag","cost":1000},{"kind":"mystery-box","slotIndex":11,"cost":950}],"211":[{"kind":"wall-buy","slotIndex":0,"weaponId":"yamasemi-dmr","cost":2500},{"kind":"wall-buy","slotIndex":1,"weaponId":"shura-lmg","cost":3000},{"kind":"wall-buy","slotIndex":2,"weaponId":"gouka-rl","cost":2500},{"kind":"wall-buy","slotIndex":3,"weaponId":"ginyanma-ar","cost":1200},{"kind":"wall-buy","slotIndex":4,"weaponId":"kaede-ar","cost":1200},{"kind":"wall-buy","slotIndex":5,"weaponId":"fists","cost":3500},{"kind":"wall-buy","slotIndex":6,"weaponId":"hiiragi-sg","cost":500},{"kind":"perk-machine","slotIndex":7,"perkId":"ext-mag","cost":1000},{"kind":"perk-machine","slotIndex":8,"perkId":"juggernog","cost":2500},{"kind":"perk-machine","slotIndex":9,"perkId":"quick-revive","cost":500},{"kind":"mystery-box","slotIndex":10,"cost":950}]}',
+  );
+
+  it('壁武器/パーク自販機/ミステリーボックスの内容・順序はR53-W2着手前と完全一致', () => {
+    for (const seedStr of Object.keys(PRE_R53W2_SNAPSHOT)) {
+      const seed = Number(seedStr);
+      const before = PRE_R53W2_SNAPSHOT[seedStr];
+      const after = generateShopLayout(seed).slots.filter(
+        (s) => s.kind !== 'pack-a-punch' && s.kind !== 'door',
+      );
+      expect(after).toEqual(before);
+    }
+  });
+
+  it('pack-a-punchスロットが常にちょうど1個、無条件で存在する', () => {
+    for (const seed of [163, 167, 173, 179, 181, 191, 193, 197, 199, 211]) {
+      const count = generateShopLayout(seed).slots.filter((s) => s.kind === 'pack-a-punch').length;
+      expect(count).toBe(1);
+    }
+  });
+
+  it('doorスロットが常にちょうど1個・コストはDOOR_COST', () => {
+    for (const seed of [163, 167, 173, 179, 181, 191]) {
+      const doorSlots = generateShopLayout(seed).slots.filter((s) => s.kind === 'door');
+      expect(doorSlots).toHaveLength(1);
+      expect(doorSlots[0]?.cost).toBe(DOOR_COST);
+    }
+  });
+
+  it('pack-a-punch/doorはrand消費列の末尾(既存スロットより後ろのslotIndex)に位置する', () => {
+    for (const seed of [163, 167, 173, 179]) {
+      const slots = generateShopLayout(seed).slots;
+      const mbIdx = slots.findIndex((s) => s.kind === 'mystery-box');
+      const papIdx = slots.findIndex((s) => s.kind === 'pack-a-punch');
+      const doorIdx = slots.findIndex((s) => s.kind === 'door');
+      expect(papIdx).toBeGreaterThan(mbIdx);
+      expect(doorIdx).toBeGreaterThan(papIdx);
+    }
+  });
+
+  it('slotIndexは新規2種を含めても0始まりの連番のまま', () => {
+    generateShopLayout(163).slots.forEach((slot, i) => {
+      expect(slot.slotIndex).toBe(i);
+    });
+  });
+});
+
+// ─── composeZombieWeaponDef(R53-W2)────────────────────────────────────────────
+
+describe('composeZombieWeaponDef', () => {
+  const base = WEAPON_DEFS['kaede-ar']!; // damage40/mag30/rpm700/reloadTac1700/reloadEmpty2300
+  const zeroOpts = { extMagStacks: 0, doubleTapStacks: 0, speedColaStacks: 0 } as const;
+
+  it('全opts=0/tier0なら基礎値のまま(名前も不変)', () => {
+    const def = composeZombieWeaponDef(base, { papTier: 0, ...zeroOpts });
+    expect(def.damage).toBe(base.damage);
+    expect(def.magazineSize).toBe(base.magazineSize);
+    expect(def.rpm).toBe(base.rpm);
+    expect(def.reloadTacticalMs).toBe(base.reloadTacticalMs);
+    expect(def.reloadEmptyMs).toBe(base.reloadEmptyMs);
+    expect(def.name).toBe(base.name);
+  });
+
+  it('PAPダメージ倍率が単独で乗る(tier1=2.5x/tier2=5x/tier3=8x)', () => {
+    expect(composeZombieWeaponDef(base, { papTier: 1, ...zeroOpts }).damage).toBe(Math.round(40 * 2.5));
+    expect(composeZombieWeaponDef(base, { papTier: 2, ...zeroOpts }).damage).toBe(Math.round(40 * 5));
+    expect(composeZombieWeaponDef(base, { papTier: 3, ...zeroOpts }).damage).toBe(Math.round(40 * 8));
+  });
+
+  it('PAP tierに応じた名称接尾辞が付与される', () => {
+    expect(composeZombieWeaponDef(base, { papTier: 0, ...zeroOpts }).name).toBe('カエデAR');
+    expect(composeZombieWeaponDef(base, { papTier: 1, ...zeroOpts }).name).toBe('カエデAR・改');
+    expect(composeZombieWeaponDef(base, { papTier: 2, ...zeroOpts }).name).toBe('カエデAR・改二');
+    expect(composeZombieWeaponDef(base, { papTier: 3, ...zeroOpts }).name).toBe('カエデAR・改三');
+  });
+
+  it('PAP tier1以上でマガジン容量が1.5倍(tier2/3も同率)', () => {
+    expect(composeZombieWeaponDef(base, { papTier: 0, ...zeroOpts }).magazineSize).toBe(30);
+    expect(composeZombieWeaponDef(base, { papTier: 1, ...zeroOpts }).magazineSize).toBe(Math.ceil(30 * 1.5));
+    expect(composeZombieWeaponDef(base, { papTier: 2, ...zeroOpts }).magazineSize).toBe(Math.ceil(30 * 1.5));
+    expect(composeZombieWeaponDef(base, { papTier: 3, ...zeroOpts }).magazineSize).toBe(Math.ceil(30 * 1.5));
+  });
+
+  it('ext-magスタックは線形加算でマガジンに乗り、PAPと合成される(複利なし)', () => {
+    const mag = (extMagStacks: number, papTier: PapTier) =>
+      composeZombieWeaponDef(base, { papTier, extMagStacks, doubleTapStacks: 0, speedColaStacks: 0 })
+        .magazineSize;
+    expect(mag(1, 0)).toBe(Math.ceil(30 * 1.5)); // 45
+    expect(mag(2, 0)).toBe(Math.ceil(30 * 2.0)); // 60
+    expect(mag(1, 1)).toBe(Math.ceil(30 * 1.5 * 1.5)); // 68 (PAP tier1 × ext-mag1)
+  });
+
+  it('double-tapスタックはダメージに加算式(1+0.3n)で乗る', () => {
+    const dmg = (n: number) =>
+      composeZombieWeaponDef(base, { papTier: 0, extMagStacks: 0, doubleTapStacks: n, speedColaStacks: 0 })
+        .damage;
+    expect(dmg(0)).toBe(40);
+    expect(dmg(1)).toBe(Math.round(40 * 1.3));
+    expect(dmg(2)).toBe(Math.round(40 * 1.6));
+  });
+
+  it('double-tapとPAPは複利せず単純乗算合成される', () => {
+    const d = composeZombieWeaponDef(base, {
+      papTier: 2,
+      extMagStacks: 0,
+      doubleTapStacks: 1,
+      speedColaStacks: 0,
+    }).damage;
+    expect(d).toBe(Math.round(40 * 5 * 1.3));
+  });
+
+  it('double-tapスタック>=1でrpmが1.33倍、0なら不変(スタック数に関わらず一律)', () => {
+    const rpm = (n: number) =>
+      composeZombieWeaponDef(base, { papTier: 0, extMagStacks: 0, doubleTapStacks: n, speedColaStacks: 0 })
+        .rpm;
+    expect(rpm(0)).toBe(700);
+    expect(rpm(1)).toBe(Math.round(700 * 1.33));
+    expect(rpm(2)).toBe(Math.round(700 * 1.33));
+  });
+
+  it('speed-colaスタックはリロード系に0.85^nで乗る', () => {
+    const reload = (n: number) =>
+      composeZombieWeaponDef(base, { papTier: 0, extMagStacks: 0, doubleTapStacks: 0, speedColaStacks: n });
+    expect(reload(0).reloadTacticalMs).toBe(1700);
+    expect(reload(1).reloadTacticalMs).toBe(Math.round(1700 * 0.85));
+    expect(reload(2).reloadTacticalMs).toBe(Math.round(1700 * 0.85 * 0.85));
+    expect(reload(1).reloadEmptyMs).toBe(Math.round(2300 * 0.85));
+  });
+
+  it('speed-colaは下限0.25でクランプされる(既存speed-cola実装と同値の床)', () => {
+    const r20 = composeZombieWeaponDef(base, {
+      papTier: 0,
+      extMagStacks: 0,
+      doubleTapStacks: 0,
+      speedColaStacks: 20,
+    });
+    expect(r20.reloadTacticalMs).toBe(Math.round(1700 * 0.25));
+    expect(r20.reloadEmptyMs).toBe(Math.round(2300 * 0.25));
+    const r30 = composeZombieWeaponDef(base, {
+      papTier: 0,
+      extMagStacks: 0,
+      doubleTapStacks: 0,
+      speedColaStacks: 30,
+    });
+    expect(r30.reloadTacticalMs).toBe(r20.reloadTacticalMs); // 床に張り付いたまま変化しない
+  });
+
+  it('毎回ベース値からの再計算であり複利ではない(同一opts→同一結果、baseは非破壊)', () => {
+    const a = composeZombieWeaponDef(base, { papTier: 1, extMagStacks: 2, doubleTapStacks: 1, speedColaStacks: 2 });
+    const b = composeZombieWeaponDef(base, { papTier: 1, extMagStacks: 2, doubleTapStacks: 1, speedColaStacks: 2 });
+    expect(a).toEqual(b);
+    expect(base.damage).toBe(40); // base自体は変更されていない
+    expect(base.magazineSize).toBe(30);
+    expect(base.name).toBe('カエデAR');
+  });
+
+  it('fistsはガードされ、opts に関わらず base をそのまま返す(参照同一)', () => {
+    const fistsBase = WEAPON_DEFS['fists']!;
+    const composed = composeZombieWeaponDef(fistsBase, {
+      papTier: 3,
+      extMagStacks: 5,
+      doubleTapStacks: 5,
+      speedColaStacks: 5,
+    });
+    expect(composed).toBe(fistsBase);
+  });
+
+  it('非fistsの返り値はbaseと異なるオブジェクト(非破壊コピー)', () => {
+    const composed = composeZombieWeaponDef(base, { papTier: 1, ...zeroOpts });
+    expect(composed).not.toBe(base);
+  });
+});
+
+describe('PAP定数', () => {
+  it('PAP_DMG_MUL = [1, 2.5, 5, 8]', () => {
+    expect(PAP_DMG_MUL).toEqual([1, 2.5, 5, 8]);
+  });
+
+  it('PAP_COST = [0, 5000, 20000, 45000](W4B改定)', () => {
+    expect(PAP_COST).toEqual([0, 5000, 20000, 45000]);
+  });
+
+  it('PAP_REFILL_COST = 2000', () => {
+    expect(PAP_REFILL_COST).toBe(2000);
+  });
+});
+
+// ─── パワーアップ(R53-W2)──────────────────────────────────────────────────────
+
+describe('PowerUp定数', () => {
+  it('despawn30s / ラウンド上限4 / 効果30s / nuke400pt / carpenter200pt', () => {
+    expect(POWERUP_DESPAWN_S).toBe(30);
+    expect(POWERUP_ROUND_CAP).toBe(4);
+    expect(POWERUP_DURATION_S).toBe(30);
+    expect(NUKE_BONUS_PT).toBe(400);
+    expect(CARPENTER_BONUS_PT).toBe(200);
+  });
+});
+
+describe('rollPowerUp', () => {
+  it('rand=常に0 → ドロップ成立・種別はプール先頭(insta)', () => {
+    expect(rollPowerUp(() => 0)).toBe('insta');
+  });
+
+  it('rand=常に0.99 → ドロップ不成立でnull', () => {
+    expect(rollPowerUp(() => 0.99)).toBeNull();
+  });
+
+  it('非ドロップ時はrand()を1回しか消費しない', () => {
+    let calls = 0;
+    const rand = () => { calls += 1; return 0.5; }; // 0.5 >= 2.5% → 非ドロップ
+    rollPowerUp(rand);
+    expect(calls).toBe(1);
+  });
+
+  it('出現率は約2.5%(LCGシード固定)', () => {
+    let seed = 123;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    };
+    let drops = 0;
+    const N = 20000;
+    for (let n = 0; n < N; n += 1) {
+      if (rollPowerUp(rand) !== null) drops += 1;
+    }
+    const rate = drops / N;
+    expect(rate).toBeGreaterThan(0.015);
+    expect(rate).toBeLessThan(0.035);
+  });
+
+  it('ドロップ成立時は5種すべてが出現しうる', () => {
+    let seed = 55;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    };
+    const kinds = new Set<PowerUpKind>();
+    for (let n = 0; n < 50000; n += 1) {
+      const v = rollPowerUp(rand);
+      if (v) kinds.add(v);
+    }
+    expect(kinds.size).toBe(5);
+  });
+});
+
+// ─── お守り(charm)(R53-W2)────────────────────────────────────────────────────
+
+describe('CHARMS', () => {
+  it('startpt: 開幕+1000ポイント', () => {
+    expect(CHARMS.startpt.effect.bonusStartPoints).toBe(1000);
+  });
+
+  it('revive: 初回ダウン自動復活1回', () => {
+    expect(CHARMS.revive.effect.autoReviveCharges).toBe(1);
+  });
+
+  it('bossdmg: ボスダメ+20%(倍率1.2)', () => {
+    expect(CHARMS.bossdmg.effect.bossDamageMultiplier).toBe(1.2);
+  });
+
+  it('perkcarry: 前試合のパーク1種引継ぎ', () => {
+    expect(CHARMS.perkcarry.effect.perkCarryCount).toBe(1);
+  });
+
+  it('全charmがname/description/unlockConditionを持つ', () => {
+    const ids: CharmId[] = ['startpt', 'revive', 'bossdmg', 'perkcarry'];
+    for (const id of ids) {
+      const c = CHARMS[id];
+      expect(c.name.length).toBeGreaterThan(0);
+      expect(c.description.length).toBeGreaterThan(0);
+      expect(c.unlockCondition.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('getCharmEffect は CHARMS[id].effect と一致する', () => {
+    expect(getCharmEffect('bossdmg')).toEqual(CHARMS.bossdmg.effect);
+  });
+});
+
+// ─── ゾンビ特殊バリアント(R53-W2)──────────────────────────────────────────────
+// 識別子はこのファイル(zombie-economy.ts)が単一の真実。bot.ts が ZombieVariant 型を
+// 直接輸入しているため、他ファイルへ移動しないこと。
+
+describe('ゾンビ特殊バリアント定数', () => {
+  it('blast定数: 半径3m・ダメージ40', () => {
+    expect(BLAST_RADIUS_M).toBe(3);
+    expect(BLAST_DMG).toBe(40);
+  });
+
+  it('miasma定数: 半径4m・持続6秒・DPS8', () => {
+    expect(MIASMA_RADIUS_M).toBe(4);
+    expect(MIASMA_DURATION_S).toBe(6);
+    expect(MIASMA_DPS).toBe(8);
+  });
+
+  it('shell定数: 正面軽減0.7(HSは貫通=軽減なし、という仕様は呼び出し側で担保)', () => {
+    expect(SHELL_FRONT_REDUCTION).toBe(0.7);
+  });
+
+  it('ZombieVariant型は3種を表す', () => {
+    const all: ZombieVariant[] = ['blast', 'miasma', 'shell'];
+    expect(all).toHaveLength(3);
+  });
+});
+
+describe('rollZombieVariant', () => {
+  function makeLcg(seed: number): () => number {
+    let s = seed;
+    return () => {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s / 0x100000000;
+    };
+  }
+
+  it('round<8は乱数に関わらず常にnull', () => {
+    expect(rollZombieVariant(1, () => 0, 0)).toBeNull();
+    expect(rollZombieVariant(7, () => 0, 0)).toBeNull();
+  });
+
+  it('round=8以上でblastが約8%の確率で出現する(LCG)', () => {
+    const rand = makeLcg(7);
+    let blastCount = 0;
+    const N = 20000;
+    for (let i = 0; i < N; i += 1) {
+      if (rollZombieVariant(8, rand, 0) === 'blast') blastCount += 1;
+    }
+    const rate = blastCount / N;
+    expect(rate).toBeGreaterThan(0.06);
+    expect(rate).toBeLessThan(0.10);
+  });
+
+  it('round=8では blast か null のみ(miasma/shellはまだ出ない)', () => {
+    const rand = makeLcg(3);
+    for (let i = 0; i < 2000; i += 1) {
+      const v = rollZombieVariant(8, rand, 0);
+      expect(v === null || v === 'blast').toBe(true);
+    }
+  });
+
+  it('round<12ではmiasma/shellが出ない(round=11)', () => {
+    const rand = makeLcg(5);
+    for (let i = 0; i < 3000; i += 1) {
+      const v = rollZombieVariant(11, rand, 0);
+      expect(v).not.toBe('miasma');
+      expect(v).not.toBe('shell');
+    }
+  });
+
+  it('round=12以上・aliveMiasma=0ならmiasmaが出現しうる', () => {
+    const rand = makeLcg(11);
+    let seen = false;
+    for (let i = 0; i < 5000; i += 1) {
+      if (rollZombieVariant(12, rand, 0) === 'miasma') { seen = true; break; }
+    }
+    expect(seen).toBe(true);
+  });
+
+  it('aliveMiasma>=6のときmiasmaは抽選から除外される(round=12〜14)', () => {
+    const rand = makeLcg(99);
+    for (let i = 0; i < 5000; i += 1) {
+      expect(rollZombieVariant(13, rand, 6)).not.toBe('miasma');
+    }
+  });
+
+  it('round<15ではshellが出ない(round=14)', () => {
+    const rand = makeLcg(41);
+    for (let i = 0; i < 3000; i += 1) {
+      expect(rollZombieVariant(14, rand, 0)).not.toBe('shell');
+    }
+  });
+
+  it('round=15以上でshellが出現しうる', () => {
+    const rand = makeLcg(21);
+    let seen = false;
+    for (let i = 0; i < 5000; i += 1) {
+      if (rollZombieVariant(15, rand, 0) === 'shell') { seen = true; break; }
+    }
+    expect(seen).toBe(true);
+  });
+
+  it('重複時は先勝ち: blast成立ならmiasma/shellは判定されない(rand()は1回のみ消費)', () => {
+    let calls = 0;
+    const rand = () => { calls += 1; return 0; }; // 常に0 → blast閾値0.08未満で即成立
+    const v = rollZombieVariant(15, rand, 0);
+    expect(v).toBe('blast');
+    expect(calls).toBe(1);
+  });
+
+  it('blast不成立・miasma成立ならmiasmaで確定しshellは判定されない(rand()は2回のみ消費)', () => {
+    let call = 0;
+    const rand = () => { call += 1; return call === 1 ? 0.5 : 0; };
+    const v = rollZombieVariant(15, rand, 0);
+    expect(v).toBe('miasma');
+    expect(call).toBe(2);
+  });
+
+  it('blast/miasma不成立・shell成立ならshellで確定する(rand()は3回消費)', () => {
+    let call = 0;
+    const rand = () => { call += 1; return call <= 2 ? 0.5 : 0; };
+    const v = rollZombieVariant(15, rand, 0);
+    expect(v).toBe('shell');
+    expect(call).toBe(3);
   });
 });

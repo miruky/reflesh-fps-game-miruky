@@ -1178,4 +1178,63 @@ describe('ALWAYS_BADGE: 毎回バッジを出すエリート10種', () => {
     expect(ALWAYS_BADGE.has('streak-35')).toBe(false);
     expect(ALWAYS_BADGE.has('blink-kill')).toBe(false);
   });
+
+  it('R53-W2: ch10-clear / kurogane-slayer がALWAYS_BADGE級として含まれる', () => {
+    expect(ALWAYS_BADGE.has('ch10-clear')).toBe(true);
+    expect(ALWAYS_BADGE.has('kurogane-slayer')).toBe(true);
+    expect(SUPPRESS_BADGE.has('ch10-clear')).toBe(false);
+    expect(SUPPRESS_BADGE.has('kurogane-slayer')).toBe(false);
+  });
+});
+
+// ── R53-W2: 帝王編+W2システム連動(KillCtx非依存・match側emitManual契約) ────────
+describe('M: 帝王編+W2システム連動メダル(emitManual)', () => {
+  const M_IDS: MedalId[] = [
+    'pap-first',
+    'pap-max',
+    'variant-100',
+    'snd-ace',
+    'ch9-clear',
+    'ch10-clear',
+    'kurogane-slayer',
+  ];
+
+  it('emitManualで直接発火し、firstUnlock/countsが通常のonKill経路と同じく機能する', () => {
+    const t = new MedalTracker(new Set());
+    const out: MedalEvent[] = [];
+    t.emitManual('pap-first', out);
+    expect(ids(out)).toEqual(['pap-first']);
+    expect(out[0]?.firstUnlock).toBe(true);
+    expect(t.counts['pap-first']).toBe(1);
+
+    out.length = 0;
+    t.emitManual('pap-first', out);
+    expect(out[0]?.firstUnlock).toBe(false); // 2回目は初取得ではない
+    expect(t.counts['pap-first']).toBe(2);
+  });
+
+  it('既知セット(profile.unlockedMedals相当)を渡すとfirstUnlock=falseで始まる', () => {
+    const t = new MedalTracker(new Set(['ch9-clear']));
+    const out: MedalEvent[] = [];
+    t.emitManual('ch9-clear', out);
+    expect(out[0]?.firstUnlock).toBe(false);
+  });
+
+  it('7種すべてがMEDALS定義を持ち、tier/color/xpが有効値である', () => {
+    const t = new MedalTracker(new Set());
+    for (const id of M_IDS) {
+      const out: MedalEvent[] = [];
+      t.emitManual(id, out);
+      expect(out).toHaveLength(1);
+      const ev = out[0]!;
+      expect(ev.name.length).toBeGreaterThan(0);
+      expect(['bronze', 'silver', 'gold', 'platinum']).toContain(ev.tier);
+      expect(ev.color.length).toBeGreaterThan(0);
+      expect(ev.xp).toBeGreaterThan(0);
+    }
+  });
+
+  it('7種のIDは互いに一意で他区分と重複しない', () => {
+    expect(new Set(M_IDS).size).toBe(M_IDS.length);
+  });
 });

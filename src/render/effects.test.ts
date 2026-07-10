@@ -659,3 +659,380 @@ describe('R48-V Effects – hitPuff/deathBurst オブジェクトプール化', 
     }).not.toThrow();
   });
 });
+
+// ── R53-W2: ゾンビ特殊バリアント + パワーアップ + 鍛神台 演出 ─────────────────
+
+describe('R53-W2 Effects – miasmaCloud (瘴気毒雲)', () => {
+  it('例外なし、シーンに子(Group)が1個追加される', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    expect(() => fx.miasmaCloud(0, 0, 0)).not.toThrow();
+    expect(scene.children.length - before).toBe(1);
+  });
+
+  it('全レイヤー/粒子の opacity 上限が 0.30 を超えない(bloom安全)', () => {
+    const { fx, scene } = makeEffects();
+    fx.miasmaCloud(0, 0, 0);
+    fx.update(0.6); // フェードイン最中(baseOpacityへ収束する前)でも上限は超えない
+    let maxOpacity = 0;
+    scene.traverse((child) => {
+      if (child instanceof THREE.Mesh && (child.userData.isMiasmaLayer === true || child.userData.isMiasmaParticle === true)) {
+        const mat = child.material as THREE.MeshBasicMaterial;
+        if (mat.opacity > maxOpacity) maxOpacity = mat.opacity;
+      }
+    });
+    expect(maxOpacity).toBeLessThanOrEqual(0.3);
+  });
+
+  it('同時4個(MIASMA_MAX)キャップ: 6回発火してもアクティブGroup数は4に頭打ち', () => {
+    const { fx, scene } = makeEffects();
+    for (let i = 0; i < 6; i += 1) fx.miasmaCloud(i, 0, 0);
+    const count = scene.children.filter((c) => c.userData.isMiasma === true).length;
+    expect(count).toBe(4);
+  });
+
+  it('上限到達後も最新スポーンは必ず反映される(最古を強制リサイクル)', () => {
+    const { fx, scene } = makeEffects();
+    for (let i = 0; i < 5; i += 1) fx.miasmaCloud(i, 0, 0);
+    fx.miasmaCloud(999, 0, 0);
+    let found = false;
+    scene.traverse((child) => {
+      if (child.userData.isMiasma === true && Math.abs(child.position.x - 999) < 1e-6) found = true;
+    });
+    expect(found).toBe(true);
+  });
+
+  it('寿命(6s)経過でscene離脱→freeプールへ回収される(active数が0に戻る)', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    fx.miasmaCloud(0, 0, 0);
+    expect(scene.children.length - before).toBe(1);
+    for (let i = 0; i < 700; i += 1) fx.update(0.01); // 7s分
+    expect(scene.children.length - before).toBe(0);
+  });
+
+  it('freeプールからの再利用時に新規Material allocが起きない(dispose呼び出しゼロで往復)', () => {
+    const { fx } = makeEffects();
+    const disposeSpy = vi.spyOn(THREE.Material.prototype, 'dispose');
+    disposeSpy.mockClear();
+    fx.miasmaCloud(0, 0, 0);
+    for (let i = 0; i < 700; i += 1) fx.update(0.01); // free化(disposeはされない)
+    expect(disposeSpy).not.toHaveBeenCalled();
+    expect(() => fx.miasmaCloud(1, 0, 0)).not.toThrow(); // free再利用
+    disposeSpy.mockRestore();
+  });
+
+  it('reduceMotion=true: 単層(1)+粒子なし(0)+自転なし', () => {
+    const { fx, scene } = makeEffects();
+    fx.miasmaCloud(0, 0, 0, true);
+    let group: THREE.Object3D | undefined;
+    scene.traverse((c) => { if (c.userData.isMiasma === true) group = c; });
+    expect(group).toBeDefined();
+    const visibleLayers = group!.children.filter((c) => c.userData.isMiasmaLayer === true && c.visible).length;
+    const visibleParticles = group!.children.filter((c) => c.userData.isMiasmaParticle === true && c.visible).length;
+    expect(visibleLayers).toBe(1);
+    expect(visibleParticles).toBe(0);
+    expect(group!.userData.rotSpeed).toBe(0);
+  });
+
+  it('reduceMotion=false: 4層+5粒子すべてが可視になる', () => {
+    const { fx, scene } = makeEffects();
+    fx.miasmaCloud(0, 0, 0, false);
+    let group: THREE.Object3D | undefined;
+    scene.traverse((c) => { if (c.userData.isMiasma === true) group = c; });
+    const visibleLayers = group!.children.filter((c) => c.userData.isMiasmaLayer === true && c.visible).length;
+    const visibleParticles = group!.children.filter((c) => c.userData.isMiasmaParticle === true && c.visible).length;
+    expect(visibleLayers).toBe(4);
+    expect(visibleParticles).toBe(5);
+  });
+
+  it('clear(): active+free双方のMaterialが解放される(dispose呼び出し回数>0)', () => {
+    const { fx } = makeEffects();
+    const disposeSpy = vi.spyOn(THREE.Material.prototype, 'dispose');
+    disposeSpy.mockClear();
+    fx.miasmaCloud(0, 0, 0); // active分(4層+5粒子=9 Material)
+    fx.miasmaCloud(1, 0, 0);
+    fx.update(6.5); // 両方期限切れ→free化(disposeはされない)
+    expect(disposeSpy).not.toHaveBeenCalled();
+    fx.miasmaCloud(2, 0, 0); // freeから1個再利用(残り1個はfreeのまま)
+    fx.clear();
+    expect(disposeSpy.mock.calls.length).toBeGreaterThan(0);
+    disposeSpy.mockRestore();
+  });
+
+  it('clear 後に再度 miasmaCloud を呼んでも例外なし(共有geometryはclear()で破棄されない)', () => {
+    const { fx } = makeEffects();
+    fx.miasmaCloud(0, 0, 0);
+    fx.clear();
+    expect(() => fx.miasmaCloud(0, 0, 0)).not.toThrow();
+  });
+});
+
+describe('R53-W2 Effects – powerUpBeacon / disposePowerUpBeacon', () => {
+  const KINDS = ['insta', 'double', 'nuke', 'maxammo', 'carpenter'] as const;
+
+  it('全kindで例外なく生成でき、八面体+リングの子2個を持つ', () => {
+    const { fx } = makeEffects();
+    for (const k of KINDS) {
+      expect(() => {
+        const g = fx.powerUpBeacon(k);
+        expect(g.children.length).toBe(2);
+      }).not.toThrow();
+    }
+  });
+
+  it('シーンに自動追加しない(呼び出し側管理型の契約)', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    const g = fx.powerUpBeacon('insta');
+    expect(scene.children.length).toBe(before);
+    expect(g.parent).toBeNull();
+  });
+
+  it('同一kindの複数生成でMaterialが共有される(毎回cloneしない)', () => {
+    const { fx } = makeEffects();
+    const g1 = fx.powerUpBeacon('double');
+    const g2 = fx.powerUpBeacon('double');
+    const m1 = (g1.children[0] as THREE.Mesh).material;
+    const m2 = (g2.children[0] as THREE.Mesh).material;
+    expect(m1).toBe(m2);
+    const r1 = (g1.children[1] as THREE.Mesh).material;
+    const r2 = (g2.children[1] as THREE.Mesh).material;
+    expect(r1).toBe(r2);
+  });
+
+  it('異なるkindは色が異なる(共有キャッシュがkindごとに独立)', () => {
+    const { fx } = makeEffects();
+    const g1 = fx.powerUpBeacon('insta');
+    const g2 = fx.powerUpBeacon('maxammo');
+    const m1 = (g1.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    const m2 = (g2.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    expect(m1.color.getHex()).not.toBe(m2.color.getHex());
+  });
+
+  it('八面体/リングの opacity 上限が 0.55 を超えない(bloom安全)', () => {
+    const { fx } = makeEffects();
+    for (const k of KINDS) {
+      const g = fx.powerUpBeacon(k);
+      for (const child of g.children) {
+        const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        expect(mat.opacity).toBeLessThanOrEqual(0.55);
+      }
+    }
+  });
+
+  it('disposePowerUpBeacon: parentから除去され、共有Materialは解放されない(他インスタンス保護)', () => {
+    const { fx, scene } = makeEffects();
+    const g1 = fx.powerUpBeacon('nuke');
+    const g2 = fx.powerUpBeacon('nuke');
+    scene.add(g1);
+    const disposeSpy = vi.spyOn(THREE.Material.prototype, 'dispose');
+    disposeSpy.mockClear();
+    expect(() => fx.disposePowerUpBeacon(g1)).not.toThrow();
+    expect(g1.parent).toBeNull();
+    expect(disposeSpy).not.toHaveBeenCalled();
+    // g2は同じMaterialをまだ問題なく参照できる(disposeされていない)
+    expect((g2.children[0] as THREE.Mesh).material).toBe((g1.children[0] as THREE.Mesh).material);
+    disposeSpy.mockRestore();
+  });
+
+  it('disposePowerUpBeacon: parentが無くても例外なし', () => {
+    const { fx } = makeEffects();
+    const g = fx.powerUpBeacon('carpenter');
+    expect(() => fx.disposePowerUpBeacon(g)).not.toThrow();
+  });
+
+  it('reduceMotion=true: bobAmplitude=0(既存rm流儀)、spinSpeedは維持(回転のみ残す)', () => {
+    const { fx } = makeEffects();
+    const g = fx.powerUpBeacon('carpenter', true);
+    expect(g.userData.bobAmplitude).toBe(0);
+    expect(g.userData.spinSpeed).toBeGreaterThan(0);
+  });
+
+  it('reduceMotion=false: bobAmplitudeが正値', () => {
+    const { fx } = makeEffects();
+    const g = fx.powerUpBeacon('carpenter', false);
+    expect(g.userData.bobAmplitude).toBeGreaterThan(0);
+  });
+
+  it('dispose(): kind別共有Materialとoctahedronジオメトリが解放される', () => {
+    const { fx } = makeEffects();
+    fx.powerUpBeacon('insta');
+    fx.powerUpBeacon('double');
+    fx.powerUpBeacon('nuke');
+    const disposeSpy = vi.spyOn(THREE.Material.prototype, 'dispose');
+    disposeSpy.mockClear();
+    fx.dispose();
+    // insta/double/nuke の 八面体Material×3 + リングMaterial×3 = 6
+    expect(disposeSpy.mock.calls.length).toBe(6);
+    disposeSpy.mockRestore();
+  });
+});
+
+describe('R53-W2 Effects – papMachineGlow (鍛神台改造演出)', () => {
+  it('例外なし、シーンに子が追加される(sparks+blastsプール流用)', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    expect(() => fx.papMachineGlow(0, 1, 0)).not.toThrow();
+    // slamSparks(Group1個) + 発光オーブ4個 = 5
+    expect(scene.children.length - before).toBe(5);
+  });
+
+  it('連打しても例外なく、時間経過後は全て解放される(新規プールを増やさない)', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    expect(() => {
+      for (let i = 0; i < 30; i += 1) fx.papMachineGlow(i, 1, 0);
+    }).not.toThrow();
+    for (let i = 0; i < 400; i += 1) fx.update(0.02); // 8s分(最長寿命2.3sを十分超える)
+    expect(scene.children.length).toBe(before);
+  });
+
+  it('clear() 後に呼んでも例外なし', () => {
+    const { fx } = makeEffects();
+    fx.papMachineGlow(0, 1, 0);
+    fx.clear();
+    expect(() => fx.papMachineGlow(0, 1, 0)).not.toThrow();
+  });
+});
+
+describe('R53-W2 Effects – variantBlastFx (爆裂種ゾンビ自爆)', () => {
+  it('例外なし、シーンに子が追加される(explosion+debrisBurstプール流用)', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    expect(() => fx.variantBlastFx(0, 0, 0)).not.toThrow();
+    // explosion: core1+dust5=6個の直接子 / debrisBurst: Group1個 = 7
+    expect(scene.children.length - before).toBe(7);
+  });
+
+  it('緑がかった破片(0x5a8f4a)が含まれる', () => {
+    const { fx, scene } = makeEffects();
+    fx.variantBlastFx(0, 0, 0);
+    let hasGreenDebris = false;
+    scene.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.geometry instanceof THREE.BoxGeometry) {
+        const mat = child.material as THREE.MeshBasicMaterial;
+        if (mat.color.getHex() === 0x5a8f4a) hasGreenDebris = true;
+      }
+    });
+    expect(hasGreenDebris).toBe(true);
+  });
+
+  it('連打しても例外なく、時間経過後は全て解放される(既存プール上限内)', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    expect(() => {
+      for (let i = 0; i < 30; i += 1) fx.variantBlastFx(i, 0, 0);
+    }).not.toThrow();
+    for (let i = 0; i < 400; i += 1) fx.update(0.02); // 8s分
+    expect(scene.children.length).toBe(before);
+  });
+
+  it('clear() 後に呼んでも例外なし', () => {
+    const { fx } = makeEffects();
+    fx.variantBlastFx(0, 0, 0);
+    fx.clear();
+    expect(() => fx.variantBlastFx(0, 0, 0)).not.toThrow();
+  });
+});
+
+describe('R53-W2 Effects – ライフサイクル統合(clear/update/dispose)', () => {
+  it('4API混在後の clear() が例外なし', () => {
+    const { fx } = makeEffects();
+    fx.miasmaCloud(0, 0, 0);
+    fx.powerUpBeacon('insta');
+    fx.papMachineGlow(0, 1, 0);
+    fx.variantBlastFx(5, 0, 0);
+    expect(() => fx.clear()).not.toThrow();
+  });
+
+  it('4API混在後の update(0.016) が例外なし', () => {
+    const { fx } = makeEffects();
+    fx.miasmaCloud(0, 0, 0);
+    fx.papMachineGlow(0, 1, 0);
+    fx.variantBlastFx(5, 0, 0);
+    const beacon = fx.powerUpBeacon('double');
+    expect(() => fx.update(0.016)).not.toThrow();
+    expect(() => fx.disposePowerUpBeacon(beacon)).not.toThrow();
+  });
+
+  it('4API混在後の dispose() が例外なし', () => {
+    const { fx } = makeEffects();
+    fx.miasmaCloud(0, 0, 0);
+    fx.powerUpBeacon('nuke');
+    fx.papMachineGlow(0, 1, 0);
+    fx.variantBlastFx(5, 0, 0);
+    expect(() => fx.dispose()).not.toThrow();
+  });
+});
+
+// ── R53 帝王体験(Fable#5): キル柱tier格差+ブリンク連携FX ──────────────────────
+describe('R53: kokuraiteiKillColumn tier格差 / raitenSlashFx / blinkDischargeNova', () => {
+  it('tier省略は明示normalとシーン追加数が一致する(後方互換)', () => {
+    const a = makeEffects();
+    const b = makeEffects();
+    const pos = new THREE.Vector3(0, 0, 0);
+    a.fx.kokuraiteiKillColumn(pos.clone());
+    b.fx.kokuraiteiKillColumn(pos.clone(), 'normal');
+    // Math.random由来の副ボルト分の揺れがあるため、複数回の平均でなく範囲一致で確認
+    const ca = a.scene.children.length;
+    const cb = b.scene.children.length;
+    expect(Math.abs(ca - cb)).toBeLessThanOrEqual(2); // 確率的な副ボルト±1系のみの差
+    a.fx.dispose();
+    b.fx.dispose();
+  });
+
+  it('elite/bossは格差装飾でシーン追加数が増える(normal < elite < boss 傾向)', () => {
+    const count = (tier: 'normal' | 'elite' | 'boss'): number => {
+      const { fx, scene } = makeEffects();
+      const base = scene.children.length;
+      // 確率揺れを均すため5回発火の平均
+      for (let i = 0; i < 5; i += 1) fx.kokuraiteiKillColumn(new THREE.Vector3(i, 0, 0), tier);
+      const n = scene.children.length - base;
+      fx.dispose();
+      return n;
+    };
+    const n = count('normal');
+    const e = count('elite');
+    const b = count('boss');
+    expect(e).toBeGreaterThan(n);
+    expect(b).toBeGreaterThan(e);
+  });
+
+  it('reduceMotion=trueはtierを問わずnormal相当へ縮退する', () => {
+    const { fx, scene } = makeEffects();
+    const base = scene.children.length;
+    fx.kokuraiteiKillColumn(new THREE.Vector3(0, 0, 0), 'boss', true);
+    const rmCount = scene.children.length - base;
+    fx.dispose();
+    const { fx: fx2, scene: scene2 } = makeEffects();
+    const base2 = scene2.children.length;
+    fx2.kokuraiteiKillColumn(new THREE.Vector3(0, 0, 0), 'normal');
+    const normalCount = scene2.children.length - base2;
+    fx2.dispose();
+    expect(Math.abs(rmCount - normalCount)).toBeLessThanOrEqual(2);
+  });
+
+  it('raitenSlashFx/blinkDischargeNovaは例外なくシーンへFXを追加する', () => {
+    const { fx, scene } = makeEffects();
+    const base = scene.children.length;
+    fx.raitenSlashFx(new THREE.Vector3(0, 0, 0));
+    expect(scene.children.length).toBeGreaterThan(base);
+    const mid = scene.children.length;
+    fx.blinkDischargeNova(new THREE.Vector3(2, 0, 0));
+    expect(scene.children.length).toBeGreaterThan(mid);
+    fx.dispose();
+  });
+
+  it('blinkDischargeNova連打でも柱キャップ96によりシーンが無制限に膨張しない', () => {
+    const { fx, scene } = makeEffects();
+    for (let i = 0; i < 40; i += 1) {
+      fx.blinkDischargeNova(new THREE.Vector3(i % 5, 0, 0));
+      fx.update(1 / 60);
+    }
+    // 柱96 + 短命blasts/rings(寿命内の残存)を含めても十分下回るバウンド
+    expect(scene.children.length).toBeLessThan(400);
+    fx.dispose();
+    expect(scene.children.length).toBe(0);
+  });
+});

@@ -51,6 +51,13 @@ export class StreakManager {
     this._progress = 0;
   }
 
+  /** ★V-B修正(R53): S&Dのラウンド頭リセット — progressもバンクも全消去(BO2 S&D準拠。
+   *  ラウンドを跨いだストリーク持ち越しはラウンド制の緊張感を壊すため) */
+  resetAll(): void {
+    this._progress = 0;
+    this._banked.fill(false);
+  }
+
   /**
    * ストリーク発動: バンク済みなら消費して true を返す。
    * 未バンクまたはゾンビモードなら false (Match 側でゾンビガードを行う)。

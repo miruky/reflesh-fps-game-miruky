@@ -5,6 +5,7 @@ import {
   Bot,
   BOSS_TUNING,
   DIFFICULTY,
+  fearAccuracyMul,
   ZOMBIE_HORDE_THIN_RANK,
   zombieKccActive,
   zombieKccSkipFactor,
@@ -459,5 +460,425 @@ describe('Bot キルカム公開API(R53-T3: fkApplyLivePose/fkApplyDeathPose/fkR
     const rigY = (boss as unknown as { rig: THREE.Group }).rig.position.y;
     expect(rigY).toBeCloseTo(rigLiftY, 10);
     expect(rigLiftY).toBeCloseTo(0.4, 10);
+  });
+});
+
+// ─── R53-W2: 特殊ゾンビ変種の視覚適用/リセット ─────────────────────────────────
+
+function makeZombie(world: RAPIER.World, spawn = new THREE.Vector3(0, 0, 0)): Bot {
+  return new Bot(world, 'ゾンビ', spawn, 0x39d465, { ...DIFFICULTY.normal }, 2, 'normal', 'zombie');
+}
+
+describe('Bot applyZombieVariantVisual(R53-W2 特殊ゾンビ変種)', () => {
+  it('blastは腹部パスチュール3個をrig配下へ追加しzombieVariantを設定する', () => {
+    const world = makeFlatWorld();
+    const zombie = makeZombie(world);
+    const rig = (zombie as unknown as { rig: THREE.Group }).rig;
+    const before = rig.children.length;
+    zombie.applyZombieVariantVisual('blast');
+    expect(zombie.zombieVariant).toBe('blast');
+    expect(rig.children.length).toBe(before + 3);
+  });
+
+  it('miasmaはシェル+頭部発光の2メッシュを追加する', () => {
+    const world = makeFlatWorld();
+    const zombie = makeZombie(world);
+    const rig = (zombie as unknown as { rig: THREE.Group }).rig;
+    const before = rig.children.length;
+    zombie.applyZombieVariantVisual('miasma');
+    expect(zombie.zombieVariant).toBe('miasma');
+    expect(rig.children.length).toBe(before + 2);
+  });
+
+  it('shellは胸+顔の骨甲板2メッシュを追加する', () => {
+    const world = makeFlatWorld();
+    const zombie = makeZombie(world);
+    const rig = (zombie as unknown as { rig: THREE.Group }).rig;
+    const before = rig.children.length;
+    zombie.applyZombieVariantVisual('shell');
+    expect(zombie.zombieVariant).toBe('shell');
+    expect(rig.children.length).toBe(before + 2);
+  });
+
+  it('同一変種の追加メッシュは個体間で同一のマテリアルインスタンスを共有する(個体クローン禁止)', () => {
+    const world = makeFlatWorld();
+    const zA = makeZombie(world, new THREE.Vector3(0, 0, 0));
+    const zB = makeZombie(world, new THREE.Vector3(10, 0, 10));
+    zA.applyZombieVariantVisual('miasma');
+    zB.applyZombieVariantVisual('miasma');
+    const rigA = (zA as unknown as { rig: THREE.Group }).rig;
+    const rigB = (zB as unknown as { rig: THREE.Group }).rig;
+    const meshesA = rigA.children.slice(-2) as THREE.Mesh[];
+    const meshesB = rigB.children.slice(-2) as THREE.Mesh[];
+    expect(meshesA[0]?.material).toBe(meshesB[0]?.material);
+    expect(meshesA[1]?.material).toBe(meshesB[1]?.material);
+    // ジオメトリは個体別(共有マテリアルとは別。安価なprimitiveなので複製は問題ない)
+    expect(meshesA[0]?.geometry).not.toBe(meshesB[0]?.geometry);
+  });
+
+  it('再適用は前回の装飾を除去してから新しい変種を追加する(多重適用での残留防止)', () => {
+    const world = makeFlatWorld();
+    const zombie = makeZombie(world);
+    const rig = (zombie as unknown as { rig: THREE.Group }).rig;
+    const baseline = rig.children.length;
+    zombie.applyZombieVariantVisual('blast'); // +3
+    expect(rig.children.length).toBe(baseline + 3);
+    zombie.applyZombieVariantVisual('shell'); // 旧blastの3個を除去してから+2
+    expect(zombie.zombieVariant).toBe('shell');
+    expect(rig.children.length).toBe(baseline + 2);
+  });
+
+  it('resetForZombieReuse(プール再利用)で旧variantの装飾が除去されzombieVariantがnullへ戻る', () => {
+    const world = makeFlatWorld();
+    const zombie = makeZombie(world);
+    world.step();
+    const rig = (zombie as unknown as { rig: THREE.Group }).rig;
+    const baseline = rig.children.length;
+    zombie.applyZombieVariantVisual('shell');
+    expect(rig.children.length).toBe(baseline + 2);
+
+    zombie.takeDamage(999);
+    world.step();
+    zombie.resetForZombieReuse(
+      { ...DIFFICULTY.normal, maxHp: 104, moveSpeedMul: 1.44 },
+      new THREE.Vector3(3, 0, 3),
+    );
+
+    expect(zombie.zombieVariant).toBeNull();
+    expect(rig.children.length).toBe(baseline);
+  });
+});
+
+describe('Bot facingDot(前面被弾判定)', () => {
+  it('正面(bot→射手 = facingと同方向)からの被弾は+1に近い', () => {
+    const fixture = makeFixture();
+    const facing = fixture.bot.facing(); // heading初期値0
+    expect(fixture.bot.facingDot(facing)).toBeCloseTo(1, 5);
+  });
+
+  it('背面(facingの逆方向)からの被弾は-1に近い', () => {
+    const fixture = makeFixture();
+    const facing = fixture.bot.facing();
+    expect(fixture.bot.facingDot(facing.clone().negate())).toBeCloseTo(-1, 5);
+  });
+
+  it('側面からの被弾は0に近い', () => {
+    const fixture = makeFixture();
+    const facing = fixture.bot.facing();
+    const side = new THREE.Vector3(-facing.z, 0, facing.x);
+    expect(fixture.bot.facingDot(side)).toBeCloseTo(0, 5);
+  });
+
+  it('ゼロベクトルは0を返す(安全側フォールバック)', () => {
+    const fixture = makeFixture();
+    expect(fixture.bot.facingDot(new THREE.Vector3(0, 0, 0))).toBe(0);
+  });
+});
+
+describe('Bot applyBossPhase(R53-W2 campaign.ts BossPhase契約)', () => {
+  it('speedMul/damageMulを現在のtuningへ乗算する(基礎からの再計算ではない)', () => {
+    const fixture = makeFixture();
+    const bot = fixture.bot;
+    const baseSpeedMul = bot.tuning.moveSpeedMul;
+    const baseDamage = bot.tuning.damage;
+    bot.applyBossPhase(1.5, 2);
+    expect(bot.tuning.moveSpeedMul).toBeCloseTo(baseSpeedMul * 1.5, 10);
+    expect(bot.tuning.damage).toBeCloseTo(baseDamage * 2, 10);
+  });
+
+  it('複数回呼ぶと重ねがけされる(フェーズは単調進行で戻らない前提)', () => {
+    const fixture = makeFixture();
+    const bot = fixture.bot;
+    const baseSpeedMul = bot.tuning.moveSpeedMul;
+    bot.applyBossPhase(1.2);
+    bot.applyBossPhase(1.2);
+    expect(bot.tuning.moveSpeedMul).toBeCloseTo(baseSpeedMul * 1.2 * 1.2, 10);
+  });
+
+  it('省略した引数(undefined)は変更しない', () => {
+    const fixture = makeFixture();
+    const bot = fixture.bot;
+    const baseDamage = bot.tuning.damage;
+    const baseSpeedMul = bot.tuning.moveSpeedMul;
+    bot.applyBossPhase(1.5); // damageMul省略
+    expect(bot.tuning.damage).toBe(baseDamage);
+    bot.applyBossPhase(undefined, 3); // speedMul省略
+    expect(bot.tuning.moveSpeedMul).toBeCloseTo(baseSpeedMul * 1.5, 10);
+  });
+
+  it('speedMulは実効moveSpeed(private)にも反映され、実際の移動量が倍率どおり変化する', () => {
+    const ctx: BotContext = {
+      targetEye: null,
+      objective: new THREE.Vector3(0, 0, -50),
+      tuning: DIFFICULTY.normal,
+      rand: () => 0.5, // headingTimer<=0の初回でoffset=0(決定論的に objective 直進)
+      onShoot: () => {},
+    };
+
+    const worldA = makeFlatWorld();
+    const botA = new Bot(worldA, 'A', new THREE.Vector3(0, 0, 0), 0xffffff, { ...DIFFICULTY.normal });
+    worldA.step();
+    botA.update(1 / 60, ctx);
+    worldA.step();
+    const dA = Math.hypot(botA.position.x, botA.position.z);
+
+    const worldB = makeFlatWorld();
+    const botB = new Bot(worldB, 'B', new THREE.Vector3(0, 0, 0), 0xffffff, { ...DIFFICULTY.normal });
+    worldB.step();
+    botB.applyBossPhase(2);
+    botB.update(1 / 60, ctx);
+    worldB.step();
+    const dB = Math.hypot(botB.position.x, botB.position.z);
+
+    expect(dA).toBeGreaterThan(0);
+    expect(dB).toBeGreaterThan(dA * 1.5); // 概ね2倍(KCCスナップの微小変動を許容)
+  });
+});
+
+describe('Bot blinkTo(R53-W2 ボス演出: 即時転移)', () => {
+  it('次のworld.step()で指定座標(足元/地面基準のY)へ転移する', () => {
+    const fixture = makeFixture();
+    fixture.bot.blinkTo(10, 0, -10);
+    fixture.world.step();
+    expect(fixture.bot.position.x).toBeCloseTo(10, 5);
+    expect(fixture.bot.position.z).toBeCloseTo(-10, 5);
+  });
+
+  it('KCC距離LOD前回移動キャッシュ/詰まり・登坂状態を転移時にリセットする(誤検知防止)', () => {
+    const fixture = makeFixture();
+    const internal = fixture.bot as unknown as {
+      prevZombieMoved: { x: number; y: number; z: number };
+      prevZombieGrounded: boolean;
+      prevGiantMoved: { x: number; y: number; z: number };
+      stuckTimer: number;
+      unstuckSteerS: number;
+      unstuckStrafeOverride: number | null;
+      climbing: boolean;
+    };
+    internal.prevZombieMoved.x = 5;
+    internal.prevZombieMoved.y = -1;
+    internal.prevZombieMoved.z = 5;
+    internal.prevZombieGrounded = true;
+    internal.prevGiantMoved.x = 3;
+    internal.prevGiantMoved.y = -2;
+    internal.prevGiantMoved.z = 3;
+    internal.stuckTimer = 2;
+    internal.unstuckSteerS = 0.5;
+    internal.unstuckStrafeOverride = 1;
+    internal.climbing = true;
+
+    fixture.bot.blinkTo(0, 0, 0);
+
+    expect(internal.prevZombieMoved).toEqual({ x: 0, y: 0, z: 0 });
+    expect(internal.prevZombieGrounded).toBe(false);
+    expect(internal.prevGiantMoved).toEqual({ x: 0, y: 0, z: 0 });
+    expect(internal.stuckTimer).toBe(0);
+    expect(internal.unstuckSteerS).toBe(0);
+    expect(internal.unstuckStrafeOverride).toBeNull();
+    expect(internal.climbing).toBe(false);
+  });
+});
+
+describe('Bot fleeMode(R53-W2 追跡ミッション: 逃走)', () => {
+  it('既定falseでは20m超のtargetEyeへ接近する(approach=+1の非回帰)', () => {
+    const world = makeFlatWorld();
+    const bot = new Bot(world, 'テスト', new THREE.Vector3(0, 0, 0), 0xc84b3c, { ...DIFFICULTY.normal });
+    world.step();
+    const ctx: BotContext = {
+      targetEye: new THREE.Vector3(0, 1.5, -30),
+      objective: null,
+      tuning: DIFFICULTY.normal,
+      rand: () => 0.5,
+      onShoot: () => {},
+    };
+    const before = bot.position.distanceTo(new THREE.Vector3(0, bot.position.y, -30));
+    for (let i = 0; i < 30; i += 1) {
+      bot.update(1 / 60, ctx);
+      world.step();
+    }
+    const after = bot.position.distanceTo(new THREE.Vector3(0, bot.position.y, -30));
+    expect(after).toBeLessThan(before);
+  });
+
+  it('trueにすると同条件でtargetEyeから遠ざかる(approachが反転)', () => {
+    const world = makeFlatWorld();
+    const bot = new Bot(world, 'テスト', new THREE.Vector3(0, 0, 0), 0xc84b3c, { ...DIFFICULTY.normal });
+    world.step();
+    bot.fleeMode = true;
+    const ctx: BotContext = {
+      targetEye: new THREE.Vector3(0, 1.5, -30),
+      objective: null,
+      tuning: DIFFICULTY.normal,
+      rand: () => 0.5,
+      onShoot: () => {},
+    };
+    const before = bot.position.distanceTo(new THREE.Vector3(0, bot.position.y, -30));
+    for (let i = 0; i < 30; i += 1) {
+      bot.update(1 / 60, ctx);
+      world.step();
+    }
+    const after = bot.position.distanceTo(new THREE.Vector3(0, bot.position.y, -30));
+    expect(after).toBeGreaterThan(before);
+  });
+});
+
+describe('Bot escortWaypoints(R53-W2 護衛追従)', () => {
+  it('先頭waypointへ向かい、到達半径3m以内で次のwaypointへ進む(escortIdxが進む)', () => {
+    const world = makeFlatWorld();
+    const bot = new Bot(world, 'テスト', new THREE.Vector3(0, 0, 0), 0xc84b3c, { ...DIFFICULTY.normal });
+    world.step();
+    bot.escortWaypoints = [new THREE.Vector3(5, 0, -5), new THREE.Vector3(5, 0, -40)];
+    const ctx: BotContext = {
+      targetEye: null,
+      objective: null,
+      tuning: DIFFICULTY.normal,
+      rand: () => 0.5,
+      onShoot: () => {},
+    };
+    const internal = bot as unknown as { escortIdx: number };
+    for (let i = 0; i < 200 && internal.escortIdx === 0; i += 1) {
+      bot.update(1 / 60, ctx);
+      world.step();
+    }
+    expect(internal.escortIdx).toBe(1);
+    // 先頭waypointへ実際に近づいている(到達判定が正しく機能した根拠)
+    expect(bot.position.distanceTo(new THREE.Vector3(5, bot.position.y, -5))).toBeLessThanOrEqual(3);
+  });
+
+  it('escortWaypointsへの再代入でescortIdxが0へリセットされる', () => {
+    const fixture = makeFixture();
+    const internal = fixture.bot as unknown as { escortIdx: number };
+    fixture.bot.escortWaypoints = [new THREE.Vector3(1, 0, 1)];
+    internal.escortIdx = 1; // 進行済み状態を模倣
+    fixture.bot.escortWaypoints = [new THREE.Vector3(2, 0, 2), new THREE.Vector3(3, 0, 3)];
+    expect(internal.escortIdx).toBe(0);
+  });
+
+  it('nullを代入すると通常のobjective/徘徊AIへ戻る(escortWaypoints getterがnullを返す)', () => {
+    const fixture = makeFixture();
+    fixture.bot.escortWaypoints = [new THREE.Vector3(1, 0, 1)];
+    fixture.bot.escortWaypoints = null;
+    expect(fixture.bot.escortWaypoints).toBeNull();
+  });
+});
+
+describe('Bot bossPhaseFlags/setBossPhaseFlags(R53-W2 campaign.ts BossPhase契約)', () => {
+  it('既定値はすべてfalse', () => {
+    const fixture = makeFixture();
+    expect(fixture.bot.bossPhaseFlags).toEqual({ blackSlash: false, blink: false, pillars: false });
+  });
+
+  it('指定キーのみ更新し、省略キーは現状維持する(部分更新)', () => {
+    const fixture = makeFixture();
+    fixture.bot.setBossPhaseFlags({ blackSlash: true });
+    expect(fixture.bot.bossPhaseFlags).toEqual({ blackSlash: true, blink: false, pillars: false });
+    fixture.bot.setBossPhaseFlags({ blink: true, pillars: true });
+    expect(fixture.bot.bossPhaseFlags).toEqual({ blackSlash: true, blink: true, pillars: true });
+  });
+});
+
+// ── R53 帝王の怯え(fearUntil/applyFear/fearAccuracyMul)────────────────────────
+// M3配線契約: humanoid系=applyFear(1.2〜2.0)で後退+match側spread拡大(1/fearAccuracyMul)、
+// zombie=applyFear(0.4)でよろめき(移動×0.2)。姿勢式は速度非依存=InstancedMesh群経路と整合。
+describe('R53: 怯え(applyFear/feared)', () => {
+  it('fearAccuracyMul は 0.5(match updateShooting の実効spread拡大係数の逆数)', () => {
+    expect(fearAccuracyMul).toBe(0.5);
+  });
+
+  it('applyFear は残時間で減衰し feared が false へ戻る(長い方を優先)', () => {
+    const { world, bot } = ((): { world: RAPIER.World; bot: Bot } => {
+      const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+      world.createCollider(
+        RAPIER.ColliderDesc.cuboid(50, 0.5, 50).setTranslation(0, -0.5, 0),
+        world.createRigidBody(RAPIER.RigidBodyDesc.fixed()),
+      );
+      const bot = new Bot(world, 'テスト', new THREE.Vector3(0, 0, 0), 0xc84b3c, DIFFICULTY.normal);
+      world.step();
+      return { world, bot };
+    })();
+    const ctx: BotContext = {
+      targetEye: null,
+      objective: null,
+      tuning: DIFFICULTY.normal,
+      rand: () => 0.5,
+      onShoot: () => {},
+    };
+    expect(bot.feared).toBe(false);
+    bot.applyFear(0.3);
+    bot.applyFear(0.1); // 短い方は延長しない
+    expect(bot.feared).toBe(true);
+    const dt = 1 / 60;
+    for (let i = 0; i < 12; i += 1) {
+      bot.update(dt, ctx);
+      world.step();
+    }
+    expect(bot.feared).toBe(true); // 0.2s経過ではまだ怯え中
+    for (let i = 0; i < 12; i += 1) {
+      bot.update(dt, ctx);
+      world.step();
+    }
+    expect(bot.feared).toBe(false); // 0.4s経過で解除(0.3sの設定値を超過)
+  });
+
+  it('ゾンビは怯え中に移動が大きく鈍る(×0.2よろめき)', () => {
+    const run = (fear: boolean): number => {
+      const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+      world.createCollider(
+        RAPIER.ColliderDesc.cuboid(80, 0.5, 80).setTranslation(0, -0.5, 0),
+        world.createRigidBody(RAPIER.RigidBodyDesc.fixed()),
+      );
+      const tuning = { ...DIFFICULTY.normal };
+      const zombie = new Bot(world, 'ゾンビ', new THREE.Vector3(0, 0, 0), 0x39d465, tuning, 2, 'normal', 'zombie');
+      zombie.hordeRank = 0; // 毎フレームフルKCC=決定論
+      world.step();
+      const ctx: BotContext = {
+        targetEye: new THREE.Vector3(0, 1.5, -30),
+        objective: null,
+        tuning,
+        rand: () => 0.5,
+        onShoot: () => {},
+        onMelee: () => {},
+      };
+      if (fear) zombie.applyFear(0.4);
+      const start = zombie.position.clone();
+      const dt = 1 / 60;
+      for (let i = 0; i < 20; i += 1) {
+        // 0.33s: 怯え(0.4s)の内側だけを計測(再付与はしない)
+        zombie.update(dt, ctx);
+        world.step();
+      }
+      return zombie.position.distanceTo(start);
+    };
+    const normal = run(false);
+    const feared = run(true);
+    expect(feared).toBeLessThan(normal * 0.45); // ×0.2よろめき(サブステップ誤差込みで<45%)
+    expect(normal).toBeGreaterThan(0.5); // 前提: 非怯えは実際に前進している
+  });
+
+  it('humanoidは怯え中に後退する(approach反転。狙いは維持=headingは対象向きのまま)', () => {
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(80, 0.5, 80).setTranslation(0, -0.5, 0),
+      world.createRigidBody(RAPIER.RigidBodyDesc.fixed()),
+    );
+    const bot = new Bot(world, '兵', new THREE.Vector3(0, 0, 0), 0xc84b3c, DIFFICULTY.normal);
+    world.step();
+    const target = new THREE.Vector3(0, 1.5, -14); // 9-20m帯=非怯えなら approach 0(距離維持)
+    const ctx: BotContext = {
+      targetEye: target,
+      objective: null,
+      tuning: DIFFICULTY.normal,
+      rand: () => 0.5,
+      onShoot: () => {},
+    };
+    bot.applyFear(2.0);
+    const d0 = bot.position.distanceTo(target);
+    const dt = 1 / 60;
+    for (let i = 0; i < 45; i += 1) {
+      bot.update(dt, ctx);
+      world.step();
+    }
+    const d1 = bot.position.distanceTo(target);
+    expect(d1).toBeGreaterThan(d0 + 0.5); // 対象から明確に離れている
   });
 });

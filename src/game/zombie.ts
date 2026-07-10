@@ -75,3 +75,26 @@ export function zombieBossDamage(r: number): number {
   const tier = Math.floor(r / 5);
   return Math.min(90, 45 + (tier - 1) * 6);
 }
+
+// 特殊ゾンビ変種(blast/miasma/shell)の型・抽選関数・定数は zombie-economy.ts が
+// 単一の真実として定義する(経済/報酬ロジックとの結び付きが強いため。R53-W2契約。
+// bot.ts 等はそちらから ZombieVariant / rollZombieVariant をインポートすること)。
+
+// ─── ラッシュラウンド(R53-W2) ────────────────────────────────────────────────
+//
+// 7ラウンドごとに敵HPを下げて物量を捌かせる「ラッシュ」を挟む。
+// ボスラウンド(isBossRound、5の倍数)と重なる場合はラッシュを翌ラウンドへ+1シフトする
+// (5と7の最小公倍数35のときのみ衝突。隣接ラウンドは5の倍数になり得ないため単純な+1で必ず回避できる)。
+
+/** ラッシュラウンドのゾンビHP倍率 */
+export const RUSH_HP_MUL = 0.6;
+/** ラッシュラウンドクリア時のボーナスポイント */
+export const RUSH_CLEAR_BONUS_PT = 500;
+
+/** r が特殊ラウンドのとき種別を返す。現状は 'rush' のみ */
+export function specialRoundKind(round: number): 'rush' | null {
+  if (round <= 0) return null;
+  const isRushBase = round % 7 === 0 && !isBossRound(round);
+  const isShiftedFromPrevBoss = round > 1 && (round - 1) % 7 === 0 && isBossRound(round - 1);
+  return isRushBase || isShiftedFromPrevBoss ? 'rush' : null;
+}

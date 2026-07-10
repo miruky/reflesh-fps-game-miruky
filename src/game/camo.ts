@@ -18,7 +18,15 @@ export type CamoId =
   | 'gold'
   | 'diamond'
   | 'dark-matter'
-  | 'tokoyami';
+  | 'tokoyami'
+  // R53-W2: Pack-a-Punch「鍛神」3段。kill数ラダー(CAMO_IDS)とは独立の「システム付与カモ」
+  // (viewmodel が WeaponDef.papCamo 経由で優先適用する。PAP_CAMO_IDS 参照)
+  | 'pap1'
+  | 'pap2'
+  | 'pap3'
+  // R53-W2: 報酬カモ(ストーリー章クリア報酬)。REWARD_CAMO_IDS/REWARD_CAMO_CHAPTER 参照
+  | 'jingai'
+  | 'shinrai';
 
 // 武器ごとのカモ用累計統計。headshots は「ヘッドショットキル」を数える(BO2式)
 export interface WeaponCamoStats {
@@ -55,20 +63,63 @@ export const CAMO_TIERS: readonly CamoDef[] = [
 export const DIAMOND_CAMO = { id: 'diamond' as const, name: 'ダイヤ', xp: 1000 };
 export const DARK_MATTER_CAMO = { id: 'dark-matter' as const, name: 'ダークマター', xp: 2500 };
 
+// ── R53-W2 Pack-a-Punch「鍛神」3段 ──────────────────────────────────────────
+// kill数ラダー(CAMO_IDS)・equippedCamoFor の解放判定とは完全に独立。武器へは
+// viewmodel.buildGun が WeaponDef.papCamo(matchが凍結ID文字列を積む)を最優先で適用する。
+// CAMO_IDS には含めない(ARMORYの通常ピッカー/進捗表示の対象外=システム付与専用)。
+export const PAP_CAMO_IDS: readonly CamoId[] = ['pap1', 'pap2', 'pap3'];
+export const PAP_CAMO_NAMES: Record<'pap1' | 'pap2' | 'pap3', string> = {
+  pap1: '鍛神・壱',
+  pap2: '鍛神・弐',
+  pap3: '鍛神・参',
+};
+export function isPapCamoId(id: string): id is 'pap1' | 'pap2' | 'pap3' {
+  return (PAP_CAMO_IDS as readonly string[]).includes(id);
+}
+
+// ── R53-W2 報酬カモ(ストーリー章クリア報酬) ──────────────────────────────
+// 解放条件そのもの(章クリア判定)は progression/match オーナーが配線する。ここでは
+// id・表示名・対応章・視覚のみを定義する。isCamoUnlocked/equippedCamoFor/camoProgress は
+// 呼び出し側が渡す unlockedRewardCamos(章クリアから算出した集合)を参照する拡張点を持つ。
+export const REWARD_CAMO_IDS: readonly CamoId[] = ['jingai', 'shinrai'];
+export const REWARD_CAMO_CHAPTER: Record<'jingai' | 'shinrai', string> = {
+  jingai: 'ch9',
+  shinrai: 'ch10',
+};
+const REWARD_CAMO_LABEL: Record<'jingai' | 'shinrai', string> = {
+  jingai: '第9章クリアで解放',
+  shinrai: '第10章クリアで解放',
+};
+export function isRewardCamoId(id: CamoId): id is 'jingai' | 'shinrai' {
+  return (REWARD_CAMO_IDS as readonly string[]).includes(id);
+}
+
 export const CAMO_IDS: readonly CamoId[] = [
   ...CAMO_TIERS.map((t) => t.id),
   DIAMOND_CAMO.id,
   DARK_MATTER_CAMO.id,
+  ...REWARD_CAMO_IDS,
 ];
 
 export function isCamoId(id: string): id is CamoId {
   return (CAMO_IDS as readonly string[]).includes(id);
 }
 
+// 描画専用: CamoId型の全メンバーを網羅して判定する(通常ラダー(CAMO_IDS)に加え、
+// tokoyami(クナイ専用)・pap1-3(PaP専用)も含む)。isCamoId は「解放ゲート対象か」の
+// 判定なので、レンダリング側の「既知の見た目定義があるか」判定には本関数を使う
+// (R53-W2: buildGunBody の明示camoId経路が isCamoId で pap/tokoyami を弾いていた欠落の根治)。
+export function isKnownCamoId(id: string): id is CamoId {
+  return Object.prototype.hasOwnProperty.call(CAMO_VISUALS, id);
+}
+
 export function camoName(id: CamoId): string {
   if (id === 'diamond') return DIAMOND_CAMO.name;
   if (id === 'dark-matter') return DARK_MATTER_CAMO.name;
   if (id === 'tokoyami') return '常闇';
+  if (id === 'pap1' || id === 'pap2' || id === 'pap3') return PAP_CAMO_NAMES[id];
+  if (id === 'jingai') return '燼骸';
+  if (id === 'shinrai') return '神雷';
   return CAMO_TIERS.find((t) => t.id === id)?.name ?? id;
 }
 
@@ -199,13 +250,24 @@ export function darkMatterFor(allStats: Record<string, WeaponCamoStats>): boolea
   return CAMO_CLASSES.every((cls) => diamondFor(cls, allStats));
 }
 
-// 指定カモが指定武器で解除済みか(diamond はその武器のクラス、dark-matter は全体で判定)
+// 指定カモが指定武器で解除済みか(diamond はその武器のクラス、dark-matter は全体で判定)。
+// rewardUnlocked: 章クリア報酬カモ(jingai/shinrai)の解放集合。progression/menu オーナーが
+// campaign.clearedMissions 等から算出して渡す(camo.ts は weapons.ts 以外に依存しないため、
+// キャンペーン進行そのものは読みに行かない=呼び出し側が結果だけを渡す拡張点)。未指定(既存
+// 呼び出し)は「報酬カモは全て未解放」という安全側デフォルトになる。
 export function isCamoUnlocked(
   camoId: CamoId,
   weaponId: string,
   allStats: Record<string, WeaponCamoStats>,
+  rewardUnlocked?: ReadonlySet<CamoId> | readonly CamoId[],
 ): boolean {
   if (!CAMO_WEAPON_IDS.includes(weaponId)) return false;
+  if (isRewardCamoId(camoId)) {
+    if (!rewardUnlocked) return false;
+    return Array.isArray(rewardUnlocked)
+      ? rewardUnlocked.includes(camoId)
+      : (rewardUnlocked as ReadonlySet<CamoId>).has(camoId);
+  }
   if (camoId === 'dark-matter') return darkMatterFor(allStats);
   if (camoId === 'diamond') {
     const cls = camoClassOf(weaponId);
@@ -232,6 +294,9 @@ export function camoProgress(
   weaponId: string,
   allStats: Record<string, WeaponCamoStats>,
 ): CamoProgress {
+  if (isRewardCamoId(camoId)) {
+    return { current: 0, target: 1, label: REWARD_CAMO_LABEL[camoId] };
+  }
   if (camoId === 'dark-matter') {
     const current = CAMO_CLASSES.filter((cls) => diamondFor(cls, allStats)).length;
     return { current, target: CAMO_CLASSES.length, label: '全クラスでダイヤを解除' };
@@ -319,12 +384,16 @@ export function kunaiCamoProgress(
   return { current: Math.min(s.kills, tier.kills), target: tier.kills, label };
 }
 
-// 装備中カモの解決。選択が無い/未解除/不正IDなら null(viewmodel が素の質感で描く)
+// 装備中カモの解決。選択が無い/未解除/不正IDなら null(viewmodel が素の質感で描く)。
+// unlockedRewardCamos は isCamoUnlocked と同じ拡張点(章クリア報酬カモの解放集合)。
+// PaP鍛神(pap1-3)はこの経路を経由しない(WeaponDef.papCamo をviewmodelが優先適用する
+// 独立系統のため、selectedCamos/equippedCamoFor には現れない)。
 export function equippedCamoFor(
   weaponId: string,
   profile: {
     selectedCamos: Record<string, string>;
     weaponStats: Record<string, WeaponCamoStats>;
+    unlockedRewardCamos?: ReadonlySet<CamoId> | readonly CamoId[];
   },
 ): CamoId | null {
   const sel = profile.selectedCamos[weaponId];
@@ -336,13 +405,15 @@ export function equippedCamoFor(
     return isKunaiCamoUnlocked(sel as CamoId, kunaiStats) ? (sel as CamoId) : null;
   }
   if (!isCamoId(sel)) return null;
-  return isCamoUnlocked(sel, weaponId, profile.weaponStats) ? sel : null;
+  return isCamoUnlocked(sel, weaponId, profile.weaponStats, profile.unlockedRewardCamos) ? sel : null;
 }
 
 // ── カモ見た目の定義(アセットレス: 色とパターン種のみのデータ) ────────────
 // viewmodel.ts が onBeforeCompile の軽量ノイズGLSLへ焼き込み、menu.ts がチップの
-// スウォッチ(CSSグラデ)に使う。emissiveIntensity は Bloom 白飛び回避のため 0.5 以下。
-export type CamoPattern = 'blotch' | 'stripe' | 'facet' | 'pulse' | 'solid';
+// スウォッチ(CSSグラデ)に使う。emissiveIntensity は Bloom 白飛び回避のため 0.5 以下
+// (CAMO_IDS対象=通常ラダー+報酬カモ)。pap1-3(CAMO_IDS非対象)は 0.55 以下が上限。
+// circuit = R53-W2 追加(PaP鍛神): 静的な二重ノイズ発光脈(viewmodel.camoPatternGLSL実装)。
+export type CamoPattern = 'blotch' | 'stripe' | 'facet' | 'pulse' | 'solid' | 'circuit';
 
 export interface CamoVisual {
   id: CamoId;
@@ -422,5 +493,37 @@ export const CAMO_VISUALS: Record<CamoId, CamoVisual> = {
     id: 'tokoyami', colorA: 0x000000, colorB: 0x060006, colorC: 0x1a001a,
     pattern: 'pulse', scale: 5, metalness: 0.15, roughness: 0.98,
     emissive: 0x000000, emissiveIntensity: 0,
+  },
+  // ── R53-W2 Pack-a-Punch「鍛神」3段(システム付与・CAMO_IDS非対象) ──────────
+  // pap1 = 橙の回路脈(静的・circuit)。暗鋼基板に細い発光ラインが走る初段
+  pap1: {
+    id: 'pap1', colorA: 0x120a06, colorB: 0xff7a1a, colorC: 0xffb066,
+    pattern: 'circuit', scale: 11, metalness: 0.55, roughness: 0.5,
+    emissive: 0xff5a10, emissiveIntensity: 0.5,
+  },
+  // pap2 = 金の回路脈+微パルス(既存の uCamoTime 基盤を再利用する pulse パターン)
+  pap2: {
+    id: 'pap2', colorA: 0x14100a, colorB: 0xd9a63c, colorC: 0xfff0c2,
+    pattern: 'pulse', scale: 9, metalness: 0.65, roughness: 0.38,
+    emissive: 0xd9a63c, emissiveIntensity: 0.5,
+  },
+  // pap3 = 白金+黒地の高密度回路(静的circuit・scaleを上げて脈を密にする)
+  pap3: {
+    id: 'pap3', colorA: 0x0a0a0c, colorB: 0xe8ecf2, colorC: 0xffe9a8,
+    pattern: 'circuit', scale: 17, metalness: 0.78, roughness: 0.22,
+    emissive: 0xdfe6f2, emissiveIntensity: 0.5,
+  },
+  // ── R53-W2 報酬カモ(ストーリー章クリア報酬) ─────────────────────────────
+  // 燼骸(jingai) = 灰白のひび割れ+黒地(ch9報酬)。facetの稜線をひび割れに見立てる
+  jingai: {
+    id: 'jingai', colorA: 0x0d0d0d, colorB: 0xcfcdc4, colorC: 0xe8e6de,
+    pattern: 'facet', scale: 14, metalness: 0.2, roughness: 0.85,
+    emissive: 0xff6a2c, emissiveIntensity: 0.2,
+  },
+  // 神雷(shinrai) = 藍黒地+氷青の雷紋(ch10報酬)。pulseの脈動をクナイ映えする電光に
+  shinrai: {
+    id: 'shinrai', colorA: 0x0a0e1c, colorB: 0x3fa8ff, colorC: 0xdff3ff,
+    pattern: 'pulse', scale: 8, metalness: 0.5, roughness: 0.4,
+    emissive: 0x5fc0ff, emissiveIntensity: 0.45,
   },
 };

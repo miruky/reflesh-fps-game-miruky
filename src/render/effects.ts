@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { PowerUpKind } from '../game/zombie-economy';
 
 interface Timed<T> {
   obj: T;
@@ -13,6 +14,24 @@ const HITPUFF_MAX = 128;
 // R48-V監査: deathBurst「インスタンス」(flash1+shard10)の同時アクティブ上限。
 // 320本(=32インスタンス×10)目安のshard総数上限に相当。1キル=1発火は必ず維持。
 const DEATH_BURST_MAX = 32;
+
+// ── R53-W2: 瘴気ゾンビ(miasma)撃破の毒雲 ──
+// zombie-economy.ts にも同名/同値の定数があるが、render層をgame層の定数に
+// 依存させないためここでは独立してローカル定義する(値は揃える契約)。
+const MIASMA_DURATION_S = 6; // 寿命(秒)。zombie-economy.MIASMA_DURATION_S と同値
+const MIASMA_RADIUS_M = 4; // 目安半径(m)。zombie-economy.MIASMA_RADIUS_M と同値
+const MIASMA_MAX = 4; // 同時アクティブ上限(超過時は最古を強制リサイクル)
+const MIASMA_LAYER_MAX = 4; // 3〜5層 → 固定4層(pool再利用のため子要素数は固定にする)
+const MIASMA_PARTICLE_MAX = 5; // 浮遊粒子少量。reduceMotion時は0
+
+// ── R53-W2: パワーアップ・ビーコン(kind別発光色) ──
+const POWERUP_BEACON_COLORS: Record<PowerUpKind, number> = {
+  insta: 0xff2a2a,
+  double: 0xffd24a,
+  nuke: 0xc8ffe0,
+  maxammo: 0x3a8bff,
+  carpenter: 0x9a6a3a,
+};
 
 // トレーサー・弾痕・爆発・スモークなど、寿命つき演出のプール管理。
 // ステージ切替時はclearで全て破棄する。
@@ -69,6 +88,12 @@ export class Effects {
   private shuraKourinFX: Timed<THREE.Group>[] = [];     // 阿修羅降臨 3頭6腕
   // ── R35 エフェクト追加プール ──
   private kokuteiMantleFX: Timed<THREE.Group>[] = [];  // BE-1 黒帝羽根煙マントル
+  // ── R53-W2 追加プール ──
+  private miasmaActive: Timed<THREE.Group>[] = [];  // 瘴気毒雲(アクティブ)
+  private miasmaFree: THREE.Group[] = [];           // 同、再利用待ち(inactive)
+  // R53-W2: パワーアップ・ビーコンのkind別共有Material(呼び出し側管理のためTimedプール化はしない)
+  private readonly powerUpMaterials = new Map<PowerUpKind, THREE.MeshBasicMaterial>();
+  private readonly powerUpRingMaterials = new Map<PowerUpKind, THREE.MeshBasicMaterial>();
   private trajectoryLine: THREE.Line | null = null;
   private readonly decalGeometry = new THREE.CircleGeometry(0.06, 8);
   private readonly puffGeometry = new THREE.SphereGeometry(0.09, 8, 6);
@@ -82,6 +107,8 @@ export class Effects {
   private readonly streakGeometry = new THREE.BoxGeometry(0.04, 0.02, 1);
   // 破片(単位箱・scale で各フラグメントサイズへ拡大)。deathBurst の sparkGeometry より大きめ
   private readonly debrisFragGeo = new THREE.BoxGeometry(1, 1, 1);
+  // R53-W2: パワーアップ・ビーコンの八面体(発光コア)。ringは既存 ringGeometry を流用
+  private readonly powerUpOctaGeometry = new THREE.OctahedronGeometry(0.42, 0);
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -1483,7 +1510,14 @@ export class Effects {
   }
 
   // 黒雷帝キル演出: 対象位置に黒い雷柱1本+小フラッシュ(_spawnLightningColumnの黒雷公開版)
-  kokuraiteiKillColumn(pos: THREE.Vector3): void {
+  // R53: tier引数追加(省略='normal'=従来と完全同一)。M3配線: 撃破した bot.tier を渡す。
+  // elite=柱+地面輪撃/boss=三連柱+黒い世界罅ライン(格差でキルの重みを示す)。
+  // reduceMotion=trueで格差装飾を省略し従来の単柱へ縮退(rm契約: 追加ストロボを増やさない)。
+  kokuraiteiKillColumn(
+    pos: THREE.Vector3,
+    tier: 'normal' | 'elite' | 'boss' = 'normal',
+    reduceMotion = false,
+  ): void {
     this._spawnLightningColumn(pos, 14, 0.2, true);
     const flash = new THREE.Mesh(
       this.blastGeometry,
@@ -1500,6 +1534,84 @@ export class Effects {
     flash.userData.targetScale = 2.2;
     this.scene.add(flash);
     this.blasts.push({ obj: flash, life: 0.22, maxLife: 0.22 });
+    if (reduceMotion || tier === 'normal') return;
+    if (tier === 'elite') {
+      // 精鋭: 地面輪撃+副柱1本(僅かにオフセット) — 「一段重い」手応え
+      this.shockwaveRing(pos.clone(), 4, 0x8844ff);
+      const off = new THREE.Vector3((Math.random() - 0.5) * 1.6, 0, (Math.random() - 0.5) * 1.6);
+      this._spawnLightningColumn(pos.clone().add(off), 10, 0.16, true);
+      return;
+    }
+    // boss: 三連柱(中央16m+左右12m)+黒い世界罅ライン4本+大輪撃 — 世界が軋む格
+    this.shockwaveRing(pos.clone(), 7, 0x6a00b0);
+    for (let i = 0; i < 2; i += 1) {
+      const a = Math.random() * Math.PI * 2;
+      const off = new THREE.Vector3(Math.cos(a) * (1.8 + Math.random()), 0, Math.sin(a) * (1.8 + Math.random()));
+      this._spawnLightningColumn(pos.clone().add(off), 12, 0.22 + Math.random() * 0.06, true);
+    }
+    this._spawnLightningColumn(pos, 16, 0.26, true);
+    // 世界罅: 地表を走る黒紫のクラックライン(fissureGlowの黒雷版・短命。地面に寝かせる=
+    // R48教訓: 立てた薄板は「棒」に見えるため rotation.x=-90° で地表投影)
+    const ground = new THREE.Vector3(pos.x, pos.y - 0.02, pos.z);
+    for (let i = 0; i < 4; i += 1) {
+      const a = (i / 4) * Math.PI * 2 + Math.random() * 0.5;
+      const len = 2.2 + Math.random() * 1.8;
+      const crack = new THREE.Mesh(
+        this.streakGeometry,
+        new THREE.MeshBasicMaterial({
+          color: 0x9944ff,
+          transparent: true,
+          opacity: 0.7,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      crack.position.set(ground.x + Math.cos(a) * len * 0.5, ground.y, ground.z + Math.sin(a) * len * 0.5);
+      crack.scale.set(0.06, 1, len);
+      crack.rotation.y = -a + Math.PI / 2;
+      crack.rotation.x = -Math.PI / 2;
+      this.scene.add(crack);
+      this.blasts.push({ obj: crack, life: 0.5, maxLife: 0.5 });
+    }
+  }
+
+  // R53 ブリンク連携FX(M3配線: ブリンク後0.6s以内の攻撃ヒット=雷転斬の着地アーク爆。
+  // ダメージ倍率×1.5はmatch側)。紫黒の小輪撃+短い放射ボルト2本+着弾リング。
+  raitenSlashFx(pos: THREE.Vector3): void {
+    this.shockwaveRing(pos.clone(), 3, 0xaa66ff);
+    for (let i = 0; i < 2; i += 1) {
+      const a = Math.random() * Math.PI * 2;
+      const to = new THREE.Vector3(pos.x + Math.cos(a) * 1.6, pos.y + 0.1, pos.z + Math.sin(a) * 1.6);
+      this.buildBranchBolt(new THREE.Vector3(pos.x, pos.y + 1.6, pos.z), to, 2, true, 0.14);
+    }
+    this.impactRing(pos, 0x8844ff);
+  }
+
+  // R53 3連ブリンク放電ノヴァ(M3配線: 3s以内の3連ブリンク成立時に1回。150AoEダメージは
+  // match側)。中心から地表を走る放射ボルト6本+大輪撃+膨張フラッシュ。ボルトは
+  // buildBranchBolt=pushGokuraiColumn経由で柱キャップ96に参加する。
+  blinkDischargeNova(pos: THREE.Vector3): void {
+    this.shockwaveRing(pos.clone(), 6, 0x8844ff);
+    for (let i = 0; i < 6; i += 1) {
+      const a = (i / 6) * Math.PI * 2 + Math.random() * 0.4;
+      const to = new THREE.Vector3(pos.x + Math.cos(a) * (3 + Math.random() * 2), pos.y + 0.05, pos.z + Math.sin(a) * (3 + Math.random() * 2));
+      this.buildBranchBolt(new THREE.Vector3(pos.x, pos.y + 0.8, pos.z), to, 2, true, 0.18);
+    }
+    const flash = new THREE.Mesh(
+      this.blastGeometry,
+      new THREE.MeshBasicMaterial({
+        color: 0xbb88ff,
+        transparent: true,
+        opacity: 0.6,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    flash.position.copy(pos);
+    flash.scale.setScalar(0.5);
+    flash.userData.targetScale = 3.0;
+    this.scene.add(flash);
+    this.blasts.push({ obj: flash, life: 0.24, maxLife: 0.24 });
   }
 
   // 黒雷帝降臨フラッシュ: 自身を中心に紫電リング+周囲へ黒雷ボルト3本(タイムスロー代替の見得)
@@ -3192,6 +3304,256 @@ export class Effects {
     }
   }
 
+  // ── R53-W2: ゾンビ特殊バリアント + パワーアップ + 鍛神台 演出 ──────────────
+
+  /**
+   * 瘴気ゾンビ撃破時に残る毒雲。緑の半透明スフィア3〜5層相当(固定4層、reduceMotion=1層)
+   * が緩やかに膨張しながらグループごと自転し、少量の浮遊粒子(sparkGeometry流用)が
+   * ゆっくり立ち上る。寿命 MIASMA_DURATION_S(6s)。同時 MIASMA_MAX(4)個キャップで、
+   * 超過時は最古を強制リサイクル(hitPuff/deathBurstと同じプール流儀)。
+   * 全レイヤーの opacity は≤0.30(bloom閾値0.9に対し十分安全)。
+   * reduceMotion=true: 単層+粒子なし+自転なし(既存rm流儀)。
+   */
+  miasmaCloud(x: number, y: number, z: number, reduceMotion = false): void {
+    const group = this.acquireMiasma();
+    group.position.set(x, y, z);
+    group.rotation.y = 0;
+    group.userData.rotSpeed = reduceMotion
+      ? 0
+      : (0.16 + Math.random() * 0.14) * (Math.random() < 0.5 ? 1 : -1);
+
+    const activeLayers = reduceMotion ? 1 : MIASMA_LAYER_MAX;
+    let layerIdx = 0;
+    for (const child of group.children) {
+      if (child.userData.isMiasmaLayer !== true) continue;
+      const layer = child as THREE.Mesh;
+      const visible = layerIdx < activeLayers;
+      layer.visible = visible;
+      if (visible) {
+        const angle = Math.random() * Math.PI * 2;
+        const r = 0.5 + Math.random() * (MIASMA_RADIUS_M * 0.45);
+        layer.position.set(Math.cos(angle) * r, Math.random() * 1.1, Math.sin(angle) * r);
+        const start = 0.5 + Math.random() * 0.3;
+        layer.scale.setScalar(start);
+        layer.userData.startScale = start;
+        layer.userData.targetScale = 1.6 + Math.random() * (MIASMA_RADIUS_M * 0.35);
+        layer.userData.baseOpacity = 0.16 + Math.random() * 0.12; // ≤0.30
+        const mat = layer.material as THREE.MeshBasicMaterial;
+        mat.opacity = 0;
+        mat.color.setHex(layerIdx % 2 === 0 ? 0x3fae5a : 0x2f8f48);
+      }
+      layerIdx += 1;
+    }
+
+    let particleIdx = 0;
+    for (const child of group.children) {
+      if (child.userData.isMiasmaParticle !== true) continue;
+      const particle = child as THREE.Mesh;
+      const visible = !reduceMotion && particleIdx < MIASMA_PARTICLE_MAX;
+      particle.visible = visible;
+      if (visible) {
+        const angle = Math.random() * Math.PI * 2;
+        const r = Math.random() * MIASMA_RADIUS_M * 0.6;
+        particle.position.set(Math.cos(angle) * r, Math.random() * 0.4, Math.sin(angle) * r);
+        particle.scale.setScalar(2 + Math.random() * 2.5);
+        particle.userData.baseOpacity = 0.18 + Math.random() * 0.1; // ≤0.30
+        (particle.material as THREE.MeshBasicMaterial).opacity = 0;
+        (particle.userData.vel as THREE.Vector3).set(
+          (Math.random() - 0.5) * 0.18,
+          0.14 + Math.random() * 0.16,
+          (Math.random() - 0.5) * 0.18,
+        );
+      }
+      particleIdx += 1;
+    }
+
+    this.miasmaActive.push({ obj: group, life: MIASMA_DURATION_S, maxLife: MIASMA_DURATION_S });
+  }
+
+  // miasmaCloud用Group取得。free優先→上限未満ならnew(4層+5粒子を一度だけ構築)→
+  // 上限到達時は最古のactiveを強制リサイクル(acquirePuff/acquireDeathFlashと同じ流儀)。
+  private acquireMiasma(): THREE.Group {
+    const free = this.miasmaFree.pop();
+    if (free) {
+      this.scene.add(free);
+      return free;
+    }
+    if (this.miasmaActive.length >= MIASMA_MAX) {
+      const oldest = this.miasmaActive.shift();
+      if (oldest) return oldest.obj; // 既にscene上。呼び出し元(miasmaCloud)が全パラメタを上書きする
+    }
+    const group = new THREE.Group();
+    group.userData.isMiasma = true;
+    for (let i = 0; i < MIASMA_LAYER_MAX; i += 1) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x3fae5a,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.NormalBlending,
+        depthWrite: false,
+      });
+      const layer = new THREE.Mesh(this.cloudGeometry, mat);
+      layer.userData.isMiasmaLayer = true;
+      group.add(layer);
+    }
+    for (let i = 0; i < MIASMA_PARTICLE_MAX; i += 1) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x8fe6a0,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const particle = new THREE.Mesh(this.sparkGeometry, mat);
+      particle.userData.isMiasmaParticle = true;
+      particle.userData.vel = new THREE.Vector3();
+      group.add(particle);
+    }
+    this.scene.add(group);
+    return group;
+  }
+
+  // miasma専用tick: 寿命切れでdisposeせず、scene離脱の上miasmaFreeへ回収して再利用する
+  // (hitPuff/deathBurstと同じプール流儀)。膨張(scale)・フェードイン/アウト・グループ自転を処理。
+  private tickMiasma(dt: number): void {
+    const kept: Timed<THREE.Group>[] = [];
+    for (const item of this.miasmaActive) {
+      item.life -= dt;
+      const group = item.obj;
+      if (item.life <= 0) {
+        this.scene.remove(group);
+        this.miasmaFree.push(group);
+        continue;
+      }
+      const ratio = item.life / item.maxLife;
+      const age = item.maxLife - item.life;
+      const fadeIn = Math.min(1, age / 1.2);
+      const fadeOut = Math.min(1, ratio / 0.35);
+      const envelope = fadeIn * fadeOut;
+      group.rotation.y += (group.userData.rotSpeed as number) * dt;
+      for (const child of group.children) {
+        if (!child.visible) continue;
+        const mesh = child as THREE.Mesh;
+        const base = mesh.userData.baseOpacity as number;
+        (mesh.material as THREE.MeshBasicMaterial).opacity = base * envelope;
+        if (mesh.userData.isMiasmaLayer === true) {
+          const start = mesh.userData.startScale as number;
+          const target = mesh.userData.targetScale as number;
+          mesh.scale.setScalar(start + (target - start) * Math.min(1, age / MIASMA_DURATION_S));
+        } else if (mesh.userData.isMiasmaParticle === true) {
+          mesh.position.addScaledVector(mesh.userData.vel as THREE.Vector3, dt);
+        }
+      }
+      kept.push(item);
+    }
+    this.miasmaActive = kept;
+  }
+
+  /**
+   * パワーアップドロップの発光ビーコン。呼び出し側管理型(matchがドロップエンティティ
+   * としてscene追加/位置更新/despawnを行うため、このメソッド自体はscene.addしない ──
+   * Timedプールではなく単なる生成ファクトリ)。回転する発光八面体(kind別色)+
+   * 下部の淡いリング(既存 ringGeometry 流用)。Materialはkind別に共有キャッシュし、
+   * 呼び出すたびのcloneはしない(同kindの複数ビーコンが同一Materialを参照する)。
+   * userData.spinSpeed/bobAmplitude は呼び出し側の毎フレーム演出適用のヒント値。
+   * reduceMotion=true: bobAmplitude=0(上下浮遊を止める)。自転(spin)は既存rm流儀どおり残す。
+   */
+  powerUpBeacon(kind: PowerUpKind, reduceMotion = false): THREE.Group {
+    const group = new THREE.Group();
+    group.name = 'powerUpBeacon';
+    const octa = new THREE.Mesh(this.powerUpOctaGeometry, this.acquirePowerUpMaterial(kind));
+    octa.position.y = 0.55;
+    group.add(octa);
+    const ring = new THREE.Mesh(this.ringGeometry, this.acquirePowerUpRingMaterial(kind));
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.04;
+    ring.scale.setScalar(0.85);
+    group.add(ring);
+    group.userData.kind = kind;
+    group.userData.spinSpeed = 0.9; // rad/s目安(呼び出し側が毎フレーム回転適用する際のヒント)
+    group.userData.bobAmplitude = reduceMotion ? 0 : 0.12;
+    return group;
+  }
+
+  /**
+   * powerUpBeacon の対。groupをparentから外すのみ。八面体/リングのMaterialはkind別
+   * 共有キャッシュ(Effects.dispose()で一括解放)のため、ここでは解放しない ──
+   * 誤って解放すると同kindの他アクティブ・ビーコンまで壊れるため。
+   */
+  disposePowerUpBeacon(group: THREE.Group): void {
+    if (group.parent) group.parent.remove(group);
+  }
+
+  private acquirePowerUpMaterial(kind: PowerUpKind): THREE.MeshBasicMaterial {
+    const cached = this.powerUpMaterials.get(kind);
+    if (cached) return cached;
+    const mat = new THREE.MeshBasicMaterial({
+      color: POWERUP_BEACON_COLORS[kind],
+      transparent: true,
+      opacity: 0.55, // ≤0.55(bloom安全)
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.powerUpMaterials.set(kind, mat);
+    return mat;
+  }
+
+  private acquirePowerUpRingMaterial(kind: PowerUpKind): THREE.MeshBasicMaterial {
+    const cached = this.powerUpRingMaterials.get(kind);
+    if (cached) return cached;
+    const mat = new THREE.MeshBasicMaterial({
+      color: POWERUP_BEACON_COLORS[kind],
+      transparent: true,
+      opacity: 0.28,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.powerUpRingMaterials.set(kind, mat);
+    return mat;
+  }
+
+  /**
+   * 鍛神台(Pack-a-Punch)の改造実行演出。橙火花バースト(既存 slamSparks 流用)+
+   * 立ち上る発光オーブ×4(既存 blasts プールを velY 付きで再利用。寿命を段階的に
+   * ずらして約2.5s持続する「光条」に見せる)。新規プール・新規ジオメトリは使わない。
+   */
+  papMachineGlow(x: number, y: number, z: number): void {
+    this.slamSparks(new THREE.Vector3(x, y, z), 0xff9a2e);
+
+    const RISE_LIFE = [1.0, 1.4, 1.8, 2.3] as const;
+    for (let i = 0; i < RISE_LIFE.length; i += 1) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: i % 2 === 0 ? 0xffe6a0 : 0xff9a2e,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const orb = new THREE.Mesh(this.blastGeometry, mat);
+      const jitter = 0.18;
+      orb.position.set(x + (Math.random() - 0.5) * jitter, y, z + (Math.random() - 0.5) * jitter);
+      orb.scale.setScalar(0.05);
+      orb.userData.targetScale = 0.22 + Math.random() * 0.1;
+      orb.userData.velY = 1.6 + Math.random() * 0.8;
+      orb.userData.baseOpacity = 0.5;
+      const life = RISE_LIFE[i]!;
+      this.scene.add(orb);
+      this.blasts.push({ obj: orb, life, maxLife: life });
+    }
+  }
+
+  /**
+   * 爆裂種ゾンビの自爆演出。小型爆発(既存 explosion、半径3m相当 = zombie-economy の
+   * BLAST_RADIUS_M と揃える)+ 緑がかった破片(既存 debrisBurst 流用)。
+   * 新規プール・新規ジオメトリは使わない。
+   */
+  variantBlastFx(x: number, y: number, z: number): void {
+    const pos = new THREE.Vector3(x, y, z);
+    this.explosion(pos, 3);
+    this.debrisBurst(pos, 0x5a8f4a, 0.4, 0.4, 0.4);
+  }
+
   update(dt: number): void {
     this.tracers = this.tick(this.tracers, dt, (line, ratio) => {
       (line.material as THREE.LineBasicMaterial).opacity =
@@ -3200,6 +3562,7 @@ export class Effects {
     this.tickPuffPool(dt);
     this.tickDeathFlash(dt);
     this.tickDeathSparks(dt);
+    this.tickMiasma(dt);
     this.decals = this.tick(this.decals, dt, (decal, ratio) => {
       // 寿命の最後の四分の一だけフェードする
       (decal.material as THREE.MeshBasicMaterial).opacity = 0.7 * Math.min(1, ratio * 4);
@@ -3896,6 +4259,11 @@ export class Effects {
     this.deathSparkActive.length = 0;
     for (const group of this.deathSparkFree) this.disposeObject(group);
     this.deathSparkFree.length = 0;
+    // R53-W2: miasma 再利用プール — inactive(free)分もここで全解放(リーク禁止)。
+    for (const item of this.miasmaActive) this.disposeObject(item.obj);
+    this.miasmaActive.length = 0;
+    for (const group of this.miasmaFree) this.disposeObject(group);
+    this.miasmaFree.length = 0;
   }
 
   // 試合破棄時に呼ぶ。プール共有ジオメトリも含めて解放する
@@ -3910,6 +4278,12 @@ export class Effects {
     this.ringGeometry.dispose();
     this.streakGeometry.dispose();
     this.debrisFragGeo.dispose();
+    this.powerUpOctaGeometry.dispose();
+    // R53-W2: パワーアップ・ビーコンのkind別共有Material(試合中は使い回し、match終了時に一括解放)
+    for (const mat of this.powerUpMaterials.values()) mat.dispose();
+    this.powerUpMaterials.clear();
+    for (const mat of this.powerUpRingMaterials.values()) mat.dispose();
+    this.powerUpRingMaterials.clear();
   }
 
   private tick<T extends THREE.Object3D>(

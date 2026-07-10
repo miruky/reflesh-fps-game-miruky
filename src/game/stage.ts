@@ -1,4 +1,4 @@
-import { mulberry32 } from '../core/rng';
+import { mulberry32, type Rand } from '../core/rng';
 
 // ── 映画的アトモスフィア(R11): THREE非依存の純型。render/atmosphere.ts と共有する ──
 export type MoodId = 'day' | 'dusk' | 'night' | 'overcast' | 'snow';
@@ -68,11 +68,26 @@ export type PropKind =
   | 'vendingmachine' | 'drumgroup' | 'pallet' | 'torii' | 'stonelantern'
   | 'well' | 'pier' | 'utilitypole' | 'rubble' | 'gasbottlegroup' | 'supplycrate';
 
+/**
+ * ミニシーン(超リアル化Layer C, R53-S2)のテンプレートID。
+ * 各シーンは 2〜5 プロップの相対配置テンプレート(SCENE_TEMPLATES参照)を持ち、
+ * シード決定論のアンカー位置+連続回転(シード回転)で配置される「物語性のある小場面」。
+ */
+export type MiniSceneId = 'shizai' | 'kenmon' | 'sandou' | 'jiko' | 'idobata' | 'kouba' | 'kyuukei';
+
 export interface ObjectEntry {
+  /** scatter='scene' の時は無視される(型都合上の代表prop。実際に置かれるkind群はsceneId側で決まる)。 */
   kind: PropKind;
+  /** scatter='scene' の時は「シーンを何箇所配置するか」を表す。 */
   count: number;
-  scatter: 'random' | 'perimeter' | 'cluster';
+  /**
+   * 配置方式。'scene' はミニシーン(複数プロップの相対配置テンプレート)を count 回試行配置する。
+   * scene 指定時は sceneId が必須(未設定ならそのエントリは無視される)。
+   */
+  scatter: 'random' | 'perimeter' | 'cluster' | 'scene';
   clusterRadius?: number;
+  /** scatter='scene' の時のみ使用。ミニシーンテンプレートID(SCENE_TEMPLATES参照)。 */
+  sceneId?: MiniSceneId;
 }
 
 /** ステージ個性レシピ。StageDef の任意フィールド。後方互換(未設定時は汎用配置) */
@@ -135,10 +150,44 @@ export interface BoxSpec {
 
 export type SpawnPoint = [number, number, number];
 
+/**
+ * 環境プロップ1インスタンス分の「視覚配置」メタデータ(R53-S2 / M2c契約)。
+ * コライダー生成(BoxSpec, buildProp() 経由)とは完全に独立した並行データ列だが、
+ * generateStage() 内で同時に生成されるため常にboxesと同期している(座標系・インスタンス対応も同一)。
+ *
+ * ── M2c(match.ts オーナー)向け配線メモ ──────────────────────────────────
+ * 1インスタンス = 1回の prop-visuals.buildPropVisual(kind, cx, cz, baseY=0, rotRad, scale, rand, palette)
+ * 呼び出しに対応する。rand は呼び出し側(match.ts)が用意する決定論RNG(例: instance毎に
+ * mulberry32(def.seed ^ index) 等)で構わない — 本フィールドはその「入力」だけを提供する。
+ * kind が prop-visuals.PROP_VISUAL_KINDS に含まれない場合は、既存の箱ビジュアル
+ * (buildProp() が生成した BoxSpec群、boxes 側にそのまま存在)へフォールバックすること。
+ */
+export interface PropPlacement {
+  kind: PropKind;
+  /** ワールドX座標(該当インスタンスの中心。boxesの対応ボックス群と同じ地上点)。 */
+  cx: number;
+  /** ワールドZ座標。 */
+  cz: number;
+  /**
+   * ヨー回転(ラジアン, 0-2π に正規化済み)。**視覚専用**。
+   * コライダー(buildProp() が使う 0-3 の90°刻み量子化回転)には一切影響しない
+   * — colliderは従来どおり軸整列のボックスのまま。rotRad は量子化回転を基準に
+   * ±0.45rad(約26°)の範囲でジッタさせた値(標準化ジッタ, R53-S2)。
+   */
+  rotRad: number;
+  /** スケール倍率(1.0 ± 0.12 の一様ジッタ)。視覚専用 — コライダー寸法は不変。 */
+  scaleJitter: number;
+}
+
 export interface StageLayout {
   boxes: BoxSpec[];
   playerSpawns: SpawnPoint[];
   botSpawns: SpawnPoint[];
+  /**
+   * 環境プロップの視覚配置一覧(R53-S2)。recipe.objects が無いステージでは空配列。
+   * boxes とは独立した列だが同一の generateStage() 呼び出しから生成されるため常に同期する。
+   */
+  propPlacements: PropPlacement[];
 }
 
 export interface Aabb {
@@ -749,15 +798,212 @@ export function buildProp(
   }
 }
 
+// ── ミニシーン(超リアル化Layer C, R53-S2) ──────────────────────────────
+// 複数プロップの相対配置テンプレート(座標はシーン中心=アンカーからのローカルオフセット、
+// dRotSteps はテンプレ内の相対量子化回転)。generateThemeObjects が
+// アンカー位置+シーン全体の連続回転(シード回転)を独立RNGで決定し、
+// 各メンバーへ buildProp() を1回ずつ呼んでboxes/propPlacedへ積む。
+interface SceneMember {
+  kind: PropKind;
+  /** シーンアンカーからのローカルXオフセット(m, シーン回転前)。 */
+  dx: number;
+  /** シーンアンカーからのローカルZオフセット(m, シーン回転前)。 */
+  dz: number;
+  /** シーン基準角に対する相対量子化回転(0-3, コライダー生成にのみ使用)。 */
+  dRotSteps: number;
+}
+
+const SCENE_TEMPLATES: Record<MiniSceneId, readonly SceneMember[]> = {
+  // 資材置場: パレット2+補給箱+傾いたドラム缶群
+  shizai: [
+    { kind: 'pallet', dx: -1.2, dz: 0, dRotSteps: 0 },
+    { kind: 'pallet', dx: 1.2, dz: 0.3, dRotSteps: 1 },
+    { kind: 'supplycrate', dx: 0, dz: -1.8, dRotSteps: 2 },
+    { kind: 'drumgroup', dx: 2.0, dz: -1.0, dRotSteps: 0 },
+  ],
+  // 検問: バリケード車+コンクリバリア列+フェンス
+  kenmon: [
+    { kind: 'barricadecar', dx: 0, dz: 0, dRotSteps: 0 },
+    { kind: 'concretebarrier', dx: -3.2, dz: -2.5, dRotSteps: 1 },
+    { kind: 'concretebarrier', dx: -3.2, dz: 0.5, dRotSteps: 1 },
+    { kind: 'fence', dx: -3.2, dz: 3.5, dRotSteps: 1 },
+  ],
+  // 参道: 鳥居+石灯籠対+ベンチ
+  sandou: [
+    { kind: 'torii', dx: 0, dz: 0, dRotSteps: 0 },
+    { kind: 'stonelantern', dx: -2.5, dz: -3, dRotSteps: 0 },
+    { kind: 'stonelantern', dx: 2.5, dz: -3, dRotSteps: 0 },
+    { kind: 'bench', dx: 0, dz: -6, dRotSteps: 2 },
+  ],
+  // 車両事故: 放置車+トラック+瓦礫
+  jiko: [
+    { kind: 'derelictcar', dx: -2, dz: 1, dRotSteps: 1 },
+    { kind: 'truck', dx: 2.5, dz: -1, dRotSteps: 3 },
+    { kind: 'rubble', dx: 0, dz: -3, dRotSteps: 0 },
+  ],
+  // 井戸端: 井戸+ベンチ+広葉樹
+  idobata: [
+    { kind: 'well', dx: 0, dz: 0, dRotSteps: 0 },
+    { kind: 'bench', dx: 2.2, dz: 0.5, dRotSteps: 1 },
+    { kind: 'broadleaf', dx: -2.5, dz: -1.5, dRotSteps: 0 },
+  ],
+  // 工場一角: 変圧器+ドラム缶+ガスボンベ+フェンス
+  kouba: [
+    { kind: 'transformer', dx: 0, dz: 0, dRotSteps: 0 },
+    { kind: 'drumgroup', dx: 2.2, dz: -0.5, dRotSteps: 1 },
+    { kind: 'gasbottlegroup', dx: -2.0, dz: 1.0, dRotSteps: 2 },
+    { kind: 'fence', dx: 0, dz: 2.8, dRotSteps: 0 },
+  ],
+  // 休憩所: ベンチ対+自販機+街灯
+  kyuukei: [
+    { kind: 'bench', dx: -1.8, dz: 0, dRotSteps: 0 },
+    { kind: 'bench', dx: 1.8, dz: 0, dRotSteps: 2 },
+    { kind: 'vendingmachine', dx: 0, dz: -1.6, dRotSteps: 0 },
+    { kind: 'streetlight', dx: 0, dz: 1.8, dRotSteps: 0 },
+  ],
+};
+
+/** テストや将来の拡張向けにミニシーンID一覧を列挙(prop-visuals.tsのPROP_VISUAL_KINDSと同じ流儀)。 */
+export const MINI_SCENE_IDS: readonly MiniSceneId[] = Object.keys(SCENE_TEMPLATES) as MiniSceneId[];
+
+/** 視覚ジッタの標準値(R53-S2): ヨーは量子化回転±ROT_JITTER、スケールは±SCALE_JITTERの一様分布。 */
+const ROT_JITTER = 0.45; // rad(約26°)。量子化回転(0/90/180/270°)を軸に振れる範囲
+// ★V-C修正: 細長プロップ(長辺/短辺>2)は±26°だと視覚端が軸整列コライダーから最大~1.3m
+// はみ出す(弾すり抜け/見えない壁の体感リスク)。回転ジッタを±0.1rad(約6°)へ縮小する。
+// 0.1 < π/4 なので量子化回転の復元(round&3)は引き続き一意
+const ROT_JITTER_LONG = 0.1;
+// ★W4A監査対応: 明示リストは portalkrane(2.75)/towercrane(2.6)/signboard(3.0)/torii(3.0) の
+// 漏れを生んだため、PROP_FOOTPRINTS のアスペクト比(長辺/短辺>2)から構造的に導出する。
+// 細長プロップは視覚回転が軸整列コライダーからはみ出しやすい(最大2.04m実測)ため±0.1radに抑える
+const LONG_PROP_KINDS: ReadonlySet<string> = new Set(
+  (Object.keys(PROP_FOOTPRINTS) as PropKind[]).filter((k) => {
+    const [w, d] = PROP_FOOTPRINTS[k];
+    return Math.max(w, d) / Math.min(w, d) > 2;
+  }),
+);
+const SCALE_JITTER = 0.12; // ±12%
+
+/** 任意の角度を [0, 2π) へ正規化する。 */
+function normalizeAngle(rad: number): number {
+  const twoPi = Math.PI * 2;
+  return ((rad % twoPi) + twoPi) % twoPi;
+}
+
+/**
+ * 量子化回転(0-3, 90°刻み)を基準に ±ROT_JITTER の視覚専用ヨーを引く。
+ * コライダーは常にこの quantSteps のまま軸整列(rotRadは一切参照されない)。
+ */
+function jitterRotRad(quantSteps: number, visRand: Rand, kind?: string): number {
+  // visRand は kind に依らず必ず1回消費(決定論ストリームの安定性維持)
+  const amp = kind !== undefined && LONG_PROP_KINDS.has(kind) ? ROT_JITTER_LONG : ROT_JITTER;
+  return normalizeAngle(quantSteps * (Math.PI / 2) + (visRand() * 2 - 1) * amp);
+}
+
+function jitterScale(visRand: Rand): number {
+  return 1 + (visRand() * 2 - 1) * SCALE_JITTER;
+}
+
+/**
+ * ミニシーン1箇所を試行配置する。アンカー位置+シーン全体の連続回転(sceneRot)を
+ * visRand(独立RNG)で決め、テンプレのローカルオフセットを sceneRot で回転させて
+ * 各メンバーのワールド座標を得る。全メンバーが境界内・クリアランスOKな試行が
+ * 見つかるまで最大20回リトライ(既存の建造物/障害物配置と同じ方針)。
+ * 失敗時は静かに諦める(シーンが1つ減るだけで既存配置には一切影響しない)。
+ */
+function tryPlaceScene(
+  sceneId: MiniSceneId,
+  def: StageDef,
+  half: number,
+  allSpawns: readonly [number, number][],
+  buildingPlaced: Aabb[],
+  propPlaced: Aabb[],
+  boxes: BoxSpec[],
+  visRand: Rand,
+  placementsOut: PropPlacement[] | undefined,
+): void {
+  const template = SCENE_TEMPLATES[sceneId];
+  const anchorMargin = 14; // 最遠オフセット(参道の-6m等)+プロップ半径を見込んだ安全マージン
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const ax = Math.round(((visRand() * 2 - 1) * (half - anchorMargin)) / GRID) * GRID;
+    const az = Math.round(((visRand() * 2 - 1) * (half - anchorMargin)) / GRID) * GRID;
+    const sceneRot = visRand() * Math.PI * 2;
+    const cos = Math.cos(sceneRot);
+    const sin = Math.sin(sceneRot);
+
+    const resolved: Array<{ kind: PropKind; px: number; pz: number; rotSteps: number }> = [];
+    let ok = true;
+    for (const member of template) {
+      const px = ax + member.dx * cos - member.dz * sin;
+      const pz = az + member.dx * sin + member.dz * cos;
+      const fp = PROP_FOOTPRINTS[member.kind];
+
+      if (Math.abs(px) + fp[0] / 2 > half - 3 || Math.abs(pz) + fp[1] / 2 > half - 3) {
+        ok = false;
+        break;
+      }
+      const nearSpawn = allSpawns.some(([sx, sz]) => Math.hypot(px - sx, pz - sz) < SPAWN_CLEARANCE);
+      if (nearSpawn) {
+        ok = false;
+        break;
+      }
+      const propAabb = aabbOf(px, pz, fp[0] + 3, fp[1] + 3);
+      if (buildingPlaced.some((b) => overlaps(b, propAabb, 0))) {
+        ok = false;
+        break;
+      }
+      const propFootAabb = aabbOf(px, pz, fp[0], fp[1]);
+      if (propPlaced.some((b) => overlaps(b, propFootAabb, 1.5))) {
+        ok = false;
+        break;
+      }
+      // シーン内の既配置メンバー同士のクリアランス(テンプレ座標の想定内なら通常発生しない)
+      if (resolved.some((r) => Math.hypot(r.px - px, r.pz - pz) < 1.5)) {
+        ok = false;
+        break;
+      }
+
+      const rotSteps = (Math.round(sceneRot / (Math.PI / 2)) + member.dRotSteps) & 3;
+      resolved.push({ kind: member.kind, px, pz, rotSteps });
+    }
+    if (!ok || resolved.length === 0) continue;
+
+    for (const r of resolved) {
+      const propBoxes = buildProp(r.kind, r.px, r.pz, r.rotSteps, visRand, def.palette);
+      boxes.push(...propBoxes);
+      const fp = PROP_FOOTPRINTS[r.kind];
+      propPlaced.push(aabbOf(r.px, r.pz, fp[0], fp[1]));
+      if (placementsOut) {
+        placementsOut.push({
+          kind: r.kind,
+          cx: r.px,
+          cz: r.pz,
+          rotRad: jitterRotRad(r.rotSteps, visRand, r.kind),
+          scaleJitter: jitterScale(visRand),
+        });
+      }
+    }
+    return; // 配置成功
+  }
+  // 20回失敗 → このシーン箇所は諦める(既存の建造物配置と同じ方針。他配置は無傷)
+}
+
 /**
  * StageRecipe.objects に従い環境プロップを配置する。
  * 別シード(def.seed ^ 0x7e57ab1e)を使用→既存レイアウトRNG非汚染。
  * クリアランス: スポーン6m / 建造物AABB+2m / プロップ間1.5m
+ *
+ * placementsOut を渡すと、配置した全インスタンス(既存スキャッタ+ミニシーン共通)の
+ * 視覚メタデータ(PropPlacement: kind/cx/cz/rotRad/scaleJitter)を追記する。
+ * rotRad/scaleJitter は本関数内部で独立に導出した visRand(def.seedから派生する別の
+ * mulberry32)でのみ消費するため、既存の rand(位置決定/量子化回転)の消費列には一切影響しない
+ * — 既存ステージの配置結果(boxes)は placementsOut の有無に関わらず完全に同一。
  */
 export function generateThemeObjects(
   def: StageDef,
   buildingPlaced: Aabb[],
   rand: () => number,
+  placementsOut?: PropPlacement[],
 ): BoxSpec[] {
   const objects = def.recipe?.objects;
   if (!objects?.length) return [];
@@ -765,6 +1011,8 @@ export function generateThemeObjects(
   const half = def.size / 2;
   const boxes: BoxSpec[] = [];
   const propPlaced: Aabb[] = [];
+  // 視覚ジッタ+ミニシーン専用の独立RNG(既存rand非汚染)。def.seedから派生する固定シード。
+  const visRand = mulberry32(def.seed ^ 0x9e3779b9);
 
   // 固定スポーン座標を決定論的に再現(rand消費なし)
   const edge = half - 4;
@@ -784,6 +1032,17 @@ export function generateThemeObjects(
   }
 
   for (const entry of objects) {
+    // ミニシーン(R53-S2): 独立RNG(visRand)のみを消費するため既存randの消費列は無傷。
+    // count は「シーンを何箇所配置するか」。sceneId未設定のエントリは黙って無視する。
+    if (entry.scatter === 'scene') {
+      if (entry.sceneId) {
+        for (let i = 0; i < entry.count; i += 1) {
+          tryPlaceScene(entry.sceneId, def, half, allSpawns, buildingPlaced, propPlaced, boxes, visRand, placementsOut);
+        }
+      }
+      continue;
+    }
+
     const fp = PROP_FOOTPRINTS[entry.kind];
 
     // クラスター中心を1エントリにつき1回決定
@@ -839,6 +1098,16 @@ export function generateThemeObjects(
         boxes.push(...propBoxes);
         propPlaced.push(aabbOf(px, pz, fp[0], fp[1]));
         placedOk = true;
+        // 視覚ジッタ(R53-S2): visRandのみ消費(既存randの消費列に影響しない=既存配置ビット不変)
+        if (placementsOut) {
+          placementsOut.push({
+            kind: entry.kind,
+            cx: px,
+            cz: pz,
+            rotRad: jitterRotRad(propRot, visRand, entry.kind),
+            scaleJitter: jitterScale(visRand),
+          });
+        }
         break;
       }
       void placedOk;
@@ -950,7 +1219,8 @@ export function generateStage(def: StageDef): StageLayout {
 
   // ③.5 テーマ環境オブジェクト(別シード・既存レイアウトRNG非汚染)
   const propRand = mulberry32(def.seed ^ 0x7e57ab1e);
-  boxes.push(...generateThemeObjects(def, placed, propRand));
+  const propPlacements: PropPlacement[] = [];
+  boxes.push(...generateThemeObjects(def, placed, propRand, propPlacements));
 
   // ④ 拡張視覚地形 + 遠景シルエット(decor = 境界外装飾)
   boxes.push(...generateExtendedTerrain(def, half));
@@ -1019,5 +1289,5 @@ export function generateStage(def: StageDef): StageLayout {
     box.breakable = { hp: Math.max(120, Math.min(260, Math.round(120 + Math.sqrt(vol) * 10))) };
   }
 
-  return { boxes, playerSpawns: corners, botSpawns };
+  return { boxes, playerSpawns: corners, botSpawns, propPlacements };
 }

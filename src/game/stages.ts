@@ -47,6 +47,8 @@ export const STAGES: StageDef[] = [
         { kind: 'streetlight', count: 6, scatter: 'perimeter' },
         { kind: 'bench', count: 4, scatter: 'random' },
         { kind: 'supplycrate', count: 2, scatter: 'random' },
+        // R53-S2 ミニシーン: 訓練場の休憩スポット
+        { kind: 'bench', count: 1, scatter: 'scene', sceneId: 'kyuukei' },
       ],
     },
   },
@@ -92,6 +94,9 @@ export const STAGES: StageDef[] = [
         { kind: 'pallet', count: 6, scatter: 'random' },
         { kind: 'drumgroup', count: 4, scatter: 'random' },
         { kind: 'concretebarrier', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 港湾倉庫の資材置場+検問
+        { kind: 'pallet', count: 1, scatter: 'scene', sceneId: 'shizai' },
+        { kind: 'barricadecar', count: 1, scatter: 'scene', sceneId: 'kenmon' },
       ],
     },
   },
@@ -137,6 +142,8 @@ export const STAGES: StageDef[] = [
         { kind: 'broadleaf', count: 4, scatter: 'cluster', clusterRadius: 15 },
         { kind: 'bench', count: 4, scatter: 'random' },
         { kind: 'rock', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 中庭の井戸端
+        { kind: 'well', count: 1, scatter: 'scene', sceneId: 'idobata' },
       ],
     },
   },
@@ -181,6 +188,8 @@ export const STAGES: StageDef[] = [
         { kind: 'stonelantern', count: 4, scatter: 'random' },
         { kind: 'rock', count: 6, scatter: 'random' },
         { kind: 'signboard', count: 4, scatter: 'perimeter' },
+        // R53-S2 ミニシーン: 神殿回廊の参道
+        { kind: 'torii', count: 1, scatter: 'scene', sceneId: 'sandou' },
       ],
     },
   },
@@ -226,6 +235,9 @@ export const STAGES: StageDef[] = [
         { kind: 'portalkrane', count: 2, scatter: 'perimeter' },
         { kind: 'gastank', count: 2, scatter: 'random' },
         { kind: 'concretebarrier', count: 6, scatter: 'random' },
+        // R53-S2 ミニシーン: 港湾の工場一角+検問
+        { kind: 'transformer', count: 1, scatter: 'scene', sceneId: 'kouba' },
+        { kind: 'barricadecar', count: 1, scatter: 'scene', sceneId: 'kenmon' },
       ],
     },
   },
@@ -273,6 +285,8 @@ export const STAGES: StageDef[] = [
         { kind: 'deadtree', count: 4, scatter: 'cluster', clusterRadius: 20 },
         { kind: 'conifer', count: 4, scatter: 'cluster', clusterRadius: 15 },
         { kind: 'antenna', count: 2, scatter: 'perimeter' },
+        // R53-S2 ミニシーン: 丘陵要塞の休憩所
+        { kind: 'bench', count: 1, scatter: 'scene', sceneId: 'kyuukei' },
       ],
     },
   },
@@ -320,6 +334,8 @@ export const STAGES: StageDef[] = [
         { kind: 'deadtree', count: 4, scatter: 'random' },
         { kind: 'fence', count: 4, scatter: 'random' },
         { kind: 'tankhull', count: 2, scatter: 'random' },
+        // R53-S2 ミニシーン: 砂漠戦域の車両事故
+        { kind: 'derelictcar', count: 1, scatter: 'scene', sceneId: 'jiko' },
       ],
     },
   },
@@ -367,6 +383,8 @@ export const STAGES: StageDef[] = [
         { kind: 'deadtree', count: 4, scatter: 'random' },
         { kind: 'rock', count: 4, scatter: 'random' },
         { kind: 'fence', count: 4, scatter: 'perimeter' },
+        // R53-S2 ミニシーン: 極地施設の休憩所
+        { kind: 'bench', count: 1, scatter: 'scene', sceneId: 'kyuukei' },
       ],
     },
   },
@@ -412,6 +430,9 @@ export const STAGES: StageDef[] = [
         { kind: 'gastank', count: 2, scatter: 'random' },
         { kind: 'transformer', count: 4, scatter: 'random' },
         { kind: 'drumgroup', count: 6, scatter: 'random' },
+        // R53-S2 ミニシーン: 重工業プラントの工場一角+資材置場
+        { kind: 'transformer', count: 1, scatter: 'scene', sceneId: 'kouba' },
+        { kind: 'pallet', count: 1, scatter: 'scene', sceneId: 'shizai' },
       ],
     },
   },
@@ -458,6 +479,8 @@ export const STAGES: StageDef[] = [
         { kind: 'signboard', count: 6, scatter: 'perimeter' },
         { kind: 'streetlight', count: 8, scatter: 'perimeter' },
         { kind: 'bench', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 夜市の休憩所
+        { kind: 'bench', count: 1, scatter: 'scene', sceneId: 'kyuukei' },
       ],
     },
   },
@@ -503,6 +526,8 @@ export const STAGES: StageDef[] = [
         { kind: 'fence', count: 6, scatter: 'perimeter' },
         { kind: 'concretebarrier', count: 4, scatter: 'random' },
         { kind: 'streetlight', count: 4, scatter: 'perimeter' },
+        // R53-S2 ミニシーン: ヘリポート複合の検問
+        { kind: 'barricadecar', count: 1, scatter: 'scene', sceneId: 'kenmon' },
       ],
     },
   },
@@ -550,6 +575,8 @@ export const STAGES: StageDef[] = [
         { kind: 'rubble', count: 6, scatter: 'random' },
         { kind: 'truck', count: 2, scatter: 'random' },
         { kind: 'forklift', count: 2, scatter: 'random' },
+        // R53-S2 ミニシーン: 採石プラントの車両事故
+        { kind: 'derelictcar', count: 1, scatter: 'scene', sceneId: 'jiko' },
       ],
     },
   },
@@ -596,6 +623,8 @@ export const STAGES: StageDef[] = [
         { kind: 'sakura', count: 4, scatter: 'random' },
         { kind: 'stonelantern', count: 4, scatter: 'random' },
         { kind: 'torii', count: 2, scatter: 'random' },
+        // R53-S2 ミニシーン: 竹林境内の参道
+        { kind: 'torii', count: 1, scatter: 'scene', sceneId: 'sandou' },
       ],
     },
   },
@@ -643,6 +672,9 @@ export const STAGES: StageDef[] = [
         { kind: 'well', count: 2, scatter: 'random' },
         { kind: 'broadleaf', count: 4, scatter: 'cluster', clusterRadius: 20 },
         { kind: 'bench', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 水田農村の井戸端+参道
+        { kind: 'well', count: 1, scatter: 'scene', sceneId: 'idobata' },
+        { kind: 'torii', count: 1, scatter: 'scene', sceneId: 'sandou' },
       ],
     },
   },
@@ -688,6 +720,8 @@ export const STAGES: StageDef[] = [
         { kind: 'rock', count: 6, scatter: 'perimeter' },
         { kind: 'antenna', count: 2, scatter: 'perimeter' },
         { kind: 'fence', count: 4, scatter: 'perimeter' },
+        // R53-S2 ミニシーン: 岬要塞の検問
+        { kind: 'barricadecar', count: 1, scatter: 'scene', sceneId: 'kenmon' },
       ],
     },
   },
@@ -734,6 +768,9 @@ export const STAGES: StageDef[] = [
         { kind: 'derelictcar', count: 6, scatter: 'random' },
         { kind: 'barricadecar', count: 4, scatter: 'random' },
         { kind: 'concretebarrier', count: 6, scatter: 'random' },
+        // R53-S2 ミニシーン: 廃駅ヤードの車両事故+検問
+        { kind: 'derelictcar', count: 1, scatter: 'scene', sceneId: 'jiko' },
+        { kind: 'barricadecar', count: 1, scatter: 'scene', sceneId: 'kenmon' },
       ],
     },
   },
@@ -781,6 +818,8 @@ export const STAGES: StageDef[] = [
         { kind: 'conifer', count: 4, scatter: 'cluster', clusterRadius: 20 },
         { kind: 'tankhull', count: 2, scatter: 'random' },
         { kind: 'rubble', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 峡谷要塞の車両事故
+        { kind: 'derelictcar', count: 1, scatter: 'scene', sceneId: 'jiko' },
       ],
     },
   },
@@ -827,6 +866,8 @@ export const STAGES: StageDef[] = [
         { kind: 'broadleaf', count: 6, scatter: 'cluster', clusterRadius: 20 },
         { kind: 'stonelantern', count: 4, scatter: 'random' },
         { kind: 'well', count: 2, scatter: 'random' },
+        // R53-S2 ミニシーン: 湖畔観測所の井戸端
+        { kind: 'well', count: 1, scatter: 'scene', sceneId: 'idobata' },
       ],
     },
   },
@@ -874,6 +915,9 @@ export const STAGES: StageDef[] = [
         { kind: 'towercrane', count: 2, scatter: 'perimeter' },
         { kind: 'concretebarrier', count: 6, scatter: 'random' },
         { kind: 'fence', count: 4, scatter: 'perimeter' },
+        // R53-S2 ミニシーン: 空港エプロンの検問+資材置場
+        { kind: 'barricadecar', count: 1, scatter: 'scene', sceneId: 'kenmon' },
+        { kind: 'pallet', count: 1, scatter: 'scene', sceneId: 'shizai' },
       ],
     },
   },
@@ -920,6 +964,9 @@ export const STAGES: StageDef[] = [
         { kind: 'torii', count: 4, scatter: 'random' },
         { kind: 'well', count: 4, scatter: 'random' },
         { kind: 'signboard', count: 4, scatter: 'perimeter' },
+        // R53-S2 ミニシーン: 温泉街の参道+井戸端
+        { kind: 'torii', count: 1, scatter: 'scene', sceneId: 'sandou' },
+        { kind: 'well', count: 1, scatter: 'scene', sceneId: 'idobata' },
       ],
     },
   },
@@ -978,6 +1025,8 @@ export const STAGES: StageDef[] = [
         { kind: 'rubble', count: 4, scatter: 'random' },
         { kind: 'concretebarrier', count: 4, scatter: 'random' },
         { kind: 'gasbottlegroup', count: 2, scatter: 'random' },
+        // R53-S2 ミニシーン: 夜の廃市の車両事故
+        { kind: 'derelictcar', count: 1, scatter: 'scene', sceneId: 'jiko' },
       ],
     },
   },
@@ -1033,6 +1082,8 @@ export const STAGES: StageDef[] = [
         { kind: 'derelictcar', count: 4, scatter: 'random' },
         { kind: 'barricadecar', count: 2, scatter: 'random' },
         { kind: 'gasbottlegroup', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 紅蓮区画の車両事故
+        { kind: 'derelictcar', count: 1, scatter: 'scene', sceneId: 'jiko' },
       ],
     },
   },
@@ -1087,6 +1138,8 @@ export const STAGES: StageDef[] = [
         { kind: 'rubble', count: 4, scatter: 'random' },
         { kind: 'portalkrane', count: 2, scatter: 'perimeter' },
         { kind: 'concretebarrier', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 灰霧の廃港の車両事故
+        { kind: 'derelictcar', count: 1, scatter: 'scene', sceneId: 'jiko' },
       ],
     },
   },
@@ -1140,6 +1193,8 @@ export const STAGES: StageDef[] = [
         { kind: 'rubble', count: 6, scatter: 'random' },
         { kind: 'stonelantern', count: 4, scatter: 'random' },
         { kind: 'deadtree', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 崩落聖堂の参道跡
+        { kind: 'torii', count: 1, scatter: 'scene', sceneId: 'sandou' },
       ],
     },
   },
@@ -1195,6 +1250,8 @@ export const STAGES: StageDef[] = [
         { kind: 'rock', count: 6, scatter: 'random' },
         { kind: 'gasbottlegroup', count: 4, scatter: 'random' },
         { kind: 'drumgroup', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 溶岩坑道の工場一角
+        { kind: 'transformer', count: 1, scatter: 'scene', sceneId: 'kouba' },
       ],
     },
   },
@@ -1248,6 +1305,8 @@ export const STAGES: StageDef[] = [
         { kind: 'barricadecar', count: 4, scatter: 'random' },
         { kind: 'derelictcar', count: 4, scatter: 'random' },
         { kind: 'rubble', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 精肉場の車両事故
+        { kind: 'derelictcar', count: 1, scatter: 'scene', sceneId: 'jiko' },
       ],
     },
   },
@@ -1302,6 +1361,9 @@ export const STAGES: StageDef[] = [
         { kind: 'barricadecar', count: 4, scatter: 'random' },
         { kind: 'derelictcar', count: 2, scatter: 'random' },
         { kind: 'fence', count: 4, scatter: 'perimeter' },
+        // R53-S2 ミニシーン: 封鎖検問所そのものの検問クラスタ×2+車両事故
+        { kind: 'barricadecar', count: 2, scatter: 'scene', sceneId: 'kenmon' },
+        { kind: 'derelictcar', count: 1, scatter: 'scene', sceneId: 'jiko' },
       ],
     },
   },
@@ -1357,6 +1419,8 @@ export const STAGES: StageDef[] = [
         { kind: 'signboard', count: 4, scatter: 'perimeter' },
         { kind: 'rubble', count: 4, scatter: 'random' },
         { kind: 'bench', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 地下商店街の休憩所
+        { kind: 'bench', count: 1, scatter: 'scene', sceneId: 'kyuukei' },
       ],
     },
   },
@@ -1409,6 +1473,8 @@ export const STAGES: StageDef[] = [
         { kind: 'deadtree', count: 6, scatter: 'random' },
         { kind: 'rubble', count: 4, scatter: 'random' },
         { kind: 'derelictcar', count: 2, scatter: 'random' },
+        // R53-S2 ミニシーン: 廃園の車両事故
+        { kind: 'derelictcar', count: 1, scatter: 'scene', sceneId: 'jiko' },
       ],
     },
   },
@@ -1464,6 +1530,8 @@ export const STAGES: StageDef[] = [
         { kind: 'rock', count: 8, scatter: 'random' },
         { kind: 'gasbottlegroup', count: 4, scatter: 'random' },
         { kind: 'rubble', count: 4, scatter: 'random' },
+        // R53-S2 ミニシーン: 火口要塞の工場一角
+        { kind: 'transformer', count: 1, scatter: 'scene', sceneId: 'kouba' },
       ],
     },
   },
@@ -1508,6 +1576,8 @@ export const STAGES: StageDef[] = [
         { kind: 'bench', count: 4, scatter: 'random' },
         { kind: 'concretebarrier', count: 2, scatter: 'random' },
         { kind: 'streetlight', count: 4, scatter: 'perimeter' },
+        // R53-S2 ミニシーン: 練習場の休憩所
+        { kind: 'bench', count: 1, scatter: 'scene', sceneId: 'kyuukei' },
       ],
     },
   },

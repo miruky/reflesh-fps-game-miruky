@@ -4,12 +4,16 @@ import { WEAPON_DEFS } from './weapons';
 import { ATTACHMENT_DEFS } from './attachments';
 import { CAMO_WEAPON_IDS } from './camo';
 import {
+  addTitle,
   applyCampaignMission,
+  applyChapterRewards,
   applyMatch,
   applyScoreRecord,
   chapterCleared,
   CHALLENGES,
+  CHARM_IDS,
   emptyProfile,
+  isCharmId,
   isMissionUnlocked,
   isUnlocked,
   levelFromXp,
@@ -17,11 +21,14 @@ import {
   MAX_LEVEL,
   rankFromRating,
   rankNameFor,
+  refreshCharmUnlocks,
   starRate,
   UNLOCKS,
+  unlockRewardCamo,
   XP_MUL_NORMAL,
   XP_MUL_ZOMBIE,
   xpToNext,
+  type CampaignProgress,
   type MatchSummary,
   type MissionSummary,
 } from './progression';
@@ -847,5 +854,216 @@ describe('levelRankUpgrade', () => {
     const result = levelRankUpgrade(lv(1), lv(500));
     expect(result?.name).toBe('剣豪');
     expect(result?.tier).toBe(5);
+  });
+});
+
+// ── R53-W2: ゾンビ統計の積算(applyMatch経由。bestZombieRound/zombieKills/zombieBossKills) ──
+describe('ゾンビ統計の積算(applyMatch)', () => {
+  it('mode="zombie"のときのみ積算される(通常モードは変化しない)', () => {
+    const profile = emptyProfile();
+    applyMatch(profile, summary({ kills: 12, zombieRound: 7, zombieBossKills: 2 }), 1, 'zombie');
+    expect(profile.bestZombieRound).toBe(7);
+    expect(profile.zombieKills).toBe(12);
+    expect(profile.zombieBossKills).toBe(2);
+
+    const profile2 = emptyProfile();
+    // mode省略(非ゾンビ)ではzombieRound/zombieBossKillsを渡してもprofileへ積算されない
+    applyMatch(profile2, summary({ kills: 12, zombieRound: 7, zombieBossKills: 2 }));
+    expect(profile2.bestZombieRound).toBe(0);
+    expect(profile2.zombieKills).toBe(0);
+    expect(profile2.zombieBossKills).toBe(0);
+  });
+
+  it('bestZombieRoundは自己ベスト(最大値)、zombieKills/zombieBossKillsは累積', () => {
+    const profile = emptyProfile();
+    applyMatch(profile, summary({ kills: 10, zombieRound: 15 }), 1, 'zombie');
+    applyMatch(profile, summary({ kills: 5, zombieRound: 9 }), 1, 'zombie'); // ラウンドは前回より低い
+    expect(profile.bestZombieRound).toBe(15); // 最大値を維持
+    expect(profile.zombieKills).toBe(15); // 10+5累積
+  });
+
+  it('zombieRound/zombieBossKills省略(旧経路)は0扱いで安全に積算される', () => {
+    const profile = emptyProfile();
+    applyMatch(profile, summary({ kills: 3 }), 1, 'zombie');
+    expect(profile.bestZombieRound).toBe(0);
+    expect(profile.zombieKills).toBe(3);
+    expect(profile.zombieBossKills).toBe(0);
+  });
+});
+
+// ── R53-W2: お守り(charm)解放条件 ──────────────────────────────────────────
+describe('charm(お守り)解放', () => {
+  it('CHARM_IDSは4種でisCharmIdと整合する', () => {
+    expect(CHARM_IDS).toEqual(['startpt', 'revive', 'bossdmg', 'perkcarry']);
+    for (const id of CHARM_IDS) expect(isCharmId(id)).toBe(true);
+    expect(isCharmId('not-a-charm')).toBe(false);
+  });
+
+  it('startpt: ゾンビR10到達で解放、R9では解放されない', () => {
+    const profile = emptyProfile();
+    profile.bestZombieRound = 9;
+    expect(refreshCharmUnlocks(profile)).not.toContain('startpt');
+    expect(profile.charms?.unlocked).not.toContain('startpt');
+    profile.bestZombieRound = 10;
+    expect(refreshCharmUnlocks(profile)).toContain('startpt');
+    expect(profile.charms?.unlocked).toContain('startpt');
+  });
+
+  it('revive: ゾンビ累計500キルで解放', () => {
+    const profile = emptyProfile();
+    profile.zombieKills = 499;
+    expect(refreshCharmUnlocks(profile)).not.toContain('revive');
+    profile.zombieKills = 500;
+    expect(refreshCharmUnlocks(profile)).toContain('revive');
+  });
+
+  it('bossdmg: ゾンビボス10体撃破で解放', () => {
+    const profile = emptyProfile();
+    profile.zombieBossKills = 9;
+    expect(refreshCharmUnlocks(profile)).not.toContain('bossdmg');
+    profile.zombieBossKills = 10;
+    expect(refreshCharmUnlocks(profile)).toContain('bossdmg');
+  });
+
+  it('perkcarry: R30到達で解放', () => {
+    const profile = emptyProfile();
+    profile.bestZombieRound = 0;
+    expect(refreshCharmUnlocks(profile)).not.toContain('perkcarry');
+    profile.bestZombieRound = 30;
+    const newly = refreshCharmUnlocks(profile);
+    expect(newly).toContain('perkcarry');
+    // R30はstartptの条件(R10)も満たすため同時に解放される
+    expect(newly).toContain('startpt');
+  });
+
+  it('冪等: 一度解放したcharmを再度refreshしても重複追加されない', () => {
+    const profile = emptyProfile();
+    profile.bestZombieRound = 30;
+    const first = refreshCharmUnlocks(profile);
+    expect(first.sort()).toEqual(['perkcarry', 'startpt']);
+    const second = refreshCharmUnlocks(profile);
+    expect(second).toEqual([]);
+    expect(profile.charms?.unlocked.filter((id) => id === 'startpt')).toHaveLength(1);
+  });
+
+  it('profile.charmsが未設定(旧セーブ相当)でも安全に初期化して解放できる', () => {
+    const profile = emptyProfile();
+    delete profile.charms;
+    profile.bestZombieRound = 10;
+    expect(refreshCharmUnlocks(profile)).toContain('startpt');
+    expect(profile.charms).toEqual({ unlocked: ['startpt'], equipped: null });
+  });
+
+  it('ゾンビモードのapplyMatch経由でcharm解放される(統合)', () => {
+    const profile = emptyProfile();
+    applyMatch(profile, summary({ kills: 500, zombieRound: 10 }), 1, 'zombie');
+    expect(profile.charms?.unlocked).toContain('startpt');
+    expect(profile.charms?.unlocked).toContain('revive');
+    expect(profile.charms?.unlocked).not.toContain('bossdmg');
+    expect(profile.charms?.unlocked).not.toContain('perkcarry');
+  });
+});
+
+// ── R53-W2: 報酬カモ + 称号(帝王編ch9/ch10報酬) ───────────────────────────────
+describe('applyChapterRewards(帝王編ch9/ch10報酬)', () => {
+  it('ch9を完全クリアするとカモ「jingai」が解放される(称号は無し)', () => {
+    const profile = emptyProfile();
+    const result = applyChapterRewards(profile, 'ch9', true);
+    expect(result.newRewardCamos).toEqual(['jingai']);
+    expect(result.newTitles).toEqual([]);
+    expect(profile.unlockedRewardCamos).toContain('jingai');
+  });
+
+  it('ch10を完全クリアするとカモ「shinrai」+称号「雷帝の後継」が解放される', () => {
+    const profile = emptyProfile();
+    const result = applyChapterRewards(profile, 'ch10', true);
+    expect(result.newRewardCamos).toEqual(['shinrai']);
+    expect(result.newTitles).toEqual(['雷帝の後継']);
+    expect(profile.unlockedRewardCamos).toContain('shinrai');
+    expect(profile.titles).toContain('雷帝の後継');
+  });
+
+  it('chapterFullyCleared=falseでは何も解放されない', () => {
+    const profile = emptyProfile();
+    const result = applyChapterRewards(profile, 'ch9', false);
+    expect(result.newRewardCamos).toEqual([]);
+    expect(profile.unlockedRewardCamos ?? []).toEqual([]);
+  });
+
+  it('ch9/ch10以外の章IDでは何も解放されない', () => {
+    const profile = emptyProfile();
+    const result = applyChapterRewards(profile, 'ch1', true);
+    expect(result.newRewardCamos).toEqual([]);
+    expect(result.newTitles).toEqual([]);
+  });
+
+  it('冪等: 同じ章を再度完全クリア扱いで渡しても重複解放されない', () => {
+    const profile = emptyProfile();
+    applyChapterRewards(profile, 'ch10', true);
+    const second = applyChapterRewards(profile, 'ch10', true);
+    expect(second.newRewardCamos).toEqual([]);
+    expect(second.newTitles).toEqual([]);
+    expect(profile.unlockedRewardCamos?.filter((id) => id === 'shinrai')).toHaveLength(1);
+    expect(profile.titles?.filter((t) => t === '雷帝の後継')).toHaveLength(1);
+  });
+
+  it('applyCampaignMission経由でCampaignProgressにnewRewardCamos/newTitlesが返る(ch1では空)', () => {
+    const ch1 = CAMPAIGN[0]!;
+    const m1 = ch1.missions[0]!;
+    const profile = emptyProfile();
+    const progress = applyCampaignMission(profile, missionSummary(m1.id, ch1.id, true, 30));
+    expect(progress.newRewardCamos).toEqual([]);
+    expect(progress.newTitles).toEqual([]);
+  });
+
+  // R53-W2着地確認: campaign.ts側にB-CAMPが帝王編(ch9/ch10)を実装済みのため、
+  // 実データでapplyCampaignMission経由のエンドツーエンド結線を検証できる。
+  // ch9=id'ch9'(6ミッション)/ch10=id'ch10'(6ミッション、最終ミッションはクロガネ撃破)
+  // であることを確認済み — applyChapterRewardsの章ID前提(推定)と完全一致した。
+  const ch9Chapter = CAMPAIGN.find((c) => c.id === 'ch9');
+  const ch10Chapter = CAMPAIGN.find((c) => c.id === 'ch10');
+
+  it('ch9(帝王編)を実データで全クリアするとカモ「jingai」が実際に解放される', () => {
+    expect(ch9Chapter).toBeTruthy();
+    if (!ch9Chapter) return;
+    const profile = emptyProfile();
+    let progress: CampaignProgress | null = null;
+    for (const m of ch9Chapter.missions) {
+      progress = applyCampaignMission(profile, missionSummary(m.id, ch9Chapter.id, true, 30));
+    }
+    expect(chapterCleared(profile, 'ch9')).toBe(true);
+    expect(profile.unlockedRewardCamos).toContain('jingai');
+    expect(progress?.newRewardCamos).toContain('jingai');
+  });
+
+  it('ch10(黒雷の玉座)を実データで全クリアするとカモ「shinrai」+称号「雷帝の後継」が実際に解放される', () => {
+    expect(ch10Chapter).toBeTruthy();
+    if (!ch10Chapter) return;
+    const profile = emptyProfile();
+    let progress: CampaignProgress | null = null;
+    for (const m of ch10Chapter.missions) {
+      progress = applyCampaignMission(profile, missionSummary(m.id, ch10Chapter.id, true, 30));
+    }
+    expect(chapterCleared(profile, 'ch10')).toBe(true);
+    expect(profile.unlockedRewardCamos).toContain('shinrai');
+    expect(profile.titles).toContain('雷帝の後継');
+    expect(progress?.newRewardCamos).toContain('shinrai');
+    expect(progress?.newTitles).toContain('雷帝の後継');
+  });
+});
+
+describe('unlockRewardCamo / addTitle', () => {
+  it('unlockRewardCamoは新規解放でtrue、既解除で2回目はfalse', () => {
+    const profile = emptyProfile();
+    expect(unlockRewardCamo(profile, 'jingai')).toBe(true);
+    expect(unlockRewardCamo(profile, 'jingai')).toBe(false);
+    expect(profile.unlockedRewardCamos).toEqual(['jingai']);
+  });
+
+  it('addTitleは新規解放でtrue、既解除で2回目はfalse', () => {
+    const profile = emptyProfile();
+    expect(addTitle(profile, '雷帝の後継')).toBe(true);
+    expect(addTitle(profile, '雷帝の後継')).toBe(false);
+    expect(profile.titles).toEqual(['雷帝の後継']);
   });
 });

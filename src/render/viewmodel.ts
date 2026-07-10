@@ -5,7 +5,7 @@ import { classDefault, OPTIC_SPECS, resolveOpticId } from '../game/optics';
 import {
   CAMO_VISUALS,
   equippedCamoFor,
-  isCamoId,
+  isKnownCamoId,
   type CamoId,
   type CamoVisual,
 } from '../game/camo';
@@ -751,6 +751,17 @@ function camoPatternGLSL(v: CamoVisual): string {
         float n1 = camoNoise(vCamoPos * ${S});
         vec3 camoCol = mix(${A}, ${B}, n1 * 0.35);
         camoCol = mix(camoCol, ${C}, smoothstep(0.78, 0.96, camoNoise(vCamoPos * ${S} * 1.7 + 5.0)));`;
+    case 'circuit':
+      // 回路脈(R53-W2 PaP鍛神 pap1/pap3): 二重ノイズの発光脈を暗基板に通す。時間非依存
+      // (静的)。交点(vein1*vein2)をハイライト色Cで明るくし「基板ジャンクション」感を出す
+      return `
+        float n1 = camoNoise(vCamoPos * ${S});
+        float vein1 = 1.0 - smoothstep(0.02, 0.09, abs(n1 - 0.5));
+        float n2 = camoNoise(vCamoPos * ${S} * 1.7 + 23.1);
+        float vein2 = 1.0 - smoothstep(0.02, 0.08, abs(n2 - 0.5));
+        vec3 camoCol = mix(${A}, ${B}, clamp(vein1 + vein2 * 0.7, 0.0, 1.0));
+        camoCol = mix(camoCol, ${C}, vein1 * vein2);
+        camoEmissiveMul = clamp(vein1 * 0.85 + vein2 * 0.5, 0.0, 1.0);`;
     default:
       return 'vec3 camoCol = diffuseColor.rgb;';
   }
@@ -1093,7 +1104,7 @@ export function buildGunBody(
     const fistsCamo: CamoId | null =
       camoId === undefined
         ? resolveEquippedCamo(def.id)
-        : camoId !== null && isCamoId(camoId)
+        : camoId !== null && isKnownCamoId(camoId)
           ? camoId
           : null;
     if (fistsCamo) {
@@ -1188,10 +1199,15 @@ export function buildGunBody(
     gun.add(grm2);
     const shurikenCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
-      : camoId !== null && isCamoId(camoId) ? camoId : null;
+      : camoId !== null && isKnownCamoId(camoId) ? camoId : null;
     if (shurikenCamo) {
       const cm4 = getCamoMaterial(shurikenCamo);
-      gun.traverse((node) => { if (node instanceof THREE.Mesh && node.material === metalVC) node.material = cm4; });
+      gun.traverse((node) => {
+        if (node instanceof THREE.Mesh && node.material === metalVC) {
+          node.material = cm4;
+          node.onBeforeRender = tickCamoTime; // 時間アニメ系カモ(pap2等)を万刃でも進める
+        }
+      });
     }
     const muzzleSH = new THREE.Object3D();
     muzzleSH.position.set(0, 0, -0.22);
@@ -1294,10 +1310,15 @@ export function buildGunBody(
     gun.add(tm);
     const bowCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
-      : camoId !== null && isCamoId(camoId) ? camoId : null;
+      : camoId !== null && isKnownCamoId(camoId) ? camoId : null;
     if (bowCamo) {
       const cm5 = getCamoMaterial(bowCamo);
-      gun.traverse((node) => { if (node instanceof THREE.Mesh && (node.material === polyVC || node.material === metalVC || node.material === polishVC)) node.material = cm5; });
+      gun.traverse((node) => {
+        if (node instanceof THREE.Mesh && (node.material === polyVC || node.material === metalVC || node.material === polishVC)) {
+          node.material = cm5;
+          node.onBeforeRender = tickCamoTime; // 時間アニメ系カモ(pap2等)を月光弓でも進める
+        }
+      });
     }
     const muzzleBow = new THREE.Object3D();
     muzzleBow.position.set(0, 0.01, -0.49);
@@ -1407,10 +1428,15 @@ export function buildGunBody(
     }
     const fanCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
-      : camoId !== null && isCamoId(camoId) ? camoId : null;
+      : camoId !== null && isKnownCamoId(camoId) ? camoId : null;
     if (fanCamo) {
       const cm3 = getCamoMaterial(fanCamo);
-      gun.traverse((node) => { if (node instanceof THREE.Mesh && node.material === metalVC) node.material = cm3; });
+      gun.traverse((node) => {
+        if (node instanceof THREE.Mesh && node.material === metalVC) {
+          node.material = cm3;
+          node.onBeforeRender = tickCamoTime; // 時間アニメ系カモ(pap2等)を風神扇でも進める
+        }
+      });
     }
     const muzzleFan = new THREE.Object3D();
     muzzleFan.position.set(0, 0, -0.28);
@@ -1525,10 +1551,15 @@ export function buildGunBody(
     // カモ適用
     const musketCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
-      : camoId !== null && isCamoId(camoId) ? camoId : null;
+      : camoId !== null && isKnownCamoId(camoId) ? camoId : null;
     if (musketCamo) {
       const ccm7 = getCamoMaterial(musketCamo);
-      gun.traverse((node) => { if (node instanceof THREE.Mesh && (node.material === metalVC || node.material === polyVC)) node.material = ccm7; });
+      gun.traverse((node) => {
+        if (node instanceof THREE.Mesh && (node.material === metalVC || node.material === polyVC)) {
+          node.material = ccm7;
+          node.onBeforeRender = tickCamoTime; // 時間アニメ系カモ(pap2等)を火縄銃でも進める
+        }
+      });
     }
     // muzzle z < 0 契約
     const muzzleMusket = new THREE.Object3D();
@@ -1610,10 +1641,15 @@ export function buildGunBody(
     }
     const staffCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
-      : camoId !== null && isCamoId(camoId) ? camoId : null;
+      : camoId !== null && isKnownCamoId(camoId) ? camoId : null;
     if (staffCamo) {
       const ccm = getCamoMaterial(staffCamo);
-      gun.traverse((node) => { if (node instanceof THREE.Mesh && (node.material === metalVC || node.material === polishVC)) node.material = ccm; });
+      gun.traverse((node) => {
+        if (node instanceof THREE.Mesh && (node.material === metalVC || node.material === polishVC)) {
+          node.material = ccm;
+          node.onBeforeRender = tickCamoTime; // 時間アニメ系カモ(pap2等)を天雷杖でも進める
+        }
+      });
     }
     const muzzleSt = new THREE.Object3D();
     muzzleSt.position.set(0, 0, -0.57);
@@ -1710,10 +1746,15 @@ export function buildGunBody(
     gun.add(mam);
     const minigunCamo: CamoId | null =
       camoId === undefined ? resolveEquippedCamo(def.id)
-      : camoId !== null && isCamoId(camoId) ? camoId : null;
+      : camoId !== null && isKnownCamoId(camoId) ? camoId : null;
     if (minigunCamo) {
       const ccm = getCamoMaterial(minigunCamo);
-      gun.traverse((node) => { if (node instanceof THREE.Mesh && (node.material === metalVC || node.material === polyVC)) node.material = ccm; });
+      gun.traverse((node) => {
+        if (node instanceof THREE.Mesh && (node.material === metalVC || node.material === polyVC)) {
+          node.material = ccm;
+          node.onBeforeRender = tickCamoTime; // 時間アニメ系カモ(pap2等)を修羅でも進める
+        }
+      });
     }
     const muzzleMG = new THREE.Object3D();
     muzzleMG.position.set(0, 0, -0.62 * bs2);
@@ -1744,7 +1785,7 @@ export function buildGunBody(
   const camo: CamoId | null =
     camoId === undefined
       ? resolveEquippedCamo(def.id)
-      : camoId !== null && isCamoId(camoId)
+      : camoId !== null && isKnownCamoId(camoId)
         ? camoId
         : null;
   const camoMat = camo ? getCamoMaterial(camo) : null;
@@ -2700,6 +2741,36 @@ const DARK_POSES: DarkPose[] = [
 const DARK_POSE_MAP = new Map<string, { p: [number, number, number]; r: [number, number, number] }>();
 for (const dp of DARK_POSES) DARK_POSE_MAP.set(dp.name, dp.darkHip);
 
+// R53 帝王溜め3段ポーズ(加算デルタの最大値=段3「黒雷・天壊」の大上段。刀を天へ掲げる)。
+// スイングデルタと同じ加算チャネルなので rest/darkHip/ADS/resolveSightY 契約に無干渉。
+// 段→レベル: 0=0 / 1=0.3(浅い引き) / 2=0.6(満ちる) / 3=1.0(大上段)。
+// M3配線: 溜め経過 0.5/1.2/2.2s の閾値跨ぎで setEmperorChargeStage(1|2|3)、リリース/中断で 0。
+const EMPEROR_CHARGE_MAX = new Map<string, { p: [number, number, number]; r: [number, number, number] }>([
+  [FIST_KUNAI, { p: [0.02, 0.12, 0.05], r: [-1.15, -0.2, 0.25] }],
+  ['vm:fistRArm', { p: [0.01, 0.08, 0.03], r: [-0.55, 0, 0] }],
+  ['vm:fistRHand', { p: [0, 0.06, 0.02], r: [-0.45, 0, 0] }],
+  ['vm:fistLArm', { p: [0.02, 0.05, 0], r: [-0.35, 0, 0] }],
+  ['vm:fistLHand', { p: [0.02, 0.04, 0], r: [-0.3, 0, 0] }],
+]);
+const EMPEROR_STAGE_LEVEL = [0, 0.3, 0.6, 1.0] as const;
+
+// R53 白芯雷脈の共有マテリアル(モジュール寿命・全ブレードで1個。disposeSharedとは独立の
+// 恒久キャッシュだが、userData.shared=true により全dispose経路でスキップされる=二重解放なし)
+let katanaVeinMat: THREE.MeshBasicMaterial | null = null;
+function getKatanaVeinMat(): THREE.MeshBasicMaterial {
+  if (!katanaVeinMat) {
+    katanaVeinMat = new THREE.MeshBasicMaterial({
+      color: 0xeaf6ff, // 白芯(僅かに氷青)
+      transparent: true,
+      opacity: 0.6,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    katanaVeinMat.userData.shared = true;
+  }
+  return katanaVeinMat;
+}
+
 // カメラ直付けの一人称武器モデル。procedural な銃本体に一人称腕を足し、
 // スウェイ・ボブ・リコイルキック・リロードを手続きで動かす。
 export class ViewModel {
@@ -2728,6 +2799,14 @@ export class ViewModel {
   private landBobStrength = 0;
   // ボルト閉鎖の二段演出。発砲キックの後、わずかに逆回転して落ち着く
   private counterKickTimer = 0;
+  // R53-W2: PaP改造演出(playPapUpgradeAnim)。武器が沈む→(非reduceMotion時のみ)発光
+  // パルス→戻る。fire/reload可動ノード契約(rest=identity)には触れず、root一時オフセット+
+  // アクセント材emissiveIntensity操作のみで表現する(rig.*ノードは不変)。
+  private _papAnimTimer = 0; // 残り秒数(0=非活性)
+  private _papAnimDuration = 0; // このアニメの総尺(進捗計算の分母)
+  private _papAnimReduced = false; // true=短縮(0.5s)+パルス省略
+  // アクセント材参照(tracerColorキャッシュ)。setWeapon毎に再取得。PaPパルスの対象。
+  private _accentMat: THREE.MeshStandardMaterial | null = null;
   // クナイ斬撃の横キック(右薙ぎ=正/左薙ぎ=負のロール。fire(variation)で加算)
   private kickSide = 0;
   // スプリント中に銃を下げる量(滑らかに追従)。raiseRatioとは独立した加算項
@@ -2796,6 +2875,13 @@ export class ViewModel {
   // ── R33 特殊武器 状態フィールド ──────────────────────────────────────────
   private _bowCharge01 = 0;       // 月光弓チャージ 0-1
   private _staffCharge01 = 0;     // 天雷杖チャージ 0-1
+  // R53 帝王溜め段(0=非溜め)。レベルは段目標へ平滑追従し、fistNodesへ加算ポーズを乗せる
+  private _emperorChargeStage: 0 | 1 | 2 | 3 = 0;
+  private _emperorChargeLevel = 0;
+  // 段3の刀身発光ブースト対象(base=適用時点の元opacity。段0/武器切替で復元=R24キャッシュ教訓)
+  private _chargeGlowMats: { mat: THREE.MeshBasicMaterial; base: number }[] = [];
+  // R53 恒久報酬: 黒刀/雷刀の白芯雷脈(kokurai-100キル)。ブレード構築時に反映される
+  private _katanaVeinsOn = false;
   private _minigunBarrelRot = 0;  // 修羅バレル回転角 (rad)
   private _minigunSpin01 = 0;     // 修羅スピン度合い 0-1 (スムース)
   // Fix-5: 万刃 ADS-z 制御用チャージ保存(setExoticCharge → update 橋渡し)
@@ -2930,7 +3016,10 @@ export class ViewModel {
     if (this.gun) this.root.remove(this.gun);
     // 装備カモを解決してキャッシュキーに含める(ARMORYで変更→次のsetWeaponで反映)。
     // キー分離により材の差し替え/復元は不要=共有マテリアルの元本を汚さない(R24教訓)。
-    const camo = resolveEquippedCamo(def.id);
+    // R53-W2: PaP鍛神(def.papCamo)は選択カモより優先(matchがクローンdefに積む契約。
+    // camo.ts の通常解放ラダーとは無関係のシステム付与カモ)。camo変数へ折り込むだけで
+    // キャッシュキーも自動分離される(R33教訓通り、キー変更=見た目変更)。
+    const camo = def.papCamo ?? resolveEquippedCamo(def.id);
     const key = `${def.id}:${(def.attachmentIds ?? []).join(',')}:${camo ?? ''}`;
     let entry = this.cache.get(key);
     if (!entry) {
@@ -2941,6 +3030,9 @@ export class ViewModel {
     this.muzzle = entry.muzzle;
     this.root.add(this.gun);
     this.muzzle.add(this.flashMesh);
+    // R53-W2: PaP改造演出(playPapUpgradeAnim)の発光パルス対象。tracerColorは全形状で必須
+    // フィールドなので常に解決できる(fists含む)。武器切替のたびに再取得すれば十分安全。
+    this._accentMat = getAccent(def.tracerColor);
     this.muzzle.add(this.flashLight);
     this.captureRig();
     // サプレッサー装着状態をキャッシュ(fire() フラッシュ減光で参照する)
@@ -2986,6 +3078,8 @@ export class ViewModel {
           barrel: g.getObjectByName('vm:barrel'),
         }
       : {};
+    // R53: 帝王溜め段は武器切替で必ず解除(発光ブーストの復元も含む — キャッシュ越境防止)
+    this.setEmperorChargeStage(0);
     // クナイ逆手ポーズ対象を捕捉(該当ノードが無い銃では空=非干渉)。restへ復帰させておく。
     this.fistNodes = [];
     if (g) {
@@ -3225,6 +3319,28 @@ export class ViewModel {
       landDip = Math.sin(phase * Math.PI) * 0.07 * this.landBobStrength * state.motionScale;
       this.landBobTimer = Math.max(0, this.landBobTimer - dt);
     }
+    // R53-W2 PaP改造演出: 前後15%を沈み込み/復帰にease、中間は沈んだまま保持。
+    // reduceMotion時は _papAnimReduced=true でパルス(papPulse)を0に固定するのみ
+    // (沈み込み/復帰自体は同じ式のまま短尺(0.5s)で完了する)。
+    let papPulse = 0;
+    if (this._papAnimTimer > 0 && this._papAnimDuration > 0) {
+      const t = 1 - this._papAnimTimer / this._papAnimDuration;
+      const sinkIn = THREE.MathUtils.smoothstep(t, 0, 0.15);
+      const sinkOut = 1 - THREE.MathUtils.smoothstep(t, 0.82, 1.0);
+      landDip += 0.12 * Math.min(sinkIn, sinkOut);
+      if (!this._papAnimReduced) {
+        const pulseWindow =
+          THREE.MathUtils.smoothstep(t, 0.12, 0.2) * (1 - THREE.MathUtils.smoothstep(t, 0.78, 0.86));
+        papPulse = pulseWindow * (0.5 + 0.5 * Math.sin(t * Math.PI * 2 * 6));
+      }
+      this._papAnimTimer = Math.max(0, this._papAnimTimer - dt);
+    }
+    // 火花的発光パルス: 既存アクセント材(getAccent)のemissiveIntensityを一時的に押し上げる。
+    // 基準値0.5 + 最大0.25(peak 0.75 < bloom閾値0.9)。papPulse=0の間は常に基準値へ戻す
+    // (タイマー満了後の最終フレームは既にpapPulse=0で書き込み済み=明示リセット不要)。
+    if (this._accentMat && (this._papAnimTimer > 0 || papPulse > 0)) {
+      this._accentMat.emissiveIntensity = 0.5 + papPulse * 0.25;
+    }
     // スプリント時の銃下げ。target -0.08 へ滑らかに追従(覗き込み中は無効)
     const sprintTarget = state.sprinting && ads < 0.2 ? -0.08 : 0;
     this.sprintLower += (sprintTarget - this.sprintLower) * Math.min(1, dt * 8);
@@ -3315,8 +3431,26 @@ export class ViewModel {
         const sd = this._swingDelta(node.name, swingFrac);
         // 黒帝中かつ刀ノードには呼吸ゆらぎ(X軸回転)を加算して刀先が微動する演出を加える
         const breathAdd = node.name === FIST_KUNAI ? darkBreathRot : 0;
-        node.position.set(bx + sd[0], by + sd[1], bz + sd[2]);
-        node.rotation.set(brx + sd[3] + breathAdd, bry + sd[4], brz + sd[5]);
+        // R53 帝王溜め段: 加算デルタ(段レベルに平滑追従)。ADS中は縮退(照準契約優先)
+        const emp = EMPEROR_CHARGE_MAX.get(node.name);
+        const el = this._emperorChargeLevel * (1 - p);
+        const ex = emp ? emp.p[0] * el : 0;
+        const ey = emp ? emp.p[1] * el : 0;
+        const ez = emp ? emp.p[2] * el : 0;
+        const erx = emp ? emp.r[0] * el : 0;
+        const ery = emp ? emp.r[1] * el : 0;
+        const erz = emp ? emp.r[2] * el : 0;
+        node.position.set(bx + sd[0] + ex, by + sd[1] + ey, bz + sd[2] + ez);
+        node.rotation.set(brx + sd[3] + breathAdd + erx, bry + sd[4] + ery, brz + sd[5] + erz);
+      }
+      // 溜めレベルの平滑追従+段3域(level>0.6)の刀身発光ブースト(base比+30%まで、opacity≤1)
+      const empTarget = EMPEROR_STAGE_LEVEL[this._emperorChargeStage];
+      this._emperorChargeLevel += (empTarget - this._emperorChargeLevel) * Math.min(1, dt * 10);
+      if (this._chargeGlowMats.length) {
+        const k = Math.max(0, (this._emperorChargeLevel - 0.6) / 0.4);
+        for (const { mat, base } of this._chargeGlowMats) {
+          mat.opacity = Math.min(1, base * (1 + 0.3 * k));
+        }
       }
     }
 
@@ -3699,6 +3833,20 @@ export class ViewModel {
   }
 
   /**
+   * R53-W2: Pack-a-Punch改造演出。match が改造購入時に呼ぶ契約。
+   * 約2.5秒: 武器が沈む→(非reduceMotion時のみ)アクセント材の火花的発光パルス→戻る。
+   * reduceMotion=true時は0.5秒へ短縮しパルスは省略(沈み込み+復帰のみ)。
+   * fire/reload可動ノード契約(rig.*ノードのrest=identity)には一切触れず、root一時
+   * オフセット(update内のpapDip)とアクセント材emissiveIntensityの操作のみで完結する。
+   * 呼び出し時点でタイマーが残っていても即座に上書き(再購入で演出をやり直す)。
+   */
+  playPapUpgradeAnim(reduceMotion = false): void {
+    this._papAnimDuration = reduceMotion ? 0.5 : 2.5;
+    this._papAnimTimer = this._papAnimDuration;
+    this._papAnimReduced = reduceMotion;
+  }
+
+  /**
    * 特殊武器7種の溜め視覚を統一APIで制御する。
    * 'gekkou-bow'      → setBowCharge (vm:strT/B, vm:limbT/B, vm:arrowShaft/Tip)
    * 'tenrai-staff'    → setStaffCharge (vm:crystal emissiveIntensity)
@@ -3896,6 +4044,77 @@ export class ViewModel {
     }
   }
 
+  // ── R53 帝王溜め段 API(M3配線: 溜め時間 0.5/1.2/2.2s の閾値跨ぎで 1|2|3、
+  // リリース/中断/死亡で 0。音は sounds.emperorChargeStage(stage) を同じ跨ぎで1回)──
+  setEmperorChargeStage(stage: 0 | 1 | 2 | 3): void {
+    if (stage === this._emperorChargeStage) return;
+    this._emperorChargeStage = stage;
+    if (stage > 0 && this._chargeGlowMats.length === 0 && this.gun) {
+      // 段3域の発光ブースト対象を1回だけ収集: 黒刀エッジ/コア+雷刀ビルボードライン。
+      // R52のTubeアークは専用フリッカーが opacity を書くため対象外(二重書き込み禁止)。
+      for (const name of ['vm:darkBlade', 'vm:lightningBlade']) {
+        const g = this.gun.getObjectByName(name);
+        if (!g) continue;
+        g.traverse((node) => {
+          if (!(node instanceof THREE.Mesh)) return;
+          const mat = node.material as THREE.Material;
+          if (!(mat instanceof THREE.MeshBasicMaterial) || !mat.transparent) return;
+          if (node.parent?.name === 'vm:katanaVeins') return; // 雷脈は常時一定輝度
+          if (this._lightningArcMeshes.includes(node as THREE.Mesh)) return;
+          this._chargeGlowMats.push({ mat, base: mat.opacity });
+        });
+      }
+    }
+    if (stage === 0 && this._chargeGlowMats.length) {
+      for (const { mat, base } of this._chargeGlowMats) mat.opacity = base;
+      this._chargeGlowMats = [];
+    }
+  }
+
+  // ── R53 恒久報酬: 刀身の白芯雷脈(kokurai-100 キル達成で progression/M3 が呼ぶ)──
+  // 黒刀(vm:darkBlade)/雷刀(vm:lightningBlade)の構築時に反映され、後から on にした場合も
+  // 既存ブレードへ即時追加する。off で除去(共有マテリアルは dispose しない)。
+  setKatanaVeins(on: boolean): void {
+    if (this._katanaVeinsOn === on) return;
+    this._katanaVeinsOn = on;
+    if (!this.gun) return;
+    for (const name of ['vm:darkBlade', 'vm:lightningBlade']) {
+      const g = this.gun.getObjectByName(name);
+      if (!g) continue;
+      const existing = g.getObjectByName('vm:katanaVeins');
+      if (on && !existing) {
+        this._addKatanaVeins(g as THREE.Group, name === 'vm:darkBlade');
+      } else if (!on && existing) {
+        existing.traverse((node) => {
+          if (node instanceof THREE.Mesh) node.geometry.dispose();
+        });
+        g.remove(existing);
+      }
+    }
+  }
+
+  // 白芯雷脈本体: 刀身に沿う極細の白青ライン2本(僅かな傾き差で「脈」の揺らぎを示す)。
+  // 共有マテリアル(userData.shared=true)なので個体/オーバーレイのdispose経路で保護される。
+  private _addKatanaVeins(bladeGroup: THREE.Group, isDark: boolean): void {
+    const veins = new THREE.Group();
+    veins.name = 'vm:katanaVeins';
+    // 黒刀は全長1.4m(z -0.19..-1.59)、雷刀(クナイ)は z -0.175..-0.504
+    const len = isDark ? 0.86 : 0.30;
+    const cz = isDark ? -0.62 : -0.34;
+    const y = isDark ? 0.012 : 0.008;
+    for (let i = 0; i < 2; i += 1) {
+      const vein = new THREE.Mesh(
+        new THREE.BoxGeometry(0.0035, 0.0015, len * (1 - i * 0.18)),
+        getKatanaVeinMat(),
+      );
+      vein.position.set((i === 0 ? 0.006 : -0.005), y + i * 0.006, cz + i * 0.03);
+      vein.rotation.x = (i === 0 ? 1 : -1) * 0.015; // 微傾差=雷脈の揺らぎ
+      vein.renderOrder = 9;
+      veins.add(vein);
+    }
+    bladeGroup.add(veins);
+  }
+
   private _buildLightningBladeMeshes(kunai: THREE.Object3D, isKokuraitei: boolean): void {
     const group = new THREE.Group();
     group.name = 'vm:lightningBlade';
@@ -3936,6 +4155,8 @@ export class ViewModel {
       group.add(makeArcLine(0xaaeeff, 0.45, -0.027, 0.002));
       group.add(makeArcLine(0x66ccff, 0.35, 0.034, 0.003));
     }
+    // R53 恒久報酬: 雷脈が解放済みなら雷刀にも白芯ラインを乗せる
+    if (this._katanaVeinsOn) this._addKatanaVeins(group, false);
     kunai.add(group);
     this._lightningOverlayMeshes.push(group);
   }
@@ -4233,6 +4454,8 @@ export class ViewModel {
       group.add(rimMesh);
     }
 
+    // R53 恒久報酬: 雷脈が解放済みなら黒刀にも白芯ラインを乗せる
+    if (this._katanaVeinsOn) this._addKatanaVeins(group, true);
     kunai.add(group);
     this._darkOverlayMeshes.push(group);
   }

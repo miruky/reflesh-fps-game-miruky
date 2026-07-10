@@ -3,6 +3,8 @@ import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
 import { MOVE_SPEEDS } from '../game/player';
 import { SUPPRESS_BADGE, ALWAYS_BADGE, medalRank, starPoints, type MedalEvent, type MedalId } from '../game/medals';
+import type { PowerUpKind } from '../game/zombie-economy';
+import type { RadioSpeaker } from '../game/campaign';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -170,6 +172,299 @@ const HP_ARC_LEN = 159.17;
 // スコアストリーク3段の到達キル数(updateBanner の TRIPLE/RAMPAGE/UNSTOPPABLE と対応)。
 const SS_TIERS: readonly number[] = [3, 5, 7];
 
+// ══════════════════════════════════════════════════════════════════════════
+// R53-W2: match.ts(M2a/M2b)が今後供給する拡張スナップショットフィールド(契約凍結済み)。
+// hud.ts は match.ts を編集しないため、ローカルの交差型で先行実装する。全フィールドoptionalで、
+// undefined時は各UI要素が自然に非表示(非ゾンビ/非ストーリー/非S&Dで消える)。
+// M2a/M2b が MatchSnapshot 本体へ同名・同型で追加した時点でこの交差は無害な重複となり、
+// そのまま削除して MatchSnapshot 直接参照に戻せる(型不一致があればここでコンパイルエラーになる)。
+// ══════════════════════════════════════════════════════════════════════════
+export interface SndSnapshotFields {
+  sndPhase?: 'buy' | 'live' | 'planted' | 'roundEnd';
+  sndScore?: [number, number]; // [mine, enemy] 先取4
+  sndBombTimer?: number;
+  sndProgress01?: number;
+  sndProgressKind?: 'plant' | 'defuse';
+  sndCarrierIsPlayer?: boolean;
+}
+export type R53W2Snapshot = MatchSnapshot &
+  SndSnapshotFields & {
+    papTier?: number;
+    zombiePowerUps?: ReadonlyArray<{ kind: PowerUpKind; x: number; y: number; z: number }>;
+    activePowerUps?: ReadonlyArray<{ kind: PowerUpKind; remainS: number }>;
+    specialRound?: 'rush' | null;
+    poison01?: number;
+    radioLine?: { speaker: RadioSpeaker; text: string } | null;
+    detect01?: number;
+    bossPhase?: { idx: number; total: number } | null;
+  };
+
+// ── PaP(Pack-a-Punch)段数ピップ ─────────────────────────────────────────
+// zombie-economy.ts の PapTier(0-3)に合わせて上限3。0/undefinedは非表示。
+export function clampPapTier(tier: number | undefined): number {
+  if (tier === undefined || !Number.isFinite(tier) || tier <= 0) return 0;
+  return Math.min(3, Math.round(tier));
+}
+
+// ── パワーアップチップ(5種: insta/double/nuke/maxammo/carpenter) ──────────
+interface PowerUpChipSpec {
+  label: string;
+  color: string;
+  icon: string;
+}
+const PU_ICON_INSTA =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M13 2 L5 14 H11 L9 22 L19 9 H13 Z" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+const PU_ICON_DOUBLE =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7 v6 c0 1.6 3.1 3 7 3 s7 -1.4 7 -3 V7"/><path d="M5 13 v6 c0 1.6 3.1 3 7 3 s7 -1.4 7 -3 v-6"/></svg>';
+const PU_ICON_NUKE =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9" stroke-dasharray="2 3"/><line x1="12" y1="1" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="1" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="23" y2="12"/></svg>';
+const PU_ICON_MAXAMMO =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="10" width="6" height="12" rx="1"/><path d="M9 10 L10.5 3 H13.5 L15 10 Z"/></svg>';
+const PU_ICON_CARPENTER =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="14" width="18" height="4" rx="1"/><path d="M6 14 L6 9 L10 9 L10 14"/><path d="M18 6 L14 10 M15.2 5.4 L18.6 8.8 L20 7.4 L16.6 4 Z" stroke-linecap="round"/></svg>';
+
+export const POWERUP_CHIP_SPECS: Record<PowerUpKind, PowerUpChipSpec> = {
+  insta: { label: 'インスタキル', color: '#ff3b2f', icon: PU_ICON_INSTA },
+  double: { label: 'ダブルポイント', color: '#ffcf4d', icon: PU_ICON_DOUBLE },
+  nuke: { label: 'ニューク', color: '#c8ffb0', icon: PU_ICON_NUKE },
+  maxammo: { label: '弾薬満タン', color: '#4ea8ff', icon: PU_ICON_MAXAMMO },
+  carpenter: { label: 'カーペンター', color: '#c9915a', icon: PU_ICON_CARPENTER },
+};
+
+// 残秒<3sのみ点滅。reduceMotion時はJS側でも常にfalse(CSSアニメ側の@mediaゲートと二重に止める)
+export function isPowerUpBlinking(remainS: number, reduceMotion: boolean): boolean {
+  return !reduceMotion && remainS > 0 && remainS < 3;
+}
+
+// ── 無線字幕: 話者色 ────────────────────────────────────────────────────
+// テーマ切替(data-accent)で変動する --ember 本体は使わず、固定hexで話者を一意に保つ。
+export const RADIO_SPEAKER_COLORS: Record<RadioSpeaker, string> = {
+  kagerou: '#9fb8c9', // steel
+  homura: '#19e6ff', // cyan (--medal-cyan と同値)
+  hibana: '#ff817b', // ember (--ember-ink と同値。テーマ非連動)
+  kurogane: '#b07cff', // violet (--medal-violet と同値)
+};
+export const RADIO_SPEAKER_NAMES: Record<RadioSpeaker, string> = {
+  kagerou: 'カゲロウ',
+  homura: 'ホムラ',
+  hibana: 'ヒバナ',
+  kurogane: 'クロガネ',
+};
+export function radioSpeakerColor(speaker: RadioSpeaker): string {
+  return RADIO_SPEAKER_COLORS[speaker];
+}
+
+// ── 潜入検知メーター ────────────────────────────────────────────────────
+export type DetectTier = 'calm' | 'wary' | 'alert';
+export function detectMeterTier(detect01: number): DetectTier {
+  if (detect01 >= 0.9) return 'alert';
+  if (detect01 >= 0.5) return 'wary';
+  return 'calm';
+}
+// alert域(≥0.9)のみ点滅。reduceMotion時はJS側でも常にfalse
+export function detectMeterBlinking(detect01: number, reduceMotion: boolean): boolean {
+  return !reduceMotion && detect01 >= 0.9;
+}
+// 半円弧(r=18の半周 ≈ 56.55)の可視長。stroke-dashoffset = arc*(1-detect01) で満欠を描く
+export const DETECT_ARC_LEN = Math.PI * 18;
+
+// ── ボスフェーズpips ────────────────────────────────────────────────────
+export type BossPhasePipState = 'done' | 'active' | 'pending';
+// idx=現在フェーズ(1始まり)。1..idx-1=done、idx=active、以降=pending。
+// total は DOM 安全上限12でクランプ(ボス設計上あり得ない値が来ても暴走させない)。
+export function bossPhasePipStates(idx: number, total: number): BossPhasePipState[] {
+  const n = clampN(Math.round(total), 1, 12);
+  const cur = clampN(Math.round(idx), 1, n);
+  return Array.from({ length: n }, (_, i) => {
+    const pos = i + 1;
+    if (pos < cur) return 'done';
+    if (pos === cur) return 'active';
+    return 'pending';
+  });
+}
+
+// ── S&D HUD ─────────────────────────────────────────────────────────────
+export const SND_WIN_TARGET = 4; // 先取4
+export function sndPipStates(wins: number, target: number = SND_WIN_TARGET): boolean[] {
+  const w = clampN(Math.round(wins), 0, target);
+  return Array.from({ length: target }, (_, i) => i < w);
+}
+export function sndProgressLabel(kind: 'plant' | 'defuse' | undefined): string {
+  if (kind === 'plant') return '設置中…';
+  if (kind === 'defuse') return '解除中…';
+  return '';
+}
+const SND_PHASE_LABELS: Record<NonNullable<SndSnapshotFields['sndPhase']>, string> = {
+  buy: 'BUY',
+  live: 'LIVE',
+  planted: 'PLANTED',
+  roundEnd: 'ROUND END',
+};
+export function sndPhaseLabel(phase: SndSnapshotFields['sndPhase']): string {
+  return phase ? SND_PHASE_LABELS[phase] : '';
+}
+
+// ── 特殊ラウンド(餓鬼の大群) ────────────────────────────────────────────
+// 'rush' へ遷移した瞬間(前フレーム非rush→今フレームrush)だけ true。バナー一発トリガ用
+export function isSpecialRoundEntering(
+  prev: 'rush' | null | undefined,
+  next: 'rush' | null | undefined,
+): boolean {
+  return prev !== 'rush' && next === 'rush';
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// R53-W3 MK.III「LIVING INSTRUMENT」— Adaptive Presence / モーメント / 帝王プレゼンス
+// uiHeat / moments / emperorState は M3(match側)の供給待ちの optional 契約。
+// 未供給時は完全に不活性(=非回帰)。emperorState のみ既存フィールドからの導出
+// フォールバックを持つため、配線前から帝王枠は機能する。
+// ══════════════════════════════════════════════════════════════════════════
+export type EmperorState = 'dark' | 'raitei' | 'kokuraitei';
+export interface MomentEvent {
+  kind: 'round' | 'rankup' | 'perk' | 'emperor' | 'ggrank' | 'special';
+  title: string;
+  sub?: string;
+  tone?: 'ember' | 'ice' | 'violet';
+}
+export type Mk3Snapshot = R53W2Snapshot & {
+  uiHeat?: number; // 0..1(既存combat heatの露出)
+  moments?: ReadonlyArray<MomentEvent>; // 1回性イベント(medalsと同じドレイン方式)
+  emperorState?: EmperorState | null;
+};
+
+// ── P0-1 Adaptive Presence: calmラッチ(ヒステリシス付き状態機械、純関数) ──
+// heat<ENTERがDELAY秒継続→calm。heat>EXITで即解除。中間帯は状態維持(タイマー凍結)。
+// uiHeat未供給/死亡/HP40%未満は常に非calm(計器全復帰の安全域)。
+export const MK3_CALM_ENTER_HEAT = 0.15;
+export const MK3_CALM_EXIT_HEAT = 0.3;
+export const MK3_CALM_DELAY_S = 2.5;
+export interface CalmLatchState {
+  calm: boolean;
+  quietS: number;
+}
+export function stepCalmLatch(
+  state: CalmLatchState,
+  uiHeat: number | undefined,
+  hpRatio: number,
+  alive: boolean,
+  dt: number,
+): CalmLatchState {
+  if (uiHeat === undefined || !alive || hpRatio < 0.4) return { calm: false, quietS: 0 };
+  if (uiHeat > MK3_CALM_EXIT_HEAT) return { calm: false, quietS: 0 };
+  if (uiHeat < MK3_CALM_ENTER_HEAT) {
+    const quietS = Math.min(state.quietS + dt, MK3_CALM_DELAY_S);
+    return { calm: state.calm || quietS >= MK3_CALM_DELAY_S, quietS };
+  }
+  return state;
+}
+
+// ── P0-2 モーメント・システム(1ノード+キュー、純関数ステップ) ──
+// suppressed(ADS/キルカム/死亡)中は新規開始のみ止める(表示中の帯は下1/3で照準を
+// 塞がないため完走させる — 途中で消すとrankup等を取り逃す)。キュー超過は古い方を
+// 残す(時系列保持。rankupの順序が意味を持つため)。
+export const MOMENT_QUEUE_MAX = 4;
+export const MOMENT_SHOW_S = 2.6;
+export const MOMENT_GAP_S = 0.6;
+export type MomentTone = 'ember' | 'gold' | 'signal' | 'ice' | 'violet' | 'threat';
+export function momentTone(m: MomentEvent): MomentTone {
+  if (m.tone === 'ice' || m.tone === 'violet' || m.tone === 'ember') return m.tone;
+  switch (m.kind) {
+    case 'rankup':
+      return 'gold';
+    case 'perk':
+      return 'signal';
+    case 'special':
+      return 'threat';
+    case 'emperor':
+      return 'violet'; // tone未指定の帝王イベントは黒系既定(雷帝はtone:'ice'指定で来る契約)
+    default:
+      return 'ember'; // round / ggrank
+  }
+}
+export interface MomentQueueState {
+  queue: MomentEvent[];
+  current: MomentEvent | null;
+  phase: 'idle' | 'show' | 'gap';
+  t: number;
+}
+export function emptyMomentQueue(): MomentQueueState {
+  return { queue: [], current: null, phase: 'idle', t: 0 };
+}
+export type MomentChange = 'show' | 'hide' | 'end' | null;
+export function stepMomentQueue(
+  st: MomentQueueState,
+  incoming: ReadonlyArray<MomentEvent> | undefined,
+  suppressed: boolean,
+  dt: number,
+): { state: MomentQueueState; change: MomentChange } {
+  const queue = st.queue.slice();
+  if (incoming) {
+    for (const m of incoming) if (queue.length < MOMENT_QUEUE_MAX) queue.push(m);
+  }
+  let { current, phase, t } = st;
+  let change: MomentChange = null;
+  t += dt;
+  if (phase === 'show' && t >= MOMENT_SHOW_S) {
+    phase = 'gap';
+    t = 0;
+    current = null;
+    change = 'hide';
+  } else if (phase === 'gap' && t >= MOMENT_GAP_S) {
+    phase = 'idle';
+    t = 0;
+    change = 'end';
+  }
+  if (phase === 'idle' && !suppressed && queue.length > 0) {
+    current = queue.shift() ?? null;
+    phase = 'show';
+    t = 0;
+    change = 'show'; // 'end'と同フレームの場合は'show'が優先(DOMは再充填で自然に上書き)
+  }
+  return { state: { queue, current, phase, t }, change };
+}
+
+// ── 漢数字ウォーターマーク(1..9999。0以下/非有限は「零」、万超は防御でそのまま) ──
+const KANJI_DIGITS = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+const KANJI_UNITS = ['', '十', '百', '千'];
+export function toKanjiNumeral(n: number): string {
+  const v = Math.floor(n);
+  if (!Number.isFinite(v) || v <= 0) return '零';
+  if (v >= 10000) return String(v);
+  let out = '';
+  const s = String(v);
+  for (let i = 0; i < s.length; i += 1) {
+    const d = s.charCodeAt(i) - 48;
+    const unit = s.length - 1 - i;
+    if (d === 0) continue;
+    out += (d === 1 && unit > 0 ? '' : (KANJI_DIGITS[d] ?? '')) + (KANJI_UNITS[unit] ?? '');
+  }
+  return out;
+}
+// kind='round' は数値タイトルを漢数字化、それ以外はタイトル先頭字(空なら「刻」)
+export function momentWatermark(m: MomentEvent): string {
+  if (m.kind === 'round') {
+    const n = Number(m.title);
+    if (Number.isFinite(n) && n > 0) return toKanjiNumeral(n);
+  }
+  return m.title.trim().charAt(0) || '刻';
+}
+
+// ── P1-1 帝王プレゼンス: 状態導出(供給があれば優先、なければ既存フィールドから) ──
+export function deriveEmperorState(snap: Mk3Snapshot): EmperorState | null {
+  if (snap.emperorState !== undefined) return snap.emperorState;
+  if (snap.kokuraiteiMode) return 'kokuraitei';
+  if ((snap.darkEmperorS ?? 0) > 0) return 'dark';
+  if (snap.raiteiMode) return 'raitei';
+  return null;
+}
+
+// ── チャージ弧(クロスヘア直下90°、r=56。旧hud-charge-gaugeと同一データの新表示) ──
+export const MK3_CHARGE_ARC_LEN = (Math.PI / 2) * 56; // ≈ 87.96
+export function chargeArcDashoffset(ratio01: number): number {
+  const r = Math.min(1, Math.max(0, ratio01));
+  return MK3_CHARGE_ARC_LEN * (1 - r);
+}
+
 export class Hud {
   private readonly el: Record<string, HTMLElement> = {};
   private compassMarks: Array<{ bearing: number; el: HTMLElement }> = [];
@@ -196,6 +491,23 @@ export class Hud {
   // ── ファイナルキルカム: body 直下の独立オーバーレイ(hud.hide() の影響を受けない) ──
   private readonly fkcRoot: HTMLElement;
   private readonly fkcFlashEl: HTMLElement;
+  // ── R53-W2: PaP pips / パワーアップ / 特殊ラウンド / 無線字幕 / 検知 / ボスpips / S&D ──
+  private lastPapTier = -1; // PaPピップの生成済み段数(変化時のみ作り直す)
+  private lastPowerUpKey = ''; // アクティブなkind集合のキー(変化時のみDOM再構築)
+  private readonly powerUpEls = new Map<PowerUpKind, { root: HTMLElement; timeEl: HTMLElement }>();
+  private lastSpecialRound: 'rush' | null | undefined; // 前フレームのspecialRound(rush突入エッジ検出用)
+  private lastRadioLine: string | null = null; // 話者+本文のキー(変化検出、null=非表示)
+  private lastBossPhaseTotal = -1; // ボスフェーズpipsの生成済み総数(変化時のみ作り直す)
+  private lastSndPipTarget = -1; // S&D先取ピップの生成済み本数(変化時のみ作り直す)
+  // ── R53-W3 MK.III: Adaptive Presence / モーメント / 帝王プレゼンス / チャージ弧 ──
+  private mk3Calm: CalmLatchState = { calm: false, quietS: 0 };
+  private mk3CalmApplied = false; // data-calm の直近書込み状態(変化フレームのみdataset書換)
+  private mk3PrevT: number | null = null; // hud.updateはdtを受け取らないため実時間で刻む
+  private mk3Moments: MomentQueueState = emptyMomentQueue();
+  private mk3CountUpTarget: number | null = null; // 数値タイトルのカウントアップ対象(表示前半0.5s)
+  private mk3EmperorApplied = ''; // 帝王枠 data-state の直近値(変化時のみ書換)
+  private mk3ArcVisible = false;
+  private mk3LastArcOffset = ''; // チャージ弧 dashoffset の直近書込み(無変化スキップ)
 
   constructor(private readonly root: HTMLElement) {
     root.innerHTML = `
@@ -226,6 +538,33 @@ export class Hud {
           <div class="hud-zombie" data-id="zombie" hidden>
             <div class="hud-zombie-round"><small>ROUND</small><strong data-id="zround">1</strong></div>
             <div class="hud-zombie-stat"><span data-id="zkills">0</span> KILLS · <span data-id="zpoints">0</span> PTS</div>
+            <!-- R53-W2: アクティブパワーアップの横並びチップ(insta/double/nuke/maxammo/carpenter) -->
+            <div class="w2-powerups" data-id="powerups" aria-hidden="true"></div>
+          </div>
+          <!-- R53-W2: 潜入検知メーター(detect01定義時のみ表示。目アイコン+半円弧ゲージ) -->
+          <div class="w2-detect" data-id="detect" hidden aria-hidden="true">
+            <svg class="w2-detect-eye" viewBox="0 0 24 14" aria-hidden="true">
+              <path d="M1 7 C5 1 19 1 23 7 C19 13 5 13 1 7 Z"></path>
+              <circle cx="12" cy="7" r="2.6"></circle>
+            </svg>
+            <svg class="w2-detect-arc" viewBox="-20 -20 40 22" aria-hidden="true">
+              <path class="w2-detect-arc-track" d="M -18 0 A 18 18 0 0 1 18 0"></path>
+              <path class="w2-detect-arc-fill" data-id="detectarc" d="M -18 0 A 18 18 0 0 1 18 0"></path>
+            </svg>
+          </div>
+          <!-- R53-W2: S&D HUD(sndPhase定義時のみ表示) -->
+          <div class="w2-snd" data-id="snd" hidden>
+            <div class="w2-snd-pips">
+              <div class="w2-snd-pip-row w2-snd-pip-row--mine" data-id="sndpipsmine"></div>
+              <div class="w2-snd-phase" data-id="sndphase"></div>
+              <div class="w2-snd-pip-row w2-snd-pip-row--enemy" data-id="sndpipsenemy"></div>
+            </div>
+            <div class="w2-snd-bomb" data-id="sndbomb" hidden><span data-id="sndbombtime">0.0</span></div>
+            <div class="w2-snd-progress" data-id="sndprogress" hidden>
+              <div class="w2-snd-progress-label" data-id="sndprogresslabel"></div>
+              <div class="w2-snd-progress-bar"><i data-id="sndprogressfill"></i></div>
+            </div>
+            <div class="w2-snd-carrier" data-id="sndcarrier" hidden>爆弾所持中</div>
           </div>
           <div class="hud-training" data-id="training" hidden>
             <div class="hud-training-row"><small>DPS</small><strong data-id="tr-dps">0.0</strong></div>
@@ -236,6 +575,8 @@ export class Hud {
           <div class="hud-boss" data-id="boss" hidden>
             <div class="hud-boss-name" data-id="boss-name">BOSS</div>
             <div class="hud-boss-bar"><i data-id="boss-bar"></i></div>
+            <!-- R53-W2: ボスフェーズ菱形pips(bossPhase定義時のみ表示) -->
+            <div class="w2-boss-phases" data-id="bossphases" hidden aria-hidden="true"></div>
           </div>
         </div>
       </div>
@@ -268,6 +609,21 @@ export class Hud {
         <span class="ch-bar ch-b" data-id="chb"></span>
         <span class="ch-bar ch-l" data-id="chl"></span>
         <span class="ch-bar ch-r" data-id="chr"></span>
+      </div>
+      <!-- R53-W3 MK.III: チャージ弧(クロスヘア直下90°。旧hud-charge-gauge棒と同一データの新表示。
+           照準補助の一部として聖域内に置くが r=56px の細線のみ=クロスヘアを塞がない) -->
+      <div class="mk3-charge-arc" data-id="mk3arc" hidden aria-hidden="true">
+        <svg viewBox="-64 -64 128 128" aria-hidden="true">
+          <path class="mk3-arc-track" d="M -39.6 39.6 A 56 56 0 0 0 39.6 39.6"></path>
+          <path class="mk3-arc-fill" data-id="mk3arcfill" d="M -39.6 39.6 A 56 56 0 0 0 39.6 39.6"></path>
+        </svg>
+      </div>
+      <!-- R53-W3 MK.III: モーメント帯(下1/3、1ノード+キュー。ラウンド/超越昇格/パーク/帝王/GGの統一演出。
+           無線字幕(bottom:24%)と非衝突の bottom:31%。ADS/キルカム中は新規開始をサプレス) -->
+      <div class="mk3-moment" data-id="mk3moment" hidden data-tone="ember">
+        <span class="mk3-moment-mark" data-id="mk3momentmark" aria-hidden="true"></span>
+        <div class="mk3-moment-title" data-id="mk3momenttitle"></div>
+        <div class="mk3-moment-sub" data-id="mk3momentsub" hidden></div>
       </div>
       <div class="hud-scope" data-id="scope" hidden>
         <div class="sc-back"></div>
@@ -409,7 +765,7 @@ export class Hud {
       </div>
       <div class="hud-zperks" data-id="zperks" hidden></div>
       <div class="hud-bottom-right ig-panel ig-panel--hud ig-panel--ember">
-        <div class="hud-weapon-row"><span data-id="weaponslot">PRIMARY</span><strong class="hud-weapon" data-id="weapon"></strong></div>
+        <div class="hud-weapon-row"><span data-id="weaponslot">PRIMARY</span><span class="w2-weapon-wrap"><strong class="hud-weapon" data-id="weapon"></strong><span class="w2-pap-pips" data-id="pappips" aria-hidden="true"></span></span></div>
         <div class="hud-ammo-row">
           <div class="hud-ammo-line">
             <div class="hud-ammo"><span data-id="ammo">30</span><span class="hud-reserve" data-id="reserve">/ 120</span></div>
@@ -465,9 +821,14 @@ export class Hud {
       <div class="hud-incoming" data-id="incoming"></div>
       <div class="hud-xp-ribbon" data-id="xpribbon" aria-live="polite" aria-atomic="false"></div>
       <div class="hud-vignette" data-id="vignette"></div>
+      <!-- R53-W2: 毒霧ビネット(poison01定義時のみ。既存の被弾ビネットとは別要素/別色で重畳しても破綻しない) -->
+      <div class="w2-poison-vignette" data-id="poisonvign"></div>
       <div class="hud-flash" data-id="flash"></div>
       <div class="hud-ultflash" data-id="ultflash"></div>
       <div class="hud-whiteout" data-id="whiteout"></div>
+      <!-- R53-W3 MK.III: 帝王プレゼンス枠(1px内枠グロー+四隅ノッチ。box-shadow insetのみ=
+           backdrop-filter不使用/GPU安価。emperorState(なければ既存フィールド導出)で常灯) -->
+      <div class="mk3-emperor-frame" data-id="mk3emperor" hidden aria-hidden="true"><i></i><i></i><i></i><i></i></div>
       <div class="hud-speedlines" data-id="speedlines"></div>
       <div class="hud-move" data-id="move" hidden>
         <span class="hud-move-state" data-id="movestate"></span>
@@ -480,6 +841,15 @@ export class Hud {
           <div class="mk-label" data-id="mklabel"></div>
           <div class="mk-pips" data-id="mkpips" aria-hidden="true"></div>
         </div>
+      </div>
+      <!-- R53-W2: 特殊ラウンド(餓鬼の大群)突入バナー。specialRound==='rush'突入の瞬間だけ一発表示 -->
+      <div class="w2-special-banner" data-id="specialbanner" hidden>
+        <div class="w2-special-banner-label">餓鬼の大群</div>
+      </div>
+      <!-- R53-W2: 無線字幕(radioLine非null時。クロスヘア聖域外・キルフィードと非衝突の下部) -->
+      <div class="w2-radio" data-id="radio" hidden>
+        <span class="w2-radio-speaker" data-id="radiospeaker"></span>
+        <span class="w2-radio-text" data-id="radiotext"></span>
       </div>
       <div class="hud-medal-stack" data-id="medalstack"></div>
       <div class="hud-badge-stack" data-id="badgestack"></div>
@@ -631,6 +1001,25 @@ export class Hud {
     this.wasSteady = false;
     this.lastSsStreak = -1; // 段の再描画を次フレームで強制(前試合の残値を持ち越さない)
     this.lastZombiePerks = '';
+    // ★W4C C-1: MK.III状態の完全リセット。前試合の終了間際に発行されたモーメント
+    // (キュー上限4件)が次試合の開幕へ流出するのを根治する
+    this.mk3Moments = emptyMomentQueue();
+    this.mk3Calm = { calm: false, quietS: 0 };
+    this.mk3CalmApplied = false;
+    delete this.root.dataset.calm;
+    this.mk3PrevT = null;
+    this.mk3CountUpTarget = null;
+    this.mk3EmperorApplied = '';
+    this.mk3ArcVisible = false;
+    const mk3moment = this.el['mk3moment'];
+    if (mk3moment) {
+      mk3moment.hidden = true;
+      mk3moment.classList.remove('mk3-show', 'mk3-leave');
+    }
+    const mk3emperor = this.el['mk3emperor'];
+    if (mk3emperor) mk3emperor.hidden = true;
+    const mk3arc = this.el['mk3arc'];
+    if (mk3arc) mk3arc.hidden = true;
     const zperks = this.el['zperks'];
     if (zperks) { zperks.innerHTML = ''; zperks.hidden = true; }
     const zbuy = this.el['zbuy'];
@@ -677,6 +1066,33 @@ export class Hud {
     if (this.minimapCtx) {
       this.minimapCtx.clearRect(0, 0, 144, 144);
     }
+    // ── R53-W2: 新規状態の完全クリア(前試合の残表示・キャッシュキーを持ち越さない) ──
+    this.lastPapTier = -1;
+    const pappips = this.el['pappips'];
+    if (pappips) pappips.innerHTML = '';
+    this.lastPowerUpKey = '';
+    this.powerUpEls.clear();
+    const powerups = this.el['powerups'];
+    if (powerups) powerups.innerHTML = '';
+    this.lastSpecialRound = undefined;
+    const specialbanner = this.el['specialbanner'];
+    if (specialbanner) {
+      specialbanner.hidden = true;
+      specialbanner.classList.remove('w2-show', 'w2-out');
+    }
+    const zroundEl = this.el['zround'];
+    if (zroundEl) zroundEl.classList.remove('w2-round-special', 'w2-round-pulse');
+    this.lastRadioLine = null;
+    const radio = this.el['radio'];
+    if (radio) radio.hidden = true;
+    const detect = this.el['detect'];
+    if (detect) detect.hidden = true;
+    this.lastBossPhaseTotal = -1;
+    const bossphases = this.el['bossphases'];
+    if (bossphases) { bossphases.innerHTML = ''; bossphases.hidden = true; }
+    this.lastSndPipTarget = -1;
+    const snd = this.el['snd'];
+    if (snd) snd.hidden = true;
   }
 
   update(
@@ -770,6 +1186,20 @@ export class Hud {
     this.updateSpinGauge(snap);
     this.drawMinimap(snap);
     this.updateGunGameHud(snap);
+
+    // ── R53-W2: M2a/M2b配線待ちの拡張フィールド(全optional。ローカル交差型で先行消費) ──
+    const snapW2 = snap as R53W2Snapshot;
+    this.updatePapPips(snapW2);
+    this.updatePowerUps(snapW2);
+    this.updatePoisonVignette(snapW2);
+    this.updateSpecialRound(snapW2);
+    this.updateRadioLine(snapW2);
+    this.updateDetectMeter(snapW2);
+    this.updateBossPhases(snapW2);
+    this.updateSndHud(snapW2);
+
+    // ── R53-W3 MK.III: Adaptive Presence / モーメント / 帝王枠 / チャージ弧 ──
+    this.updateMk3(snap as Mk3Snapshot);
 
     const scoreboard = this.el['scoreboard'];
     if (scoreboard) {
@@ -2155,6 +2585,346 @@ export class Hud {
         `<span class="gg-top3-rank">${e.rank}</span>` +
         `</div>`
       ).join('');
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // R53-W2: match.ts(M2a/M2b)配線待ちの拡張HUD。全て snap.<field> が undefined の間は
+  // 自然に非表示のまま(既存モードの見た目・挙動に一切影響しない)。
+  // ══════════════════════════════════════════════════════════════════════
+
+  // PaP(Pack-a-Punch)段数ピップ。武器名の隣に橙の小菱形×tier(papTier=0/undefinedで非表示)
+  private updatePapPips(snap: R53W2Snapshot): void {
+    const host = this.el['pappips'];
+    if (!host) return;
+    const tier = clampPapTier(snap.papTier);
+    if (tier === this.lastPapTier) return;
+    this.lastPapTier = tier;
+    host.innerHTML = '';
+    for (let i = 0; i < tier; i += 1) {
+      const pip = document.createElement('i');
+      pip.className = 'w2-pap-pip';
+      host.appendChild(pip);
+    }
+  }
+
+  // アクティブパワーアップの横並びチップ(insta/double/nuke/maxammo/carpenter、5種色分け)。
+  // kind集合が変化した時だけDOM再構築し、残秒は毎フレームテキストのみ更新(BO2ストリーク流儀)。
+  // 残3s未満のみ点滅(reduceMotion時は非点滅)。zombiePowerUps(ワールドドロップ)は
+  // 3Dビーコンで視認できるためHUDマーカーは実装しない(意図的な不実装)。
+  private updatePowerUps(snap: R53W2Snapshot): void {
+    const host = this.el['powerups'];
+    if (!host) return;
+    const list = snap.activePowerUps ?? [];
+    if (list.length === 0) {
+      if (this.lastPowerUpKey !== '') {
+        this.lastPowerUpKey = '';
+        this.powerUpEls.clear();
+        host.innerHTML = '';
+      }
+      return;
+    }
+    const key = list.map((p) => p.kind).join(',');
+    if (key !== this.lastPowerUpKey) {
+      this.lastPowerUpKey = key;
+      host.innerHTML = '';
+      this.powerUpEls.clear();
+      for (const p of list) {
+        const spec = POWERUP_CHIP_SPECS[p.kind];
+        const chip = document.createElement('div');
+        chip.className = 'w2-pu-chip';
+        chip.style.setProperty('--pu-color', spec.color);
+        chip.title = spec.label;
+        chip.setAttribute('aria-label', spec.label);
+        chip.innerHTML = `<span class="w2-pu-icon">${spec.icon}</span><span class="w2-pu-time"></span>`;
+        host.appendChild(chip);
+        const timeEl = chip.querySelector('.w2-pu-time') as HTMLElement;
+        this.powerUpEls.set(p.kind, { root: chip, timeEl });
+      }
+    }
+    for (const p of list) {
+      const ref = this.powerUpEls.get(p.kind);
+      if (!ref) continue;
+      const txt = String(Math.max(0, Math.ceil(p.remainS)));
+      if (ref.timeEl.textContent !== txt) ref.timeEl.textContent = txt;
+      ref.root.classList.toggle('w2-pu-blink', isPowerUpBlinking(p.remainS, snap.reduceMotion));
+    }
+  }
+
+  // 毒霧ビネット: 緑の縁オーバーレイ。.hud-vignette(被弾/低HP=赤)とは別要素・別z層のため、
+  // 双方が同時に出ても色が混線せず both が独立に見える(opacity/色のみで駆動しDOM競合なし)
+  private updatePoisonVignette(snap: R53W2Snapshot): void {
+    const el = this.el['poisonvign'];
+    if (!el) return;
+    const p01 = clampN(snap.poison01 ?? 0, 0, 1);
+    el.style.opacity = p01 > 0.001 ? String(p01 * 0.6) : '0';
+  }
+
+  // 特殊ラウンド(餓鬼の大群)突入バナー: 'rush'へ遷移した瞬間だけ一発表示(CONFIRMEDバナー流儀)。
+  // ラウンド数字はspecialRound中ずっと赤色化(バナーとは独立に持続)
+  private updateSpecialRound(snap: R53W2Snapshot): void {
+    const special = snap.specialRound ?? null;
+    if (isSpecialRoundEntering(this.lastSpecialRound, special)) {
+      const banner = this.el['specialbanner'];
+      if (banner) {
+        const reduceMotion = snap.reduceMotion;
+        banner.classList.remove('w2-show', 'w2-out');
+        banner.hidden = false;
+        if (!reduceMotion) {
+          void banner.offsetWidth; // reflow でスラムインを再起動
+          banner.classList.add('w2-show');
+        }
+        window.setTimeout(() => {
+          if (reduceMotion) {
+            banner.hidden = true;
+          } else {
+            banner.classList.add('w2-out');
+            window.setTimeout(() => {
+              banner.hidden = true;
+              banner.classList.remove('w2-show', 'w2-out');
+            }, 500);
+          }
+        }, 2200);
+      }
+    }
+    this.lastSpecialRound = special;
+    const zroundEl = this.el['zround'];
+    if (zroundEl) {
+      const active = special === 'rush';
+      zroundEl.classList.toggle('w2-round-special', active);
+      // 点滅/脈動はreduceMotion時に付与しない(JS側ゲート。CSS側の@mediaと二重で止める)
+      zroundEl.classList.toggle('w2-round-pulse', active && !snap.reduceMotion);
+    }
+  }
+
+  // 無線字幕: 話者名+本文。クロスヘア聖域外(下部)・キルフィード(右上)と非衝突。
+  // radioLine非null→表示(フェードイン)、null→フェードアウト。長文はCSSで2行clamp
+  private updateRadioLine(snap: R53W2Snapshot): void {
+    const el = this.el['radio'];
+    if (!el) return;
+    const line = snap.radioLine ?? null;
+    const key = line ? `${line.speaker}:${line.text}` : null;
+    if (key === this.lastRadioLine) return;
+    this.lastRadioLine = key;
+    if (line) {
+      this.text('radiotext', line.text);
+      const speakerEl = this.el['radiospeaker'];
+      const color = radioSpeakerColor(line.speaker);
+      if (speakerEl) {
+        speakerEl.textContent = RADIO_SPEAKER_NAMES[line.speaker];
+        speakerEl.style.color = color;
+      }
+      el.style.setProperty('--radio-color', color); // 左端バーの話者色(CSS側 border-left が参照)
+      el.hidden = false;
+      el.classList.remove('w2-out');
+      void el.offsetWidth;
+      el.classList.add('w2-show');
+    } else {
+      el.classList.remove('w2-show');
+      el.classList.add('w2-out');
+      window.setTimeout(() => {
+        // フェード待機中に新しい無線が来ていたら(lastRadioLineが非null)隠さない
+        if (!this.lastRadioLine) el.hidden = true;
+      }, 320);
+    }
+  }
+
+  // 潜入検知メーター: 目アイコン+半円弧ゲージ。0=白/0.5+=黄/0.9+=赤点滅(detect01未定義で非表示)
+  private updateDetectMeter(snap: R53W2Snapshot): void {
+    const el = this.el['detect'];
+    if (!el) return;
+    const shown = snap.detect01 !== undefined;
+    el.hidden = !shown;
+    if (!shown) return;
+    const d01 = clampN(snap.detect01 ?? 0, 0, 1);
+    const tier = detectMeterTier(d01);
+    el.classList.toggle('w2-tier-wary', tier === 'wary');
+    el.classList.toggle('w2-tier-alert', tier === 'alert');
+    el.classList.toggle('w2-detect-blink', detectMeterBlinking(d01, snap.reduceMotion));
+    const arc = this.el['detectarc'];
+    if (arc) {
+      arc.setAttribute('stroke-dasharray', String(DETECT_ARC_LEN));
+      arc.setAttribute('stroke-dashoffset', String(DETECT_ARC_LEN * (1 - d01)));
+    }
+  }
+
+  // ボスフェーズ菱形pips: 既存ボスHPバーの近くにidx/totalを表示(bossPhase未定義で非表示)
+  private updateBossPhases(snap: R53W2Snapshot): void {
+    const host = this.el['bossphases'];
+    if (!host) return;
+    const bp = snap.bossPhase ?? null;
+    host.hidden = !bp;
+    if (!bp) return;
+    if (bp.total !== this.lastBossPhaseTotal) {
+      this.lastBossPhaseTotal = bp.total;
+      host.innerHTML = '';
+      const n = clampN(Math.round(bp.total), 1, 12);
+      for (let i = 0; i < n; i += 1) {
+        const pip = document.createElement('i');
+        pip.className = 'w2-boss-phase-pip';
+        host.appendChild(pip);
+      }
+    }
+    const states = bossPhasePipStates(bp.idx, bp.total);
+    const pips = host.children;
+    for (let i = 0; i < pips.length; i += 1) {
+      const state = states[i] ?? 'pending';
+      const pip = pips[i] as HTMLElement;
+      pip.classList.toggle('w2-pip-done', state === 'done');
+      pip.classList.toggle('w2-pip-active', state === 'active');
+    }
+  }
+
+  // S&D HUD: ラウンドピップ(先取4・チーム色)/フェーズチップ/設置後ボム大カウントダウン/
+  // 設置・解除プログレスバー/所持アイコン。sndPhase未定義で非表示(非S&Dモードは無影響)
+  private updateSndHud(snap: R53W2Snapshot): void {
+    const host = this.el['snd'];
+    if (!host) return;
+    const active = snap.sndPhase !== undefined;
+    host.hidden = !active;
+    if (!active) return;
+
+    if (this.lastSndPipTarget !== SND_WIN_TARGET) {
+      this.lastSndPipTarget = SND_WIN_TARGET;
+      for (const id of ['sndpipsmine', 'sndpipsenemy'] as const) {
+        const row = this.el[id];
+        if (!row) continue;
+        row.innerHTML = '';
+        for (let i = 0; i < SND_WIN_TARGET; i += 1) {
+          const pip = document.createElement('i');
+          pip.className = 'w2-snd-pip';
+          row.appendChild(pip);
+        }
+      }
+    }
+    const score: [number, number] = snap.sndScore ?? [0, 0];
+    const mineStates = sndPipStates(score[0]);
+    const enemyStates = sndPipStates(score[1]);
+    const mineRow = this.el['sndpipsmine'];
+    if (mineRow) {
+      const pips = mineRow.children;
+      for (let i = 0; i < pips.length; i += 1) {
+        (pips[i] as HTMLElement).classList.toggle('w2-snd-pip-lit', mineStates[i] ?? false);
+      }
+    }
+    const enemyRow = this.el['sndpipsenemy'];
+    if (enemyRow) {
+      const pips = enemyRow.children;
+      for (let i = 0; i < pips.length; i += 1) {
+        (pips[i] as HTMLElement).classList.toggle('w2-snd-pip-lit', enemyStates[i] ?? false);
+      }
+    }
+
+    this.text('sndphase', sndPhaseLabel(snap.sndPhase));
+
+    const bombEl = this.el['sndbomb'];
+    if (bombEl) {
+      const showBomb = snap.sndPhase === 'planted' && snap.sndBombTimer !== undefined;
+      bombEl.hidden = !showBomb;
+      if (showBomb) this.text('sndbombtime', Math.max(0, snap.sndBombTimer ?? 0).toFixed(1));
+    }
+
+    const progEl = this.el['sndprogress'];
+    if (progEl) {
+      const showProg = snap.sndProgress01 !== undefined;
+      progEl.hidden = !showProg;
+      if (showProg) {
+        this.text('sndprogresslabel', sndProgressLabel(snap.sndProgressKind));
+        const fill = this.el['sndprogressfill'];
+        if (fill) fill.style.transform = `scaleX(${clampN(snap.sndProgress01 ?? 0, 0, 1)})`;
+      }
+    }
+
+    const carrierEl = this.el['sndcarrier'];
+    if (carrierEl) carrierEl.hidden = !snap.sndCarrierIsPlayer;
+  }
+
+  // ══ R53-W3 MK.III「LIVING INSTRUMENT」════════════════════════════════════
+  // per-frame DOM書込みの規律: dataset/hidden/クラスは「変化フレームのみ」。
+  // 毎フレーム走るのはカウントアップ中のtext()(同値スキップ)とチャージ弧の
+  // dashoffset(直近値スキップ)のみ。
+  private updateMk3(snap: Mk3Snapshot): void {
+    const now = performance.now();
+    const dt = this.mk3PrevT === null ? 0 : clampN((now - this.mk3PrevT) / 1000, 0, 0.1);
+    this.mk3PrevT = now;
+
+    // ── P0-1 Adaptive Presence(calm時に計器が沈む) ──
+    const hpRatio = snap.maxHp > 0 ? snap.hp / snap.maxHp : 1;
+    this.mk3Calm = stepCalmLatch(this.mk3Calm, snap.uiHeat, hpRatio, snap.alive, dt);
+    if (this.mk3Calm.calm !== this.mk3CalmApplied) {
+      this.mk3CalmApplied = this.mk3Calm.calm;
+      if (this.mk3Calm.calm) this.root.dataset.calm = '';
+      else delete this.root.dataset.calm;
+    }
+
+    // ── P0-2 モーメント帯 ──
+    const suppressed = snap.adsProgress > 0.5 || snap.killcamCamActive || !snap.alive;
+    const step = stepMomentQueue(this.mk3Moments, snap.moments, suppressed, dt);
+    this.mk3Moments = step.state;
+    const momentEl = this.el['mk3moment'];
+    if (momentEl) {
+      if (step.change === 'show' && step.state.current) {
+        const m = step.state.current;
+        momentEl.dataset.tone = momentTone(m);
+        this.text('mk3momentmark', momentWatermark(m));
+        const sub = this.el['mk3momentsub'];
+        if (sub) {
+          sub.textContent = m.sub ?? '';
+          sub.hidden = !m.sub;
+        }
+        const n = Number(m.title);
+        this.mk3CountUpTarget = m.title !== '' && Number.isFinite(n) && n > 0 ? n : null;
+        this.text('mk3momenttitle', this.mk3CountUpTarget !== null ? '0' : m.title);
+        momentEl.hidden = false;
+        momentEl.classList.remove('mk3-leave');
+        this.restartAnimation('mk3moment', 'mk3-show');
+      } else if (step.change === 'hide') {
+        momentEl.classList.add('mk3-leave');
+        this.mk3CountUpTarget = null;
+      } else if (step.change === 'end') {
+        momentEl.hidden = true;
+        momentEl.classList.remove('mk3-leave', 'mk3-show');
+      }
+      // 数値タイトルのカウントアップ(表示開始0.5sのみ。text()は同値書込みをスキップする)
+      if (this.mk3CountUpTarget !== null && step.state.phase === 'show') {
+        const k = Math.min(1, step.state.t / 0.5);
+        this.text('mk3momenttitle', String(Math.round(this.mk3CountUpTarget * k)));
+        if (k >= 1) this.mk3CountUpTarget = null;
+      }
+    }
+
+    // ── P1-1 帝王プレゼンス枠 ──
+    const emperor = deriveEmperorState(snap);
+    const empKey = emperor ?? '';
+    if (empKey !== this.mk3EmperorApplied) {
+      this.mk3EmperorApplied = empKey;
+      const frame = this.el['mk3emperor'];
+      if (frame) {
+        frame.hidden = empKey === '';
+        if (empKey !== '') frame.dataset.state = empKey;
+      }
+    }
+
+    // ── チャージ弧(旧hud-charge-gauge棒はmk3レイヤCSSで非表示化=同一データの二重表示回避) ──
+    const arcWrap = this.el['mk3arc'];
+    const arcFill = this.el['mk3arcfill'];
+    if (arcWrap && arcFill) {
+      const ratio = snap.chargeRatio ?? 0;
+      const visible = ratio > 0 && snap.alive;
+      if (visible !== this.mk3ArcVisible) {
+        this.mk3ArcVisible = visible;
+        arcWrap.hidden = !visible;
+        if (!visible) this.mk3LastArcOffset = '';
+      }
+      if (visible) {
+        const off = chargeArcDashoffset(ratio).toFixed(1);
+        if (off !== this.mk3LastArcOffset) {
+          this.mk3LastArcOffset = off;
+          arcFill.style.strokeDashoffset = off;
+          arcWrap.classList.toggle('mk3-arc-full', ratio >= 1);
+        }
+        if (arcWrap.dataset.state !== empKey) arcWrap.dataset.state = empKey;
+      }
     }
   }
 }

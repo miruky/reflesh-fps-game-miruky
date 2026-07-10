@@ -2,12 +2,18 @@
 // match.ts の Match クラス自体は THREE/Rapier のフル世界を要求するため直接ユニットテストしない
 // (このリポジトリの既存方針。match.test.ts は存在せず、代わりに match.ts が export する
 // 純関数/定数と、weapons.ts/zombie-economy.ts の純ロジックを組み合わせて検証する)。
-// applyZombiePerk('ext-mag', ...) と switchPrimaryWeapon() が実際に行っている手順
-// (applyAttachments でクローン → def.magazineSize を書き換え → new Weapon() で
-// Magazine を再構築)をここで再現し、副作用が正しいことを保証する。
+//
+// R53-W2以降: match.ts の applyZombiePerk('ext-mag'/'double-tap'/'speed-cola', ...) と
+// switchPrimaryWeapon() は「現在値への直接変異」を撤去し、composeZombieWeaponDef() 一本化へ
+// 移行した(recomposeWeapon/recomposeAllWeapons、常にWEAPON_DEFSの基礎値から再計算)。
+// ここでは match.ts が実際に行っている新手順(applyAttachments でクローン →
+// composeZombieWeaponDef でPaP/パーク合成 → new Weapon() で Magazine を再構築、または
+// 既存WeaponのdefフィールドをcomposeZombieWeaponDefの出力へコピー)を再現し、
+// ext-mag単体の数値がcompose移行の前後で不変であることを回帰確認する
+// (詳細な網羅テストは zombie-compose-wiring.test.ts 参照)。
 import { describe, expect, it } from 'vitest';
 import { EXT_MAG_EXCLUDED_IDS } from './match';
-import { applyExtMagCapacity, PERKS } from './zombie-economy';
+import { applyExtMagCapacity, composeZombieWeaponDef, PERKS } from './zombie-economy';
 import { applyAttachments } from './attachments';
 import { WEAPON_DEFS, Weapon } from './weapons';
 
@@ -32,18 +38,22 @@ describe('拡張マガジン(ext-mag)パーク', () => {
 
   // ─── (b) 共有WEAPON_DEFSが変異していない ───────────────────────────────────
 
-  it('match.tsの適用パターン(applyAttachmentsクローン→magazineSize書換→new Weapon)は共有WEAPON_DEFSを変異させない', () => {
+  it('R53-W2: match.tsの新手順(applyAttachmentsクローン→composeZombieWeaponDef→def書換)は共有WEAPON_DEFSを変異させない', () => {
     const before = JSON.stringify(WEAPON_DEFS['kaede-ar']);
 
-    // applyZombiePerk('ext-mag', 3) が装備中武器へ行う手順の再現
+    // recomposeWeapon(w) が装備中武器へ行う手順の再現(papTier=0/ext-magのみ3スタック)
     const cloned = applyAttachments(WEAPON_DEFS['kaede-ar']!, []); // switchPrimaryWeaponと同じ空attachments
-    const baseCap = WEAPON_DEFS[cloned.id]!.magazineSize;
-    const newCap = applyExtMagCapacity(baseCap, 3);
-    cloned.magazineSize = newCap;
     const weapon = new Weapon(cloned);
-    weapon.magazine.setCapacity(newCap, true);
+    const composed = composeZombieWeaponDef(WEAPON_DEFS['kaede-ar']!, {
+      papTier: 0,
+      extMagStacks: 3,
+      doubleTapStacks: 0,
+      speedColaStacks: 0,
+    });
+    weapon.def.magazineSize = composed.magazineSize;
+    weapon.magazine.setCapacity(composed.magazineSize, true);
 
-    expect(weapon.magazine.capacity).toBe(75);
+    expect(weapon.magazine.capacity).toBe(75); // ext-mag単体の数値はcompose移行前後で不変(回帰確認)
     expect(JSON.stringify(WEAPON_DEFS['kaede-ar'])).toBe(before); // 共有defは無傷
     expect(WEAPON_DEFS['kaede-ar']!.magazineSize).toBe(30); // 個別フィールドでも確認
   });
@@ -53,7 +63,13 @@ describe('拡張マガジン(ext-mag)パーク', () => {
     const beforeSnapshots = Object.fromEntries(ids.map((id) => [id, JSON.stringify(WEAPON_DEFS[id])]));
     for (const id of ids) {
       const cloned = applyAttachments(WEAPON_DEFS[id]!, []);
-      cloned.magazineSize = applyExtMagCapacity(WEAPON_DEFS[id]!.magazineSize, 2);
+      const composed = composeZombieWeaponDef(WEAPON_DEFS[id]!, {
+        papTier: 0,
+        extMagStacks: 2,
+        doubleTapStacks: 0,
+        speedColaStacks: 0,
+      });
+      cloned.magazineSize = composed.magazineSize;
       new Weapon(cloned); // 生成のみ(戻り値未使用でも副作用が無いことを確認する目的)
     }
     for (const id of ids) {
@@ -63,30 +79,35 @@ describe('拡張マガジン(ext-mag)パーク', () => {
 
   // ─── (c) 購入後に新規購入した武器にも適用される ────────────────────────────
 
-  it('switchPrimaryWeapon相当: 既に2スタック所持の状態で新規武器(wall-buy/mystery-box)を取得すると容量倍加が適用される', () => {
+  it('switchPrimaryWeapon相当: 既に2スタック所持の状態で新規武器(wall-buy/mystery-box)を取得すると容量倍加が適用される(compose経由でも同じ数値)', () => {
     const extMagStacks = 2; // 既存の zombiePerkStacks.get('ext-mag')
     for (const id of ['ginyanma-ar', 'hiiragi-sg', 'raicho-sniper']) {
       const baseDef = WEAPON_DEFS[id];
       if (!baseDef) continue; // ミステリーボックスプールに存在しない武器はスキップ
-      const newDef = applyAttachments(baseDef, []);
-      // switchPrimaryWeapon() と同じ条件分岐
-      if (extMagStacks > 0 && !EXT_MAG_EXCLUDED_IDS.has(newDef.id)) {
-        newDef.magazineSize = applyExtMagCapacity(newDef.magazineSize, extMagStacks);
-      }
-      const weapon = new Weapon(newDef);
+      const cloned = applyAttachments(baseDef, []);
+      // switchPrimaryWeapon() と同じ手順: composeZombieWeaponDef(papTier=0固定、壁/箱は常に新品)
+      const composed = composeZombieWeaponDef(cloned, {
+        papTier: 0,
+        extMagStacks,
+        doubleTapStacks: 0,
+        speedColaStacks: 0,
+      });
+      const weapon = new Weapon(composed);
       expect(weapon.magazine.capacity).toBe(Math.ceil(baseDef.magazineSize * 2.0));
       expect(weapon.magazine.rounds).toBe(weapon.magazine.capacity); // 新規取得時は満タン
     }
   });
 
-  it('未購入(スタック0)なら新規武器は基礎容量のまま', () => {
-    const extMagStacks = 0;
+  it('未購入(スタック0)なら新規武器は基礎容量のまま(compose経由)', () => {
     const baseDef = WEAPON_DEFS['kaede-ar']!;
-    const newDef = applyAttachments(baseDef, []);
-    if (extMagStacks > 0 && !EXT_MAG_EXCLUDED_IDS.has(newDef.id)) {
-      newDef.magazineSize = applyExtMagCapacity(newDef.magazineSize, extMagStacks);
-    }
-    const weapon = new Weapon(newDef);
+    const cloned = applyAttachments(baseDef, []);
+    const composed = composeZombieWeaponDef(cloned, {
+      papTier: 0,
+      extMagStacks: 0,
+      doubleTapStacks: 0,
+      speedColaStacks: 0,
+    });
+    const weapon = new Weapon(composed);
     expect(weapon.magazine.capacity).toBe(30);
   });
 
@@ -112,30 +133,33 @@ describe('拡張マガジン(ext-mag)パーク', () => {
     }
   });
 
-  it('fists は装備中でもパーク自体は他武器に適用され続ける(除外は武器単位)', () => {
-    // applyZombiePerk のループ: fistsのみcontinueでスキップし、他武器は処理される
+  it('fists は装備中でもパーク自体は他武器に適用され続ける(除外は武器単位、recomposeWeaponのガードで再現)', () => {
+    // recomposeAllWeapons のループ相当: fistsのみEXT_MAG_EXCLUDED_IDSガードでスキップし、他武器は処理される
     const primary = applyAttachments(WEAPON_DEFS['kaede-ar']!, []);
     const secondary = applyAttachments(WEAPON_DEFS['fists']!, []);
     const weapons = [new Weapon(primary), new Weapon(secondary)];
-    const stackCount = 1;
+    const opts = { papTier: 0 as const, extMagStacks: 1, doubleTapStacks: 0, speedColaStacks: 0 };
     for (const w of weapons) {
       if (EXT_MAG_EXCLUDED_IDS.has(w.def.id)) continue;
-      const baseCap = WEAPON_DEFS[w.def.id]!.magazineSize;
-      const newCap = applyExtMagCapacity(baseCap, stackCount);
-      w.def.magazineSize = newCap;
-      w.magazine.setCapacity(newCap, true);
+      const composed = composeZombieWeaponDef(WEAPON_DEFS[w.def.id]!, opts);
+      w.def.magazineSize = composed.magazineSize;
+      w.magazine.setCapacity(composed.magazineSize, true);
     }
     expect(weapons[0]!.magazine.capacity).toBe(45); // kaede-ar: 30→45
     expect(weapons[1]!.magazine.capacity).toBe(999); // fists: 変化なし
   });
 
-  it('ミニガン(shura-lmg)は容量が増えても magazine.capacity 基準のrefundロジックと矛盾しない', () => {
+  it('ミニガン(shura-lmg)は容量が増えても magazine.capacity 基準のrefundロジックと矛盾しない(compose経由)', () => {
     const cloned = applyAttachments(WEAPON_DEFS['shura-lmg']!, []);
-    const baseCap = WEAPON_DEFS['shura-lmg']!.magazineSize; // 150
-    const newCap = applyExtMagCapacity(baseCap, 1); // 225
-    cloned.magazineSize = newCap;
+    const composed = composeZombieWeaponDef(WEAPON_DEFS['shura-lmg']!, {
+      papTier: 0,
+      extMagStacks: 1, // 150 → 225
+      doubleTapStacks: 0,
+      speedColaStacks: 0,
+    });
+    cloned.magazineSize = composed.magazineSize;
     const weapon = new Weapon(cloned);
-    weapon.magazine.setCapacity(newCap, true);
+    weapon.magazine.setCapacity(composed.magazineSize, true);
     weapon.magazine.rounds = 10;
     // match.ts の refundRound(rounds, capacity) と同じ規約: capacityを超えて加算しない
     const refunded = Math.min(weapon.magazine.capacity, weapon.magazine.rounds + 1);

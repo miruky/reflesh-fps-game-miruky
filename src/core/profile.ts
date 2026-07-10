@@ -1,5 +1,12 @@
-import { isCamoId, isKunaiCamoId } from '../game/camo';
-import { emptyDailyState, emptyProfile, type DailyState, type Profile } from '../game/progression';
+import { isCamoId, isKunaiCamoId, isRewardCamoId, type CamoId } from '../game/camo';
+import {
+  emptyDailyState,
+  emptyProfile,
+  isCharmId,
+  type CharmId,
+  type DailyState,
+  type Profile,
+} from '../game/progression';
 
 const KEY = 'hibana.profile.v1';
 
@@ -129,6 +136,39 @@ export function parseProfile(raw: string): Profile {
   // ── デイリーチャレンジ状態(旧セーブは emptyDailyState で補完) ──
   if (typeof source.daily === 'object' && source.daily !== null) {
     base.daily = parseDailyState(source.daily as Record<string, unknown>);
+  }
+
+  // ── R53-W2: ゾンビ統計(charm解放条件の入力)。旧セーブは0で開始(後方互換) ──
+  base.bestZombieRound = num(source.bestZombieRound, 0);
+  base.zombieKills = num(source.zombieKills, 0);
+  base.zombieBossKills = num(source.zombieBossKills, 0);
+  // ★V-D HIGH修正(R53): 黒雷帝キル生涯累計(刀身雷脈=100キル判定)。旧セーブは0で開始
+  base.kokuraiKillsTotal = num(source.kokuraiKillsTotal, 0);
+
+  // ── R53-W2: お守り(charm)。既知のCharmIdのみ採用、equippedは未解放なら無効化 ──
+  if (typeof source.charms === 'object' && source.charms !== null) {
+    const c = source.charms as Record<string, unknown>;
+    const unlocked: CharmId[] = Array.isArray(c.unlocked)
+      ? c.unlocked.filter((id): id is CharmId => typeof id === 'string' && isCharmId(id))
+      : [];
+    let equipped: CharmId | null = null;
+    if (typeof c.equipped === 'string' && isCharmId(c.equipped) && unlocked.includes(c.equipped)) {
+      equipped = c.equipped;
+    }
+    base.charms = { unlocked, equipped };
+  }
+
+  // ── R53-W2: 称号(rankNameForとは別の実績由来の呼称)。文字列のみ採用 ──
+  if (Array.isArray(source.titles)) {
+    base.titles = source.titles.filter((t): t is string => typeof t === 'string');
+  }
+
+  // ── R53-W2: 報酬カモ(camo.ts REWARD_CAMO_IDS: jingai/shinrai)。kill数条件の
+  // CAMO_TIERSとは別枠。既知の報酬カモIDのみ採用する ──
+  if (Array.isArray(source.unlockedRewardCamos)) {
+    base.unlockedRewardCamos = source.unlockedRewardCamos.filter(
+      (id): id is CamoId => typeof id === 'string' && isCamoId(id) && isRewardCamoId(id),
+    );
   }
 
   return base;

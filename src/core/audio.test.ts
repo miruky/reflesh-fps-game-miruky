@@ -29,6 +29,10 @@ import {
   planShot,
   prosodyBase,
   prosodyFor,
+  RADIO_SQUELCH_SPECS,
+  radioProsodyBase,
+  radioProsodyFor,
+  type RadioSpeaker,
   renderImpulse,
   REVERB_PRESETS,
   scoreVoice,
@@ -45,6 +49,7 @@ import {
 } from './audio';
 import { STAGES } from '../game/stages';
 import { generateStageDef, BIOMES } from '../game/biomes';
+import type { PowerUpKind } from '../game/zombie-economy';
 
 // 決定的な擬似乱数(rng注入用)
 function mulberry32(seed: number): () => number {
@@ -309,7 +314,8 @@ describe('R9 ミキシング/BGM理論', () => {
 });
 
 describe('R12 ステージ/ムード別 BGMプロファイル', () => {
-  const KEYS: BgmProfileKey[] = ['day', 'dusk', 'night', 'overcast', 'snow', 'night-neon', 'zombie'];
+  // R53: 'emperor-kokurai'(黒雷帝転調。setEmperorBgm('kokuraitei')が使用)を追加
+  const KEYS: BgmProfileKey[] = ['day', 'dusk', 'night', 'overcast', 'snow', 'night-neon', 'zombie', 'emperor-kokurai'];
 
   it('BGM_PROFILES: 全キー(MoodId + night-neon)が存在し、各progressionは4小節×3和音', () => {
     for (const key of KEYS) {
@@ -374,10 +380,12 @@ describe('R12 ステージ/ムード別 BGMプロファイル', () => {
     expect(BGM_PROFILES.snow.riserEnabled).toBe(false);
   });
 
-  it('BGM_PROFILES.zombie: 最低rootHz・sub-drone・早いlead・ライザー有効の不穏プロファイル', () => {
+  it('BGM_PROFILES.zombie: 最低rootHz(ムード中)・sub-drone・早いlead・ライザー有効の不穏プロファイル', () => {
     const z = BGM_PROFILES.zombie;
-    expect(z.rootHz).toBeCloseTo(46.25, 2); // 全ムード中で最低音
-    const roots = KEYS.filter((k) => k !== 'zombie').map((k) => BGM_PROFILES[k].rootHz);
+    expect(z.rootHz).toBeCloseTo(46.25, 2); // ムード系で最低音(R53: 絶対最低は emperor-kokurai=41.2 に譲る)
+    const roots = KEYS.filter((k) => k !== 'zombie' && k !== 'emperor-kokurai').map(
+      (k) => BGM_PROFILES[k].rootHz,
+    );
     expect(Math.min(...roots)).toBeGreaterThan(z.rootHz);
     expect(z.subMode).toBe('drone');
     expect(z.subDrive).toBeGreaterThan(0);
@@ -808,5 +816,217 @@ describe('音響祭 新API 無例外テスト', () => {
     const sk = new SoundKit();
     sk.setDarkEmperorAura(true);
     expect(() => sk.quiesce()).not.toThrow();
+  });
+});
+
+// ── R53-W2 コンテンツ拡張(ゾンビ拡充/ストーリー帝王編/S&D)の音API群 ──────────
+describe('R53-W2 無線プロソディ/スケルチ 純ロジック', () => {
+  const SPEAKERS: RadioSpeaker[] = ['kagerou', 'homura', 'hibana', 'kurogane'];
+
+  it('radioProsodyBase: 話者ごとに異なるprosodyを持つ(4種とも相異なる)', () => {
+    const sigs = SPEAKERS.map((s) => {
+      const p = radioProsodyBase(s);
+      return `${p.pitch}|${p.rate}`;
+    });
+    expect(new Set(sigs).size).toBe(SPEAKERS.length);
+  });
+
+  it('radioProsodyBase: kuroganeは低pitch/遅rate、homuraは他話者より速め(rate最大)', () => {
+    const kurogane = radioProsodyBase('kurogane');
+    const homura = radioProsodyBase('homura');
+    for (const s of SPEAKERS) {
+      if (s === 'kurogane') continue;
+      expect(kurogane.pitch).toBeLessThan(radioProsodyBase(s).pitch);
+    }
+    for (const s of SPEAKERS) {
+      expect(homura.rate).toBeGreaterThanOrEqual(radioProsodyBase(s).rate);
+    }
+  });
+
+  it('radioProsodyFor: 基準±微ジッタ内かつpitch[0,2]/rate[0.1,10]に必ず収まる', () => {
+    for (const speaker of SPEAKERS) {
+      for (let i = 0; i < 50; i += 1) {
+        const p = radioProsodyFor(speaker);
+        const b = radioProsodyBase(speaker);
+        expect(p.pitch).toBeGreaterThanOrEqual(0);
+        expect(p.pitch).toBeLessThanOrEqual(2);
+        expect(p.rate).toBeGreaterThanOrEqual(0.1);
+        expect(p.rate).toBeLessThanOrEqual(10);
+        expect(Math.abs(p.pitch - b.pitch)).toBeLessThanOrEqual(0.026);
+        expect(Math.abs(p.rate - b.rate)).toBeLessThanOrEqual(0.031);
+      }
+    }
+  });
+
+  it('RADIO_SQUELCH_SPECS: 4話者を網羅し、kuroganeのみ歪み(drive+asym)を持つ', () => {
+    expect(Object.keys(RADIO_SQUELCH_SPECS).sort()).toEqual([...SPEAKERS].sort());
+    expect(RADIO_SQUELCH_SPECS.kurogane.drive).toBeGreaterThan(0);
+    expect(RADIO_SQUELCH_SPECS.kurogane.curve).toBe('asym');
+    for (const s of SPEAKERS) {
+      if (s === 'kurogane') continue;
+      expect(RADIO_SQUELCH_SPECS[s].drive ?? 0).toBe(0);
+    }
+  });
+
+  it('RADIO_SQUELCH_SPECS: 全話者のcarrierHz/noiseHz/qが正の値', () => {
+    for (const s of SPEAKERS) {
+      const spec = RADIO_SQUELCH_SPECS[s];
+      expect(spec.carrierHz).toBeGreaterThan(0);
+      expect(spec.noiseHz).toBeGreaterThan(0);
+      expect(spec.q).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('R53-W2 SoundKit 新API 無例外テスト(AudioContext不要)', () => {
+  const SPEAKERS: RadioSpeaker[] = ['kagerou', 'homura', 'hibana', 'kurogane'];
+  const POWER_UP_KINDS: PowerUpKind[] = ['insta', 'double', 'nuke', 'maxammo', 'carpenter'];
+
+  it('papUpgrade: 2.5s三段(圧着/研磨/チャイム)で例外なし', () => {
+    expect(() => new SoundKit().papUpgrade()).not.toThrow();
+  });
+  it('papDeny: 例外なし', () => {
+    expect(() => new SoundKit().papDeny()).not.toThrow();
+  });
+
+  it('powerUpPickup: 全種別(insta/double/nuke/maxammo/carpenter)で例外なし', () => {
+    const kit = new SoundKit();
+    for (const kind of POWER_UP_KINDS) {
+      expect(() => kit.powerUpPickup(kind)).not.toThrow();
+    }
+  });
+  it('powerUpExpire: 例外なし', () => {
+    expect(() => new SoundKit().powerUpExpire()).not.toThrow();
+  });
+
+  it('variantBlastExplode: 例外なし', () => {
+    expect(() => new SoundKit().variantBlastExplode()).not.toThrow();
+  });
+  it('variantMiasmaBurst: 例外なし(内部ループ非管理=quiesce不要な自然減衰)', () => {
+    expect(() => new SoundKit().variantMiasmaBurst()).not.toThrow();
+  });
+  it('shellHit: 連続呼び出し(スロットル経路)でも例外なし', () => {
+    const kit = new SoundKit();
+    expect(() => {
+      kit.shellHit();
+      kit.shellHit();
+      kit.shellHit();
+    }).not.toThrow();
+  });
+
+  it('specialRoundStart: 例外なし', () => {
+    expect(() => new SoundKit().specialRoundStart()).not.toThrow();
+  });
+  it('specialRoundClear: 例外なし', () => {
+    expect(() => new SoundKit().specialRoundClear()).not.toThrow();
+  });
+
+  it('radioBeep: 全話者で例外なし', () => {
+    const kit = new SoundKit();
+    for (const speaker of SPEAKERS) {
+      expect(() => kit.radioBeep(speaker)).not.toThrow();
+    }
+  });
+  it('radioSpeak: 全話者・空文字/長文で例外なし', () => {
+    const kit = new SoundKit();
+    for (const speaker of SPEAKERS) {
+      expect(() => kit.radioSpeak(speaker, 'area secure, moving to checkpoint')).not.toThrow();
+    }
+    expect(() => kit.radioSpeak('kurogane', '')).not.toThrow();
+  });
+  it('radioSpeak: 連続呼び出し(前の発話を割り込み)でも例外なし', () => {
+    const kit = new SoundKit();
+    expect(() => {
+      kit.radioSpeak('kagerou', 'first transmission');
+      kit.radioSpeak('homura', 'second transmission');
+    }).not.toThrow();
+  });
+  it('radioSpeak → quiesce: 孤児onend/onerrorコールバック(後beep)が無効化されても例外なし', () => {
+    const kit = new SoundKit();
+    kit.radioSpeak('kurogane', 'command, do you copy');
+    expect(() => kit.quiesce()).not.toThrow();
+  });
+
+  it('sndPlantTick: 連続呼び出し(進捗加速を模した高頻度呼び)でも例外なし', () => {
+    const kit = new SoundKit();
+    expect(() => {
+      for (let i = 0; i < 10; i += 1) kit.sndPlantTick();
+    }).not.toThrow();
+  });
+  it('sndPlanted: 例外なし', () => {
+    expect(() => new SoundKit().sndPlanted()).not.toThrow();
+  });
+  it('sndFuseTick: urgency 0 / 0.5 / 1 で例外なし(範囲外もクランプされ例外なし)', () => {
+    const kit = new SoundKit();
+    expect(() => kit.sndFuseTick(0)).not.toThrow();
+    expect(() => kit.sndFuseTick(0.5)).not.toThrow();
+    expect(() => kit.sndFuseTick(1)).not.toThrow();
+    expect(() => kit.sndFuseTick(-1)).not.toThrow();
+    expect(() => kit.sndFuseTick(2)).not.toThrow();
+  });
+  it('sndDefused: 例外なし', () => {
+    expect(() => new SoundKit().sndDefused()).not.toThrow();
+  });
+  it('sndDetonate: 既存explosion/rocketSubBoom流用経路で例外なし', () => {
+    expect(() => new SoundKit().sndDetonate()).not.toThrow();
+  });
+  it('sndRoundWin: 勝利/敗北の両方で例外なし', () => {
+    const kit = new SoundKit();
+    expect(() => kit.sndRoundWin(true)).not.toThrow();
+    expect(() => kit.sndRoundWin(false)).not.toThrow();
+  });
+
+  it('kuroganePhase: phase 2 / 3 で例外なし', () => {
+    const kit = new SoundKit();
+    expect(() => kit.kuroganePhase(2)).not.toThrow();
+    expect(() => kit.kuroganePhase(3)).not.toThrow();
+  });
+  it('kuroganeDefeat: 終焉の長残響で例外なし', () => {
+    expect(() => new SoundKit().kuroganeDefeat()).not.toThrow();
+  });
+
+  it('quiesce: 新API一式を呼んだ後も例外なし(dispose経路の網羅)', () => {
+    const kit = new SoundKit();
+    kit.papUpgrade();
+    kit.powerUpPickup('nuke');
+    kit.variantMiasmaBurst();
+    kit.specialRoundStart();
+    kit.radioSpeak('hibana', 'covering fire');
+    kit.sndFuseTick(0.9);
+    kit.kuroganePhase(3);
+    expect(() => kit.quiesce()).not.toThrow();
+    // 二重quiesceも安全(冪等)
+    expect(() => kit.quiesce()).not.toThrow();
+  });
+});
+
+// ── R53 帝王BGM転調(Fable#5)────────────────────────────────────────────────
+describe("R53: BGM_PROFILES['emperor-kokurai']", () => {
+  it('専用プロファイルが存在し、全プロファイル中で最深のルート(41.2Hz=E1)を持つ', () => {
+    const p = BGM_PROFILES['emperor-kokurai'];
+    expect(p).toBeDefined();
+    expect(p.rootHz).toBe(41.2);
+    for (const key of Object.keys(BGM_PROFILES) as BgmProfileKey[]) {
+      if (key === 'emperor-kokurai') continue;
+      expect(BGM_PROFILES[key].rootHz).toBeGreaterThan(p.rootHz);
+    }
+  });
+
+  it('玉座の間合い: half-time閾値0.45+drive bass+drone sub(帝の重圧の骨格)', () => {
+    const p = BGM_PROFILES['emperor-kokurai'];
+    expect(p.halfTimeKickBelowHeat).toBe(0.45);
+    expect(p.bassMode).toBe('drive');
+    expect(p.subMode).toBe('drone');
+    expect(p.subDrive).toBeGreaterThanOrEqual(2.6); // zombie(2.6)以上の地響き
+  });
+
+  it('進行はゾンビ(病んだクラスタ)と異なる荘厳系(ナポリ♭II=半音上の威圧を含む)', () => {
+    const p = BGM_PROFILES['emperor-kokurai'];
+    expect(p.progression).toHaveLength(4);
+    for (const chord of p.progression) expect(chord).toHaveLength(3);
+    // 第2小節がナポリの♭II(ルート+1半音)で始まる=帝王進行の指紋
+    expect(p.progression[1]![0]).toBe(1);
+    // ゾンビ進行(0,1,6クラスタ開始)とは異なる
+    expect(p.progression[0]).not.toEqual(BGM_PROFILES.zombie.progression[0]);
   });
 });

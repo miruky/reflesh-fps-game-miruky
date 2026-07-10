@@ -1,6 +1,6 @@
 // ゲームモードのルール定義と進行計算。描画・物理に依存しない
 // 'story'=キャンペーン(目的駆動・scoreTarget無効) / 'score'=スコアアタック(時間内キル数)
-export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie' | 'hardpoint' | 'killconfirm' | 'gungame' | 'training';
+export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie' | 'hardpoint' | 'killconfirm' | 'gungame' | 'training' | 'snd';
 
 export type TeamId = number;
 
@@ -59,6 +59,13 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
     teamBased: true,
     scoreTarget: 6500,
   },
+  snd: {
+    id: 'snd',
+    name: 'サーチ&デストロイ',
+    desc: 'ノーリスポーンのラウンド制。攻撃側は爆弾を設置、守備側は解除を狙う。先取4ラウンドで4ラウンドごとに攻守交替',
+    teamBased: true,
+    scoreTarget: 4, // ラウンド先取数。実勝敗はSndMatchが管理
+  },
   story: {
     id: 'story',
     name: 'ストーリー',
@@ -90,7 +97,7 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
 };
 
 // メニューで選べる対戦モード。'story' は専用UI、'zombie' は専用ラウンドUI
-export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'hardpoint', 'killconfirm', 'gungame', 'score', 'zombie', 'training'];
+export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'hardpoint', 'killconfirm', 'snd', 'gungame', 'score', 'zombie', 'training'];
 
 const CAPTURE_PER_S = 0.35;
 const DECAY_PER_S = 0.2;

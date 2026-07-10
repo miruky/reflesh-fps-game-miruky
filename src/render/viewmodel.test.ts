@@ -177,6 +177,40 @@ describe('武器カモ(buildGunBody)', () => {
     });
     expect(dotY).toBeCloseTo(resolveSightY(def), 6);
   });
+
+  // ── R53-W2: PaP鍛神(pap1-3)/報酬カモ(jingai/shinrai)の描画登録 ──
+  it('pap1-3/jingai/shinrai は全形状(早期分岐含む)で例外なく組め、カモ材が載る', () => {
+    const NEW_IDS = ['pap1', 'pap2', 'pap3', 'jingai', 'shinrai'] as const;
+    const SHAPES: ViewModelShape[] = [
+      'rifle',
+      'fists',
+      'shuriken-hand',
+      'bow-japanese',
+      'war-fan',
+      'musket',
+      'lightning-staff',
+      'minigun',
+    ];
+    for (const shape of SHAPES) {
+      for (const id of NEW_IDS) {
+        const def: WeaponDef = { ...ar, shape };
+        const { gun, muzzle } = buildGunBody(def, id);
+        expect(muzzle.position.z, `${shape}:${id}`).toBeLessThan(0);
+        const mats = camoMats(gun);
+        expect(mats.length, `${shape}:${id}`).toBeGreaterThan(0);
+        for (const m of mats) expect(m.camoVisualId, `${shape}:${id}`).toBe(id);
+      }
+    }
+  });
+
+  it('pap1-3 は明示camoIdでのみ適用される(通常の未指定/プロファイル解決経路には出てこない)', () => {
+    // camoId省略(=resolveEquippedCamo経由)ではプロファイル未保存のためnull=素の質感
+    expect(camoMats(buildGunBody(ar).gun)).toHaveLength(0);
+    // 明示的に渡せば通常武器と同じくレンダリングされる(viewmodelのpapCamo優先フックが使う経路)
+    const mats = camoMats(buildGunBody(ar, 'pap2').gun);
+    expect(mats.length).toBeGreaterThan(0);
+    for (const m of mats) expect(m.camoVisualId).toBe('pap2');
+  });
 });
 
 // resolveSightY は ADS 収束 Y(=-adsY)を武器ごとに決める純関数。buildGunBody のサイト
@@ -678,6 +712,278 @@ describe('R53-W1 F3: 修羅バレルのキャッシュ参照', () => {
     vm.setWeapon(def);
     const rig = (vm as unknown as Record<string, unknown>)['rig'] as { barrel?: THREE.Object3D };
     expect(rig.barrel).toBeUndefined();
+    vm.dispose();
+  });
+});
+
+// ── R53-W2: WeaponDef.papCamo優先適用 + キャッシュキー分離 + PaP改造演出 ────
+describe('R53-W2: papCamo優先適用/キャッシュキー分離/playPapUpgradeAnim', () => {
+  function gunCamoIds(root: THREE.Object3D): string[] {
+    const out: string[] = [];
+    root.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.material instanceof CamoStandardMaterial) {
+        out.push(o.material.camoVisualId);
+      }
+    });
+    return out;
+  }
+
+  it('def.papCamoが設定されていれば選択カモ(未設定=null)より優先してレンダリングされる', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const ar = WEAPON_DEFS['kaede-ar'];
+    if (!ar) throw new Error('kaede-ar missing');
+    // プロファイル未保存(テスト環境)なので通常経路は camo=null になるはずの武器
+    vm.setWeapon(ar);
+    expect(gunCamoIds(vm.root)).toHaveLength(0);
+    // papCamo付きdefに切り替えると鍛神カモが最優先で載る
+    vm.setWeapon({ ...ar, papCamo: 'pap2' });
+    const ids = gunCamoIds(vm.root);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect(id).toBe('pap2');
+    vm.dispose();
+  });
+
+  it('キャッシュキー分離: 同一武器でも papCamo 違いは別キャッシュエントリになり、見た目も分離される', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const ar = WEAPON_DEFS['kaede-ar'];
+    if (!ar) throw new Error('kaede-ar missing');
+    const cache = (vm as unknown as Record<string, unknown>)['cache'] as Map<string, unknown>;
+    vm.setWeapon(ar);
+    const sizePlain = cache.size;
+    vm.setWeapon({ ...ar, papCamo: 'pap1' });
+    expect(cache.size).toBe(sizePlain + 1);
+    vm.setWeapon({ ...ar, papCamo: 'pap3' });
+    expect(cache.size).toBe(sizePlain + 2);
+    // pap1へ戻すとキャッシュが再利用され、サイズは増えない
+    vm.setWeapon({ ...ar, papCamo: 'pap1' });
+    expect(cache.size).toBe(sizePlain + 2);
+    expect(gunCamoIds(vm.root)).toEqual(expect.arrayContaining(['pap1']));
+    for (const id of gunCamoIds(vm.root)) expect(id).toBe('pap1');
+    vm.dispose();
+  });
+
+  // adsProgress=1で breathAtten/bobAmp が完全にゼロになる(R53-W1 NEUTRAL_STATE と同じ手法)
+  // ため、root.position はスウェイ等に一切揺らされずpapDip/emissiveパルスの寄与のみで動く。
+  const NEUTRAL_STATE = {
+    adsProgress: 1,
+    mouseDX: 0,
+    mouseDY: 0,
+    moveFactor: 0,
+    grounded: false,
+    reloadRatio: null,
+    raiseRatio: 0,
+    motionScale: 1,
+    alive: true,
+    scopeReveal01: 0,
+    sprinting: false,
+  };
+
+  it('playPapUpgradeAnim(通常2.5s): 中盤でrootが沈み+発光パルスが起き、最終的に元位置へ戻る', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const ar = WEAPON_DEFS['kaede-ar'];
+    if (!ar) throw new Error('kaede-ar missing');
+    vm.setWeapon(ar);
+    vm.update(0, NEUTRAL_STATE);
+    const baselineY = vm.root.position.y;
+    vm.playPapUpgradeAnim(false);
+    const accentMat = (vm as unknown as Record<string, unknown>)['_accentMat'] as THREE.MeshStandardMaterial;
+    let minY = Infinity;
+    let maxEmissive = 0;
+    for (let i = 0; i < 200; i += 1) {
+      vm.update(1 / 60, NEUTRAL_STATE);
+      minY = Math.min(minY, vm.root.position.y);
+      maxEmissive = Math.max(maxEmissive, accentMat.emissiveIntensity);
+    }
+    expect(minY).toBeLessThan(baselineY - 0.05); // 武器が沈んだ
+    expect(maxEmissive).toBeGreaterThan(0.5); // 発光パルスが基準値(0.5)を超えた
+    expect(maxEmissive).toBeLessThan(0.9); // bloom閾値0.9未満(白飛び再発禁止)
+    expect(vm.root.position.y).toBeCloseTo(baselineY, 6); // タイマー経過後にrootが元位置
+    vm.dispose();
+  });
+
+  it('playPapUpgradeAnim(reduceMotion=true): 短縮(0.5s)+パルスなしで、最終的に元位置へ戻る', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const ar = WEAPON_DEFS['kaede-ar'];
+    if (!ar) throw new Error('kaede-ar missing');
+    vm.setWeapon(ar);
+    vm.update(0, NEUTRAL_STATE);
+    const baselineY = vm.root.position.y;
+    vm.playPapUpgradeAnim(true);
+    const accentMat = (vm as unknown as Record<string, unknown>)['_accentMat'] as THREE.MeshStandardMaterial;
+    let minY = Infinity;
+    let maxEmissive = 0;
+    for (let i = 0; i < 60; i += 1) {
+      // 60/60 = 1.0s > 0.5s の短縮尺
+      vm.update(1 / 60, NEUTRAL_STATE);
+      minY = Math.min(minY, vm.root.position.y);
+      maxEmissive = Math.max(maxEmissive, accentMat.emissiveIntensity);
+    }
+    expect(minY).toBeLessThan(baselineY - 0.05); // 沈み込み自体は起きる
+    expect(maxEmissive).toBeCloseTo(0.5, 5); // パルス省略=基準値のまま変化しない
+    expect(vm.root.position.y).toBeCloseTo(baselineY, 6);
+    vm.dispose();
+  });
+
+  it('playPapUpgradeAnimは fire/reload可動ノード(rig.*)には触れない(rest=identity契約は不変)', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['kaede-ar'];
+    if (!def) throw new Error('kaede-ar missing');
+    vm.setWeapon(def);
+    const rig = (vm as unknown as Record<string, unknown>)['rig'] as {
+      slide?: THREE.Object3D;
+      bolt?: THREE.Object3D;
+      charging?: THREE.Object3D;
+      magazine?: THREE.Object3D;
+    };
+    vm.playPapUpgradeAnim(false);
+    for (let i = 0; i < 30; i += 1) vm.update(1 / 60, NEUTRAL_STATE);
+    if (rig.slide) expect(rig.slide.position.z).toBe(0);
+    if (rig.bolt) expect(rig.bolt.position.z).toBe(0);
+    if (rig.charging) expect(rig.charging.position.z).toBe(0);
+    if (rig.magazine) expect(rig.magazine.position.y).toBe(0);
+    vm.dispose();
+  });
+
+  it('W1非回帰: 修羅のブレースADS収束(X/Z)はpapDipの影響を受けず、Yのみ一時的に沈んで戻る', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['shura-lmg'];
+    if (!def) throw new Error('shura-lmg missing');
+    vm.setWeapon(def);
+    vm.update(0, NEUTRAL_STATE);
+    expect(vm.root.position.x).toBeCloseTo(0.3, 5);
+    expect(vm.root.position.y).toBeCloseTo(-0.3, 5);
+    expect(vm.root.position.z).toBeCloseTo(-0.3, 5);
+    vm.playPapUpgradeAnim(false);
+    let minY = Infinity;
+    for (let i = 0; i < 40; i += 1) {
+      // 中盤(≈0.33s)まで進める。X/Zはブレース位置のまま不変、Yだけ沈む
+      vm.update(1 / 60, NEUTRAL_STATE);
+      minY = Math.min(minY, vm.root.position.y);
+      expect(vm.root.position.x).toBeCloseTo(0.3, 5);
+      expect(vm.root.position.z).toBeCloseTo(-0.3, 5);
+    }
+    expect(minY).toBeLessThan(-0.3 - 0.05);
+    for (let i = 0; i < 160; i += 1) vm.update(1 / 60, NEUTRAL_STATE); // 残りを消化
+    expect(vm.root.position.x).toBeCloseTo(0.3, 5);
+    expect(vm.root.position.y).toBeCloseTo(-0.3, 5);
+    expect(vm.root.position.z).toBeCloseTo(-0.3, 5);
+    vm.dispose();
+  });
+});
+
+// ── R53 帝王体験(Fable#5): 溜め3段ポーズ+恒久報酬・白芯雷脈 ─────────────────
+// 溜め段は加算デルタ(スイングと同チャネル)なので rest/ADS/resolveSightY 契約に無干渉。
+// ADS中は level×(1-adsProgress) で縮退する(照準契約優先)。
+describe('R53: 帝王溜め段(setEmperorChargeStage)+白芯雷脈(setKatanaVeins)', () => {
+  const HIP_STATE = {
+    adsProgress: 0,
+    mouseDX: 0,
+    mouseDY: 0,
+    moveFactor: 0,
+    grounded: true,
+    reloadRatio: null,
+    raiseRatio: 0,
+    motionScale: 1,
+    alive: true,
+    scopeReveal01: 0,
+    sprinting: false,
+  };
+
+  function makeKunaiVm(): { vm: ViewModel; kunai: THREE.Object3D } {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['fists'];
+    if (!def) throw new Error('fists missing');
+    vm.setWeapon(def);
+    const kunai = vm.root.getObjectByName('vm:kunai');
+    if (!kunai) throw new Error('vm:kunai missing');
+    return { vm, kunai };
+  }
+
+  it('段3で刀が大上段へ(rotation.x が rest より大きく上向く)、段0で復帰する', () => {
+    const { vm, kunai } = makeKunaiVm();
+    for (let i = 0; i < 30; i += 1) vm.update(1 / 60, HIP_STATE);
+    const restRx = kunai.rotation.x;
+    vm.setEmperorChargeStage(3);
+    for (let i = 0; i < 90; i += 1) vm.update(1 / 60, HIP_STATE);
+    // EMPEROR_CHARGE_MAX の kunai r[0]=-1.15 がフル(level=1.0)で乗る
+    expect(kunai.rotation.x).toBeLessThan(restRx - 0.8);
+    vm.setEmperorChargeStage(0);
+    for (let i = 0; i < 120; i += 1) vm.update(1 / 60, HIP_STATE);
+    expect(kunai.rotation.x).toBeCloseTo(restRx, 2);
+    vm.dispose();
+  });
+
+  it('段の単調性: 段1 < 段2 < 段3 の持ち上げ量', () => {
+    const { vm, kunai } = makeKunaiVm();
+    const rxAt = (stage: 0 | 1 | 2 | 3): number => {
+      vm.setEmperorChargeStage(stage);
+      for (let i = 0; i < 90; i += 1) vm.update(1 / 60, HIP_STATE);
+      return kunai.rotation.x;
+    };
+    const r0 = rxAt(0);
+    const r1 = rxAt(1);
+    const r2 = rxAt(2);
+    const r3 = rxAt(3);
+    expect(r1).toBeLessThan(r0);
+    expect(r2).toBeLessThan(r1);
+    expect(r3).toBeLessThan(r2);
+    vm.dispose();
+  });
+
+  it('ADS中は溜めポーズが縮退する(照準契約優先: level×(1-adsProgress))', () => {
+    const { vm, kunai } = makeKunaiVm();
+    vm.setEmperorChargeStage(3);
+    for (let i = 0; i < 90; i += 1) vm.update(1 / 60, { ...HIP_STATE, adsProgress: 1 });
+    // ADS逆手ポーズ(FIST_POSES.ads r[0]=-2.0)そのもの=溜め加算はゼロ
+    expect(kunai.rotation.x).toBeCloseTo(-2.0, 1);
+    vm.dispose();
+  });
+
+  it('武器切替で溜め段が解除される(キャッシュ越境防止)', () => {
+    const { vm, kunai } = makeKunaiVm();
+    for (let i = 0; i < 30; i += 1) vm.update(1 / 60, HIP_STATE);
+    const restRx = kunai.rotation.x;
+    vm.setEmperorChargeStage(3);
+    for (let i = 0; i < 60; i += 1) vm.update(1 / 60, HIP_STATE);
+    const ar = WEAPON_DEFS['kaede-ar'];
+    const fists = WEAPON_DEFS['fists'];
+    if (!ar || !fists) throw new Error('defs missing');
+    vm.setWeapon(ar);
+    vm.setWeapon(fists);
+    const kunai2 = vm.root.getObjectByName('vm:kunai');
+    if (!kunai2) throw new Error('vm:kunai missing after reswap');
+    for (let i = 0; i < 60; i += 1) vm.update(1 / 60, HIP_STATE);
+    expect(kunai2.rotation.x).toBeCloseTo(restRx, 2);
+    vm.dispose();
+  });
+
+  it('setKatanaVeins(true): 黒刀に vm:katanaVeins が付き、falseで除去される', () => {
+    const { vm } = makeKunaiVm();
+    vm.setKunaiDarkMode(true);
+    expect(vm.root.getObjectByName('vm:darkBlade')).toBeTruthy();
+    expect(vm.root.getObjectByName('vm:katanaVeins')).toBeFalsy();
+    vm.setKatanaVeins(true);
+    expect(vm.root.getObjectByName('vm:katanaVeins')).toBeTruthy();
+    vm.setKatanaVeins(false);
+    expect(vm.root.getObjectByName('vm:katanaVeins')).toBeFalsy();
+    vm.dispose();
+  });
+
+  it('雷脈は先に解放→後からブレード構築でも自動で乗る(雷刀側)', () => {
+    const { vm } = makeKunaiVm();
+    vm.setKatanaVeins(true);
+    expect(vm.root.getObjectByName('vm:katanaVeins')).toBeFalsy(); // ブレード未構築なら無し
+    vm.setKunaiLightningMode(true);
+    const blade = vm.root.getObjectByName('vm:lightningBlade');
+    expect(blade).toBeTruthy();
+    expect(blade!.getObjectByName('vm:katanaVeins')).toBeTruthy();
     vm.dispose();
   });
 });

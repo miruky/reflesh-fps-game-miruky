@@ -1,0 +1,223 @@
+/* ============================================================
+   IGNITION FRAME MK.III — メニュー/ARMORY層 (R53 Fable#4)
+   style.css から独立した追加レイヤ(menu.ts が import)。
+   規律: filter/backdrop-filter 禁止 / 新フォント資産なし(明朝はOS内蔵)
+   / @keyframes は mk3m- 接頭辞 / reduceMotion は @media + .reduce-motion 二重ゲート
+   / 外向きglow禁止(スクロールコンテナ内は inset のみ)
+   ============================================================ */
+
+/* ── 超越階級の漢字判子(ワードマーク背後) ─────────────────────── */
+.wordmark {
+  position: relative;
+}
+.mk3m-rank-stamp {
+  position: absolute;
+  right: -0.5em;
+  top: 50%;
+  transform: translateY(-54%) rotate(6deg);
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', 'MS PMincho', serif;
+  font-size: 62px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--ember, #ff5a26);
+  opacity: 0.13;
+  pointer-events: none;
+  user-select: none;
+  z-index: 0;
+}
+.wordmark > h1,
+.wordmark > p {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── hold-to-launch 出撃レバー(300msフィル) ───────────────────── */
+.menu-start {
+  position: relative;
+  overflow: hidden;
+}
+.menu-start > span,
+.menu-start > svg {
+  position: relative;
+  z-index: 1;
+}
+.mk3m-hold-fill {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--ember, #ff5a26) 52%, transparent),
+    color-mix(in srgb, var(--ember, #ff5a26) 22%, transparent)
+  );
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0.92;
+}
+.menu-start.mk3m-holding .mk3m-hold-fill {
+  transform: scaleX(1);
+  transition: transform 300ms linear;
+}
+.menu-start:not(.mk3m-holding) .mk3m-hold-fill {
+  transition: transform 110ms ease-out;
+}
+/* 省モーション: 掃引の代わりに 300ms の明滅フィル(機能=進捗表示は維持) */
+@media (prefers-reduced-motion: reduce) {
+  .menu-start.mk3m-holding .mk3m-hold-fill {
+    transform: none;
+    transition: none;
+    animation: mk3m-holdfade 300ms linear forwards;
+  }
+}
+:root.reduce-motion .menu-start.mk3m-holding .mk3m-hold-fill {
+  transform: none;
+  transition: none;
+  animation: mk3m-holdfade 300ms linear forwards;
+}
+@keyframes mk3m-holdfade {
+  from {
+    opacity: 0.15;
+  }
+  to {
+    opacity: 0.8;
+  }
+}
+
+/* ── mfd-hero 2層視差(JSが transform を書く。transformのみ=再レイアウトなし) ── */
+.mfd-hero .hero-limb,
+.mfd-hero .hero-grid {
+  will-change: transform;
+}
+
+/* ── ARMORY 装備差分チップ ─────────────────────────────────────── */
+.mk3m-diff {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+  min-height: 12px;
+  pointer-events: none;
+}
+.mk3m-diff i {
+  font-style: normal;
+  font-size: 9px;
+  line-height: 1.25;
+  letter-spacing: 0.03em;
+  padding: 0 3px;
+  border: 1px solid;
+  border-radius: 2px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.mk3m-diff i.up {
+  color: var(--ok, #57e389);
+  border-color: color-mix(in srgb, var(--ok, #57e389) 55%, transparent);
+}
+.mk3m-diff i.down {
+  color: var(--threat, #ff5c5c);
+  border-color: color-mix(in srgb, var(--threat, #ff5c5c) 55%, transparent);
+}
+
+/* ── EXOTIC 神殿(紫金) ────────────────────────────────────────── */
+.weapon-grid.mk3m-exotic-shrine {
+  background:
+    linear-gradient(160deg, rgba(64, 22, 98, 0.32), rgba(18, 8, 30, 0.55) 55%, rgba(94, 72, 14, 0.26));
+  border: 1px solid rgba(176, 124, 255, 0.34);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 196, 107, 0.1),
+    inset 0 0 44px rgba(96, 32, 160, 0.24);
+}
+.armory-preview.mk3m-exotic-shrine {
+  border-color: rgba(176, 124, 255, 0.42);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 196, 107, 0.12),
+    inset 0 0 64px rgba(96, 32, 160, 0.2);
+}
+.mk3m-exotic-lore {
+  margin-top: 8px;
+  padding: 8px 10px 9px;
+  border: 1px solid rgba(176, 124, 255, 0.4);
+  background: linear-gradient(150deg, rgba(56, 22, 86, 0.48), rgba(12, 8, 22, 0.72));
+  display: grid;
+  gap: 7px;
+}
+.mk3m-lore-row {
+  display: grid;
+  gap: 2px;
+}
+.mk3m-lore-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.mk3m-lore-kind {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: rgba(176, 124, 255, 0.85);
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.mk3m-lore-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--medal-gold, #ffc46b);
+  letter-spacing: 0.06em;
+}
+.mk3m-lore-how {
+  font-size: 9px;
+  padding: 0 4px;
+  border: 1px solid rgba(176, 124, 255, 0.45);
+  border-radius: 2px;
+  color: rgba(216, 190, 255, 0.9);
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.mk3m-lore-desc {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: rgba(226, 232, 244, 0.82);
+}
+
+/* ── リザルト「マッチストーリー」タイムライン ─────────────────── */
+.mk3m-story {
+  margin: 10px 0 2px;
+}
+.mk3m-story-cap {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  opacity: 0.55;
+  margin-bottom: 2px;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.mk3m-story svg {
+  display: block;
+  width: 100%;
+  height: 48px;
+}
+.mk3m-story .mk3m-story-line {
+  stroke: rgba(159, 184, 201, 0.35);
+}
+.mk3m-mk--ember {
+  color: var(--ember, #ff5a26);
+}
+.mk3m-mk--cyan {
+  color: var(--signal, #19e6ff);
+}
+.mk3m-mk--violet {
+  color: #b07cff;
+}
+.mk3m-mk--ok {
+  color: var(--ok, #57e389);
+}
+.mk3m-mk--gold {
+  color: var(--medal-gold, #ffc46b);
+}
+.mk3m-mk--steel {
+  color: #8fa0b0;
+}
+.mk3m-story text {
+  font-size: 7.5px;
+  letter-spacing: 0.06em;
+  fill: rgba(210, 222, 235, 0.78);
+  font-family: var(--mono, ui-monospace, monospace);
+}

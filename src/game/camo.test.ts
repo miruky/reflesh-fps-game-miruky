@@ -18,13 +18,21 @@ import {
   goldFor,
   isCamoId,
   isCamoUnlocked,
+  isKnownCamoId,
   isKunaiCamoId,
   isKunaiCamoUnlocked,
+  isPapCamoId,
+  isRewardCamoId,
   kunaiCamoProgress,
   KUNAI_CAMO_IDS,
+  PAP_CAMO_IDS,
+  PAP_CAMO_NAMES,
+  REWARD_CAMO_CHAPTER,
+  REWARD_CAMO_IDS,
   TOKOYAMI_CAMO,
   weaponIdByName,
   weaponNameOf,
+  type CamoId,
   type WeaponCamoStats,
 } from './camo';
 import { WEAPON_DEFS } from './weapons';
@@ -50,11 +58,18 @@ describe('カモ段階表', () => {
     }
   });
 
-  it('IDは11種で重複しない(9段+ダイヤ+ダークマター)', () => {
-    expect(CAMO_IDS).toHaveLength(11);
-    expect(new Set(CAMO_IDS).size).toBe(11);
+  it('IDは13種で重複しない(9段+ダイヤ+ダークマター+報酬カモ2種)', () => {
+    // R53-W2: jingai/shinrai(報酬カモ)がCAMO_IDSへ自然に追加された(既存11種+2)
+    expect(CAMO_IDS).toHaveLength(13);
+    expect(new Set(CAMO_IDS).size).toBe(13);
     expect(CAMO_IDS).toContain('diamond');
     expect(CAMO_IDS).toContain('dark-matter');
+    expect(CAMO_IDS).toContain('jingai');
+    expect(CAMO_IDS).toContain('shinrai');
+    // PaP鍛神(システム付与)はCAMO_IDS対象外
+    expect(CAMO_IDS).not.toContain('pap1');
+    expect(CAMO_IDS).not.toContain('pap2');
+    expect(CAMO_IDS).not.toContain('pap3');
   });
 
   it('isCamoId は既知IDのみ真', () => {
@@ -331,5 +346,140 @@ describe('equippedCamoFor', () => {
         id,
       ).toBe('dark-matter');
     }
+  });
+});
+
+// ── R53-W2: Pack-a-Punch「鍛神」3段(pap1-3・システム付与カモ) ──────────────
+describe('PaP鍛神カモ(pap1-3)', () => {
+  it('PAP_CAMO_IDSは3種で、CAMO_IDS(通常ラダー)には含まれない', () => {
+    expect(PAP_CAMO_IDS).toEqual(['pap1', 'pap2', 'pap3']);
+    for (const id of PAP_CAMO_IDS) expect(CAMO_IDS, id).not.toContain(id);
+  });
+
+  it('isPapCamoId は pap1-3 のみ真', () => {
+    expect(isPapCamoId('pap1')).toBe(true);
+    expect(isPapCamoId('pap2')).toBe(true);
+    expect(isPapCamoId('pap3')).toBe(true);
+    expect(isPapCamoId('gold')).toBe(false);
+    expect(isPapCamoId('jingai')).toBe(false);
+    expect(isPapCamoId('')).toBe(false);
+  });
+
+  it('isKnownCamoId は CAMO_IDS 非対象の pap1-3/tokoyami も真、未知IDは偽', () => {
+    for (const id of PAP_CAMO_IDS) expect(isKnownCamoId(id), id).toBe(true);
+    expect(isKnownCamoId('tokoyami')).toBe(true);
+    expect(isKnownCamoId('rainbow')).toBe(false);
+    expect(isKnownCamoId('')).toBe(false);
+    // isCamoId(解放ゲート用)は pap1-3/tokoyami を対象外のまま維持する(非回帰)
+    expect(isCamoId('pap1')).toBe(false);
+    expect(isCamoId('tokoyami')).toBe(false);
+  });
+
+  it('PAP_CAMO_NAMESは3段とも「鍛神」を含む日本語名を持つ', () => {
+    for (const id of PAP_CAMO_IDS) {
+      const name = PAP_CAMO_NAMES[id as 'pap1' | 'pap2' | 'pap3'];
+      expect(name, id).toContain('鍛神');
+    }
+    expect(camoName('pap1')).toBe(PAP_CAMO_NAMES.pap1);
+    expect(camoName('pap2')).toBe(PAP_CAMO_NAMES.pap2);
+    expect(camoName('pap3')).toBe(PAP_CAMO_NAMES.pap3);
+  });
+
+  it('CAMO_VISUALS: pap1-3全てシェーダ生成に必要な値が例外なく揃い、発光は0.55以下', () => {
+    for (const id of PAP_CAMO_IDS) {
+      const v = CAMO_VISUALS[id];
+      expect(v, id).toBeDefined();
+      expect(v.id).toBe(id);
+      expect(v.emissiveIntensity, id).toBeLessThanOrEqual(0.55);
+      expect(v.metalness, id).toBeGreaterThanOrEqual(0);
+      expect(v.metalness, id).toBeLessThanOrEqual(1);
+      expect(v.roughness, id).toBeGreaterThanOrEqual(0);
+      expect(v.roughness, id).toBeLessThanOrEqual(1);
+      expect(v.scale, id).toBeGreaterThan(0);
+    }
+    // pap1=静的回路脈、pap2=時間uniformを使うpulse(微パルス)、pap3=高密度(scaleが最大)
+    expect(CAMO_VISUALS.pap1.pattern).toBe('circuit');
+    expect(CAMO_VISUALS.pap2.pattern).toBe('pulse');
+    expect(CAMO_VISUALS.pap3.pattern).toBe('circuit');
+    expect(CAMO_VISUALS.pap3.scale).toBeGreaterThan(CAMO_VISUALS.pap1.scale);
+  });
+
+  it('isCamoUnlocked/camoProgress は pap1-3 を通常ラダーの対象にしない(常に false/idx<0)', () => {
+    const stats: Record<string, WeaponCamoStats> = { 'kaede-ar': { kills: 99999, headshots: 999 } };
+    for (const id of PAP_CAMO_IDS) {
+      expect(isCamoUnlocked(id, 'kaede-ar', stats), id).toBe(false);
+    }
+  });
+});
+
+// ── R53-W2: 報酬カモ(jingai/shinrai・章クリア報酬) ───────────────────────
+describe('報酬カモ(jingai/shinrai)', () => {
+  it('REWARD_CAMO_IDSは2種で、CAMO_IDSに自然に含まれる(ARMORY選択UI互換)', () => {
+    expect(REWARD_CAMO_IDS).toEqual(['jingai', 'shinrai']);
+    for (const id of REWARD_CAMO_IDS) expect(CAMO_IDS, id).toContain(id);
+  });
+
+  it('isRewardCamoId は jingai/shinrai のみ真', () => {
+    expect(isRewardCamoId('jingai')).toBe(true);
+    expect(isRewardCamoId('shinrai')).toBe(true);
+    expect(isRewardCamoId('gold')).toBe(false);
+    expect(isRewardCamoId('pap1')).toBe(false);
+  });
+
+  it('REWARD_CAMO_CHAPTER: jingai=ch9報酬、shinrai=ch10報酬', () => {
+    expect(REWARD_CAMO_CHAPTER.jingai).toBe('ch9');
+    expect(REWARD_CAMO_CHAPTER.shinrai).toBe('ch10');
+  });
+
+  it('camoName/CAMO_VISUALS: 燼骸/神雷の名前と見た目が例外なく揃う', () => {
+    expect(camoName('jingai')).toBe('燼骸');
+    expect(camoName('shinrai')).toBe('神雷');
+    for (const id of REWARD_CAMO_IDS) {
+      const v = CAMO_VISUALS[id];
+      expect(v, id).toBeDefined();
+      expect(v.emissiveIntensity, id).toBeLessThanOrEqual(0.5);
+    }
+  });
+
+  it('isCamoUnlocked: rewardUnlocked未指定/空は未解放、指定(配列/Set)で解放される', () => {
+    const stats: Record<string, WeaponCamoStats> = {};
+    expect(isCamoUnlocked('jingai', 'kaede-ar', stats)).toBe(false);
+    expect(isCamoUnlocked('jingai', 'kaede-ar', stats, [])).toBe(false);
+    expect(isCamoUnlocked('jingai', 'kaede-ar', stats, ['jingai'])).toBe(true);
+    expect(isCamoUnlocked('shinrai', 'kaede-ar', stats, ['jingai'])).toBe(false);
+    const asSet = new Set<CamoId>(['shinrai']);
+    expect(isCamoUnlocked('shinrai', 'kaede-ar', stats, asSet)).toBe(true);
+    expect(isCamoUnlocked('jingai', 'kaede-ar', stats, asSet)).toBe(false);
+    // 対象外武器(fists)は報酬カモ集合を渡しても常にfalse
+    expect(isCamoUnlocked('jingai', 'fists', stats, ['jingai'])).toBe(false);
+  });
+
+  it('camoProgress: 未解放時は章クリア文言のラベルを返す', () => {
+    const p1 = camoProgress('jingai', 'kaede-ar', {});
+    expect(p1.label).toContain('第9章');
+    const p2 = camoProgress('shinrai', 'kaede-ar', {});
+    expect(p2.label).toContain('第10章');
+  });
+
+  it('equippedCamoFor: unlockedRewardCamosを渡すと報酬カモが装備解決される', () => {
+    expect(
+      equippedCamoFor('kaede-ar', {
+        selectedCamos: { 'kaede-ar': 'jingai' },
+        weaponStats: {},
+        unlockedRewardCamos: ['jingai'],
+      }),
+    ).toBe('jingai');
+    // 未解放(unlockedRewardCamos省略)は null
+    expect(
+      equippedCamoFor('kaede-ar', { selectedCamos: { 'kaede-ar': 'jingai' }, weaponStats: {} }),
+    ).toBeNull();
+    // shinraiはクナイ映え狙いだが、equippedCamoForの通常経路(fists以外)にも普通に載る
+    expect(
+      equippedCamoFor('tsubaki-smg', {
+        selectedCamos: { 'tsubaki-smg': 'shinrai' },
+        weaponStats: {},
+        unlockedRewardCamos: new Set<CamoId>(['shinrai']),
+      }),
+    ).toBe('shinrai');
   });
 });

@@ -237,7 +237,20 @@ export type MedalId =
   | 'chain-50'
   | 'chain-comeback'
   | 'chain-saver'
-  | 'chain-god';
+  | 'chain-god'
+  // ── M: 帝王編+W2システム連動 (7, R53-W2) ─────────────────────────────────
+  // 全てKillCtx非依存: onKill()の連続キル/距離/武器種などの文脈を持たないため、
+  // match側が MedalTracker.emitManual() を通じて直接発火する契約とする
+  // (例: pap-first/pap-max = Pack-a-Punch実行時、variant-100 = 特殊ゾンビ撃破数、
+  //  snd-ace = S&D 1ラウンド全滅勝ち、ch9-clear/ch10-clear/kurogane-slayer = 帝王編の
+  //  ミッションクリア/ボス撃破時)
+  | 'pap-first'
+  | 'pap-max'
+  | 'variant-100'
+  | 'snd-ace'
+  | 'ch9-clear'
+  | 'ch10-clear'
+  | 'kurogane-slayer';
 
 export interface MedalEvent {
   id: MedalId;
@@ -521,6 +534,14 @@ const MEDALS: Record<MedalId, MedalDef> = {
   'chain-comeback': { name: 'CHAIN COMEBACK', tier: 'silver', color: 'var(--medal-gold)', xp: 200 },
   'chain-saver': { name: 'CHAIN SAVER', tier: 'gold', color: 'var(--medal-gold)', xp: 500 },
   'chain-god': { name: 'CHAIN GOD', tier: 'platinum', color: 'var(--medal-plat)', xp: 15000 },
+  // ── M: 帝王編+W2システム連動(match側が emitManual() で直接発火) ──
+  'pap-first': { name: '初改造', tier: 'silver', color: 'var(--medal-blue)', xp: 300 },
+  'pap-max': { name: '改造完了', tier: 'gold', color: 'var(--medal-gold)', xp: 800 },
+  'variant-100': { name: '特異体討伐', tier: 'gold', color: 'var(--medal-red)', xp: 1500 },
+  'snd-ace': { name: 'エース', tier: 'platinum', color: 'var(--medal-plat)', xp: 1000 },
+  'ch9-clear': { name: '帝王編・序', tier: 'gold', color: 'var(--medal-violet)', xp: 2000 },
+  'ch10-clear': { name: '帝王編・極', tier: 'platinum', color: 'var(--medal-plat)', xp: 5000 },
+  'kurogane-slayer': { name: 'クロガネ討伐', tier: 'platinum', color: 'var(--medal-plat)', xp: 4000 },
 };
 
 // 武器クラス別のロングショット閾値(m)。sniper は常時 / shotgun は無効
@@ -541,6 +562,8 @@ export const LONGSHOT: Record<WeaponClass, number> = {
 // 既存36種は headshot 以外全部バッジ解放を維持(実績互換)。
 // 新180種は「体験が明確に変わるエリート18種」だけバッジ解放し、残り162種を抑止。
 // → 画面にバッジが出うるメダル種は 216種中53種(≒1/4)。
+// (R53-W2でM区分7種を追加。SUPPRESS_BADGEには入れていないため
+//  全223種中バッジ解放可能なのは60種 — ch10-clear/kurogane-slayerはALWAYS_BADGE)
 // 削除ではなく「表示無効化」 — 定義・XP・カウントは維持し将来復活可能
 export const SUPPRESS_BADGE: ReadonlySet<MedalId> = new Set<MedalId>([
   // ── 既存14種(頻出bronze: バッジを出すとHUDが埋まる) ──
@@ -612,6 +635,9 @@ export const ALWAYS_BADGE: ReadonlySet<MedalId> = new Set<MedalId>([
   'chain-50',     // SINGULARITY
   'rampage-feed', // 10連フィード
   'kokurai-50',   // 黒雷帝50連
+  // ── R53-W2: 帝王編の到達点級(ALWAYS_BADGE級との指示に従う) ──
+  'ch10-clear',      // 帝王編・極(第10章完全制覇)
+  'kurogane-slayer', // 帝王編ラスボス「クロガネ」撃破
 ]);
 
 // アナウンサー音声の読み上げ優先度(大きいほど優先)。1キルで複数取得時に最上位を1件だけ読む
@@ -804,6 +830,13 @@ export class MedalTracker {
   private kokuraiKills = 0;
   private kokuraiNoDmg = true;
   private kokuraiActivated = false;
+
+  // ★V-D HIGH修正: 刀身雷脈(黒雷帝キル累計100)の在match寄与に使う「本当のキル数」。
+  // medalCounts['kokurai-kill'] は「初キルの1回だけ発火するメダル」の回数(≒試合数)で
+  // あってキル数ではない — 累計判定は必ずこの getter を使うこと。
+  get kokuraiKillCount(): number {
+    return this.kokuraiKills;
+  }
   private ultKills = 0;
   private hellKills = 0;
   private hellNoDmg = true;
@@ -864,6 +897,7 @@ export class MedalTracker {
     if (['slide-snipe','slide-qs','slide-hs','air-snipe','air-qs','air-hs','slide-air-kill','air-slam-kill'].includes(id)) return 'I';
     if (id.startsWith('dark-') || id.startsWith('raitei-') || id.startsWith('kokurai-') || id.startsWith('ult-') || id.startsWith('hell-') || id.startsWith('de-') ) return 'J';
     if (id.startsWith('chain-')) return 'L';
+    if (['pap-first', 'pap-max', 'variant-100', 'snd-ace', 'ch9-clear', 'ch10-clear', 'kurogane-slayer'].includes(id)) return 'M';
     return null;
   }
 
@@ -1319,6 +1353,17 @@ export class MedalTracker {
   }
 
   // ── 新コールバック(match側が配線する。未配線でも安全) ──
+
+  /**
+   * KillCtx非依存メダルを match側が直接発火するための汎用フック(R53-W2)。
+   * pap-first/pap-max/variant-100/snd-ace/ch9-clear/ch10-clear/kurogane-slayer は
+   * onKill()の連続キル/距離/武器種などの文脈を持たないため、この経路で発火する契約とする
+   * (例: Pack-a-Punch実行時に match.ts が emitManual('pap-first', out) を呼ぶ)。
+   * firstUnlock判定・カウント・カテゴリ集計は通常のemit()と同じ経路を通る。
+   */
+  emitManual(id: MedalId, out: MedalEvent[]): void {
+    this.emit(id, out);
+  }
 
   /** プレイヤーが被ダメージを受けた */
   onPlayerDamaged(): void {

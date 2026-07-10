@@ -4,6 +4,34 @@ import { easeOutCubic } from '../core/easing';
 import type { WeaponDef } from '../game/weapons';
 import { buildGunBody } from './viewmodel';
 
+// ── R53 MK.III: インスペクトループ ──────────────────────────────────
+// buildGunBody の可動ノード(vm:*、rest=identity契約)をプレビュー内でゆっくり駆動し、
+// 「生きている機械」を見せる。ノードの分類: recip=前後往復(スライド/ボルト等)、
+// mag=弾倉の微沈み、spin=回転(ミニガンバレル/リボルバーシリンダー)。
+export type InspectKind = 'recip' | 'mag' | 'spin';
+export interface InspectNode {
+  node: THREE.Object3D;
+  kind: InspectKind;
+  phase: number;
+}
+const INSPECT_KIND_BY_NAME: Record<string, InspectKind> = {
+  'vm:slide': 'recip',
+  'vm:bolt': 'recip',
+  'vm:charging': 'recip',
+  'vm:forend': 'recip',
+  'vm:magazine': 'mag',
+  'vm:cylinder': 'spin',
+  'vm:barrel': 'spin',
+};
+export function collectInspectNodes(root: THREE.Object3D): InspectNode[] {
+  const out: InspectNode[] = [];
+  root.traverse((o) => {
+    const kind = INSPECT_KIND_BY_NAME[o.name];
+    if (kind) out.push({ node: o, kind, phase: out.length * 1.7 });
+  });
+  return out;
+}
+
 // 台座(祭壇)のホロ光輪。アセットレス: CircleGeometry + 手続きGLSLの加算合成のみ。
 // 同心リング + 外周エッジ + レーダー掃引で「兵装を捧げる祭壇」の質感を作る。
 const PEDESTAL_VERT = /* glsl */ `
@@ -58,6 +86,14 @@ export class WeaponPreview {
   private dragging = false;
   private lastX = 0;
   private lastY = 0;
+
+  // R53 MK.III: インスペクトループ+空撃ち
+  private inspectNodes: InspectNode[] = [];
+  private fireT = 0; // 空撃ちキック(1→0へ減衰)
+  private downX = 0;
+  private downY = 0;
+  private downT = 0;
+  private movedPx = 0; // pointerdownからの累積移動量(クリック/ドラッグの弁別)
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -146,6 +182,10 @@ export class WeaponPreview {
     this.velYaw = 0;
     this.lastX = e.clientX;
     this.lastY = e.clientY;
+    this.downX = e.clientX;
+    this.downY = e.clientY;
+    this.downT = performance.now();
+    this.movedPx = 0;
     this.canvas.setPointerCapture(e.pointerId);
     this.canvas.style.cursor = 'grabbing';
   };
@@ -155,17 +195,26 @@ export class WeaponPreview {
     const dy = (e.clientY - this.lastY) * 0.01;
     this.lastX = e.clientX;
     this.lastY = e.clientY;
+    this.movedPx = Math.max(
+      this.movedPx,
+      Math.hypot(e.clientX - this.downX, e.clientY - this.downY),
+    );
     this.yaw += dx;
     this.pitch = Math.max(-0.6, Math.min(0.6, this.pitch + dy));
     this.velYaw = dx;
   };
   private readonly onUp = (e: PointerEvent): void => {
+    const wasDragging = this.dragging;
     this.dragging = false;
     this.canvas.style.cursor = 'grab';
     try {
       this.canvas.releasePointerCapture(e.pointerId);
     } catch {
       // 既に解放済みなら無視
+    }
+    // R53 MK.III: 動かさず短く押した=クリック → 空撃ち(ドラッグ回転とは弁別)
+    if (wasDragging && this.movedPx < 6 && performance.now() - this.downT < 450) {
+      this.fireT = 1;
     }
   };
 
@@ -195,12 +244,15 @@ export class WeaponPreview {
     this.fitToView(gun);
     this.pivot.add(gun);
     this.current = gun;
+    this.inspectNodes = collectInspectNodes(gun); // MK.III: 可動ノードを一度だけ捕捉
+    this.fireT = 0;
     this.accent.color.setHex(def.tracerColor);
     this.pedestalMat.uniforms.uColor!.value.setHex(def.tracerColor);
     this.presentT = 0; // 新武器の登場ドリーを開始
   }
 
   private clearCurrent(): void {
+    this.inspectNodes = [];
     if (!this.current) return;
     this.pivot.remove(this.current);
     this.current.traverse((o) => {
@@ -272,12 +324,35 @@ export class WeaponPreview {
       if (Math.abs(this.velYaw) < 0.0004) this.velYaw = 0;
       if (!this.reduceMotion) this.yaw += 0.006 * dt60;
     }
-    this.pivot.rotation.set(this.pitch, this.yaw, 0);
+    // R53 MK.III: 空撃ちキック(減衰)+可動ノードのインスペクト駆動。
+    // ノードは rest=identity 契約なので毎フレーム絶対値で上書きすれば累積誤差なし
+    // (spinのみ加算回転=連続性優先)。
+    const fire = easeOutCubic(this.fireT);
+    if (this.fireT > 0) this.fireT = Math.max(0, this.fireT - dt60 * 0.07);
+    const tSec = now * 0.001;
+    if (!this.reduceMotion) {
+      for (const it of this.inspectNodes) {
+        if (it.kind === 'recip') {
+          it.node.position.z =
+            Math.max(0, Math.sin(tSec * 1.3 + it.phase)) * 0.006 + fire * 0.03;
+        } else if (it.kind === 'mag') {
+          it.node.position.y = Math.sin(tSec * 0.9 + it.phase) * -0.0035 - fire * 0.008;
+        } else {
+          it.node.rotation.z += (0.0025 + fire * 0.06) * dt60;
+        }
+      }
+    } else {
+      for (const it of this.inspectNodes) {
+        if (it.kind === 'recip') it.node.position.z = fire * 0.02;
+      }
+    }
+    this.pivot.rotation.set(this.pitch + fire * 0.03, this.yaw, 0);
 
     if (this.reduceMotion) {
       // 省モーション: 登場ドリー/呼吸/光の周回/掃引を止め、静止ポーズで見せる
+      // (空撃ちキックのみ控えめに残す=クリックへの応答は機能)
       this.presentT = 1;
-      this.pivot.position.set(0, 0, 0);
+      this.pivot.position.set(0, 0, fire * 0.02);
       this.pivot.scale.setScalar(1);
       this.key.intensity = 1.55;
     } else {
@@ -286,12 +361,14 @@ export class WeaponPreview {
       this.presentT = Math.min(1, this.presentT + dt60 * 0.05);
       const pres = easeOutCubic(this.presentT);
       const breath = Math.sin(now * 0.0016) * 0.01;
-      this.pivot.position.set(0, (1 - pres) * -0.14 + breath, (1 - pres) * -0.12);
+      // 空撃ちキック: 手前へ短く跳ね、キー光が一瞬爆ぜる(MK.III)
+      this.pivot.position.set(0, (1 - pres) * -0.14 + breath, (1 - pres) * -0.12 + fire * 0.05);
       this.pivot.scale.setScalar(0.96 + 0.04 * pres);
-      this.key.intensity = 1.55 + (1 - pres) * 0.6;
+      this.key.intensity = 1.55 + (1 - pres) * 0.6 + fire * 0.8;
       // アクセント光を武器の周りへゆっくり周回させ、金属面にハイライトを流す
       const a = now * 0.0006;
       this.accent.position.set(Math.cos(a) * 0.72, 0.35, Math.sin(a) * 0.72);
+      this.accent.intensity = 7 + fire * 9;
       // 祭壇のホロ光輪を掃引させる
       this.pedestalMat.uniforms.uTime!.value = now * 0.001;
     }

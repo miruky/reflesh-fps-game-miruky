@@ -153,6 +153,10 @@ function launch(config: MatchConfig): void {
   // reduced-motionはCSS(@media)側で尊重される
   // リスタート経路の二重起動防止→ステージの空間残響→環境音ベッドの順に音場を用意
   sounds.stopAmbience();
+  // ★V-D MEDIUM修正: 前試合のdisposeは音場セットアップの「前」に行う。前試合が黒雷帝で
+  // 終わっていると dispose→setEmperorBgm(null) が退避プロファイル(前ステージ曲)を復元する
+  // ため、後置きだと新ステージの setMusicProfile を上書きして曲を取り違える(「次のミッション」経路)
+  match?.dispose();
   // 適応DPRの状態を初期化(前試合の解像度スケール段を持ち越さない)。共有rendererの
   // pixelRatioも基準へ戻す(これを怠ると新試合のcomposerが低下値を継承し複利で劣化する)
   frameEma = 0.0166;
@@ -171,7 +175,6 @@ function launch(config: MatchConfig): void {
         : bgmMood;
   sounds.setMusicProfile(bgmKey);
   sounds.startAmbience(config.stage);
-  match?.dispose();
   match = new Match(
     config,
     settings,
@@ -209,12 +212,18 @@ function startMatch(selection: MenuSelection): void {
     zombieStartRound: selection.zombieStartRound,
     hellMode: selection.hellMode ?? false,
     allGiantMode: selection.allGiantMode ?? false,
+    // R53-W2 M2b: MN2凍結契約の転記(お守り/継承パーク。ゾンビモードのみ効果)
+    charm: selection.charm,
+    carriedPerk: selection.carriedPerk,
+    // ★V-D HIGH修正: medalCounts['kokurai-kill']は「初キルメダルの発火回数≒試合数」で
+    // キル数ではない。刀身雷脈(黒雷百殺=100キル)の基底は生涯キル累計を使う
+    kokuraiKillsBase: profile.kokuraiKillsTotal ?? 0,
   });
 }
 
 // ストーリー・ミッションを起動する。武器は自由選択(省略時=支給武器)
 let activeMissionPrimary: string | null = null; // リトライ時に選択武器を引き継ぐ
-function startMission(missionId: string, primaryId?: string): void {
+function startMission(missionId: string, primaryId?: string, missionDifficulty?: 'easy' | 'normal' | 'hard'): void {
   const mission = missionById(missionId);
   if (!mission) return;
   // 別ミッションへ移る時は前回の選択武器を持ち越さない(支給武器を黙って上書きしない)。
@@ -233,6 +242,11 @@ function startMission(missionId: string, primaryId?: string): void {
     difficulty: mission.difficulty,
     durationS: mission.durationS,
     mission,
+    // R53-W2 M2b: ブリーフィング難易度(MN2凍結契約。undefined=normal扱い)
+    missionDifficulty,
+    // ★V一括修正: 帝王システムはストーリーでも発動する(c10はfists支給)ため、
+    // 刀身雷脈の生涯累計はミッション経路にも供給する
+    kokuraiKillsBase: profile.kokuraiKillsTotal ?? 0,
   });
 }
 

@@ -1,6 +1,7 @@
 import type { SoundProfile } from '../game/weapons';
 import type { MoodId, StagePalette } from '../game/stage';
 import type { SurfaceMaterial, SurfaceSet } from '../game/materials';
+import type { PowerUpKind } from '../game/zombie-economy';
 import { AmbienceEngine, deriveAmbientProfile } from './ambience';
 import { fillBrownNoise, makeSeamlessLoop } from './ambience';
 
@@ -445,7 +446,7 @@ export function layerGains(heat: number): {
 // 「移調だけ」に潰れないよう {rootHz, padType, arpType, bpm帯} を各ムードで違えて
 // 音色/リズムで識別させる。全キー(MoodId + 'night-neon')網羅で tsc が漏れを検出する。
 // ═══════════════════════════════════════════════════════════════════
-export type BgmProfileKey = MoodId | 'night-neon' | 'zombie';
+export type BgmProfileKey = MoodId | 'night-neon' | 'zombie' | 'emperor-kokurai';
 
 export interface BgmProfile {
   progression: readonly (readonly number[])[]; // rootからの半音オフセット3和音×4小節
@@ -510,6 +511,14 @@ const PROG_ZOMBIE: readonly (readonly number[])[] = [
   [11, 0, 5], // 半音でぶつける
   [8, 11, 3], // 増和音めいた宙吊り
   [7, 10, 2], // 沈み込む(解決しない)
+];
+// R53 黒雷帝: 「病んだ」ゾンビと違い、荘厳な滅び(ナポリの♭II威圧+短調)。
+// 帝が世界を統べる重圧 — 解決しないが崩れもしない、玉座の和声。
+const PROG_EMPEROR: readonly (readonly number[])[] = [
+  [0, 3, 7], // i(黒い玉座)
+  [1, 5, 8], // ♭II(ナポリ的威圧 — 半音上から見下ろす)
+  [7, 10, 14], // v(嵐の遠雷)
+  [8, 12, 15], // ♭VI(暗い荘厳)
 ];
 
 export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
@@ -670,6 +679,31 @@ export const BGM_PROFILES: Record<BgmProfileKey, BgmProfile> = {
     riserEnabled: true,
     snareSnap: 0.75,
     halfTimeKickBelowHeat: 0.2, // A4-F17: heat<0.2は1拍目のみキック(half-time)
+  },
+  // R53 黒雷帝転調: 永続黒雷帝の「世界が変わった」を音楽で示す専用プロファイル。
+  // E1(41.2Hz)の超低ドローン+疎な雷パーカッション(half-time)+ナポリ進行の荘厳。
+  // heat床0.6は tickBgm 側(emperorBgmState==='kokuraitei')で適用される。
+  'emperor-kokurai': {
+    progression: PROG_EMPEROR,
+    rootHz: 41.2, // E1: 全プロファイル最深。玉座の地鳴り
+    bpmBase: 72,
+    bpmRange: 40,
+    padType: 'sawtooth',
+    bassType: 'sawtooth',
+    arpType: 'triangle', // 雷紋の冷たい残光
+    leadType: 'sawtooth',
+    leadDrive: 1.8,
+    hatBrightHz: 4800, // 暗いハット(高域を絞り黒い空気感)
+    padWet: 0.09,
+    bassMode: 'drive',
+    lpQ: 2.0,
+    kickDrive: 3.4,
+    subMode: 'drone',
+    subDrive: 2.8, // 最重の地響き
+    leadStartHeat: 0.30,
+    riserEnabled: true,
+    snareSnap: 0.6,
+    halfTimeKickBelowHeat: 0.45, // 低heatは玉座の重い間合い(雷鳴の間隔)
   },
 };
 
@@ -934,6 +968,45 @@ export const RAITEI_AURA_SPEC = {
   lfoHz: 0.28,
 } as const;
 
+// ═══════════════════════════════════════════════════════════════════
+// R53-W2 コンテンツ拡張(ゾンビ拡充/ストーリー帝王編/S&D)の音API群。
+// 純関数・定数は副作用ゼロでテスト可能に切り出す(既存 prosodyFor 等の流儀を踏襲)。
+// ═══════════════════════════════════════════════════════════════════
+
+// PowerUpKind は game/zombie-economy.ts を単一の真実として import する(型の二重定義防止)
+
+// 無線話者。kuroganeのみ電子的歪み(kuroganePhase/Defeatと同系統の黒雷帝トーン)
+export type RadioSpeaker = 'kagerou' | 'homura' | 'hibana' | 'kurogane';
+
+// 話者ごとの基準プロソディ(kurogane=低pitch/遅rate、homura=速め)
+const RADIO_PROSODY: Record<RadioSpeaker, Prosody> = {
+  kagerou: { pitch: 0.85, rate: 1.0 },
+  homura: { pitch: 1.05, rate: 1.18 },
+  hibana: { pitch: 1.15, rate: 1.02 },
+  kurogane: { pitch: 0.52, rate: 0.8 },
+};
+export function radioProsodyBase(speaker: RadioSpeaker): Prosody {
+  return RADIO_PROSODY[speaker];
+}
+// 基準に微ジッタを乗せて機械反復感を消す(prosodyForと同じクランプ規約)
+export function radioProsodyFor(speaker: RadioSpeaker): Prosody {
+  const b = radioProsodyBase(speaker);
+  const pitch = Math.min(2, Math.max(0, b.pitch + (Math.random() - 0.5) * 0.05));
+  const rate = Math.min(10, Math.max(0.1, b.rate + (Math.random() - 0.5) * 0.06));
+  return { pitch, rate };
+}
+
+// 無線スケルチ(radioBeep)の話者別音色。kuroganeのみ歪み(電子的な硬さ)
+export const RADIO_SQUELCH_SPECS: Record<
+  RadioSpeaker,
+  { carrierHz: number; noiseHz: number; q: number; drive?: number; curve?: 'tanh' | 'asym' }
+> = {
+  kagerou: { carrierHz: 1800, noiseHz: 3200, q: 4 },
+  homura: { carrierHz: 2200, noiseHz: 3800, q: 5 },
+  hibana: { carrierHz: 2600, noiseHz: 4200, q: 6 },
+  kurogane: { carrierHz: 1200, noiseHz: 2600, q: 3, drive: 6, curve: 'asym' },
+};
+
 export class SoundKit {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -999,6 +1072,13 @@ export class SoundKit {
   private tinnitusUntilS = 0;
   private duckRecoverTarget = 1; // 低HP時はBGM復帰を抑える
   private lastHealthCutoff = 20000;
+  // R53-W2: 高頻度呼び出しの安全弁スロットル(甲殻ヒット/S&Dティック)
+  private lastShellHitS = 0;
+  private lastPlantTickS = 0;
+  private lastFuseTickS = 0;
+  // R53-W2: radioSpeak の末尾beepを onend/onerror で発火するための世代カウンタ。
+  // quiesce()で世代を進めることで、孤児コールバックが後からメニューでbeepを鳴らす事故を防ぐ(R14教訓)
+  private radioSpeakGen = 0;
   // 長尺ボイス(>0.5s)の登録簿。quiesce()で確実に止める(耳鳴り/フラッシュ等の鳴り残り防止)
   private longVoices = new Set<AudioScheduledSourceNode>();
   private surface: SurfaceSet = { floor: 'concrete', wall: 'concrete' };
@@ -1025,6 +1105,11 @@ export class SoundKit {
   private lastRiserS = 0; // ライザーのクールダウン(連発防止)
   private profileKey: BgmProfileKey = 'day'; // 現在のステージ/ムード別プロファイル
   private profile: BgmProfile = BGM_PROFILES.day;
+  // R53 帝王BGM転調: kokuraitei=専用プロファイルへ切替、dark/raitei=tickBgmで差し込みレイヤ。
+  // M3配線: 帝王状態遷移時(activateKokuraitei/黒帝発動/雷帝永続化/試合dispose)に
+  // sounds.setEmperorBgm('kokuraitei'|'dark'|'raitei'|null) を呼ぶ。null=通常復帰。
+  private emperorBgmState: 'dark' | 'raitei' | 'kokuraitei' | null = null;
+  private emperorPrevProfileKey: BgmProfileKey | null = null; // kokuraitei転調前のステージキー
 
   ensure(): void {
     if (this.ctx) {
@@ -1220,22 +1305,38 @@ export class SoundKit {
   private speakAnnounce(
     label: string,
     vol: number,
-    opts: { cancel?: boolean; delayMs?: number; emphasize?: boolean; fallbackJingle?: boolean } = {},
+    opts: {
+      cancel?: boolean;
+      delayMs?: number;
+      emphasize?: boolean;
+      fallbackJingle?: boolean;
+      prosody?: Prosody; // R53-W2: radioSpeak等、ラベル外の任意プロソディで発話させる
+      onEnd?: () => void; // R53-W2: 発話終了(またはスキップ)を通知(radioSpeakの後beep用)
+    } = {},
   ): void {
     const volume = Math.max(0, Math.min(1, vol));
-    if (volume <= 0) return;
+    if (volume <= 0) {
+      opts.onEnd?.();
+      return;
+    }
     const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
     if (!synth || typeof SpeechSynthesisUtterance === 'undefined' || !this.announcerVoice) {
       if (opts.fallbackJingle) this.streakJingle(volume);
+      opts.onEnd?.();
       return;
     }
     const u = new SpeechSynthesisUtterance(normalizeTts(label, opts.emphasize ?? false));
     u.lang = 'en-US';
     u.voice = this.announcerVoice;
-    const { pitch, rate } = prosodyFor(label);
+    const { pitch, rate } = opts.prosody ?? prosodyFor(label);
     u.pitch = pitch;
     u.rate = rate;
     u.volume = volume * this.masterVol;
+    if (opts.onEnd) {
+      const onEnd = opts.onEnd;
+      u.onend = () => onEnd();
+      u.onerror = () => onEnd();
+    }
     if (opts.cancel) synth.cancel();
     if (opts.delayMs) {
       const delay = opts.delayMs;
@@ -1919,6 +2020,23 @@ export class SoundKit {
     if (!this.bgmStopped) this.stopBgm();
   }
 
+  // R53 帝王BGM転調(M3配線: 帝王状態の遷移時に呼ぶ。既に同状態なら冪等)。
+  // kokuraitei: ステージプロファイルを退避して 'emperor-kokurai' へ転調(世界が変わる)。
+  // dark/raitei: プロファイルは維持し、tickBgm が1レイヤずつ控えめに差し込む。
+  // null: kokuraitei転調を復帰(通常は永続だが、試合終了/dispose 側の掃除用)。
+  setEmperorBgm(state: 'dark' | 'raitei' | 'kokuraitei' | null): void {
+    if (state === this.emperorBgmState) return;
+    const prev = this.emperorBgmState;
+    this.emperorBgmState = state;
+    if (state === 'kokuraitei') {
+      if (this.profileKey !== 'emperor-kokurai') this.emperorPrevProfileKey = this.profileKey;
+      this.setMusicProfile('emperor-kokurai');
+    } else if (prev === 'kokuraitei') {
+      if (this.emperorPrevProfileKey) this.setMusicProfile(this.emperorPrevProfileKey);
+      this.emperorPrevProfileKey = null;
+    }
+  }
+
   setCombatHeat(v: number): void {
     this.combatHeat = Math.max(0, Math.min(1, v));
     // アンビエンスは交戦中に自動で沈む(エンジン側に差分ガードあり)
@@ -1957,7 +2075,9 @@ export class SoundKit {
     // 初回/取り残し時は現在時刻へ寄せ直す(過去拍の取り戻しによるノード洪水を防ぐ)
     if (this.nextBeatTime === 0 || this.nextBeatTime < now) this.nextBeatTime = now + 0.1;
     const p = this.profile;
-    const heat = this.combatHeat;
+    // R53: 黒雷帝中はheat床0.6 — 帝の音楽は静まらない(探索中でも嵐が鳴り続ける)
+    const heat =
+      this.emperorBgmState === 'kokuraitei' ? Math.max(this.combatHeat, 0.6) : this.combatHeat;
     const bpm = p.bpmBase + heat * p.bpmRange;
     const beatDur = 60 / bpm;
     const g = layerGains(heat);
@@ -2024,6 +2144,16 @@ export class SoundKit {
       // (=パッドoct1の1オクターブ上)を使い協和させ、持続和音との短2度衝突を避ける。
       if (leadGain > 0.01 && (beatInBar === 0 || beatInBar === 2)) {
         this.tone({ freq: bgmNoteHz(chord[2]!, 2, p.rootHz), durationS: beatDur * 0.85, type: p.leadType, gain: 0.032 * leadGain, delayS: delay, attackS: 0.006, drive: 2 + p.leadDrive * 3, curve: 'tanh', detuneCents: (this.rng() * 2 - 1) * 6, pan: beatInBar === 0 ? -0.22 : 0.22, bus: this.bgmBus });
+      }
+      // ── R53 帝王差し込みレイヤ(dark/raitei。kokuraiteiは専用プロファイル側で表現)──
+      // dark(黒帝): 小節頭に1回、根音の1オクターブ下の暗い脈動(黒い心臓の鼓動)。ゲイン控えめ
+      if (this.emperorBgmState === 'dark' && beatInBar === 0) {
+        this.tone({ freq: bgmNoteHz(chord[0]!, 0, p.rootHz) * 0.5, durationS: beatDur * 1.6, type: 'sine', gain: 0.05, drive: 6, curve: 'asym', delayS: delay, bus: this.bgmBus });
+      }
+      // raitei(雷帝): 3拍目に1回、氷青の高いきらめき(雷紋の残光)+極小の超高域スパーク
+      if (this.emperorBgmState === 'raitei' && beatInBar === 2) {
+        this.tone({ freq: bgmNoteHz(chord[2]!, 3, p.rootHz), durationS: 0.12, type: 'triangle', gain: 0.035, delayS: delay, detuneCents: 6, pan: wide, bus: this.bgmBus });
+        this.noiseBurst({ durationS: 0.014, filterHz: 8500, filterType: 'highpass', gain: 0.016, delayS: delay + 0.02, attackS: 0.001, pan: -wide, bus: this.bgmBus });
       }
       // パッド(小節頭で3和音)+ sub-drone(小節頭で地響きの持続層)。
       // 低heat(<0.4)非sparseは半小節頭にもパッドを重ねidleの空白を埋める
@@ -2886,6 +3016,69 @@ export class SoundKit {
       // 追加紫電: より細く高い稲妻(9000Hz超高域・短い)
       this.noiseBurst({ durationS: 0.010, filterHz: 9000, filterType: 'bandpass', q: 8, gain: 0.18, attackS: 0.001, delayS: 0.08, bus: this.uiBus ?? undefined });
     }
+  }
+
+  // ── R53 帝王体験: キル柱tier差スティング/溜め段SFX/雷帝キルスティング ────────
+  // M3配線: 黒雷キル時に kokuraiKillLayer(streak) と併せて撃破対象の bot.tier で呼ぶ。
+  // normal=軽い追撃アクセントのみ(kokuraiKillLayerが主役)/elite=+金属的な輪撃/
+  // boss=三連雷+世界罅の重低音(kokuraiteiKillColumn(pos,'boss')の三連柱と同期する設計)。
+  kokuraiKillTierSting(tier: 'normal' | 'elite' | 'boss'): void {
+    if (!this.ctx || !this.sfxBus) return;
+    if (this.liveVoices() > 225) return;
+    if (tier === 'normal') {
+      // 軽い紫電アクセント1本(通常キルの格は既存キルレイヤーが担う)
+      this.noiseBurst({ durationS: 0.012, filterHz: 6500, filterType: 'bandpass', q: 5, gain: 0.12, attackS: 0.001, bus: this.uiBus ?? undefined });
+      return;
+    }
+    if (tier === 'elite') {
+      // 輪撃: 金属的リング(1200Hz)+中域ブーム — 精鋭を斬った手応え
+      this.noiseBurst({ durationS: 0.02, filterHz: 5600, filterType: 'bandpass', q: 3, gain: 0.30, attackS: 0.001 });
+      this.tone({ freq: 1200, endFreq: 880, durationS: 0.22, type: 'triangle', gain: 0.14, delayS: 0.02 });
+      this.tone({ freq: 62, endFreq: 26, durationS: 0.4, type: 'sine', gain: 0.34, drive: 7, curve: 'asym', delayS: 0.02 });
+      return;
+    }
+    // boss: 三連雷(0/0.14/0.30s)+世界罅の超低域(16→6Hz)+長い残響 — 世界が軋む
+    this.duck(-9, 0.15, 0.5);
+    const times = [0, 0.14, 0.30];
+    for (let i = 0; i < times.length; i += 1) {
+      const d = times[i]!;
+      this.noiseBurst({ durationS: 0.022, filterHz: 5200 - i * 600, filterType: 'bandpass', q: 2.5, gain: 0.42 - i * 0.06, attackS: 0.001, delayS: d });
+      this.tone({ freq: 50 - i * 6, endFreq: 16 - i * 3, durationS: 0.5, type: 'sine', gain: 0.42 - i * 0.05, drive: 8, curve: 'asym', delayS: d });
+    }
+    this.tone({ freq: 16, endFreq: 6, durationS: 1.1, type: 'sine', gain: 0.46, drive: 13, curve: 'asym', delayS: 0.34 });
+    this.noiseBurst({ durationS: 1.4, filterHz: 170, filterType: 'lowpass', gain: 0.24, delayS: 0.5, attackS: 0.12, wet: 0.5 });
+  }
+
+  // 溜め段SFX(黒帝/雷帝/黒雷帝の溜め攻撃)。M3配線: 溜め経過が段閾値(0.5/1.2/2.2s)を
+  // 跨いだ瞬間に stage=1/2/3 で1回ずつ呼ぶ(毎フレーム呼ばない)。
+  emperorChargeStage(stage: 1 | 2 | 3): void {
+    if (!this.ctx || !this.sfxBus) return;
+    if (this.liveVoices() > 228) return;
+    if (stage === 1) {
+      // 低い帯電ブリップ: 力が刀に集まり始める
+      this.tone({ freq: 200, endFreq: 300, durationS: 0.14, type: 'sine', gain: 0.15, drive: 3 });
+      return;
+    }
+    if (stage === 2) {
+      // 中域アーク+上昇トーン: 満ちる
+      this.noiseBurst({ durationS: 0.03, filterHz: 2800, filterType: 'bandpass', q: 3, gain: 0.22, attackS: 0.002 });
+      this.tone({ freq: 300, endFreq: 450, durationS: 0.18, type: 'triangle', gain: 0.16, drive: 3, delayS: 0.01 });
+      return;
+    }
+    // stage3 黒雷・天壊: 明るい上昇サープ+超高域シマー+サブの膨張 — 天へ掲げる
+    this.tone({ freq: 400, endFreq: 1400, durationS: 0.5, type: 'sawtooth', gain: 0.18, drive: 4, curve: 'tanh', attackS: 0.05 });
+    this.noiseBurst({ durationS: 0.35, filterHz: 5200, filterEndHz: 9000, filterType: 'bandpass', q: 2, gain: 0.12, attackS: 0.08 });
+    this.tone({ freq: 40, endFreq: 58, durationS: 0.6, type: 'sine', gain: 0.28, drive: 6, curve: 'asym' });
+  }
+
+  // 雷帝キルスティング(相対的底上げ): 氷青の小型柱 — 結晶的なピング+冷たい短音+小サブ。
+  // M3配線: 雷帝(非黒雷帝)状態でのキル時に呼ぶ(effects.raiteiKillColumn系と対)。
+  raiteiKillSting(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    if (this.liveVoices() > 228) return;
+    this.noiseBurst({ durationS: 0.014, filterHz: 5200, filterType: 'bandpass', q: 6, gain: 0.20, attackS: 0.001, bus: this.uiBus ?? undefined });
+    this.tone({ freq: 880, endFreq: 660, durationS: 0.16, type: 'triangle', gain: 0.08, delayS: 0.02, bus: this.uiBus ?? undefined });
+    this.tone({ freq: 70, endFreq: 40, durationS: 0.22, type: 'sine', gain: 0.15, drive: 4, curve: 'asym', delayS: 0.02, bus: this.uiBus ?? undefined });
   }
 
   // 黒雷帝常時遠雷: 距離減衰した遠雷ランブル(pan=方位、0=中央)
@@ -3984,6 +4177,10 @@ export class SoundKit {
     this.stopBgm();
     this.stopAmbience();
     this.stopDistantBattle(); // 遠方戦場アンビエンスの setTimeout を確実に解除
+    // R53: 帝王BGM転調の後始末 — 次試合が黒雷帝BGMで始まる事故を防ぐ(setMusicProfileは
+    // 次のlaunchで正しいムードキーが来れば切り替わるため、状態フラグのみ落とせば安全)
+    this.emperorBgmState = null;
+    this.emperorPrevProfileKey = null;
     if (this.ctx) {
       const now = this.ctx.currentTime;
       // dmrロングテール/パッドのメニュー漏れ防止(300ms後に設定値へ復帰)
@@ -4041,10 +4238,315 @@ export class SoundKit {
       clearTimeout(this.speakTimer);
       this.speakTimer = 0;
     }
+    // R53-W2: radioSpeak の孤児onend/onerrorコールバックを無効化(メニューでの遅延beep防止)
+    this.radioSpeakGen += 1;
     if (typeof window !== 'undefined') window.speechSynthesis?.cancel();
     this.tinnitusUntilS = 0;
     this.lastHealthCutoff = 20000;
     this.duckRecoverTarget = 1;
     this.voiceLog.length = 0;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // R53-W2 コンテンツ拡張API群(ゾンビ拡充/ストーリー帝王編/S&D)。
+  // 全て tone()/noiseBurst() 経由(自動でvoiceLog計上+0.5s超はlongVoices登録=quiesceで確実停止)。
+  // 内部で setTimeout/setInterval を新規に持つ関数は無し(fuseTick等も呼び出し側の周期呼びで
+  // 加速を表現する既存 heartbeat()/raiteiHumTick() 流儀を踏襲)。radioSpeak のみ onend/onerror
+  // コールバックを持つため、radioSpeakGen で quiesce() 後の孤児発火を無効化する。
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ── 鍛神台(Pack-a-Punch風)改造 ──────────────────────────────────────
+  // 2.5s三段: 重い機械圧着(0-0.5s)→金属研磨(0.85-1.75s)→完成チャイム(荘厳・1.95-2.5s)
+  papUpgrade(): void {
+    this.duck(-6, 0.15, 0.4);
+    // 第1段: 重い機械圧着(低域インパクト+油圧の唸り)
+    this.tone({ freq: 45, endFreq: 22, durationS: 0.5, type: 'sine', gain: 0.55, drive: 9, curve: 'asym' });
+    this.noiseBurst({ durationS: 0.4, filterHz: 500, filterType: 'lowpass', gain: 0.4, attackS: 0.01 });
+    this.noiseBurst({ durationS: 0.06, filterHz: 1400, filterType: 'bandpass', q: 3, gain: 0.3, attackS: 0.002 });
+    this.tone({ freq: 90, endFreq: 130, durationS: 0.6, type: 'sawtooth', gain: 0.18, drive: 3, delayS: 0.1 });
+    // 第2段: 金属研磨(高域ノイズの持続スイープ+断続クラック火花)
+    this.noiseBurst({ durationS: 0.9, filterHz: 1800, filterEndHz: 3400, filterType: 'bandpass', q: 6, gain: 0.28, delayS: 0.85, playbackJitter: 0.04 });
+    this.noiseBurst({ durationS: 0.9, filterHz: 2600, filterEndHz: 4200, filterType: 'bandpass', q: 8, gain: 0.16, delayS: 0.95 });
+    for (let i = 0; i < 5; i += 1) {
+      this.noiseBurst({ durationS: 0.02, filterHz: 5200, filterType: 'bandpass', q: 5, gain: 0.14 * (0.5 + this.rng() * 0.5), delayS: 0.9 + i * 0.15 + this.rng() * 0.05, attackS: 0.001 });
+    }
+    // 第3段: 完成チャイム(荘厳な上昇和音+低音の支え)
+    const chime = [523.25, 659.25, 784.0, 1046.5]; // C5-E5-G5-C6
+    for (let i = 0; i < chime.length; i += 1) {
+      this.tone({ freq: chime[i]!, durationS: 0.6 - i * 0.05, type: 'sine', gain: 0.32 - i * 0.03, delayS: 1.95 + i * 0.09, attackS: 0.01, wet: 0.5 });
+    }
+    this.tone({ freq: 130.81, endFreq: 196, durationS: 0.8, type: 'triangle', gain: 0.22, delayS: 1.95, attackS: 0.02 });
+  }
+
+  // 鍛神台: 資金不足の拒否音(短い下降ブザー)
+  papDeny(): void {
+    this.tone({ freq: 220, endFreq: 140, durationS: 0.12, type: 'square', gain: 0.22, bus: this.uiBus ?? undefined });
+    this.tone({ freq: 160, endFreq: 90, durationS: 0.14, type: 'square', gain: 0.18, delayS: 0.1, bus: this.uiBus ?? undefined });
+    this.noiseBurst({ durationS: 0.05, filterHz: 900, filterType: 'lowpass', gain: 0.12, bus: this.uiBus ?? undefined });
+  }
+
+  // ── W4D: S&D爆弾のドロップ/拾得(緊張の要所の情報音。uiBus=常時明瞭・ワンショット) ──
+  sndBombDrop(): void {
+    // 落下アラーム: 下降2音+金属的な着地タップ
+    this.tone({ freq: 680, endFreq: 520, durationS: 0.12, type: 'square', gain: 0.2, bus: this.uiBus ?? undefined });
+    this.tone({ freq: 460, endFreq: 320, durationS: 0.16, type: 'square', gain: 0.18, delayS: 0.11, bus: this.uiBus ?? undefined });
+    this.noiseBurst({ durationS: 0.05, filterHz: 2200, filterType: 'bandpass', q: 4, gain: 0.16, delayS: 0.2, attackS: 0.002, bus: this.uiBus ?? undefined });
+  }
+
+  sndBombPickup(): void {
+    // 拾得: 上昇2音+短いクリック(killconfirmタグ回収の音階系譜)
+    this.tone({ freq: 540, endFreq: 720, durationS: 0.1, type: 'triangle', gain: 0.2, bus: this.uiBus ?? undefined });
+    this.tone({ freq: 760, endFreq: 980, durationS: 0.12, type: 'triangle', gain: 0.18, delayS: 0.09, bus: this.uiBus ?? undefined });
+    this.noiseBurst({ durationS: 0.03, filterHz: 4200, filterType: 'bandpass', q: 5, gain: 0.1, attackS: 0.001, bus: this.uiBus ?? undefined });
+  }
+
+  // ── W4D: ドア(封印ゲート)開放 — 1750ptの解錠に相応しい重ラッチ+短い上昇チャイム ──
+  doorUnlock(): void {
+    // 重い閂の解除
+    this.tone({ freq: 70, endFreq: 38, durationS: 0.3, type: 'sine', gain: 0.42, drive: 6, curve: 'asym' });
+    this.noiseBurst({ durationS: 0.12, filterHz: 700, filterType: 'lowpass', gain: 0.26, attackS: 0.005 });
+    this.noiseBurst({ durationS: 0.05, filterHz: 1800, filterType: 'bandpass', q: 4, gain: 0.2, delayS: 0.12, attackS: 0.002 });
+    // 解錠チャイム(papUpgrade完成チャイムの短縮系譜: C5-G5-C6)
+    const chime = [523.25, 784.0, 1046.5];
+    for (let i = 0; i < chime.length; i += 1) {
+      this.tone({ freq: chime[i]!, durationS: 0.42 - i * 0.06, type: 'sine', gain: 0.24 - i * 0.04, delayS: 0.28 + i * 0.08, attackS: 0.01, wet: 0.4 });
+    }
+  }
+
+  // ── パワーアップ(BO2風ジングル) ─────────────────────────────────────
+  powerUpPickup(kind: PowerUpKind): void {
+    switch (kind) {
+      case 'insta': {
+        // 鋭い上昇トリル(5音)
+        const seq = [880, 1046.5, 1244.5, 1568, 1975.5];
+        for (let i = 0; i < seq.length; i += 1) {
+          this.tone({ freq: seq[i]!, durationS: 0.09, type: 'square', gain: 0.3 - i * 0.02, delayS: i * 0.045, attackS: 0.001, bus: this.uiBus ?? undefined });
+        }
+        this.noiseBurst({ durationS: 0.15, filterHz: 6000, filterType: 'highpass', gain: 0.15, delayS: 0.2, bus: this.uiBus ?? undefined });
+        break;
+      }
+      case 'double': {
+        // 2音のこだま(倍加を示す反復)
+        this.tone({ freq: 784, durationS: 0.1, type: 'triangle', gain: 0.3, bus: this.uiBus ?? undefined });
+        this.tone({ freq: 784, durationS: 0.1, type: 'triangle', gain: 0.24, delayS: 0.14, bus: this.uiBus ?? undefined });
+        this.tone({ freq: 1046.5, durationS: 0.14, type: 'triangle', gain: 0.26, delayS: 0.22, bus: this.uiBus ?? undefined });
+        break;
+      }
+      case 'nuke': {
+        // 低い爆発前振り(サイレン上昇)→sting
+        this.tone({ freq: 90, endFreq: 55, durationS: 0.5, type: 'sawtooth', gain: 0.3, drive: 4, bus: this.uiBus ?? undefined });
+        this.tone({ freq: 55, endFreq: 200, durationS: 0.35, type: 'sawtooth', gain: 0.22, delayS: 0.35, bus: this.uiBus ?? undefined });
+        this.noiseBurst({ durationS: 0.05, filterHz: 3000, filterType: 'bandpass', gain: 0.3, delayS: 0.68, attackS: 0.001, bus: this.uiBus ?? undefined });
+        break;
+      }
+      case 'maxammo': {
+        // 機械装填音+明るいディン
+        this.noiseBurst({ durationS: 0.05, filterHz: 2400, filterType: 'bandpass', q: 4, gain: 0.26, bus: this.uiBus ?? undefined });
+        this.tone({ freq: 600, endFreq: 300, durationS: 0.06, type: 'triangle', gain: 0.2, delayS: 0.05, bus: this.uiBus ?? undefined });
+        this.tone({ freq: 1318.5, durationS: 0.18, type: 'sine', gain: 0.3, delayS: 0.13, bus: this.uiBus ?? undefined });
+        break;
+      }
+      case 'carpenter': {
+        // 木材ハンマー打ち(3連打)+仕上げのディン
+        for (let i = 0; i < 3; i += 1) {
+          this.tone({ freq: 340, endFreq: 180, durationS: 0.05, type: 'triangle', gain: 0.26, delayS: i * 0.09, bus: this.uiBus ?? undefined });
+          this.noiseBurst({ durationS: 0.03, filterHz: 1200, filterType: 'bandpass', gain: 0.18, delayS: i * 0.09, bus: this.uiBus ?? undefined });
+        }
+        this.tone({ freq: 523.25, durationS: 0.16, type: 'sine', gain: 0.22, delayS: 0.32, bus: this.uiBus ?? undefined });
+        break;
+      }
+      default: {
+        const _exhaustive: never = kind;
+        return _exhaustive;
+      }
+    }
+  }
+
+  // パワーアップ失効の下降音(種別共通)
+  powerUpExpire(): void {
+    this.tone({ freq: 700, endFreq: 260, durationS: 0.35, type: 'triangle', gain: 0.22, bus: this.uiBus ?? undefined });
+    this.tone({ freq: 350, endFreq: 130, durationS: 0.3, type: 'sine', gain: 0.16, delayS: 0.08, bus: this.uiBus ?? undefined });
+  }
+
+  // ── ゾンビ変異体 ────────────────────────────────────────────────────
+  // 爆発体(Blast)の自爆: explosion()より軽量な中距離破裂+破片散布
+  variantBlastExplode(): void {
+    this.duck(-7, 0.08);
+    this.noiseBurst({ durationS: 0.35, filterHz: 650, filterType: 'lowpass', gain: 0.6, drive: 5 });
+    this.tone({ freq: 70, endFreq: 26, durationS: 0.4, type: 'sine', gain: 0.42, drive: 6, curve: 'asym' });
+    this.noiseBurst({ durationS: 0.02, filterHz: 2600, filterType: 'highpass', gain: 0.35, attackS: 0.001 });
+    for (let i = 0; i < 4; i += 1) {
+      this.noiseBurst({
+        durationS: 0.03 + this.rng() * 0.02,
+        filterHz: this.jit(1000 + this.rng() * 1500, 0.1),
+        filterType: 'bandpass',
+        q: 3,
+        gain: 0.09 - i * 0.01,
+        pan: Math.max(-1, Math.min(1, (this.rng() * 2 - 1) * 0.6)),
+        delayS: 0.08 + i * 0.05,
+      });
+    }
+  }
+
+  // 毒霧体(Miasma)の破裂: 湿った破裂+持続シュー音(ambience流儀=長めのnoiseBurstで自然減衰。
+  // 内部ループ管理を持たないため停止APIも quiesce登録も不要)
+  variantMiasmaBurst(): void {
+    this.noiseBurst({ durationS: 0.09, filterHz: 500, filterType: 'lowpass', gain: 0.32, attackS: 0.005 });
+    this.tone({ freq: 180, endFreq: 90, durationS: 0.12, type: 'triangle', gain: 0.18 });
+    this.noiseBurst({ durationS: 1.8, filterHz: 3200, filterType: 'bandpass', q: 0.7, gain: 0.14, attackS: 0.06, delayS: 0.05 });
+    this.noiseBurst({ durationS: 1.6, filterHz: 2200, filterType: 'bandpass', q: 0.9, gain: 0.08, attackS: 0.08, delayS: 0.15 });
+  }
+
+  // 甲殻体(Shell)への被弾: 硬い金属的弾き(装甲貫通できない打撃感)
+  shellHit(): void {
+    const now = this.ctx?.currentTime ?? 0;
+    if (now - this.lastShellHitS < 0.03 || this.liveVoices() > 220) return;
+    this.lastShellHitS = now;
+    this.tone({ freq: 1400, endFreq: 700, durationS: 0.05, type: 'square', gain: 0.22, attackS: 0.001 });
+    this.noiseBurst({ durationS: 0.02, filterHz: 4200, filterType: 'bandpass', q: 6, gain: 0.24, attackS: 0.001 });
+    this.tone({ freq: 220, endFreq: 90, durationS: 0.04, type: 'triangle', gain: 0.14 });
+  }
+
+  // ── 特殊ラウンド(餓鬼の大群) ────────────────────────────────────────
+  // 心拍加速(uiBus・体内音)+群れの咆哮(sfxBus・detuneコーラス+パン分散)
+  specialRoundStart(): void {
+    this.duck(-8, 0.2, 0.5);
+    const beatTimes = [0, 0.32, 0.58, 0.78];
+    for (const t of beatTimes) {
+      this.tone({ freq: 60, endFreq: 34, durationS: 0.12, type: 'sine', gain: 0.4, drive: 5, curve: 'asym', delayS: t, bus: this.uiBus ?? undefined });
+    }
+    const growls: { pan: number; det: number }[] = [
+      { pan: -0.5, det: -20 },
+      { pan: 0.2, det: 10 },
+      { pan: 0.6, det: -8 },
+      { pan: -0.1, det: 18 },
+    ];
+    for (const g of growls) {
+      this.tone({ freq: 85, endFreq: 45, durationS: 1.1, type: 'sawtooth', gain: 0.16, drive: 4, detuneCents: g.det, pan: g.pan, delayS: 0.15 + this.rng() * 0.1 });
+      this.noiseBurst({ durationS: 0.5, filterHz: 700, filterType: 'bandpass', q: 0.8, gain: 0.1, pan: g.pan, delayS: 0.2 + this.rng() * 0.15 });
+    }
+    this.noiseBurst({ durationS: 0.3, filterHz: 2200, filterType: 'bandpass', q: 1.5, gain: 0.2, delayS: 0.9 });
+  }
+
+  // 特殊ラウンド撃破: 報酬ジングル
+  specialRoundClear(): void {
+    const seq = [659.25, 880, 1046.5, 1318.5];
+    for (let i = 0; i < seq.length; i += 1) {
+      this.tone({ freq: seq[i]!, durationS: 0.14, type: 'sine', gain: 0.32 - i * 0.03, delayS: i * 0.07, attackS: 0.002, bus: this.uiBus ?? undefined });
+    }
+    this.noiseBurst({ durationS: 0.2, filterHz: 6500, filterType: 'highpass', gain: 0.14, delayS: 0.28, bus: this.uiBus ?? undefined });
+    this.tone({ freq: 164.81, endFreq: 220, durationS: 0.4, type: 'triangle', gain: 0.2, delayS: 0.05, bus: this.uiBus ?? undefined });
+  }
+
+  // ── 無線(ストーリー帝王編) ──────────────────────────────────────────
+  // 話者別スケルチ(通話開始/終了の頭出し)。無線本文は radioSpeak が既存TTSで担う
+  radioBeep(speaker: RadioSpeaker): void {
+    const s = RADIO_SQUELCH_SPECS[speaker];
+    this.noiseBurst({ durationS: 0.05, filterHz: s.noiseHz, filterType: 'bandpass', q: s.q, gain: 0.16, attackS: 0.002, drive: s.drive, curve: s.curve, bus: this.uiBus ?? undefined });
+    this.tone({ freq: s.carrierHz, durationS: 0.035, type: 'square', gain: 0.08, bus: this.uiBus ?? undefined });
+  }
+
+  // 無線発話ラッパー: 前beep→(話者プロソディで)TTS読み上げ→発話終了で後beep。
+  // 発話終了は SpeechSynthesisUtterance.onend/onerror で検知(推定時間の決め打ちをしない)。
+  // quiesce()で世代カウンタを進めることで、後beepの孤児コールバックを無効化する。
+  radioSpeak(speaker: RadioSpeaker, text: string): void {
+    this.radioBeep(speaker);
+    const gen = (this.radioSpeakGen += 1);
+    this.speakAnnounce(text, 1, {
+      cancel: false,
+      delayMs: 120,
+      prosody: radioProsodyFor(speaker),
+      onEnd: () => {
+        if (gen === this.radioSpeakGen) this.radioBeep(speaker);
+      },
+    });
+  }
+
+  // ── S&D(設置/解除) ──────────────────────────────────────────────────
+  // 設置中の断続ビープ。進捗による加速(呼び出し間隔の短縮)は呼び出し側が担う
+  sndPlantTick(): void {
+    const now = this.ctx?.currentTime ?? 0;
+    if (now - this.lastPlantTickS < 0.02 || this.liveVoices() > 220) return;
+    this.lastPlantTickS = now;
+    this.tone({ freq: 1500, durationS: 0.045, type: 'square', gain: 0.16, attackS: 0.001, bus: this.uiBus ?? undefined });
+    this.noiseBurst({ durationS: 0.02, filterHz: 4200, filterType: 'bandpass', q: 5, gain: 0.1, bus: this.uiBus ?? undefined });
+  }
+
+  // 設置完了の全体警告ステム
+  sndPlanted(): void {
+    this.tone({ freq: 220, endFreq: 110, durationS: 0.5, type: 'sawtooth', gain: 0.3, drive: 4, bus: this.uiBus ?? undefined });
+    this.noiseBurst({ durationS: 0.08, filterHz: 3000, filterType: 'bandpass', gain: 0.22, attackS: 0.002, bus: this.uiBus ?? undefined });
+    for (let i = 0; i < 3; i += 1) {
+      this.tone({ freq: 1800, durationS: 0.08, type: 'square', gain: 0.2, delayS: 0.15 + i * 0.22, bus: this.uiBus ?? undefined });
+    }
+  }
+
+  // ヒューズ鼓動(urgency01: 0=平常..1=切迫)。pitch/rateの上昇は呼び出し引数で表現し、
+  // 呼び出し頻度の加速(≒rate)は呼び出し側が担う(heartbeat()/raiteiHumTick()と同じ流儀)
+  sndFuseTick(urgency01: number): void {
+    const u = Math.max(0, Math.min(1, urgency01));
+    const now = this.ctx?.currentTime ?? 0;
+    if (now - this.lastFuseTickS < 0.02 || this.liveVoices() > 220) return;
+    this.lastFuseTickS = now;
+    const freq = 700 + u * 900; // 700→1600Hz
+    this.tone({ freq, durationS: 0.05 - u * 0.02, type: 'sine', gain: 0.22 + u * 0.12, attackS: 0.001, bus: this.uiBus ?? undefined });
+    if (u > 0.6) {
+      this.noiseBurst({ durationS: 0.015, filterHz: 5000, filterType: 'bandpass', gain: 0.12 * u, bus: this.uiBus ?? undefined });
+    }
+  }
+
+  // 解除の安堵(下降する温かい和音)
+  sndDefused(): void {
+    const seq = [1046.5, 880, 659.25];
+    for (let i = 0; i < seq.length; i += 1) {
+      this.tone({ freq: seq[i]!, durationS: 0.25, type: 'sine', gain: 0.26 - i * 0.03, delayS: i * 0.09, attackS: 0.005, bus: this.uiBus ?? undefined });
+    }
+    this.noiseBurst({ durationS: 0.3, filterHz: 400, filterType: 'lowpass', gain: 0.1, delayS: 0.05, bus: this.uiBus ?? undefined });
+  }
+
+  // 起爆: 既存explosion系の流用+専用サブブーム(explosion()が内部でduckするため二重duckしない)
+  sndDetonate(): void {
+    this.explosion(0, 6);
+    this.rocketSubBoom(0, 6);
+    this.tone({ freq: 34, endFreq: 12, durationS: 1.0, type: 'sine', gain: 0.5, drive: 10, curve: 'asym', delayS: 0.03 });
+  }
+
+  // ラウンド勝敗の確定ジングル
+  sndRoundWin(won: boolean): void {
+    if (won) {
+      const seq = [659.25, 880, 1046.5, 1318.5];
+      for (let i = 0; i < seq.length; i += 1) {
+        this.tone({ freq: seq[i]!, durationS: 0.18, type: 'triangle', gain: 0.3 - i * 0.03, delayS: i * 0.08, attackS: 0.002, bus: this.uiBus ?? undefined });
+      }
+    } else {
+      const seq = [523.25, 440, 349.23, 293.66];
+      for (let i = 0; i < seq.length; i += 1) {
+        this.tone({ freq: seq[i]!, durationS: 0.22, type: 'sawtooth', gain: 0.24 - i * 0.02, delayS: i * 0.09, attackS: 0.002, bus: this.uiBus ?? undefined });
+      }
+    }
+  }
+
+  // ── 帝王編ボス(黒鋼/クロガネ) ───────────────────────────────────────
+  // フェーズ遷移スティング。黒雷帝(kokurai系)の系譜=低域プレッシャー一撃+電撃クラック連打
+  kuroganePhase(phase: 2 | 3): void {
+    const big = phase === 3;
+    this.duck(big ? -14 : -10, big ? 0.3 : 0.2, 0.6);
+    this.tone({ freq: big ? 26 : 34, endFreq: big ? 9 : 14, durationS: big ? 1.2 : 0.9, type: 'sine', gain: big ? 0.62 : 0.5, drive: big ? 13 : 10, curve: 'asym' });
+    this.noiseBurst({ durationS: 0.03, filterHz: big ? 4400 : 3800, filterType: 'bandpass', q: 2, gain: big ? 0.5 : 0.4, attackS: 0.001 });
+    const strikes = big ? [0, 0.18, 0.4] : [0, 0.22];
+    for (const d of strikes) {
+      this.noiseBurst({ durationS: 0.02, filterHz: 6000, filterType: 'bandpass', q: 3, gain: 0.4, attackS: 0.001, delayS: d });
+    }
+    this.tone({ freq: 55, endFreq: big ? 70 : 60, durationS: big ? 2.0 : 1.4, type: 'sawtooth', gain: big ? 0.24 : 0.18, drive: 3, delayS: 0.15 });
+  }
+
+  // 撃破: 終焉の長い残響(gokuraiZetsumetsu同格の重み)
+  kuroganeDefeat(): void {
+    this.duck(-20, 0.5, 1.2);
+    this.tone({ freq: 20, endFreq: 6, durationS: 2.5, type: 'sine', gain: 0.6, drive: 14, curve: 'asym', delayS: 0.1 });
+    this.noiseBurst({ durationS: 0.05, filterHz: 3200, filterType: 'bandpass', q: 1.5, gain: 0.45, attackS: 0.002, delayS: 0.1 });
+    this.noiseBurst({ durationS: 4.5, filterHz: 200, filterType: 'lowpass', gain: 0.3, delayS: 0.6, attackS: 0.4, wet: 0.6 });
+    this.tone({ freq: 48, endFreq: 90, durationS: 5.0, type: 'sawtooth', gain: 0.18, drive: 3, delayS: 0.8 });
+    this.tone({ freq: 2200, endFreq: 400, durationS: 3.0, type: 'sine', gain: 0.12, delayS: 1.0 });
   }
 }

@@ -117,6 +117,10 @@ export interface WeaponDef {
   shape?: ViewModelShape;
   // 銃身長などの全体スケール。未指定なら viewmodel のクラス既定値
   bodyScale?: number;
+  // R53-W2: Pack-a-Punch適用時に match がクローンdefへ積む「システム付与カモ」ID。
+  // viewmodel.buildGun/ViewModel.setWeapon は camo.ts の通常解放ラダー(選択カモ)より
+  // 優先してこれを適用する(型は camo.ts の CamoId 循環importを避けるためリテラルで凍結)。
+  papCamo?: 'pap1' | 'pap2' | 'pap3';
 }
 
 const DEG = Math.PI / 180;

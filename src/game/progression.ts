@@ -19,6 +19,7 @@ import {
   darkMatterFor,
   DIAMOND_CAMO,
   diamondFor,
+  REWARD_CAMO_CHAPTER,
   weaponNameOf,
   type CamoId,
   type WeaponCamoStats,
@@ -63,6 +64,23 @@ export interface CampaignState {
   missionBests: Record<string, MissionBest>;
 }
 
+// ── R53-W2: お守り(charm)。CharmId の単一の真実は zombie-economy.ts(B-ECON)。
+// 再exportで既存の `import { CharmId } from './progression'` 消費側との互換を維持する。
+export type { CharmId } from './zombie-economy';
+import type { CharmId } from './zombie-economy';
+
+export const CHARM_IDS: readonly CharmId[] = ['startpt', 'revive', 'bossdmg', 'perkcarry'];
+
+export function isCharmId(id: string): id is CharmId {
+  return (CHARM_IDS as readonly string[]).includes(id);
+}
+
+// お守りの解放状態(装備は1個まで)
+export interface CharmState {
+  unlocked: CharmId[];
+  equipped: CharmId | null;
+}
+
 export interface Profile {
   xp: number;
   rating: number;
@@ -85,6 +103,25 @@ export interface Profile {
   scoreRecords: Record<string, number>;
   // デイリーチャレンジ + ストリーク
   daily: DailyState;
+  // ── R53-W2追加(旧セーブとの後方互換のため全てoptional。parseProfileが安全に補完する) ──
+  // ゾンビモードの累計統計(charm解放条件の入力)。ゾンビ以外のモードでは変化しない
+  bestZombieRound?: number;
+  zombieKills?: number;
+  zombieBossKills?: number;
+  // お守り(charm)の解放/装備状態。メニューの「お守りピッカー」はこのフィールドを読む
+  charms?: CharmState;
+  // 称号(rankNameForの階位ランクとは独立した、実績由来の呼称)。表示順=解放順
+  titles?: string[];
+  // 報酬カモ(camo.ts の REWARD_CAMO_IDS: jingai/shinrai)の解放状態。CAMO_TIERSの
+  // kill数条件/ダイヤ/ダークマターとは別枠。フィールド名は camo.ts の
+  // isCamoUnlocked/equippedCamoFor が期待する `unlockedRewardCamos` に合わせてあり、
+  // Profile を構造的にそのまま渡す既存呼び出し(viewmodel.ts/match.ts の
+  // equippedCamoFor(weaponId, profile) 経路)にそのまま刺さる。
+  unlockedRewardCamos?: CamoId[];
+  // ★V-D HIGH修正(R53): 黒雷帝キルの生涯累計(刀身雷脈=100キル判定の単一真実源)。
+  // medalCounts['kokurai-kill'] は「初キルメダルの発火回数≒試合数」でありキル数ではない。
+  // 毎試合 summary.kokuraiKills(tracker.kokuraiKillCount)を加算する。optional=後方互換
+  kokuraiKillsTotal?: number;
 }
 
 export interface MatchSummary {
@@ -108,6 +145,38 @@ export interface MatchSummary {
   medalCounts: Record<string, number>;
   // この試合のメダルXP合計
   medalXp: number;
+  // ── R53-W2: ゾンビモード専用の統計(省略可=旧経路互換)。mode==='zombie'の時のみ
+  // accumulateMatchが読み、profile.bestZombieRound/zombieBossKillsへ積算する。
+  // zombieKillsそのものは既存のkillsをそのまま流用するため専用フィールドは設けない
+  // (ゾンビモードの撃破対象は実質全てゾンビのため)。
+  zombieRound?: number;
+  zombieBossKills?: number;
+  // ★V-D HIGH修正(R53): この試合の黒雷帝キル実数(tracker.kokuraiKillCount)。
+  // profile.kokuraiKillsTotal(刀身雷脈=100キル判定)へ積算する。省略可=旧経路互換
+  kokuraiKills?: number;
+}
+
+// ── R53-W2: お守り(charm)解放条件。全て profile のゾンビ累計統計から判定する純関数 ──
+const CHARM_UNLOCK_CONDITIONS: Record<CharmId, (profile: Profile) => boolean> = {
+  startpt: (profile) => (profile.bestZombieRound ?? 0) >= 10,
+  revive: (profile) => (profile.zombieKills ?? 0) >= 500,
+  bossdmg: (profile) => (profile.zombieBossKills ?? 0) >= 10,
+  perkcarry: (profile) => (profile.bestZombieRound ?? 0) >= 30,
+};
+
+// 未解放のcharmのうち条件を満たしたものをprofile.charmsへ積む。新規解放したIDを返す
+// (結果画面の「お守り解放!」通知に使える)。冪等: 既に解放済みのIDは重複追加しない。
+export function refreshCharmUnlocks(profile: Profile): CharmId[] {
+  if (!profile.charms) profile.charms = { unlocked: [], equipped: null };
+  const newly: CharmId[] = [];
+  for (const id of CHARM_IDS) {
+    if (profile.charms.unlocked.includes(id)) continue;
+    if (CHARM_UNLOCK_CONDITIONS[id](profile)) {
+      profile.charms.unlocked.push(id);
+      newly.push(id);
+    }
+  }
+  return newly;
 }
 
 export function emptyProfile(): Profile {
@@ -140,6 +209,14 @@ export function emptyProfile(): Profile {
     campaign: { clearedMissions: [], unlockedChapters: ['ch1'], missionBests: {} },
     scoreRecords: {},
     daily: emptyDailyState(),
+    // R53-W2: 型は後方互換のためoptionalだが、新規プロフィールは常に具体値で埋める
+    bestZombieRound: 0,
+    zombieKills: 0,
+    zombieBossKills: 0,
+    charms: { unlocked: [], equipped: null },
+    titles: [],
+    unlockedRewardCamos: [],
+    kokuraiKillsTotal: 0,
   };
 }
 
@@ -147,6 +224,16 @@ export function emptyProfile(): Profile {
 // 訓練モードは統計汚染防止のため呼び出し側で xpMul 適用をスキップする(ここでは定義しない)。
 export const XP_MUL_NORMAL = 500; // 通常(非ゾンビ)モード — 試合XP全体に掛ける乗数
 export const XP_MUL_ZOMBIE =  25; // ゾンビモード — 試合XP全体に掛ける乗数
+
+// ── R53-W2: XP方針の設計判断(コメントのみ・意図的に未実装) ──────────────────
+// 1. Pack-a-Punch改造/パワーアップ取得はXPを付与しない。これらはゾンビの
+//    ポイント経済(zombie-economy.ts の POINTS/PAP_COST)で完結させ、XP経済とは
+//    分離する。accumulateMatch/applyMatch に「PaP実行時のXP加算」のようなフックは
+//    意図的に追加していない — 追加する場合はこの分離方針を破ることになるため要相談。
+// 2. S&D(Search & Destroy)勝利は専用のXP行を設けない。チームモードの既存の
+//    「勝利500xp / 試合参加150xp」(xpBreakdown内の 'won: true'→500 の行、
+//    accumulateMatch側)が自然にカバーするため、S&D固有のXP加算ロジックは不要
+//    (S&Dモード自体は本ラウンド時点でmodes.tsに未着地。着地後もこの方針は不変)。
 
 // レベルnからn+1へ必要なXP。
 // L1-99:    750 + (n-1)*250 の一次曲線(既存セーブとの後方互換を維持するため不変)。
@@ -655,6 +742,23 @@ function accumulateMatch(
   for (const [id, count] of Object.entries(summary.medalCounts)) {
     profile.medalCounts[id] = (profile.medalCounts[id] ?? 0) + count;
   }
+  // ── R53-W2: ゾンビ統計の積算(charm解放条件の入力。ゾンビモードのみ加算) ──
+  // zombieKills は summary.kills をそのまま採用する(ゾンビモードの撃破対象は実質
+  // 全てゾンビのため、専用フィールドを増やさず既存値を流用する)。bestZombieRound/
+  // zombieBossKills は summary 側の新設optionalフィールドから読む(match.ts の
+  // result() がまだこれらを埋めていない場合は 0 加算 = 実質ノーオペになるだけで安全)。
+  if (opts.mode === 'zombie') {
+    profile.bestZombieRound = Math.max(profile.bestZombieRound ?? 0, summary.zombieRound ?? 0);
+    profile.zombieKills = (profile.zombieKills ?? 0) + Math.max(0, summary.kills);
+    profile.zombieBossKills =
+      (profile.zombieBossKills ?? 0) + Math.max(0, summary.zombieBossKills ?? 0);
+    refreshCharmUnlocks(profile);
+  }
+  // ★V-D HIGH修正(R53): 黒雷帝キル実数の生涯積算(刀身雷脈=100キル判定)。帝王システムは
+  // 全モードで発動しうるため mode ゲートの外で加算する(summary未供給時は0=ノーオペ)
+  if ((summary.kokuraiKills ?? 0) > 0) {
+    profile.kokuraiKillsTotal = (profile.kokuraiKillsTotal ?? 0) + Math.max(0, summary.kokuraiKills ?? 0);
+  }
   // カモ: 武器ID別統計の積算と新規解除の検出(XPは下のbreakdownで計上する)
   const newCamos = applyCamoStats(profile, summary);
 
@@ -768,6 +872,62 @@ export interface CampaignProgress extends MatchProgress {
   stars: number;
   chapterUnlocked: string | null;
   missionBest: MissionBest | null;
+  // R53-W2: この試合(ミッションクリア)で新規解放した報酬カモ(camo.ts REWARD_CAMO_IDS)/称号
+  newRewardCamos: CamoId[];
+  newTitles: string[];
+}
+
+// ── R53-W2: 報酬カモ / 称号 の汎用ヘルパ ─────────────────────────────────────
+// どちらも冪等(既に持っていれば false を返し何もしない)。
+
+// 報酬カモ(camo.ts REWARD_CAMO_IDS: jingai/shinrai)をprofileへ積む。新規解放ならtrue。
+// フィールド名 unlockedRewardCamos は camo.ts の isCamoUnlocked/equippedCamoFor が
+// 第4引数/profile.unlockedRewardCamosとして期待する拡張点そのもの。
+export function unlockRewardCamo(profile: Profile, camoId: CamoId): boolean {
+  if (!profile.unlockedRewardCamos) profile.unlockedRewardCamos = [];
+  if (profile.unlockedRewardCamos.includes(camoId)) return false;
+  profile.unlockedRewardCamos.push(camoId);
+  return true;
+}
+
+// 称号をprofileへ積む。新規解放ならtrue
+export function addTitle(profile: Profile, title: string): boolean {
+  if (!profile.titles) profile.titles = [];
+  if (profile.titles.includes(title)) return false;
+  profile.titles.push(title);
+  return true;
+}
+
+// chapterId → 報酬カモID の逆引き(camo.ts の REWARD_CAMO_CHAPTER = {jingai:'ch9',
+// shinrai:'ch10'} を反転しただけ。camo.ts側で章の対応が変わってもここは自動追従する)。
+const CHAPTER_REWARD_CAMO: Partial<Record<string, CamoId>> = Object.fromEntries(
+  Object.entries(REWARD_CAMO_CHAPTER).map(([camoId, chapterId]) => [chapterId, camoId as CamoId]),
+);
+
+// ── R53-W2: 帝王編(ch9/ch10)報酬 ────────────────────────────────────────────
+// 報酬カモの対応(章→カモID)は camo.ts の REWARD_CAMO_CHAPTER が単一の真実源
+// (CHAPTER_REWARD_CAMO はその逆引き)。称号は camo.ts に対応する概念が無いため、
+// ch10クリア→「雷帝の後継」だけこの関数内にハードコードする。
+// CAMPAIGN配列への帝王編ミッション追加自体はB-CAMPが並行実装中のため、本関数は
+// CAMPAIGN/chapterCleared()に依存しない純関数として書く(呼び側がchapterFullyCleared
+// 判定を渡す)。着地後、campaign.ts側の実章IDがch9/ch10と一致するか要確認。
+export function applyChapterRewards(
+  profile: Profile,
+  chapterId: string,
+  chapterFullyCleared: boolean,
+): { newRewardCamos: CamoId[]; newTitles: string[] } {
+  const newRewardCamos: CamoId[] = [];
+  const newTitles: string[] = [];
+  if (!chapterFullyCleared) return { newRewardCamos, newTitles };
+  const rewardCamo = CHAPTER_REWARD_CAMO[chapterId];
+  if (rewardCamo && unlockRewardCamo(profile, rewardCamo)) {
+    newRewardCamos.push(rewardCamo);
+  }
+  // ch10全クリア → 称号「雷帝の後継」
+  if (chapterId === 'ch10' && addTitle(profile, '雷帝の後継')) {
+    newTitles.push('雷帝の後継');
+  }
+  return { newRewardCamos, newTitles };
 }
 
 // 星評価: 勝利=1★、par以内で+1★、モディファイア有りで+1★(最大3)。敗北は0。
@@ -856,14 +1016,25 @@ export function applyCampaignMission(profile: Profile, summary: MissionSummary, 
     }
   }
 
+  const chapterFullyCleared = summary.missionWon && chapterCleared(profile, summary.chapterId);
   let chapterUnlocked: string | null = null;
-  if (summary.missionWon && chapterCleared(profile, summary.chapterId)) {
+  if (chapterFullyCleared) {
     const next = nextChapterId(summary.chapterId);
     if (next && !camp.unlockedChapters.includes(next)) {
       camp.unlockedChapters.push(next);
       chapterUnlocked = next;
     }
   }
+  // R53-W2: 帝王編(ch9/ch10)報酬。章IDはcamo.tsのREWARD_CAMO_CHAPTERが真実源
+  // ({jingai:'ch9', shinrai:'ch10'})。CAMPAIGN配列(campaign.ts)への帝王編ミッション
+  // 追加自体はB-CAMPが並行実装中で本ファイル執筆時点では未着地のため、実際にch9/ch10を
+  // 全クリアするまではchapterFullyClearedが常にfalseとなり、この呼び出しは安全に
+  // 無効化された状態で存在する(applyChapterRewardsのコメント参照)。
+  const { newRewardCamos, newTitles } = applyChapterRewards(
+    profile,
+    summary.chapterId,
+    chapterFullyCleared,
+  );
 
   if (firstClear) {
     const bonusXp = Math.round(800 * xpMul);
@@ -877,5 +1048,14 @@ export function applyCampaignMission(profile: Profile, summary: MissionSummary, 
     );
   }
 
-  return { ...base, missionId: summary.missionId, firstClear, stars, chapterUnlocked, missionBest };
+  return {
+    ...base,
+    missionId: summary.missionId,
+    firstClear,
+    stars,
+    chapterUnlocked,
+    missionBest,
+    newRewardCamos,
+    newTitles,
+  };
 }
