@@ -1197,6 +1197,9 @@ describe('M: 帝王編+W2システム連動メダル(emitManual)', () => {
     'ch9-clear',
     'ch10-clear',
     'kurogane-slayer',
+    // R54-F6: 隠し章chB「歴戦の間」(ボスラッシュ)
+    'boss-rush-clear',
+    'boss-rush-ace',
   ];
 
   it('emitManualで直接発火し、firstUnlock/countsが通常のonKill経路と同じく機能する', () => {
@@ -1220,7 +1223,7 @@ describe('M: 帝王編+W2システム連動メダル(emitManual)', () => {
     expect(out[0]?.firstUnlock).toBe(false);
   });
 
-  it('7種すべてがMEDALS定義を持ち、tier/color/xpが有効値である', () => {
+  it('9種すべてがMEDALS定義を持ち、tier/color/xpが有効値である', () => {
     const t = new MedalTracker(new Set());
     for (const id of M_IDS) {
       const out: MedalEvent[] = [];
@@ -1234,7 +1237,7 @@ describe('M: 帝王編+W2システム連動メダル(emitManual)', () => {
     }
   });
 
-  it('7種のIDは互いに一意で他区分と重複しない', () => {
+  it('9種のIDは互いに一意で他区分と重複しない', () => {
     expect(new Set(M_IDS).size).toBe(M_IDS.length);
   });
 });

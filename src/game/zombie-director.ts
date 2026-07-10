@@ -32,6 +32,7 @@ import {
   type ShopLayout, type ShopSlot, type ZombiePerkId, type PapTier, type PowerUpKind, type CharmEffect,
 } from './zombie-economy';
 import { papInteractSealed, papTierAfterWallBuy, isCrowdEligible, crowdSlotAction, EXT_MAG_EXCLUDED_IDS, PAP_CAMO_BY_TIER, applyHellTuning, zombieHordeRanks } from './match-helpers';
+import { zombieSeparationGrid } from './bot';
 import {
   emptyRogueMods, applyCardToMods, rollRogueOfferWithTier, rogueTierFor,
   readRogueMeta, writeRogueMeta, accumulateRogueMeta,
@@ -206,6 +207,8 @@ export class ZombieDirector {
 
   // 試合終了時のゾンビ系リソース解放(旧Match.dispose内の該当ブロックを原順序で移動)
   dispose(): void {
+    // R54-B1: 分離グリッドを空へ(次試合でrebuildされるまで separation はゼロ=安全)
+    zombieSeparationGrid.clear();
     // R54-F5 輪廻: 恒久メタ加算(quit/全滅/再戦すべてdispose経由=一元化)。単発ガード付き
     if (this.rogueActive && !this.rogueMetaDone && this.zombieRound > 0) {
       this.rogueMetaDone = true;
@@ -915,6 +918,12 @@ export class ZombieDirector {
     }
     const ranks = zombieHordeRanks(d2);
     for (let i = 0; i < zAlive.length; i += 1) zAlive[i]!.hordeRank = ranks[i]!;
+    // R54-B1: 群衆分離グリッドの再構築(0.25s周期=この関数の呼び出し周期)。
+    // rank>=24の後方群はKCCから対ゾンビ衝突を除外(bot.ts filterPredicate)しており、
+    // 重なり防止はこのグリッドのseparation(bot.ts updateZombie)が担う
+    zombieSeparationGrid.rebuild(
+      zAlive.map((b) => ({ uid: b.uid, x: b.position.x, z: b.position.z })),
+    );
     // R53-W3 M3: 最近接8体⇔群の動的切替(両経路は式同一=ポップなし)。
     // rank<8はObject3D(実articulated影+個体忠実度)、rank>=8はInstancedMeshへ
     if (this.zombieCrowd) {

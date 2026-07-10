@@ -1,3 +1,4 @@
+import { CAMPAIGN } from '../game/campaign';
 import { isCamoId, isKunaiCamoId, isRewardCamoId, type CamoId } from '../game/camo';
 import {
   emptyDailyState,
@@ -104,6 +105,17 @@ export function parseProfile(raw: string): Profile {
       // 第1章は常に解放(softlock回避)
       if (!chapters.includes('ch1')) chapters.push('ch1');
       base.campaign.unlockedChapters = chapters;
+    }
+    // R54-F6: 隠し章chB「歴戦の間」=ch10制覇で解放。通常の章連鎖pushは「章クリアの瞬間」
+    // にしか走らないため、chB追加以前にch10を制覇済みの旧セーブはロード正規化で遡及付与する
+    // (以後のクリアは progression.ts の既存 nextChapterId 連鎖が同じ結果を出す)
+    const ch10 = CAMPAIGN.find((c) => c.id === 'ch10');
+    if (
+      ch10 &&
+      !base.campaign.unlockedChapters.includes('chB') &&
+      ch10.missions.every((m) => base.campaign.clearedMissions.includes(m.id))
+    ) {
+      base.campaign.unlockedChapters.push('chB');
     }
     if (typeof camp.missionBests === 'object' && camp.missionBests !== null) {
       const diffs = ['easy', 'normal', 'hard'];

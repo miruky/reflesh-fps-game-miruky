@@ -9,6 +9,7 @@ import {
   ZOMBIE_HORDE_THIN_RANK,
   zombieKccActive,
   zombieKccSkipFactor,
+  zombieSeparationGrid,
   type BotContext,
 } from './bot';
 
@@ -213,6 +214,118 @@ describe('zombieKccSkipFactor(★1/★5 stuckTimer実時間補正用)', () => {
 
   it('60m超は係数4', () => {
     expect(zombieKccSkipFactor(80, 0)).toBe(4);
+  });
+});
+
+// ─── R54-W1(B1) 群衆分離KCC: hordeRank>=THIN_RANKの対ゾンビcollider除外 + 空間ハッシュ分離 ───
+describe('Bot ゾンビ 群衆分離KCC(R54-W1 B1)', () => {
+  function makeZombieWorld(): RAPIER.World {
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    const floorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(50, 0.5, 50).setTranslation(0, -0.5, 0),
+      floorBody,
+    );
+    return world;
+  }
+
+  function makeCtx(targetEye: THREE.Vector3 | null, tuning = { ...DIFFICULTY.normal }): BotContext {
+    return {
+      targetEye,
+      objective: null,
+      tuning,
+      rand: () => 0.5,
+      onShoot: () => {},
+      onMelee: () => {},
+    };
+  }
+
+  it('先頭集団(hordeRank<THIN_RANK)は他ゾンビのbodyColliderに衝突してブロックされる(非回帰)', () => {
+    const world = makeZombieWorld();
+    const tuning = { ...DIFFICULTY.normal };
+    const mover = new Bot(
+      world, '前衛', new THREE.Vector3(0, 0, 0), 0x39d465, tuning, 2, 'normal', 'zombie',
+    );
+    new Bot(world, 'static', new THREE.Vector3(0, 0, -1.5), 0x39d465, tuning, 2, 'normal', 'zombie');
+    mover.hordeRank = 0; // 先頭集団=フルKCC(既存挙動を維持する対象)
+    world.step();
+
+    const ctx = makeCtx(new THREE.Vector3(0, 1.5, -30), tuning);
+    for (let i = 0; i < 30; i += 1) {
+      mover.update(1 / 60, ctx);
+      world.step();
+    }
+    // 相手bodyCollider半径0.35×2=0.7相当の接触距離を大きく割り込めない(通り抜けない)
+    expect(mover.position.z).toBeGreaterThan(-1.3);
+  });
+
+  it('先頭集団外(hordeRank>=THIN_RANK)は他ゾンビのbodyColliderをすり抜ける(密集KCC軽量化)', () => {
+    const world = makeZombieWorld();
+    const tuning = { ...DIFFICULTY.normal };
+    const mover = new Bot(
+      world, '後方', new THREE.Vector3(0, 0, 0), 0x39d465, tuning, 2, 'normal', 'zombie',
+    );
+    new Bot(world, 'static', new THREE.Vector3(0, 0, -1.5), 0x39d465, tuning, 2, 'normal', 'zombie');
+    mover.hordeRank = ZOMBIE_HORDE_THIN_RANK; // 群衆後方=対ゾンビKCC除外の対象
+    world.step();
+
+    const ctx = makeCtx(new THREE.Vector3(0, 1.5, -30), tuning);
+    for (let i = 0; i < 30; i += 1) {
+      mover.update(1 / 60, ctx);
+      world.step();
+    }
+    // 相手の中心z(-1.5)を通り過ぎている=対ゾンビ衝突が効いていない
+    expect(mover.position.z).toBeLessThan(-1.5);
+  });
+
+  it('対ゾンビKCC除外はcollisionGroupsを変更しないため、被弾ヘッドショット判定は非回帰', () => {
+    const world = makeZombieWorld();
+    const tuning = { ...DIFFICULTY.normal };
+    const thinned = new Bot(
+      world, '後方', new THREE.Vector3(0, 0, 0), 0x39d465, tuning, 2, 'normal', 'zombie',
+    );
+    thinned.hordeRank = ZOMBIE_HORDE_THIN_RANK;
+    world.step();
+
+    // filterPredicateはKCCのcomputeColliderMovement呼び出しに限定されるため、通常のcastRay
+    // (被弾判定と同じ経路)は従来どおりheadColliderへ命中する
+    const headY = thinned.headPosition().y;
+    const ray = new RAPIER.Ray({ x: 0, y: headY, z: -10 }, { x: 0, y: 0, z: 1 });
+    const hit = world.castRay(ray, 100, true);
+    expect(hit).not.toBeNull();
+    expect(hit!.collider.handle).toBe(thinned.headCollider.handle);
+  });
+
+  it('rebuild済みの空間ハッシュはhordeRank>=THIN_RANKの個体のwishへ反発を加算する(統合確認)', () => {
+    const world = makeZombieWorld();
+    const tuning = { ...DIFFICULTY.normal };
+    const mover = new Bot(
+      world, 'A', new THREE.Vector3(0, 0, 0), 0x39d465, tuning, 2, 'normal', 'zombie',
+    );
+    mover.hordeRank = ZOMBIE_HORDE_THIN_RANK;
+    world.step();
+
+    // 北側(+z)0.3mに「幽霊」隣接体(実colliderを持たない仮想エントリ)を登録する。
+    // targetは+x方向のみ(z成分ゼロ)に置くため、target-tracking由来のwishZは常に0。
+    // よってzに変位が生じればそれは空間ハッシュの分離ベクトル以外に発生源がない。
+    zombieSeparationGrid.rebuild([
+      { uid: mover.uid, x: mover.position.x, z: mover.position.z },
+      { uid: -999, x: mover.position.x, z: mover.position.z + 0.3 },
+    ]);
+
+    try {
+      const ctx = makeCtx(new THREE.Vector3(50, 1.5, 0), tuning); // +x方向へ直進(z成分ゼロ)
+      for (let i = 0; i < 5; i += 1) {
+        mover.update(1 / 60, ctx);
+        world.step();
+      }
+      // 北側の幽霊隣接体からの反発(-z向き)を受け、targetだけでは生じ得ないz変位が生じる
+      expect(mover.position.z).toBeLessThan(0);
+    } finally {
+      // 他テストへ影響しないよう、モジュール単位のシングルトンを必ず空へ戻す
+      // (rebuild()が一度も呼ばれない=常にゼロという非回帰契約を後続テストのために復元)
+      zombieSeparationGrid.clear();
+    }
   });
 });
 

@@ -238,7 +238,7 @@ export type MedalId =
   | 'chain-comeback'
   | 'chain-saver'
   | 'chain-god'
-  // ── M: 帝王編+W2システム連動 (7, R53-W2) ─────────────────────────────────
+  // ── M: 帝王編+W2システム連動 (9, R53-W2 / R54-F6でボスラッシュ2種追加) ──────
   // 全てKillCtx非依存: onKill()の連続キル/距離/武器種などの文脈を持たないため、
   // match側が MedalTracker.emitManual() を通じて直接発火する契約とする
   // (例: pap-first/pap-max = Pack-a-Punch実行時、variant-100 = 特殊ゾンビ撃破数、
@@ -250,7 +250,10 @@ export type MedalId =
   | 'snd-ace'
   | 'ch9-clear'
   | 'ch10-clear'
-  | 'kurogane-slayer';
+  | 'kurogane-slayer'
+  // R54-F6: 隠し章chB「歴戦の間」(ボスラッシュ)。clear=ミッション勝利、ace=par(300s)以内勝利
+  | 'boss-rush-clear'
+  | 'boss-rush-ace';
 
 export interface MedalEvent {
   id: MedalId;
@@ -542,6 +545,10 @@ const MEDALS: Record<MedalId, MedalDef> = {
   'ch9-clear': { name: '帝王編・序', tier: 'gold', color: 'var(--medal-violet)', xp: 2000 },
   'ch10-clear': { name: '帝王編・極', tier: 'platinum', color: 'var(--medal-plat)', xp: 5000 },
   'kurogane-slayer': { name: 'クロガネ討伐', tier: 'platinum', color: 'var(--medal-plat)', xp: 4000 },
+  // R54-F6: 隠し章chB「歴戦の間」。SUPPRESS外+ALWAYS外=初回のみバッジカード、以降はフィード行
+  // (「ALWAYS_BADGE級の格・初回表示」の指示をこの組で実現。ALWAYS_BADGE≤12のピンも維持)
+  'boss-rush-clear': { name: '歴戦', tier: 'platinum', color: 'var(--medal-plat)', xp: 5000 },
+  'boss-rush-ace': { name: '歴戦・神速', tier: 'gold', color: 'var(--medal-gold)', xp: 3000 },
 };
 
 // 武器クラス別のロングショット閾値(m)。sniper は常時 / shotgun は無効
@@ -562,8 +569,8 @@ export const LONGSHOT: Record<WeaponClass, number> = {
 // 既存36種は headshot 以外全部バッジ解放を維持(実績互換)。
 // 新180種は「体験が明確に変わるエリート18種」だけバッジ解放し、残り162種を抑止。
 // → 画面にバッジが出うるメダル種は 216種中53種(≒1/4)。
-// (R53-W2でM区分7種を追加。SUPPRESS_BADGEには入れていないため
-//  全223種中バッジ解放可能なのは60種 — ch10-clear/kurogane-slayerはALWAYS_BADGE)
+// (R53-W2でM区分7種、R54-F6でボスラッシュ2種を追加。SUPPRESS_BADGEには入れていないため
+//  全225種中バッジ解放可能なのは62種 — ch10-clear/kurogane-slayerはALWAYS_BADGE)
 // 削除ではなく「表示無効化」 — 定義・XP・カウントは維持し将来復活可能
 export const SUPPRESS_BADGE: ReadonlySet<MedalId> = new Set<MedalId>([
   // ── 既存14種(頻出bronze: バッジを出すとHUDが埋まる) ──
@@ -897,7 +904,7 @@ export class MedalTracker {
     if (['slide-snipe','slide-qs','slide-hs','air-snipe','air-qs','air-hs','slide-air-kill','air-slam-kill'].includes(id)) return 'I';
     if (id.startsWith('dark-') || id.startsWith('raitei-') || id.startsWith('kokurai-') || id.startsWith('ult-') || id.startsWith('hell-') || id.startsWith('de-') ) return 'J';
     if (id.startsWith('chain-')) return 'L';
-    if (['pap-first', 'pap-max', 'variant-100', 'snd-ace', 'ch9-clear', 'ch10-clear', 'kurogane-slayer'].includes(id)) return 'M';
+    if (['pap-first', 'pap-max', 'variant-100', 'snd-ace', 'ch9-clear', 'ch10-clear', 'kurogane-slayer', 'boss-rush-clear', 'boss-rush-ace'].includes(id)) return 'M';
     return null;
   }
 

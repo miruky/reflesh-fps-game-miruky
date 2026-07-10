@@ -1,6 +1,6 @@
 // ゲームモードのルール定義と進行計算。描画・物理に依存しない
 // 'story'=キャンペーン(目的駆動・scoreTarget無効) / 'score'=スコアアタック(時間内キル数)
-export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie' | 'hardpoint' | 'killconfirm' | 'gungame' | 'training' | 'snd';
+export type GameMode = 'ffa' | 'tdm' | 'dom' | 'story' | 'score' | 'zombie' | 'hardpoint' | 'killconfirm' | 'gungame' | 'training' | 'snd' | 'ctf';
 
 export type TeamId = number;
 
@@ -66,6 +66,13 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
     teamBased: true,
     scoreTarget: 4, // ラウンド先取数。実勝敗はSndMatchが管理
   },
+  ctf: {
+    id: 'ctf',
+    name: 'キャプチャー・ザ・フラッグ',
+    desc: '敵陣の旗を奪って自陣へ持ち帰る。自陣の旗が基地にある時だけキャプチャ成立。3本先取',
+    teamBased: true,
+    scoreTarget: 3, // キャプチャ先取数(CTF_CAPS_TO_WIN)。実勝敗はCtfStateが管理
+  },
   story: {
     id: 'story',
     name: 'ストーリー',
@@ -96,7 +103,9 @@ export const MODE_DEFS: Record<GameMode, ModeDef> = {
   },
 };
 
-// メニューで選べる対戦モード。'story' は専用UI、'zombie' は専用ラウンドUI
+// メニューで選べる対戦モード。'story' は専用UI、'zombie' は専用ラウンドUI。
+// 'ctf' は純ロジックのみ実装済み(R54-F6)— match配線/旗ビジュアル/bot AI/HUDの完成時にここへ追加する
+// (データ駆動メニューに未配線モードを出さないための意図的な保留)
 export const MODE_IDS: GameMode[] = ['ffa', 'tdm', 'dom', 'hardpoint', 'killconfirm', 'snd', 'gungame', 'score', 'zombie', 'training'];
 
 const CAPTURE_PER_S = 0.35;
@@ -540,5 +549,173 @@ export class TrainingStats {
   /** HS率 0..1 */
   hsRate(): number {
     return this.shotsHit > 0 ? this.headshots / this.shotsHit : 0;
+  }
+}
+
+// ── CTF: 2旗の状態機械(R54-F6。純ロジック — 描画/物理/座標検知はmatch側) ──────────────
+// 【match配線メモ(次スロットのオーナー向け)】
+//  - 旗座標: S&Dサイトと同じdomゾーン係数の対角配置を推奨
+//    (自陣旗 { x: -size*0.3, z: size*0.12 } / 敵陣旗 { x: size*0.3, z: -size*0.12 })。
+//  - 接触検知: プレイヤー/botが旗座標へ CTF_PICKUP_RADIUS 以内に入った時、
+//    「敵旗なら onPickup(自team, uid)、自旗なら onFlagTouch(自team, uid)」を毎tick呼ぶ
+//    (両APIとも状態が合わない呼び出しはnullで無視するため、呼び側の条件分岐は距離だけでよい)。
+//  - 死亡: killされたuidに対して onCarrierDeath(uid, pos) を呼ぶ(運んでいなければnull)。
+//  - snapshot案: snapshot.ctf?: { mine: CtfFlagPhase; enemy: CtfFlagPhase;
+//    carrierIsPlayer: boolean; score: [number, number] } — HUDは旗アイコン2個+スコアで足りる。
+//  - bot AI: objectiveFor に「攻め=敵旗(base/dropped位置)→奪取後は自陣旗座標へ帰還、
+//    守り=自旗の現在位置」の分岐を足す(hardpoint/sndObjectiveForと同じ構造)。
+//  - プレイヤーのuidは-1(S&Dのキャリア慣例と同じ)。
+export const CTF_CAPS_TO_WIN = 3;
+export const CTF_RETURN_S = 20;
+export const CTF_PICKUP_RADIUS = 2.2;
+
+export type CtfFlagPhase = 'base' | 'carried' | 'dropped';
+
+export interface CtfFlagSnapshot {
+  team: TeamId; // この旗の所有チーム(=旗が立つ基地の側)
+  phase: CtfFlagPhase;
+  carrierUid: number | null;
+  dropPos: { x: number; y: number; z: number } | null;
+  returnInS: number; // dropped時の自動帰還までの残り秒(それ以外は0)
+}
+
+export type CtfEvent =
+  | { kind: 'taken'; flagTeam: TeamId; byTeam: TeamId; byUid: number }
+  | { kind: 'dropped'; flagTeam: TeamId; pos: { x: number; y: number; z: number } }
+  | { kind: 'returned'; flagTeam: TeamId; how: 'touch' | 'timeout' }
+  | { kind: 'captured'; team: TeamId; score: number; isWin: boolean };
+
+interface CtfFlag {
+  phase: CtfFlagPhase;
+  carrierUid: number | null;
+  dropPos: { x: number; y: number; z: number } | null;
+  returnTimer: number;
+}
+
+export class CtfState {
+  private readonly flags = new Map<TeamId, CtfFlag>();
+  private readonly scores = new Map<TeamId, number>();
+  private _winner: TeamId | null = null;
+
+  constructor(readonly teams: readonly [TeamId, TeamId] = [PLAYER_TEAM, ENEMY_TEAM]) {
+    for (const t of teams) {
+      this.flags.set(t, { phase: 'base', carrierUid: null, dropPos: null, returnTimer: 0 });
+      this.scores.set(t, 0);
+    }
+  }
+
+  private enemyOf(team: TeamId): TeamId {
+    return team === this.teams[0] ? this.teams[1] : this.teams[0];
+  }
+
+  /** dropped旗の自動帰還カウントダウン。発生イベントを返す(勝敗確定後は何もしない) */
+  update(dt: number): CtfEvent[] {
+    if (this._winner !== null) return [];
+    const events: CtfEvent[] = [];
+    for (const [team, flag] of this.flags) {
+      if (flag.phase !== 'dropped') continue;
+      flag.returnTimer -= dt;
+      if (flag.returnTimer <= 0) {
+        this.resetFlag(flag);
+        events.push({ kind: 'returned', flagTeam: team, how: 'timeout' });
+      }
+    }
+    return events;
+  }
+
+  /**
+   * team の一員(uid)が「敵旗」に触れた: base/droppedなら奪取してcarried化。
+   * すでに運搬中/勝敗確定後は null(呼び側は距離判定だけで毎tick呼んでよい)
+   */
+  onPickup(team: TeamId, uid: number): CtfEvent | null {
+    if (this._winner !== null) return null;
+    const flagTeam = this.enemyOf(team);
+    const flag = this.flags.get(flagTeam);
+    if (!flag || flag.phase === 'carried') return null;
+    flag.phase = 'carried';
+    flag.carrierUid = uid;
+    flag.dropPos = null;
+    flag.returnTimer = 0;
+    return { kind: 'taken', flagTeam, byTeam: team, byUid: uid };
+  }
+
+  /**
+   * team の一員(uid)が「自陣旗」に触れた:
+   *  - 自旗がdropped → 即時帰還(味方タッチリターン)
+   *  - 自旗がbase & uidが敵旗を運搬中 → キャプチャ(+1点、敵旗は基地へ戻る)。3本先取で勝利
+   *  - それ以外(base&非運搬、carried=敵が持ち去り中) → null
+   */
+  onFlagTouch(team: TeamId, uid: number): CtfEvent | null {
+    if (this._winner !== null) return null;
+    const own = this.flags.get(team);
+    if (!own) return null;
+    if (own.phase === 'dropped') {
+      this.resetFlag(own);
+      return { kind: 'returned', flagTeam: team, how: 'touch' };
+    }
+    if (own.phase !== 'base') return null; // 自旗が奪われている間はキャプチャ不成立(CTFの基本則)
+    const enemyFlag = this.flags.get(this.enemyOf(team));
+    if (!enemyFlag || enemyFlag.phase !== 'carried' || enemyFlag.carrierUid !== uid) return null;
+    this.resetFlag(enemyFlag);
+    const score = (this.scores.get(team) ?? 0) + 1;
+    this.scores.set(team, score);
+    const isWin = score >= CTF_CAPS_TO_WIN;
+    if (isWin) this._winner = team;
+    return { kind: 'captured', team, score, isWin };
+  }
+
+  /** uid が死亡した: 運搬中の旗があれば pos へドロップし20秒の帰還タイマーを開始 */
+  onCarrierDeath(uid: number, pos: { x: number; y: number; z: number }): CtfEvent | null {
+    if (this._winner !== null) return null;
+    for (const [team, flag] of this.flags) {
+      if (flag.phase !== 'carried' || flag.carrierUid !== uid) continue;
+      flag.phase = 'dropped';
+      flag.carrierUid = null;
+      flag.dropPos = { ...pos };
+      flag.returnTimer = CTF_RETURN_S;
+      return { kind: 'dropped', flagTeam: team, pos: { ...pos } };
+    }
+    return null;
+  }
+
+  /** uid が運搬中の旗の所有チーム(運搬していなければ null)。HUD/bot AI用 */
+  carrying(uid: number): TeamId | null {
+    for (const [team, flag] of this.flags) {
+      if (flag.phase === 'carried' && flag.carrierUid === uid) return team;
+    }
+    return null;
+  }
+
+  score(team: TeamId): number {
+    return this.scores.get(team) ?? 0;
+  }
+
+  winner(): TeamId | null {
+    return this._winner;
+  }
+
+  flagPhase(team: TeamId): CtfFlagPhase {
+    return this.flags.get(team)?.phase ?? 'base';
+  }
+
+  snapshot(): { flags: CtfFlagSnapshot[]; scores: Array<{ team: TeamId; score: number }>; winner: TeamId | null } {
+    return {
+      flags: [...this.flags.entries()].map(([team, f]) => ({
+        team,
+        phase: f.phase,
+        carrierUid: f.carrierUid,
+        dropPos: f.dropPos ? { ...f.dropPos } : null,
+        returnInS: f.phase === 'dropped' ? Math.max(0, f.returnTimer) : 0,
+      })),
+      scores: [...this.scores.entries()].map(([team, score]) => ({ team, score })),
+      winner: this._winner,
+    };
+  }
+
+  private resetFlag(flag: CtfFlag): void {
+    flag.phase = 'base';
+    flag.carrierUid = null;
+    flag.dropPos = null;
+    flag.returnTimer = 0;
   }
 }

@@ -39,11 +39,20 @@ export interface EnemyGroupDef {
   difficulty: Difficulty;
   // 敵の機体種。省略時はエンジン既定(boss=大型戦車、通常波の一部がドローン化)。
   // 'zombie'=感染機(燼骸/近接特化)、'master'=達人個体(剣+射撃のハイブリッド)。ch9/ch10で使用。
-  kind?: 'humanoid' | 'drone' | 'tank' | 'turret' | 'zombie' | 'master';
+  // 'giant'=巨躯(近接ブルーザー)。chB「歴戦の間」で使用。
+  kind?: 'humanoid' | 'drone' | 'tank' | 'turret' | 'zombie' | 'master' | 'giant';
   // ★W4B監査(HIGH)対応: HP倍率。master系ボスの基礎HP(900)はフェーズ演出前に約1.7秒で
   // 溶けるため、章ボスへ乗算で厚みを与える(c9m6=×4≈3600、c10m6=×10=9000 —
   // 素手+ウルトで30-45秒の3フェーズ戦になる実測設計値)。省略=1。
   hpMul?: number;
+  // R54-F6: ボス個体の表示名(キルフィード/フェーズ演出用)。省略時は
+  // objective.bossName → 'BOSS' の順でフォールバック。chBの6連戦のように
+  // 1ミッションに複数ボスが順番に出る場合、各グループへ固有名を与える。
+  name?: string;
+  // R54-F6: グループ固有の多段フェーズ(ミッション単位の MissionDef.bossPhases の一般化)。
+  // tier='boss' のグループに設定すると、その個体の出現時にフェーズ機が再アームされる
+  // (chB「歴戦の間」の剣士/クロガネ再来戦で使用。c10m6 の MissionDef.bossPhases は不変)。
+  phases?: BossPhase[];
 }
 export interface EnemyWaveDef {
   // 'boss-hp': ボスのHPが triggerHp01 以下になった瞬間に1回だけ発火する増援波(ch10 ボスラッシュ等)。
@@ -53,6 +62,9 @@ export interface EnemyWaveDef {
   triggerHp01?: number;
   enemies: EnemyGroupDef[];
   announce?: string;
+  // R54-F6: 'wave-clear' 波専用。前波の全滅確認と同時に完全補給(弾薬/グレネード/HP)を行い、
+  // 8秒の小休止(インターミッション)を挟んでからこの波を出す(chB「歴戦の間」の連戦テンポ)。
+  resupply?: boolean;
 }
 // 無線劇の話者。'kurogane' は ch9 終盤の謎の声/ch10 のクロガネ本人にのみ使用する。
 export type RadioSpeaker = 'kagerou' | 'homura' | 'hibana' | 'kurogane';
@@ -2144,6 +2156,137 @@ export const CAMPAIGN: ChapterDef[] = [
       },
     ],
   ),
+  // ─────────────────── 隠し章B「歴戦の間」(R54-F6 ボスラッシュ) ───────────────────
+  // ch10制覇(6ミッション全クリア)で解放される1ミッション章。chapter()ヘルパは
+  // id=`ch${num}` 固定のため直接リテラルで構築する(stageId seed=11007は既存章の
+  // `num*1000+index*137+7` 系列と衝突しない)。解放経路は progression.ts の既存
+  // 章連鎖(nextChapterId=CAMPAIGN配列順)+core/profile.ts のロード時遡及付与。
+  {
+    id: 'chB',
+    title: '歴戦の間',
+    subtitle: '隠し章 — ボスラッシュ',
+    lore: 'クロガネ亡き後、玉座の地下に残された演算炉。そこにはヒバナが打ち倒してきた六体の強敵——歴戦の亡霊たちの戦闘記録が、今も闘い続けたまま封じられている。全てを順に沈めた者だけが「歴戦」の名を継ぐ。',
+    missions: [
+      {
+        id: 'cbm1-rekisen',
+        chapterId: 'chB',
+        index: 0,
+        title: '歴戦の間',
+        subtitle: '六連戦',
+        stageId: 'gen-industrial-11007',
+        primaryId: 'raitei-lmg',
+        challenge: { kind: 'hs-count', value: 10, label: '頭部撃ち10回で亡霊たちを沈める' },
+        objective: { kind: 'eliminate-all', label: '六体の亡霊を順に全て沈める——ボスラッシュ' },
+        // 6連戦: 各波ボス1体のみ(bossHp01/HUDボスバーが波ごとに単独で立つ)。
+        // wave2以降は resupply=true — 全滅確認と同時に完全補給+8秒の小休止。
+        // HPは tuningFor('boss','hard') 基礎値×hpMul を spawnBot のboss床が採用する。
+        waves: [
+          {
+            trigger: 'start',
+            announce: '一戦目——重装戦車「鉄塊」',
+            enemies: [{ tier: 'boss', count: 1, difficulty: 'hard', kind: 'tank', hpMul: 3, name: '重装戦車・鉄塊' }],
+          },
+          {
+            trigger: 'wave-clear',
+            resupply: true,
+            announce: '二戦目——母機ガンシップ、再臨',
+            enemies: [{ tier: 'boss', count: 1, difficulty: 'hard', kind: 'drone', hpMul: 3, name: '母機ガンシップ・写し' }],
+          },
+          {
+            trigger: 'wave-clear',
+            resupply: true,
+            announce: '三戦目——巨躯、灰の中より',
+            enemies: [{ tier: 'boss', count: 1, difficulty: 'hard', kind: 'giant', hpMul: 2, name: '巨躯・灰塊' }],
+          },
+          {
+            trigger: 'wave-clear',
+            resupply: true,
+            announce: '四戦目——灰の剣士、抜刀',
+            enemies: [
+              {
+                tier: 'boss',
+                count: 1,
+                difficulty: 'hard',
+                kind: 'master',
+                hpMul: 4,
+                name: '灰の剣士・写し',
+                phases: [
+                  { hp01: 1.0, announce: '灰の剣士、静かに構える' },
+                  {
+                    hp01: 0.5,
+                    speedMul: 1.2,
+                    damageMul: 1.15,
+                    blackSlash: true,
+                    announce: '灰の剣士、斬撃を飛ばす——太刀筋が変わる',
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            trigger: 'wave-clear',
+            resupply: true,
+            announce: '五戦目——燼骸の王',
+            enemies: [{ tier: 'boss', count: 1, difficulty: 'hard', kind: 'zombie', hpMul: 5, name: '燼骸の王' }],
+          },
+          {
+            trigger: 'wave-clear',
+            resupply: true,
+            announce: '最終戦——黒雷帝クロガネ、再来',
+            enemies: [
+              {
+                tier: 'boss',
+                count: 1,
+                difficulty: 'hard',
+                kind: 'master',
+                hpMul: 10,
+                name: '黒雷帝クロガネ・再来',
+                // c10m6 と同構成の3段フェーズ(hp01降順契約)
+                phases: [
+                  { hp01: 1.0, announce: 'クロガネ、玉座より起つ——写し身なれど太刀筋は本物' },
+                  {
+                    hp01: 0.6,
+                    speedMul: 1.15,
+                    damageMul: 1.1,
+                    blackSlash: true,
+                    blink: true,
+                    announce: 'クロガネ、黒雷を纏う——太刀筋が変わる',
+                  },
+                  {
+                    hp01: 0.25,
+                    speedMul: 1.3,
+                    damageMul: 1.25,
+                    pillars: true,
+                    summonCount: 3,
+                    announce: '演算炉、雷柱と共に崩れる——最後の抵抗',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        modifiers: [],
+        durationS: 600,
+        difficulty: 'hard',
+        brief: [
+          '玉座の地下、封じられた演算炉に六体の亡霊が待つ。',
+          '戦車、母機、巨躯、剣士、燼骸の王——そして黒雷帝の写し身。',
+          '各戦の合間に補給が入る。息を整え、順に沈めろ。',
+        ],
+        cutscene: [
+          'ホムラ: 演算炉が、あなたの戦闘記録を再生し続けてる。……全部、あなたが倒した敵。',
+          'カゲロウ: 歴戦の亡霊たちだ。順に沈めろ。それがお前の歩いてきた道の証明になる。',
+        ],
+        parTimeS: 300,
+        radio: [
+          { at: { event: 'start' }, speaker: 'kagerou', text: '歴戦の亡霊たちだ。順に沈めろ。' },
+          { at: { event: 'wave-clear' }, speaker: 'homura', text: '一体、沈黙。……次が来る。補給を済ませて。' },
+          { at: { s: 180 }, speaker: 'kagerou', text: '息を整えろ。奴らは記録の中の強さのままだ——だがお前は、あの頃より強い。' },
+          { at: { event: 'objective-done' }, speaker: 'kagerou', text: '全機、沈黙。……歴戦の間、制覇だ。誇っていい。' },
+        ],
+      },
+    ],
+  },
 ];
 
 export function allMissions(): MissionDef[] {

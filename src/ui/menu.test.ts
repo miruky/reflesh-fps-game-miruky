@@ -17,8 +17,8 @@ import { stagesForMode } from '../game/stages';
 // 純関数のみをここで検証する(hud.tsの既存テスト群と同じ流儀)。
 
 describe('campaignTotals (R53-W2: 48/144ハードコード根治のregression)', () => {
-  it('CAMPAIGN実データで60ミッション/★180点(ch9/ch10の帝王編着地を含む)', () => {
-    expect(campaignTotals(CAMPAIGN)).toEqual({ missions: 60, starsMax: 180 });
+  it('CAMPAIGN実データで61ミッション/★183点(帝王編+R54-F6隠し章chB歴戦の間を含む)', () => {
+    expect(campaignTotals(CAMPAIGN)).toEqual({ missions: 61, starsMax: 183 });
   });
 
   it('章数に依らず自動追従する(章0/1/2件で算出)', () => {

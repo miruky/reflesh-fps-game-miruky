@@ -8,6 +8,8 @@ import { applyGravityStep } from './player';
 // (経済/報酬ロジックとの結び付きが強いため)。並行実装中は一時的にtscが赤くなり得る
 // (report参照)。
 import type { ZombieVariant } from './zombie-economy';
+// R54-W1(B1) 密集ゾンビの物理ライト化: 対ゾンビKCC除外個体の重なり回避に使う空間ハッシュ。
+import { ZombieSeparationGrid } from './spatial-hash';
 
 // 胴体カプセルは首までの高さに留め、頭の判定球をカプセルの外に出す。
 // 全身を覆うカプセルにすると水平レイが常に胴体へ先に当たり、
@@ -300,6 +302,46 @@ export function zombieKccSkipFactor(distToPlayerM: number, hordeRank = 0): numbe
   if (distToPlayerM <= ZOMBIE_KCC_LOD_MID_M) return 2;
   return 4;
 }
+
+// ── R54-W1(B1) 密集ゾンビの物理ライト化: 対ゾンビKCC除外 ──────────────────────
+// hordeRank>=ZOMBIE_HORDE_THIN_RANK(群衆後方)の個体は、updateZombieのcomputeColliderMovement
+// へfilterPredicateを渡し「他ゾンビのbodyCollider」だけを衝突解決の対象から除外する
+// (被弾レイ/爆風/近接判定・obstacleAhead等の他クエリは一切変更しない=非干渉)。
+//
+// 手段の選定(collision groups vs filterPredicate): このコードベースはどのコライダーも
+// collisionGroupsを一度も設定しておらず(既定=全グループ所属・全グループと衝突)、
+// computeColliderMovementのfilterGroups引数はクエリ側の値ではなく相手colliderの実際の
+// collisionGroups(setCollisionGroups)と比較される。よってzombieのbodyColliderに
+// setCollisionGroupsで新規ビットを振る必要があるが、これはRapierの衝突判定パイプライン
+// 全体(接触/交差イベント生成等、明示的にfilterGroupsを指定しない他クエリも含む)に
+// 波及し得る広域変更であり、「被弾レイ/爆風/近接判定に影響しないことが絶対条件」に反する
+// リスクがある。対してfilterPredicateはこの1回のcomputeColliderMovement呼び出しにのみ
+// 効くクロージャで、collider自体の状態を一切変更しない。よって述語方式を採用する。
+//
+// 識別方法: Bot生成時にkind==='zombie'ならWorld単位のSet<collider.handle>へ登録し、
+// dispose()で解除する(WeakMap<World, Set<number>>でWorldをまたぐhandle番号の再利用に
+// よる誤判定を構造的に防ぐ。試合ごとdispose契約と整合し、Worldが破棄されればGC対象)。
+const zombieHandlesByWorld = new WeakMap<RAPIER.World, Set<number>>();
+function zombieHandleSet(world: RAPIER.World): Set<number> {
+  let set = zombieHandlesByWorld.get(world);
+  if (set === undefined) {
+    set = new Set<number>();
+    zombieHandlesByWorld.set(world, set);
+  }
+  return set;
+}
+
+// ── R54-W1(B1) 群衆分離の空間ハッシュ(申し送り) ────────────────────────────
+// 対ゾンビKCCを除外された個体は互いにすり抜けて重なり得るため、代わりにこの軽量グリッドで
+// 反発ベクトルを計算しwishへ加算する(spatial-hash.ts参照)。rebuild()は0.25s周期でhordeRank
+// を再計算する側(zombie-director.ts)から全ゾンビの{uid,x,z}を渡して呼ぶのが自然だが、
+// 本ラウンドはzombie-director.tsが並行編集中のため配線しない(申し送り事項。統合パスで
+// 「0.25s毎にrebuild([...zAlive].map(b=>({uid:b.uid,x:b.position.x,z:b.position.z})))」を
+// 追加すること)。rebuild()が一度も呼ばれない間は格子が空 → separation()は常に{x:0,z:0}を
+// 返すため、配線が完了するまでこのグリッドは完全に無害(非回帰)。
+export const zombieSeparationGrid = new ZombieSeparationGrid();
+// updateZombie内でのみ使うアロケゼロ出力先(GIANT_POS_SCRATCH等と同じ流儀)
+const ZOMBIE_SEP_SCRATCH = { x: 0, z: 0 };
 
 // ★5 ホットパス用スクラッチ(updateGiantの毎フレームnew Vector3を根絶)
 const GIANT_POS_SCRATCH = new THREE.Vector3();
@@ -978,6 +1020,9 @@ export class Bot {
   // ★5 群衆ランクKCC LOD契約: matchが0.25s毎に近い順ランクを書き込む(0=最近接)。
   // 既定99=未算出/非上位(zombieKccActive/zombieKccSkipFactorが参照する契約フィールド)
   hordeRank = 99;
+  // R54-W1(B1): kind==='zombie'のみコンストラクタで生成する、computeColliderMovement用
+  // filterPredicate(他ゾンビのbodyColliderのみ除外)。他kindはnull(未使用=非回帰)。
+  private readonly zombieCrowdFilterPredicate: ((c: RAPIER.Collider) => boolean) | null = null;
   // ── R53-W3 ゾンビ群InstancedMesh化 ──
   // 群スロット(-1=非インスタンス=従来のObject3D描画)。割当/解放は match 側
   // (ZombieCrowdRenderer.acquire/release → setCrowdSlot)が行う。対象は
@@ -1237,6 +1282,18 @@ export class Bot {
         RAPIER.ColliderDesc.ball(headR).setTranslation(0, this.headOff, 0),
         this.body,
       );
+    }
+    // R54-W1(B1): kind==='zombie'のbodyCollider/headCollider handleをWorld単位のSetへ登録し、
+    // 「他ゾンビのコライダーか」をO(1)判定するfilterPredicateを1回だけ生成して保持する
+    // (毎フレームのクロージャ再生成を避ける)。collisionGroupsには一切触れない。
+    // headColliderも必ず含める: bodyColliderだけ除外してもheadColliderの頭球(y≈0.88、
+    // 半径0.22)がbodyカプセルの上端(y≈0.8)と垂直に重なるため、除外漏れがあると
+    // すり抜けが成立しない(実測で発覚。単体テストで再発防止済み)。
+    if (kind === 'zombie') {
+      const handles = zombieHandleSet(world);
+      handles.add(this.bodyCollider.handle);
+      handles.add(this.headCollider.handle);
+      this.zombieCrowdFilterPredicate = (c: RAPIER.Collider): boolean => !handles.has(c.handle);
     }
     // KCCはhumanoid/tank/zombieが使用するが生成は共通(最小差分。World破棄で回収される)
     this.controller = world.createCharacterController(0.05);
@@ -2412,6 +2469,16 @@ export class Bot {
       wishZ = f.z * this.moveSpeed * 0.4;
     }
 
+    // ── R54-W1(B1) 群衆分離: 対ゾンビKCCを除外される個体(hordeRank>=THIN_RANK。下の
+    // KCCブロック参照)は互いにすり抜けて重なり得るため、空間ハッシュの反発ベクトルを
+    // wishへ加算して見た目の重なりを緩和する。rebuild()の配線が完了するまでは格子が空
+    // (=separation()は常に{x:0,z:0})なので、この加算は現時点で完全に無効(非回帰)。
+    if (this.hordeRank >= ZOMBIE_HORDE_THIN_RANK) {
+      zombieSeparationGrid.separation(this.uid, pos.x, pos.z, ZOMBIE_SEP_SCRATCH);
+      wishX += ZOMBIE_SEP_SCRATCH.x;
+      wishZ += ZOMBIE_SEP_SCRATCH.z;
+    }
+
     // ── 登坂アシスト: 前フレームに前進を阻まれ登坂点火済みで、まだ上限高さ未満なら、
     //    重力の代わりにゆっくり上向き速度を与えて障害物の上へ這い上がる。水平前進は
     //    弱めに継続して乗り上がる。上限到達 or 目標喪失なら重力へ戻る。────────────
@@ -2443,7 +2510,22 @@ export class Bot {
     let blocked = false; // LODフレームではblocked評価をスキップ(遠距離の登坂点火を抑制)
 
     if (kccFull) {
-      this.controller.computeColliderMovement(this.bodyCollider, movement);
+      // R54-W1(B1): hordeRank>=THIN_RANK(群衆後方)は他ゾンビのbodyColliderをこの
+      // 呼び出しに限り衝突解決の対象から除外する(filterPredicate。collider自体の状態は
+      // 不変=被弾レイ/爆風/近接判定/obstacleAhead等の他クエリに一切影響しない)。
+      // forcedFull(climbing/melee)経由でここに来た場合も同じ条件で適用してよい
+      // (kccFullの「毎フレーム計算するか」というLODカデンスとは独立した判断のため)。
+      if (this.hordeRank >= ZOMBIE_HORDE_THIN_RANK && this.zombieCrowdFilterPredicate) {
+        this.controller.computeColliderMovement(
+          this.bodyCollider,
+          movement,
+          undefined,
+          undefined,
+          this.zombieCrowdFilterPredicate,
+        );
+      } else {
+        this.controller.computeColliderMovement(this.bodyCollider, movement);
+      }
       const moved = this.controller.computedMovement();
       grounded = this.controller.computedGrounded();
       if (grounded && this.velY < 0) this.velY = -0.5;
@@ -3182,6 +3264,13 @@ export class Bot {
   // ★7 userData.shared=true(getSharedZombieDarkMat等の共有材)はここでdisposeしない
   // (viewmodel.tsの共有マテリアルと同じ保護パターン。他個体がまだ参照している)。
   dispose(): void {
+    // R54-W1(B1): World単位のゾンビcollider handle集合からも解除する(removeRigidBodyで
+    // handleが無効化される前に行う。WeakMap<World,Set>自体はWorld破棄でGC対象)
+    if (this.kind === 'zombie') {
+      const handles = zombieHandleSet(this.world);
+      handles.delete(this.bodyCollider.handle);
+      handles.delete(this.headCollider.handle);
+    }
     // R16修正: KinematicCharacterController も解放(無限ゾンビモードでの青天井リーク防止)
     this.world.removeCharacterController(this.controller);
     this.world.removeRigidBody(this.body);

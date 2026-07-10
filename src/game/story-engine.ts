@@ -47,6 +47,8 @@ import type { DarkSlashWave } from './match';
 const BOSS_BLINK_OFFSET_M = 6;
 const BOSS_PILLAR_DAMAGE = 60;
 const BOSS_PILLAR_RADIUS_M = 2.2;
+// R54-F6: resupply波(chB歴戦の間)の小休止秒数 — 全滅確認→補給→この秒数後に次波
+const WAVE_INTERMISSION_S = 8;
 
 export interface StoryHost {
   readonly player: Player;
@@ -109,6 +111,12 @@ export class StoryEngine {
   bossPhaseIdx = 0; // 消化済み bossPhases 数(snapshot.bossPhase.idx)
   bossPhaseRef: Bot | null = null; // フェーズ管理対象のボス(missionのboss)
   bossPhaseDefeatNoted = false; // クロガネ撃破音/メダルの単発ガード
+  // R54-F6: グループ固有フェーズ(EnemyGroupDef.phases)の再アーム機構。
+  // null=従来どおり MissionDef.bossPhases を参照(c10m6非回帰)。phases持ちボスが
+  // spawnWave で出現すると armBossPhases() がここへ差し替え、フェーズ機を初期化する
+  activeBossPhases: BossPhase[] | null = null;
+  waveIntermission = 0; // resupply波の小休止残り秒(>0の間は次波を出さない)
+  waveClearNoted = false; // 現在の先頭wave-clear波の「全滅確認済み」単発ガード(無線/補給の重複発火防止)
   bossSlashTimer = 0; // blackSlash フェーズ挙動の周期
   bossBlinkTimer = 0; // blink フェーズ挙動の周期
   bossPillarTimer = 0; // pillars フェーズ挙動の周期
@@ -560,11 +568,23 @@ export class StoryEngine {
         const hp01 = this.bossHp01();
         ready = hp01 === undefined ? !this.h.bots.some((b) => b.tier === 'boss' && b.alive) && this.waveIndex > 0 : hp01 <= (wave.triggerHp01 ?? 0.5);
       } else {
-        ready = this.h.aliveEnemyCount() === 0; // 'wave-clear'
-        if (ready) this.fireRadioEvent('wave-clear');
+        // 'wave-clear': 全滅確認は1回だけ処理(waveClearNotedガード)。resupply波は
+        // 全滅確認と同時に完全補給し、8秒の小休止が明けてから出す(R54-F6 chB歴戦の間)。
+        // 非resupply波は従来どおり即時(waveIntermissionは0のまま=ready即true)
+        const cleared = this.h.aliveEnemyCount() === 0;
+        if (cleared && !this.waveClearNoted) {
+          this.waveClearNoted = true;
+          this.fireRadioEvent('wave-clear');
+          if (wave.resupply) {
+            this.waveIntermission = WAVE_INTERMISSION_S;
+            this.grantWaveResupply();
+          }
+        }
+        ready = cleared && this.waveIntermission <= 0;
       }
       if (!ready) break;
       this.pendingWaves.shift();
+      this.waveClearNoted = false; // 次のwave-clear波のためにガードを解除
       this.spawnWave(wave);
       this.waveIndex += 1;
       if (wave.announce) this.h.announcements.push(wave.announce);
@@ -610,9 +630,10 @@ export class StoryEngine {
             kind = 'drone';
           }
         }
+        // R54-F6: グループ固有名(chB 6連戦の個体名)> objective.bossName > 'BOSS'
         const name =
           tier === 'boss'
-            ? (this.h.mission?.objective.bossName ?? 'BOSS')
+            ? (group.name ?? this.h.mission?.objective.bossName ?? 'BOSS')
             : kind === 'drone'
               ? `ドローン-${n + 1}`
               : (BOT_NAMES[n % BOT_NAMES.length] ?? `EN-${n}`);
@@ -635,9 +656,36 @@ export class StoryEngine {
         // LOD(既定hordeRank=99=最遠扱い)を外し常時フル精度で描画する。zombieモード本編は
         // updateZombieHordeRank が0.25s周期で上書きするため対象外(spawnWave専用の初期値上書き)
         if (kind === 'zombie') spawned.hordeRank = 0;
+        // R54-F6: グループ固有のbossPhases(chB歴戦の間)。phases持ちボスの出現で
+        // フェーズ機を再アームする(1ミッション内で複数のフェーズ戦を順に成立させる)
+        if (tier === 'boss' && group.phases && group.phases.length > 0) {
+          this.armBossPhases(spawned, group.phases);
+        }
         n += 1;
       }
     }
+  }
+
+  // R54-F6: フェーズ機の再アーム — 対象ボスとフェーズ表を差し替え、進行状態を全初期化する。
+  // MissionDef.bossPhases(c10m6)は activeBossPhases が null の間だけ参照されるため非回帰
+  armBossPhases(boss: Bot, phases: BossPhase[]): void {
+    this.activeBossPhases = phases;
+    this.bossPhaseRef = boss;
+    this.bossPhaseIdx = 0;
+    this.bossPhaseDefeatNoted = false;
+    this.bossSlashTimer = 0;
+    this.bossBlinkTimer = 0;
+    this.bossPillarTimer = 0;
+  }
+
+  // R54-F6: resupply波の完全補給 — 弾薬/グレネード/HPを満量へ(chB歴戦の間の連戦テンポ)。
+  // 確保ジングル(capture)は既存資産の流用で「一区切り」の手応えを出す
+  grantWaveResupply(): void {
+    for (const weapon of this.h.weapons) weapon.resupply();
+    this.h.refillGrenades();
+    this.h.player.hp = this.h.player.maxHp;
+    this.h.sounds.capture();
+    this.h.announcements.push(`補給完了 — ${WAVE_INTERMISSION_S}秒後、次の敵が来る`);
   }
 
   // 目的の進行・勝敗判定(update の先取スコア判定の代わりに呼ぶ)
@@ -645,6 +693,8 @@ export class StoryEngine {
     const m = this.h.mission;
     if (!m || this.missionOutcome !== 'pending') return;
     this.missionTimeS += dt;
+    // R54-F6: resupply波の小休止カウントダウン(advanceWavesが参照)
+    if (this.waveIntermission > 0) this.waveIntermission = Math.max(0, this.waveIntermission - dt);
     if (this.h.modifierSet.has('one-life') && !this.h.player.alive) {
       this.missionOutcome = 'lost';
       return;
@@ -734,6 +784,15 @@ export class StoryEngine {
     if (id.startsWith('c9m6') || id.startsWith('c10m6')) {
       const out: MedalEvent[] = [];
       this.h.tracker.emitManual(id.startsWith('c9m6') ? 'ch9-clear' : 'ch10-clear', out);
+      this.h.emitMedals(out);
+    }
+    // R54-F6: chB「歴戦の間」クリア=歴戦メダル。par(300s)以内なら神速メダルも同時発火
+    if (id.startsWith('cbm1')) {
+      const out: MedalEvent[] = [];
+      this.h.tracker.emitManual('boss-rush-clear', out);
+      if (this.missionTimeS <= (this.h.mission?.parTimeS ?? 300)) {
+        this.h.tracker.emitManual('boss-rush-ace', out);
+      }
       this.h.emitMedals(out);
     }
   }
@@ -887,24 +946,32 @@ export class StoryEngine {
   // ボスフェーズ: HP閾値通過で campaign.ts の bossPhases を順に適用し、
   // アクティブなフェーズ挙動(blackSlash/blink/pillars)を周期実行する
   updateBossPhases(dt: number): void {
-    const phases = this.h.mission?.bossPhases;
+    // R54-F6: グループ固有フェーズ(armBossPhases済み)を優先、無ければ従来の
+    // ミッション単位 bossPhases(c10m6)— どちらも無ければフェーズ機は眠ったまま
+    const phases = this.activeBossPhases ?? this.h.mission?.bossPhases;
     if (!phases || phases.length === 0) return;
-    const isKurogane = (this.h.mission?.id ?? '').startsWith('c10m6');
     // ボス参照の解決(未出現→出現の遷移を拾う)
     if (!this.bossPhaseRef || !this.h.bots.includes(this.bossPhaseRef)) {
       this.bossPhaseRef = this.h.bots.find((b) => b.tier === 'boss') ?? null;
     }
     const boss = this.bossPhaseRef;
     if (!boss) return;
+    // R54-F6: クロガネ演出(フェーズスティング/終焉音)は個体名でも判定する
+    // (chB「歴戦の間」最終戦=黒雷帝クロガネ・再来でも同じ演出を鳴らす)。
+    // 討伐メダル kurogane-slayer は c10m6 限定(初出の物語文脈を保つ)
+    const missionId = this.h.mission?.id ?? '';
+    const isKurogane = missionId.startsWith('c10m6') || boss.name.includes('クロガネ');
     // 撃破検知(単発): クロガネなら専用の終焉音+メダル
     if (!boss.alive) {
       if (!this.bossPhaseDefeatNoted) {
         this.bossPhaseDefeatNoted = true;
         if (isKurogane) {
           this.h.sounds.kuroganeDefeat();
-          const out: MedalEvent[] = [];
-          this.h.tracker.emitManual('kurogane-slayer', out);
-          this.h.emitMedals(out);
+          if (missionId.startsWith('c10m6')) {
+            const out: MedalEvent[] = [];
+            this.h.tracker.emitManual('kurogane-slayer', out);
+            this.h.emitMedals(out);
+          }
         }
       }
       return;
@@ -1026,8 +1093,12 @@ export class StoryEngine {
       hostile: true,
       hitPlayer: false,
       hostileOwnerName: boss.name,
-      // ボスフェーズの damageMul は「基準34×現フェーズ倍率」で反映(bot.tuning.damageは近接用)
-      dmgOverride: Math.round(HOSTILE_SLASH_DAMAGE * (this.h.mission?.bossPhases?.[this.bossPhaseIdx - 1]?.damageMul ?? 1)),
+      // ボスフェーズの damageMul は「基準34×現フェーズ倍率」で反映(bot.tuning.damageは近接用)。
+      // R54-F6: フェーズ表の参照元はupdateBossPhasesと同じ優先順(グループ固有→ミッション単位)
+      dmgOverride: Math.round(
+        HOSTILE_SLASH_DAMAGE *
+          ((this.activeBossPhases ?? this.h.mission?.bossPhases)?.[this.bossPhaseIdx - 1]?.damageMul ?? 1),
+      ),
     });
     this.h.sounds.darkSlash();
   }

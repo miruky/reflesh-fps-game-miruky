@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CAMPAIGN } from '../game/campaign';
 import { emptyProfile } from '../game/progression';
 import { parseProfile, serializeProfile } from './profile';
 
@@ -195,5 +196,37 @@ describe('parseProfile', () => {
     expect(restored.bestZombieRound).toBe(0);
     expect(restored.zombieKills).toBe(0);
     expect(restored.zombieBossKills).toBe(0);
+  });
+});
+
+// ── R54-F6: 隠し章chB「歴戦の間」の遡及アンロック(ロード正規化) ──────────────
+describe('chB遡及アンロック(R54-F6)', () => {
+  const ch10Ids = CAMPAIGN.find((c) => c.id === 'ch10')!.missions.map((m) => m.id);
+
+  it('ch10全6ミッションをクリア済みの旧セーブはロード時にchBが解放される', () => {
+    const restored = parseProfile(
+      JSON.stringify({
+        campaign: { clearedMissions: ch10Ids, unlockedChapters: ['ch1', 'ch10'] },
+      }),
+    );
+    expect(restored.campaign.unlockedChapters).toContain('chB');
+  });
+
+  it('ch10が1ミッションでも未クリアならchBは付与されない', () => {
+    const restored = parseProfile(
+      JSON.stringify({
+        campaign: { clearedMissions: ch10Ids.slice(0, 5), unlockedChapters: ['ch1', 'ch10'] },
+      }),
+    );
+    expect(restored.campaign.unlockedChapters).not.toContain('chB');
+  });
+
+  it('既にchB解放済みのセーブで重複pushしない', () => {
+    const restored = parseProfile(
+      JSON.stringify({
+        campaign: { clearedMissions: ch10Ids, unlockedChapters: ['ch1', 'ch10', 'chB'] },
+      }),
+    );
+    expect(restored.campaign.unlockedChapters.filter((id) => id === 'chB')).toHaveLength(1);
   });
 });
