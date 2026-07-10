@@ -1319,6 +1319,12 @@ export class Hud2 {
     if (node && node.textContent !== value) node.textContent = value;
   }
 
+  // 先取スコアラベルの共通整形。無限先取(zombie等)では target が Infinity のため
+  // 生文字列化すると '先取 Infinity' の壊れ表示になる — 有限のときだけ出す。
+  private formatScoreGoal(scoreTarget: number): string {
+    return Number.isFinite(scoreTarget) ? `先取 ${scoreTarget}` : '';
+  }
+
   private updateCompass(yaw: number, _width: number): void {
     const headingDeg = ((-yaw * 180) / Math.PI + 360 * 4) % 360;
     // コンパス帯のmask外に置いた数値方位(3桁ゼロ詰め・360°は0°へ丸め込む)
@@ -1768,7 +1774,7 @@ export class Hud2 {
     this.text('scoremine', String(snap.scoreMine));
     this.text('scoreenemy', String(snap.scoreEnemy));
     // 先取ラベルは有限のときだけ('先取 Infinity'の壊れ表示を防ぐ)
-    this.text('scoretarget', Number.isFinite(snap.scoreTarget) ? `先取 ${snap.scoreTarget}` : '');
+    this.text('scoretarget', this.formatScoreGoal(snap.scoreTarget));
 
     const mission = this.el['mission'];
     if (mission) {
@@ -2416,7 +2422,8 @@ export class Hud2 {
     const body = this.el['scorerows'];
     if (!body) return;
     this.text('scoremode', snap.modeName);
-    this.text('scoregoal', `先取 ${snap.scoreTarget}`);
+    // 無限先取(zombie等)では target が Infinity のため生文字列化しない(scoretargetと同じガード)
+    this.text('scoregoal', this.formatScoreGoal(snap.scoreTarget));
     body.innerHTML = '';
     for (const row of snap.scoreboard) {
       const tr = document.createElement('tr');

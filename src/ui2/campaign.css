@@ -102,6 +102,12 @@
   height: 100%;
   background: linear-gradient(90deg, #ff7e3f, #e85615);
   transform-origin: left center;
+  /* R55-WC[HIGH]: 実比率は --grow(0..1) をJS側が焼く。旧実装はここをanimationの
+     transform:scaleX(1)固定終端が上書きしていたため常に満タン表示になっていた
+     (真因)。今は transform を --grow のみで駆動し、入場演出は opacity で行う
+     (transformを animation に持たせない = 実値が常に勝つ)。 */
+  transform: scaleX(var(--grow, 0));
+  opacity: 0;
   animation: u2cGrow 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -527,6 +533,16 @@
   font-size: 13.5px;
   padding: 8px 10px;
 }
+/* R55-WC[MEDIUM]: #menu select:focus(-visible)(旧#menu系コーラル赤 --ember:#ff574f)を
+   熾火橙で上書きする。#menu select:focus-visible は #id+type+pseudo=(1,1,1)の詳細度を
+   持つため、クラスだけの .u2c-select:focus-visible=(0,2,0) では id 桁で負けて上書きでき
+   ない(IDは常にクラス数に勝つ)。祖先に #menu を明示して(1,2,0)まで詳細度を上げ、実際に
+   勝たせる。 */
+#menu .u2c-select:focus-visible,
+#menu .u2c-select:focus {
+  outline: 2px solid #ffa061;
+  outline-offset: 3px;
+}
 .u2c-chip {
   padding: 6px 16px;
   border: 1px solid rgba(232, 227, 216, 0.25);
@@ -847,10 +863,10 @@
 }
 @keyframes u2cGrow {
   0% {
-    transform: scaleX(0);
+    opacity: 0;
   }
   100% {
-    transform: scaleX(1);
+    opacity: 1;
   }
 }
 @keyframes u2cRise {

@@ -531,6 +531,10 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
     row.className = `u2a-row${selected ? ' on selected' : ''}${unlocked ? '' : ' locked'}`;
     row.setAttribute('aria-pressed', String(selected));
     row.dataset.wid = id;
+    // W-C[MEDIUM]: 初期フォーカスが戻るボタンへ誤って上書きされる事故の根治。
+    // menu2.open()は[data-autofocus]を最優先で拾うため、選択中の武器行へ宣言的に付与する。
+    // (unlockedもゲート: disabled行にfocus()は無効化されmenu2側のfallbackも空振りするため)
+    if (selected && unlocked) row.setAttribute('data-autofocus', '');
     const shape = def.shape ?? CLASS_SHAPE[def.class] ?? 'rifle';
     const kills = profile.weaponStats[id]?.kills ?? 0;
     const mastery =
@@ -588,6 +592,8 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
     row.className = `u2a-row${loadout.grenade === kind ? ' on selected' : ''}`;
     row.setAttribute('aria-pressed', String(loadout.grenade === kind));
     row.dataset.wid = kind;
+    // W-C[MEDIUM]: 武器行と同様、選択中の投擲物行にも初期フォーカスの根拠を宣言的に付与する。
+    if (loadout.grenade === kind) row.setAttribute('data-autofocus', '');
     row.innerHTML =
       `<span class="u2a-wtext"><span class="u2a-wname">${spec.name} ×${spec.carry}</span>` +
       `<span class="u2a-wsub">${GRENADE_DESCS[kind]}</span></span>`;

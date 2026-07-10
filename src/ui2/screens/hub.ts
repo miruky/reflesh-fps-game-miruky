@@ -240,7 +240,7 @@ function earthSvg(): string {
 
 export const mountHub: ScreenMount = (host, root) => {
   root.setAttribute('data-id', 'hub-root');
-  if (host.reducedMotion()) root.classList.add('u2h-reduce');
+  root.classList.toggle('u2h-reduce', host.reducedMotion());
   const p = host.profile;
   const lv = levelFromXp(p.xp);
   const rank = rankNameFor(lv.level).name;
@@ -526,6 +526,7 @@ export const mountHub: ScreenMount = (host, root) => {
     dispose: () => {
       window.clearInterval(timer);
       root.removeAttribute('data-id');
+      root.classList.remove('u2h-reduce');
       root.innerHTML = '';
     },
   };

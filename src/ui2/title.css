@@ -215,15 +215,18 @@
   color: #ffa061;
   transform: translateX(8px);
 }
+/* W-C: 角丸ボックス型outlineは撤去(モックに無い)。フォーカス指標は.sel(橙文字+21px/800+
+   発光菱ブレット)を流用し、focus-visibleでも同一の見た目になるようにしてアクセシビリティを維持する。 */
 .u2-title__nav-item:focus-visible {
-  outline: 2px solid #ffa061;
-  outline-offset: 4px;
+  outline: none;
 }
+.u2-title__nav-item:focus-visible,
 .u2-title__nav-item.sel {
   color: #ff8b4d;
   font-weight: 800;
   font-size: 21px;
 }
+.u2-title__nav-item:focus-visible .u2-title__dia,
 .u2-title__nav-item.sel .u2-title__dia {
   border: none;
   background: #ff6b2b;

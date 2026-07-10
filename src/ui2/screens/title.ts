@@ -232,6 +232,10 @@ export function mountTitle(host: TitleHost, root: HTMLElement, onStart: () => vo
   const stage = el.querySelector<HTMLElement>('.u2-title__stage');
   const buttons = Array.from(el.querySelectorAll<HTMLButtonElement>('.u2-title__nav-item'));
   const credits = el.querySelector<HTMLElement>('.u2-title__credits');
+  // W-C: クレジットモーダル表示中のフォーカストラップ用。credits以外の背景コンテナ。
+  const backgroundInertTargets = Array.from(
+    el.querySelectorAll<HTMLElement>('.u2-title__logo, .u2-title__nav, .u2-title__foot'),
+  );
   let sel = 0;
   let lastFocused: HTMLElement | null = null;
 
@@ -247,11 +251,14 @@ export function mountTitle(host: TitleHost, root: HTMLElement, onStart: () => vo
     if (!credits) return;
     lastFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     credits.hidden = false;
+    // W-C: 背景ナビへのTab到達を遮断(フォーカストラップ)。
+    for (const t of backgroundInertTargets) t.inert = true;
     credits.querySelector<HTMLButtonElement>('.u2-title__credits-close')?.focus({ preventScroll: true });
   };
   const closeCredits = (): void => {
     if (!credits) return;
     credits.hidden = true;
+    for (const t of backgroundInertTargets) t.inert = false;
     (lastFocused ?? buttons[sel])?.focus({ preventScroll: true });
   };
 
@@ -266,7 +273,9 @@ export function mountTitle(host: TitleHost, root: HTMLElement, onStart: () => vo
   };
 
   buttons.forEach((btn, i) => {
-    btn.addEventListener('mouseenter', () => applySel(i, false));
+    // W-C: ホバーもフォーカスを追従させ、sel(見た目)とdocument.activeElement(Enter/Space発火対象)を
+    // 常に一致させる(矢印キーと同じ保証)。不一致だと「見た目で選択中の項目」と異なる項目が発火する。
+    btn.addEventListener('mouseenter', () => applySel(i, true));
     btn.addEventListener('focus', () => applySel(i, false));
     btn.addEventListener('click', () => activate(TITLE_NAV[i]?.action ?? 'start'));
   });

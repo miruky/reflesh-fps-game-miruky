@@ -211,8 +211,18 @@ export class Menu2 implements MenuApi {
     this.active = { id, handle };
     requestAnimationFrame(() => {
       if (this.active?.id !== id) return;
-      const first = this.focusables()[0];
-      first?.focus({ preventScroll: true });
+      // W-C[11][15]: 画面が既にフォーカスを自分の意図した要素へ置いていたら尊重する
+      // (コーディネータの汎用再フォーカスが、武器行/CTA等の初期フォーカスを戻るボタンへ
+      //  奪ってしまう不整合の根治)。宣言的な [data-autofocus] を最優先し、次いで既に
+      //  ステージ内へ入っているフォーカス、最後に従来の focusables()[0]。
+      const declared = this.stage.querySelector<HTMLElement>('[data-autofocus]');
+      if (declared && declared.offsetParent !== null) {
+        declared.focus({ preventScroll: true });
+        return;
+      }
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active !== document.body && this.stage.contains(active)) return;
+      this.focusables()[0]?.focus({ preventScroll: true });
     });
   }
 

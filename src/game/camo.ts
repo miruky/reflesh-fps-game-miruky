@@ -489,11 +489,17 @@ export const CAMO_VISUALS: Record<CamoId, CamoVisual> = {
   // + 面ごとの微細ファセット煌めき+虹色フレネル(sparkle。R55: 参照画像のような
   // 「クロム/ダイヤ板が激しく反射する」超ギラギラ質感へ強化。gold=金属金/dark-matter=
   // 宇宙脈動とは質感で差別化: diamond だけが鏡のような強反射+煌めきを持つ)
+  // R55-WC根治(MEDIUM⑥): envMapIntensity 1.8 は「近接Bloomハロ回避(閾値0.9)」鉄則を
+  // 大きく超え白飛び再発リスクだった(近接カメラ+ほぼ鏡面metalness0.95/roughness0.05の
+  // 組合せで、明るい環境光を鏡反射すると indirectSpecular が単独で閾値へ迫る)。0.7へ
+  // 抑制(roughness/metalnessは維持しファセット煌めき自体は残す)。sparkleも0.8→0.55へ
+  // 絞り、totalEmissiveRadianceへの加算(フレネル虹色+グリッター最悪値)が base emissive
+  // と合算しても0.9閾値へ余裕を持って収まるようにする(ギラつき感は残しつつ白飛びしない)。
   diamond: {
     id: 'diamond', colorA: 0xd6f0ff, colorB: 0x4a90d9, colorC: 0xffffff,
     pattern: 'facet', scale: 16, metalness: 0.95, roughness: 0.05,
     emissive: 0xbfe4ff, emissiveIntensity: 0.3,
-    envMapIntensity: 1.8, sparkle: 0.8,
+    envMapIntensity: 0.7, sparkle: 0.55,
   },
   // ダークマター = 暗紫の脈動ノイズ(uTimeアニメ)
   'dark-matter': {

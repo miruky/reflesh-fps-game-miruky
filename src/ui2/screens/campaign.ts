@@ -160,7 +160,14 @@ export const mountCampaign: ScreenMount = (host, root) => {
   // R55: ★/前章制圧を条件にした章・ミッションのLOCKED表示を撤廃。全章・全ミッションを
   // 常に選択可能として描画する(ユーザー要望「面倒なので」)。★自体は任意の実績として
   // starsHtmlで表示だけ継続する。
-  const chaptersHtml = CAMPAIGN.map((chapter, ci) => {
+  // W-C[18]: 秘匿章(全ミッションが未解放=chB「歴戦の間」)は、ch10全クリアで解放されるまで
+  // 一覧から隠す(ネタバレ/実績先食いの防止)。通常章(ch1-ch10)は⑤どおり常に全解放なので
+  // 必ず可視。解放済み or 1つでもクリア済みの章は表示する。
+  const chapterVisible = (chapter: (typeof CAMPAIGN)[number]): boolean =>
+    chapter.missions.some(
+      (m) => isMissionUnlocked(host.profile, m.id) || camp.clearedMissions.includes(m.id),
+    );
+  const chaptersHtml = CAMPAIGN.filter(chapterVisible).map((chapter, ci) => {
     const chClear = chapter.missions.filter((m) => camp.clearedMissions.includes(m.id)).length;
     const rows = chapter.missions
       .map((mission) => {
@@ -185,7 +192,7 @@ export const mountCampaign: ScreenMount = (host, root) => {
           <span class="u2c-chapter-title">${esc(chapter.title)}</span>
           <span class="u2c-chapter-sub">${esc(chapter.subtitle)}</span>
           <span class="u2c-chapter-prog"><b>${chClear}</b>/${chapter.missions.length}
-            <span class="u2c-growbar"><i style="transform:scaleX(${(chClear / Math.max(1, chapter.missions.length)).toFixed(3)})"></i></span>
+            <span class="u2c-growbar"><i style="--grow:${(chClear / Math.max(1, chapter.missions.length)).toFixed(3)}"></i></span>
           </span>
         </div>
         <div class="u2c-missions">${rows}</div>
@@ -222,7 +229,7 @@ export const mountCampaign: ScreenMount = (host, root) => {
       <span class="u2c-title">軌道に灯る火種</span>
       <div class="u2c-rule"></div>
       <div class="u2c-progressline">制圧 <b>${cleared}</b>/${totalMissions}\u3000·\u3000★ <b>${totalStars}</b>/${starsMax}
-        <span class="u2c-growbar"><i style="transform:scaleX(${(cleared / Math.max(1, totalMissions)).toFixed(3)})"></i></span>
+        <span class="u2c-growbar"><i style="--grow:${(cleared / Math.max(1, totalMissions)).toFixed(3)}"></i></span>
       </div>
     </div>
     <div class="u2c-chapters" data-id="chapter-list">${chaptersHtml}</div>
@@ -233,7 +240,8 @@ export const mountCampaign: ScreenMount = (host, root) => {
   root.querySelectorAll<HTMLButtonElement>('[data-mission]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const m = missionById(btn.dataset.mission ?? '');
-      if (m) host.open('briefing', { mission: m });
+      // W-C[18]: 秘匿章の防御(万一ロック中の行が描画されてもプレイさせない)
+      if (m && isMissionUnlocked(host.profile, m.id)) host.open('briefing', { mission: m });
     });
   });
   root
@@ -257,8 +265,11 @@ export const mountCampaign: ScreenMount = (host, root) => {
 export const mountBriefing: ScreenMount = (host, root, opts) => {
   const mission = opts?.mission;
   if (!mission) {
-    // 契約違反ペイロードは戦役へ退避(ハングさせない)
-    host.open('campaign');
+    // 契約違反ペイロードは戦役へ退避(ハングさせない)。host.open()をmount関数の
+    // 実行中(=Menu2.openの同期呼び出しスタック内)に再入すると this.active の
+    // 追跡が壊れdispose()が永久に呼ばれなくなる(R55-WC[LOW])ため、現在のopen()
+    // 呼び出しがスタックを抜けてから走らせる。
+    queueMicrotask(() => host.open('campaign'));
     return { dispose: () => undefined };
   }
   root.classList.add('u2-campaign');
@@ -303,7 +314,7 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
     </dl>
     <div class="u2c-brief-actions">
       <button type="button" class="u2c-quiet" data-id="brief-back">戦役へ戻る</button>
-      <button type="button" class="u2c-cta" data-id="deploy-mission">出撃する<span class="u2c-spur"></span><span class="u2c-shine"></span></button>
+      <button type="button" class="u2c-cta" data-id="deploy-mission" data-autofocus>出撃する<span class="u2c-spur"></span><span class="u2c-shine"></span></button>
     </div>
     ${hintbarHtml(`規定 ${fmtPar(mission.parTimeS)} · ${mission.objective.label}`, '戦役へ')}
   `;
@@ -428,7 +439,9 @@ export const mountMissionResult: ScreenMount = (host, root, opts) => {
   const result = opts?.result;
   const progress = opts?.campaignProgress;
   if (!result || !progress) {
-    host.open('campaign');
+    // R55-WC[LOW]: mount実行中の同期再入host.open()はMenu2.active追跡を壊しdisposeが
+    // 永久にスキップされる。現在のopen()呼び出しがスタックを抜けてから走らせる。
+    queueMicrotask(() => host.open('campaign'));
     return { dispose: () => undefined };
   }
   root.classList.add('u2-campaign');
@@ -482,9 +495,9 @@ export const mountMissionResult: ScreenMount = (host, root, opts) => {
       ${unlockNote}${firstNote}${challengeNote}
       ${statCards}
       <div class="u2c-mr-actions">
-        ${nextId && nextUnlocked ? '<button type="button" class="u2c-cta" data-id="next-mission">次のミッション<span class="u2c-spur"></span><span class="u2c-shine"></span></button>' : ''}
+        ${nextId && nextUnlocked ? '<button type="button" class="u2c-cta" data-id="next-mission" data-autofocus>次のミッション<span class="u2c-spur"></span><span class="u2c-shine"></span></button>' : ''}
         <button type="button" class="u2c-quiet" data-id="retry-mission">もう一度</button>
-        <button type="button" class="u2c-quiet" data-id="to-campaign">戦役へ戻る</button>
+        <button type="button" class="u2c-quiet" data-id="to-campaign"${nextId && nextUnlocked ? '' : ' data-autofocus'}>戦役へ戻る</button>
       </div>
     </div>
     <div class="u2c-mr-rail">${progressCardHtml(host, progress)}</div>

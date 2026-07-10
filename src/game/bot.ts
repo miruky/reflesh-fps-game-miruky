@@ -1653,13 +1653,23 @@ export class Bot {
   }
 
   // ボス演出: 指定座標(respawnAtのspawnと同じ「足元/地面基準」のY)へ即時転移する。
-  // setNextKinematicTranslationで次のworld.step()時に反映される(通常移動と同じ経路)。
+  // R55 W-C確証finding修正(CRITICAL): setNextKinematicTranslationは「次のworld.step()で
+  // 消費されるキュー」に過ぎず、body.translation()はここでは即時更新されない。本メソッドは
+  // physics.step()「後」のupdateZombieDirectorから呼ばれるため、旧実装のままだと次フレームの
+  // updateZombie(先頭で `const t = this.body.translation()` を読み、そこへ歩行移動を足して
+  // 改めてsetNextKinematicTranslationする)がキュー済みのテレポート先を「まだ反映されていない
+  // stale位置+微小移動」で上書きしてしまい、テレポートが物理的に一切着地しない
+  // (=詰まったゾンビが永久に動けずラウンドが進行しない)。respawnAt(直下のresetForZombieReuse
+  // 経由)と同じ setTranslation(..., true) で即時反映することで、直後のupdateZombieが必ず
+  // テレポート後の位置をtranslation()で読めるようにする。KCC(KinematicCharacterController)の
+  // 速度推定/次stepの参照用に、直後で同座標をsetNextKinematicTranslationにも積んでおく(delta=0)。
   // ★2/★5 KCC距離LODのprevZombieMoved/prevGiantMoved(前回movedキャッシュ)や
   // climbing/stuckTimer等「前フレームからの連続移動」を前提にした内部状態は、瞬間移動で
   // 物理的に無関係な値になる(古い小さな移動量の再利用/詰まり誤検知)ため、
   // respawnAt/resetForZombieReuseと同じ一連のリセットをここでも行う。
   blinkTo(x: number, y: number, z: number): void {
     const by = y + this.feetOffset;
+    this.body.setTranslation({ x, y: by, z }, true);
     this.body.setNextKinematicTranslation({ x, y: by, z });
     this._prevBodyPos.set(x, by, z);
     this._horizSpeed = 0;

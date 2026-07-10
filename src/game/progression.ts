@@ -1023,9 +1023,22 @@ export function nextChapterId(chapterId: string): string | null {
 // (isMissionUnlocked(profile, missionId))との互換のために残す(将来ミッション単位の個別
 // ロックを復活させたくなった場合の拡張点)。★自体は任意の実績評価として引き続き記録・表示
 // する(starRate/missionBests/progression結果画面は無改変)。
+//
+// R55-W-C: ただし上記の全解放は「隠し章」には適用しない。chB「歴戦の間」はR54-F6で
+// 「ch10全クリアまで秘匿(ネタバレ+実績先食い防止)」として設計された特別章で、★ゲート
+// 撤廃の巻き添えで新規プロフィールから即閲覧・プレイ可能になっていた回帰を修正する。
+// SECRET_CHAPTER_IDS に属する章のミッションだけ、既存の unlockedChapters 簿記
+// (章クリア時の連鎖push=progression.ts下部 / 旧セーブの遡及付与=profile.ts)を
+// 解放条件として使う。通常章(ch1-ch10)は従来通り無条件に解放したまま。
+const SECRET_CHAPTER_IDS: readonly string[] = ['chB'];
+
 export function isMissionUnlocked(profile: Profile, missionId: string): boolean {
-  void profile;
-  return missionById(missionId) !== null;
+  const mission = missionById(missionId);
+  if (!mission) return false;
+  if (SECRET_CHAPTER_IDS.includes(mission.chapterId)) {
+    return profile.campaign.unlockedChapters.includes(mission.chapterId);
+  }
+  return true;
 }
 
 const SCORE_RECORD_CAP = 64; // localStorage肥大化を防ぐ件数上限

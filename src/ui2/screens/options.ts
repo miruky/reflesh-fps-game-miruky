@@ -954,11 +954,9 @@ function mountOptionsImpl(
 
     const startCapture = (action: PadAction): void => {
       endCapture();
-      if (settings.gamepadLayout !== 'custom') {
-        settings.gamepadLayout = 'custom';
-        settings.gamepadBindings = cloneBindings(settings.gamepadBindings);
-        updatePreset();
-      }
+      // O-LOW: プリセット→カスタムへの切替+clone は「実際にボタンが確定した時」まで遅延する。
+      // ここで即時切替すると、Escで取消した際に settings.gamepadLayout/gamepadBindings が
+      // custom のまま残留し、無関係な次回commit()でlocalStorageへ誤永続化されてしまう。
       capturingAction = action;
       lastRebindAction = action;
       bindNote = '';
@@ -973,6 +971,11 @@ function mountOptionsImpl(
       renderBindings();
       host.input.captureNextButton((binding) => {
         endCapture();
+        if (settings.gamepadLayout !== 'custom') {
+          settings.gamepadLayout = 'custom';
+          settings.gamepadBindings = cloneBindings(settings.gamepadBindings);
+          updatePreset();
+        }
         assignBinding(action, binding);
         commit();
         renderBindings();
@@ -994,9 +997,22 @@ function mountOptionsImpl(
     title.textContent = tab.label;
     for (const [id, b] of tabButtons) b.classList.toggle('active', id === tab.id);
     list.innerHTML = '';
-    for (const row of tab.rows) list.appendChild(buildRow(row));
+    // O-MED: 先頭行は詳細パネルにバインドされるだけでなく、リスト側の橙ハイライト(.sel)も
+    // 同時に付ける(selectRow経由)。rebindスペックはblock(display:contents)を返すため、
+    // 実際の選択対象は内部の`.u2o-row`(presetWrap)を辿って探す。
+    let firstWrap: HTMLElement | null = null;
+    for (const row of tab.rows) {
+      const node = buildRow(row);
+      list.appendChild(node);
+      if (!firstWrap) {
+        firstWrap = node.classList.contains('u2o-row')
+          ? node
+          : node.querySelector<HTMLElement>('.u2o-row');
+      }
+    }
     const first = tab.rows[0];
-    if (first) renderDetail(first);
+    if (first && firstWrap) selectRow(firstWrap, first);
+    else if (first) renderDetail(first);
   };
   const setTab = (id: string): void => {
     lastTabId = id;

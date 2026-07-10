@@ -801,6 +801,70 @@ describe('Bot blinkTo(R53-W2 ボス演出: 即時転移)', () => {
     expect(fixture.bot.position.z).toBeCloseTo(-10, 5);
   });
 
+  // R55 W-C確証finding修正(CRITICAL): setNextKinematicTranslationは「次のworld.step()で
+  // 消費されるキュー」に過ぎず、呼び出しただけではbody.translation()は更新されない。
+  // 旧実装はこれのみを呼んでいたため、blinkTo直後にworld.step()を挟まずtranslation()を
+  // 読むと転移前の座標のままだった(=zombie-director側の救済テレポートが本フィールドを
+  // 一切更新しないまま「テレポート済み」として扱われていた)。
+  it('world.step()を挟まなくても呼び出し直後にbody.translation()が目標座標へ即時反映される', () => {
+    const fixture = makeFixture();
+    fixture.bot.blinkTo(10, 0, -10);
+    expect(fixture.bot.position.x).toBeCloseTo(10, 5);
+    expect(fixture.bot.position.z).toBeCloseTo(-10, 5);
+  });
+
+  // R55 W-C確証finding修正(CRITICAL・本丸): zombie-director.updateZombieDirectorは
+  // match.tsのphysics.step()「後」に呼ばれる(match.ts: updateBots→physics.step→...→
+  // updateZombieDirector)。旧実装のblinkToはsetNextKinematicTranslationのみだったため、
+  // 次フレームのupdateBots→updateZombie冒頭 `const t = this.body.translation()` が
+  // まだキュー未消化のstale(=転移前)座標を読み、そこへ徘徊/追跡の微小移動を足して
+  // 改めてsetNextKinematicTranslationし直す(=テレポート先を上書き)。結果、直後の
+  // physics.step()ではテレポートが一切着地せず、詰まったゾンビが永久に動けなかった
+  // (⑧最終安全弁が実質無効化されていた)。setTranslation(..., true)による即時反映で、
+  // 次フレームのupdateZombieが必ずテレポート後の座標をtranslation()で読めることを保証する。
+  it('blinkTo直後の次フレームupdateZombie(match.tsと同じupdateBots→physics.stepの順)がstale座標でテレポートを上書きしない', () => {
+    const world = makeFlatWorld();
+    const tuning = { ...DIFFICULTY.normal };
+    const zombie = new Bot(
+      world,
+      'ゾンビ',
+      new THREE.Vector3(0, 0, 0),
+      0x39d465,
+      tuning,
+      2,
+      'normal',
+      'zombie',
+    );
+    world.step();
+
+    const ctx: BotContext = {
+      targetEye: null, // 徘徊: wishが小さく保たれ、テレポート判定を汚さない
+      objective: null,
+      tuning,
+      rand: () => 0.5,
+      onShoot: () => {},
+      onMelee: () => {},
+    };
+
+    // match.tsの通常ティック(updateBots→physics.step)を数フレーム回してから、
+    // zombie-director.updateZombieDirector相当(physics.step「後」)でblinkToする。
+    const dt = 1 / 60;
+    for (let i = 0; i < 3; i += 1) {
+      zombie.update(dt, ctx);
+      world.step();
+    }
+    zombie.blinkTo(30, 0, 30);
+
+    // 次フレームのupdateBots→physics.step相当を1回だけ回す
+    zombie.update(dt, ctx);
+    world.step();
+
+    // 徘徊の微小移動(moveSpeed*0.4*dt ≒ 数cm)を許容しても、旧実装のバグでは
+    // origin(0,0,0)付近に留まり続ける。この閾値は5m離れているため両者を明確に判別できる。
+    expect(zombie.position.x).toBeGreaterThan(25);
+    expect(zombie.position.z).toBeGreaterThan(25);
+  });
+
   it('KCC距離LOD前回移動キャッシュ/詰まり・登坂状態を転移時にリセットする(誤検知防止)', () => {
     const fixture = makeFixture();
     const internal = fixture.bot as unknown as {

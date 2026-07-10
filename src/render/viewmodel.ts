@@ -4067,6 +4067,15 @@ export class ViewModel {
       this._applyDarkModeVisuals();
     } else {
       this._removeDarkRimOverlay();
+      // R55-WC根治(HIGH③回帰): 黒帝発動中に雷帝(raitei)が併存すると、直前に
+      // _buildLightningBladeMeshes(kunai, true) が黒刀サイズ(0.86m/z-0.62)で
+      // vm:lightningBlade を構築している。黒帝だけが終了して雷帝が継続する場合、
+      // 何もせず _restoreKunaiGlow を呼ぶと同メソッド末尾の再構築ガード
+      // (!kunai.getObjectByName('vm:lightningBlade'))が「既に存在する」ため素通りし、
+      // 黒刀サイズのまま実刀身(通常雷刀0.30m/z-0.34)と食い違う「浮いた棒」が残る。
+      // ここで先に撤去してガードを発火させ、_restoreKunaiGlow → _applyLightningModeVisuals
+      // 経由で現在の刀身サイズ(_darkMode は直前で既に false 済み)へ確実に再構築させる。
+      if (this._lightningMode) this._removeLightningOverlay();
       this._restoreKunaiGlow();
     }
   }
@@ -4381,8 +4390,11 @@ export class ViewModel {
       group.add(makeArcLine(0xaaeeff, 0.45, -0.020));
       group.add(makeArcLine(0x66ccff, 0.35, 0.034));
     }
-    // R53 恒久報酬: 雷脈が解放済みなら雷刀にも白芯ラインを乗せる
-    if (this._katanaVeinsOn) this._addKatanaVeins(group, false);
+    // R53 恒久報酬: 雷脈が解放済みなら雷刀にも白芯ラインを乗せる。
+    // R55-WC根治(LOW③): isDark は bladeLen/bladeCenterZ と同じ _darkMode 述語に
+    // 一致させる(黒帝+雷帝併存中は黒刀サイズ0.86m/z-0.62、それ以外は雷刀0.30m/z-0.34)。
+    // 旧実装は常に false 固定で、黒帝中は白芯雷脈だけ小サイズのまま追従しなかった。
+    if (this._katanaVeinsOn) this._addKatanaVeins(group, this._darkMode);
     kunai.add(group);
     this._lightningOverlayMeshes.push(group);
   }

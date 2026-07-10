@@ -264,9 +264,14 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
       b.addEventListener(
         'click',
         () => {
+          // R55 W-C: 再構築でフォーカスが失われるため、選択前にフォーカスがあれば
+          // 選択後の.selectedへ戻す(armory.tsのhadFocusパターンと同型)
+          const hadFocus = nav.contains(document.activeElement);
           active = s.id;
           renderNav();
           renderPanel();
+          if (hadFocus)
+            nav.querySelector<HTMLElement>('.u2d-nav-item.selected')?.focus({ preventScroll: true });
         },
         sig,
       );
@@ -283,9 +288,12 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     const isZombie = sel.mode === 'zombie';
     // ゾンビ時はstageDef.botCount(通常対戦用BOT数)を流用せず、zombie.tsの実数値を使う。
     // 同時生存上限は描画tier依存(deploy画面ではtier未知)のため、確実な範囲(低〜高)で表示。
+    // R55 W-C: 超鬼畜ONだとmatch.tsが実スポーンをMath.ceil(botCount*1.5)へ引き上げるため、
+    // '最大'ラベルにのみ同じ上限を反映する(row3のAIボット表示は生値のまま=旧仕様維持)。
+    const hellBotCount = sel.hellMode ? Math.ceil(stageDef.botCount * 1.5) : stageDef.botCount;
     const capLabel = isZombie
       ? `同時生存上限 ${ZOMBIE_MAX_ALIVE.low}\u301c${ZOMBIE_MAX_ALIVE.high}体`
-      : `最大${stageDef.botCount + 1}人`;
+      : `最大${hellBotCount + 1}人`;
     const zRound = sel.zombieStartRound ?? 1;
     const row3 = isZombie
       ? `ゾンビ ${zombieTotal(zRound)}体/R${zRound}\u3000—\u3000参戦準備完了`
@@ -466,9 +474,16 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     rogue.addEventListener(
       'change',
       () => {
+        // R55 W-C: 再構築でフォーカスが失われるため、変更前にフォーカスがあれば
+        // 再構築後の同トグルへ戻す(armory.tsのhadFocusパターンと同型)
+        const hadFocus = rogueRow.contains(document.activeElement);
         sel.rogueRun = rogue.checked;
         host.saveLoadout();
         renderPanel(); // 排他(開始R/お守り)の活性を作り直す
+        if (hadFocus)
+          q('panel-body')
+            .querySelector<HTMLElement>('[data-id="rogueRun"]')
+            ?.focus({ preventScroll: true });
       },
       sig,
     );
@@ -548,9 +563,14 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
       charmGrid.replaceChildren();
       const equip = (id: CharmId | null): void => {
         if (id !== null && !charms.unlocked.includes(id)) return;
+        // R55 W-C: 再構築でフォーカスが失われるため、選択前にフォーカスがあれば
+        // 選択後の.selectedへ戻す(armory.tsのhadFocusパターンと同型)
+        const hadFocus = charmGrid.contains(document.activeElement);
         charms.equipped = id;
         saveProfile(host.profile);
         renderCharms();
+        if (hadFocus)
+          charmGrid.querySelector<HTMLElement>('.u2d-opt.selected')?.focus({ preventScroll: true });
       };
       const none = document.createElement('button');
       none.type = 'button';

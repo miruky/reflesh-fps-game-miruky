@@ -1281,28 +1281,28 @@ export class Menu {
     `;
     const list = host.querySelector<HTMLElement>('[data-id="chapter-list"]');
     if (!list) return;
+    // R55-W-C: ★/前章制圧を条件にした「章まるごとLOCKED」表示を撤廃し、ui2と同方針へ揃える。
+    // 全章を常にmission-grid付きで描画し、ロック判定はmissionChip内のisMissionUnlockedのみに
+    // 委譲する(隠し章chBの解放待ちもmissionChip側のLOCKED表示で自動的に反映される)。
     for (const chapter of CAMPAIGN) {
-      const unlocked = this.profile.campaign.unlockedChapters.includes(chapter.id);
       const chClear = chapter.missions.filter((m) => camp.clearedMissions.includes(m.id)).length;
       const card = document.createElement('div');
-      card.className = unlocked ? 'chapter-card' : 'chapter-card locked';
+      card.className = 'chapter-card';
       const head = document.createElement('div');
       head.className = 'chapter-card-head';
       head.innerHTML = `
         <span class="chapter-no">${chapter.title}</span>
-        <span class="chapter-sub">${unlocked ? chapter.subtitle : '機密 — 前章の制圧で解放'}</span>
+        <span class="chapter-sub">${chapter.subtitle}</span>
         <span class="chapter-prog"><b>${chClear}</b>/${chapter.missions.length}<span class="chapter-prog-bar" aria-hidden="true"><i style="transform:scaleX(${(chClear / chapter.missions.length).toFixed(3)})"></i></span></span>
       `;
       card.appendChild(head);
-      if (unlocked) {
-        const grid = document.createElement('div');
-        grid.className = 'mission-grid';
-        for (const mission of chapter.missions) {
-          grid.appendChild(this.missionChip(mission));
-        }
-        this.stagger(grid); // チップ入場(listitem-in)の--i付与
-        card.appendChild(grid);
+      const grid = document.createElement('div');
+      grid.className = 'mission-grid';
+      for (const mission of chapter.missions) {
+        grid.appendChild(this.missionChip(mission));
       }
+      this.stagger(grid); // チップ入場(listitem-in)の--i付与
+      card.appendChild(grid);
       list.appendChild(card);
     }
   }

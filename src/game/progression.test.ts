@@ -358,14 +358,44 @@ describe('キャンペーン進行', () => {
   // R55: ★(スター)獲得や「前章を全制圧しないと次章に触れない」というゲートはユーザー要望
   // (「★を取らないとストーリー解放されないシステムを廃止してください。面倒なので」)により撤廃。
   // 新規プロフィールでも全章・全ミッションが最初から選択可能(旧: ch1の第1ミッションのみ解放)。
-  it('新規プロフィールでも全章・全ミッションが最初から選択可能(★/前章制圧ゲート撤廃)', () => {
+  it('新規プロフィールでも通常章(ch1-ch10)は全ミッションが最初から選択可能(★/前章制圧ゲート撤廃)', () => {
     const p = emptyProfile();
     expect(isMissionUnlocked(p, m1.id)).toBe(true);
     expect(isMissionUnlocked(p, m2.id)).toBe(true);
     expect(isMissionUnlocked(p, CAMPAIGN[1]!.missions[0]!.id)).toBe(true);
-    expect(isMissionUnlocked(p, CAMPAIGN[CAMPAIGN.length - 1]!.missions[0]!.id)).toBe(true);
+    const ch10 = CAMPAIGN.find((c) => c.id === 'ch10')!;
+    expect(isMissionUnlocked(p, ch10.missions[ch10.missions.length - 1]!.id)).toBe(true);
     // 実在しないmissionIdだけはfalse(存在チェックとしては維持)
     expect(isMissionUnlocked(p, 'not-a-real-mission-id')).toBe(false);
+  });
+
+  // R55-W-C: ★ゲート撤廃の巻き添えで隠し最終章chB「歴戦の間」(R54-F6でch10全クリアまで
+  // 秘匿と設計)が新規プロフィールから即プレイ可能になっていた回帰の修正確認。
+  // 通常章は全解放のまま、chBだけは既存のunlockedChapters簿記(章クリア連鎖push /
+  // 旧セーブの遡及付与)を解放条件として使い続ける。
+  describe('隠し章chB「歴戦の間」の秘匿(R54-F6設計の維持)', () => {
+    const chB = CAMPAIGN.find((c) => c.id === 'chB')!;
+    const ch10 = CAMPAIGN.find((c) => c.id === 'ch10')!;
+
+    it('新規プロフィールではchBは未解放', () => {
+      const p = emptyProfile();
+      expect(isMissionUnlocked(p, chB.missions[0]!.id)).toBe(false);
+    });
+
+    it('ch10を全クリアするとchBが解放される(unlockedChaptersへの連鎖push経由)', () => {
+      const p = emptyProfile();
+      for (const m of ch10.missions) {
+        applyCampaignMission(p, missionSummary(m.id, ch10.id, true, 30));
+      }
+      expect(p.campaign.unlockedChapters).toContain('chB');
+      expect(isMissionUnlocked(p, chB.missions[0]!.id)).toBe(true);
+    });
+
+    it('unlockedChaptersにchBが手動で積まれていれば解放扱い(遡及付与セーブと同じ形)', () => {
+      const p = emptyProfile();
+      p.campaign.unlockedChapters.push('chB');
+      expect(isMissionUnlocked(p, chB.missions[0]!.id)).toBe(true);
+    });
   });
 
   it('初クリアで記録追加+初制圧ボーナス、再クリアは重複なし', () => {

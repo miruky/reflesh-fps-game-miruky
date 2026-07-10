@@ -356,7 +356,8 @@
   color: #77705f;
 }
 .u2d-lobby-row3 {
-  background: rgba(8, 7, 9, 0.8);
+  /* R55 W-C: 不透明契約(0.82+)をわずかに下回っていたため引き上げ */
+  background: rgba(8, 7, 9, 0.86);
   border: 1px solid rgba(232, 227, 216, 0.16);
   border-top: none;
   padding: 11px 20px;
@@ -373,7 +374,8 @@
   bottom: 200px;
   display: flex;
   flex-direction: column;
-  background: rgba(8, 7, 9, 0.86);
+  /* R55 W-C: 背景の菱紋バナーが行間ギャップから透けるバグの再発防止(実質不透明) */
+  background: rgba(8, 7, 9, 0.97);
   border: 1px solid rgba(232, 227, 216, 0.16);
 }
 .u2d-panel-head {

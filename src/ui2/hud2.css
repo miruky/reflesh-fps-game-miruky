@@ -354,12 +354,14 @@
 #hud.u2-hud .u2h-zones .zone-contested {
   animation: u2hBlink 1.2s ease-in-out infinite;
 }
-/* 戦績行(撃破/戦死/連続) */
+/* 戦績行(撃破/戦死/連続): 明るい空を背景にしても視認できるよう他の計器チップと同じ暗い素地を敷く */
 #hud.u2-hud .u2h-kdrow {
   display: flex;
   align-items: baseline;
   gap: 14px;
-  padding-left: 2px;
+  background: rgba(6, 7, 10, 0.86);
+  border: 1px solid rgba(232, 227, 216, 0.14);
+  padding: 6px 12px;
 }
 #hud.u2-hud .u2h-kd {
   display: flex;
@@ -767,6 +769,9 @@
   gap: 7px;
   font-size: 11.5px;
   color: #a79f90;
+  background: rgba(6, 7, 10, 0.86);
+  border: 1px solid rgba(232, 227, 216, 0.14);
+  padding: 5px 12px;
 }
 #hud.u2-hud .u2h-dia--util {
   width: 13px;
