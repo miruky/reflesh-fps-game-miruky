@@ -1,4 +1,5 @@
 import './rogue.css'; // R54-F5 輪廻HUD/メニュー様式(style.css追記凍結のため機能別ファイル)
+import '../mk3-phase2.css'; // R54-F7 MK.III Phase 2(キルカム武器バナー/ハイライト/フォト)
 import { RADAR_RANGE_M, RETICLE_COLORS } from '../core/settings';
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
@@ -504,6 +505,7 @@ export class Hud {
   // ── ファイナルキルカム: body 直下の独立オーバーレイ(hud.hide() の影響を受けない) ──
   private readonly fkcRoot: HTMLElement;
   private readonly fkcFlashEl: HTMLElement;
+  private readonly fkcWeaponEl: HTMLElement; // R54-F7: シネマ帯下部の「武器名 — 距離m」バナー
   // ── R53-W2: PaP pips / パワーアップ / 特殊ラウンド / 無線字幕 / 検知 / ボスpips / S&D ──
   private lastPapTier = -1; // PaPピップの生成済み段数(変化時のみ作り直す)
   private lastPowerUpKey = ''; // アクティブなkind集合のキー(変化時のみDOM再構築)
@@ -942,9 +944,11 @@ export class Hud {
         <span class="hud-fkc-hairline"></span>
       </div>
       <div class="hud-fkc-skip">SKIP : クリック / SPACE</div>
+      <div class="p2-fkc-weapon" hidden></div>
     `;
     document.body.appendChild(this.fkcRoot);
     this.fkcFlashEl = this.fkcRoot.querySelector('.hud-fkc-flash') as HTMLElement;
+    this.fkcWeaponEl = this.fkcRoot.querySelector('.p2-fkc-weapon') as HTMLElement;
   }
 
   /**
@@ -2392,8 +2396,16 @@ export class Hud {
   // ── ファイナルキルカム ──────────────────────────────────────────────
 
   /** ファイナルキルカム開始: シネマバー + バナーを表示する */
-  showFinalKillcam(): void {
+  showFinalKillcam(weaponName?: string | null, distM?: number): void {
     this.fkcRoot.classList.add('fkc-active');
+    // R54-F7: シネマ帯下部の武器バナー(mono)。武器名未供給(旧試合互換/素手系)は非表示
+    if (weaponName) {
+      this.fkcWeaponEl.textContent =
+        distM && distM > 0 ? `${weaponName} — ${distM}m` : weaponName;
+      this.fkcWeaponEl.hidden = false;
+    } else {
+      this.fkcWeaponEl.hidden = true;
+    }
   }
 
   /** ファイナルキルカム終了: オーバーレイを隠す。スコープが残っていたら消す */

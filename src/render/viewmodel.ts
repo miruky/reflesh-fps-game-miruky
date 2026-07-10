@@ -2882,6 +2882,13 @@ export class ViewModel {
   private _chargeGlowMats: { mat: THREE.MeshBasicMaterial; base: number }[] = [];
   // R53 恒久報酬: 黒刀/雷刀の白芯雷脈(kokurai-100キル)。ブレード構築時に反映される
   private _katanaVeinsOn = false;
+  // R54-F8' E5: クロガネ套装「黒鋼の残響」(ch10クリア特典)。優先: kuroganeStyle > 通常雷刀色。
+  // profile.kuroganeStyleフラグの読取・設定はmatch/menu側(M-EMP配線)。
+  private _kuroganeStyleOn = false;
+  // R54-F8' E2: 修羅の相(0-3)。段2=バレル微発光/段3=赤熱(オーバーレイ方式 —
+  // バレル本体は共有マテリアル(metalVC)のため直接mutateしない)
+  private _shuraPhase: 0 | 1 | 2 | 3 = 0;
+  private _shuraGlowMesh: THREE.Mesh | null = null;
   private _minigunBarrelRot = 0;  // 修羅バレル回転角 (rad)
   private _minigunSpin01 = 0;     // 修羅スピン度合い 0-1 (スムース)
   // Fix-5: 万刃 ADS-z 制御用チャージ保存(setExoticCharge → update 橋渡し)
@@ -3080,6 +3087,13 @@ export class ViewModel {
       : {};
     // R53: 帝王溜め段は武器切替で必ず解除(発光ブーストの復元も含む — キャッシュ越境防止)
     this.setEmperorChargeStage(0);
+    // R54-F8' E2: 修羅の相も武器切替で解除(キャッシュ銃に残った旧グローを消灯)
+    if (this._shuraGlowMesh) {
+      (this._shuraGlowMesh.material as THREE.MeshBasicMaterial).opacity = 0;
+      this._shuraGlowMesh.visible = false;
+    }
+    this._shuraGlowMesh = null;
+    this._shuraPhase = 0;
     // クナイ逆手ポーズ対象を捕捉(該当ノードが無い銃では空=非干渉)。restへ復帰させておく。
     this.fistNodes = [];
     if (g) {
@@ -3958,9 +3972,16 @@ export class ViewModel {
         if (node.userData.lightningOrigMat) return;
         const origMat = node.material as THREE.MeshStandardMaterial;
         const lm = origMat.clone();
-        lm.emissive.setHex(0x55bbff);
-        lm.emissiveIntensity = 0.8;
-        lm.color.setHex(0x002244);
+        // R54-F8' E5: クロガネ套装 — 黒鋼の刀身+赤い残響(通常雷刀の氷青より優先)
+        if (this._kuroganeStyleOn) {
+          lm.emissive.setHex(0x8b0f14);
+          lm.emissiveIntensity = 0.55;
+          lm.color.setHex(0x0a0a0c);
+        } else {
+          lm.emissive.setHex(0x55bbff);
+          lm.emissiveIntensity = 0.8;
+          lm.color.setHex(0x002244);
+        }
         lm.userData.shared = false;
         node.userData.lightningOrigMat = origMat;
         node.userData.lightningMat = lm;
@@ -4115,6 +4136,56 @@ export class ViewModel {
     bladeGroup.add(veins);
   }
 
+  // ── R54-F8' E5: クロガネ套装のトグル(M-EMP配線: 試合開始時にprofile.kuroganeStyleを反映。
+  // 雷刀色の再適用のため、雷モード中に切替えた場合はオーバーレイ再構築を強制する)
+  setKuroganeStyle(on: boolean): void {
+    if (this._kuroganeStyleOn === on) return;
+    this._kuroganeStyleOn = on;
+    if (this._lightningMode) {
+      // 雷モード中: 一旦剥がして再適用(lightningOrigMat復元→再クローン)で色系を切替
+      this._removeLightningOverlay();
+      this._restoreKunaiGlowLightning();
+      this._applyLightningModeVisuals();
+    }
+  }
+
+  // ── R54-F8' E2: 修羅の相の視覚(0=消灯/2=微発光/3=赤熱)。バレルは共有マテリアルのため
+  // 加算オーバーレイ(半透明シリンダ)方式 — DC+1のみ、共有材のmutateなし。
+  // M-EMP配線: shuraPhaseFor(連続ヒット数)の変化時に呼ぶ。武器切替でsetWeaponが自然に破棄。
+  setShuraPhase(phase: 0 | 1 | 2 | 3): void {
+    if (phase === this._shuraPhase) return;
+    this._shuraPhase = phase;
+    const barrel = this.gun?.getObjectByName('vm:barrel');
+    if (!barrel) { this._shuraGlowMesh = null; return; }
+    let mesh = barrel.getObjectByName('vm:shuraGlow') as THREE.Mesh | undefined;
+    if (!mesh) {
+      // バレル束(半径~0.07×bs2、長さ0.5×bs2)を包む薄い発光筒。bs2はバレル群実寸から推定不要 —
+      // 親グループのローカルで固定寸(minigunのbs2=1.6実寸に合わせる)
+      const geo = new THREE.CylinderGeometry(0.155, 0.155, 0.78, 12, 1, true);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xff5522,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      mat.userData.shared = false;
+      mesh = new THREE.Mesh(geo, mat);
+      mesh.name = 'vm:shuraGlow';
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position.set(0, 0, -0.59); // バレル群中心(bz≈-0.59×bs2相当)
+      barrel.add(mesh);
+    }
+    this._shuraGlowMesh = mesh;
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    // 段0/1=消灯、段2=微発光(橙)、段3=赤熱(実効≤0.55: opacity 0.42×加算)
+    const opacity = phase >= 3 ? 0.42 : phase === 2 ? 0.16 : 0;
+    mat.opacity = opacity;
+    mat.color.setHex(phase >= 3 ? 0xff2a10 : 0xff7a30);
+    mesh.visible = opacity > 0;
+  }
+
   private _buildLightningBladeMeshes(kunai: THREE.Object3D, isKokuraitei: boolean): void {
     const group = new THREE.Group();
     group.name = 'vm:lightningBlade';
@@ -4150,6 +4221,11 @@ export class ViewModel {
       group.add(makeArcLine(0x7700cc, 0.55, -0.028, 0.003));
       group.add(makeArcLine(0x5500aa, 0.40, -0.027, 0.004));
       group.add(makeArcLine(0x88aaff, 0.35, 0.034, 0.003));
+    } else if (this._kuroganeStyleOn) {
+      // R54-F8' E5: クロガネ套装 — 赤亀裂ライン(氷青の代替、輝度は同等以下)
+      group.add(makeArcLine(0xdd2233, 0.60, -0.028, 0.003));
+      group.add(makeArcLine(0xff5544, 0.40, -0.027, 0.002));
+      group.add(makeArcLine(0xcc1122, 0.35, 0.034, 0.003));
     } else {
       group.add(makeArcLine(0x88ddff, 0.60, -0.028, 0.003));
       group.add(makeArcLine(0xaaeeff, 0.45, -0.027, 0.002));
@@ -4188,7 +4264,8 @@ export class ViewModel {
     this._lightningArcMeshes = [];
     this._lightningArcFlickerT = [];
 
-    const arcColor = this._kokuraiteiMode ? 0x8800ff : 0x88ddff;
+    // R54-F8' E5: クロガネ套装は赤亀裂(黒雷帝の紫は不変)
+    const arcColor = this._kokuraiteiMode ? 0x8800ff : this._kuroganeStyleOn ? 0xcc1122 : 0x88ddff;
     const arcCount = 5;
     // 刃の実測ローカルZ範囲。多少の余白(≤0.02)は許容しつつ、これを超えて突き出さないよう
     // 全アークをこの範囲内(startOffset/spanRatioの構成上、常に範囲内に収まる)にクランプする。

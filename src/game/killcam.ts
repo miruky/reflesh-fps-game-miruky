@@ -86,6 +86,55 @@ export function ckSpeedAt(cursor: number, killT: number): number {
   return 0.2 + (1.0 - 0.2) * t;
 }
 
+// ── R54-F7 シネマ強化(純粋関数/定数) ─────────────────────────────────
+/** キル瞬間マイクロフリーズの長さ(s)。reduceMotion 時はフリーズ自体をスキップする。 */
+export const CK_FREEZE_S = 0.12;
+
+/**
+ * シネマティックキルカムの FOV ランプ(純粋関数)。
+ * キル -0.5s まで 52(やや広角の接近)→ キル瞬間 46(ズームインの緊張)→
+ * キル +0.3s で 50(CK基準)へ復帰。各区間 smoothstep のイージング。
+ */
+export function ckFovAt(cursor: number, killT: number): number {
+  const d = cursor - killT;
+  if (d <= -0.5) return 52;
+  if (d < 0) {
+    const t = (d + 0.5) / 0.5;
+    const ss = t * t * (3 - 2 * t);
+    return 52 + (46 - 52) * ss;
+  }
+  if (d < 0.3) {
+    const t = d / 0.3;
+    const ss = t * t * (3 - 2 * t);
+    return 46 + (50 - 46) * ss;
+  }
+  return 50;
+}
+
+/**
+ * 再生カーソルの1ステップ前進(純粋関数)。キル瞬間(killT)を跨ぐフレームでは
+ * カーソルを killT へ正確に着地させ、CK_FREEZE_S の完全静止(マイクロフリーズ)を
+ * 開始する。フリーズ残(freezeLeft)がある間はカーソルを進めず実時間だけ減らす。
+ * reduceMotion=true ならフリーズを一切発生させない(既存挙動と同一の連続前進)。
+ */
+export function ckCursorStep(
+  cursor: number,
+  dt: number,
+  speed: number,
+  killT: number,
+  freezeLeft: number,
+  reduceMotion: boolean,
+): { cursor: number; freezeLeft: number } {
+  if (freezeLeft > 0) {
+    return { cursor, freezeLeft: Math.max(0, freezeLeft - dt) };
+  }
+  const step = dt * speed;
+  if (!reduceMotion && cursor < killT && cursor + step >= killT) {
+    return { cursor: killT, freezeLeft: CK_FREEZE_S };
+  }
+  return { cursor: cursor + step, freezeLeft: 0 };
+}
+
 // R54-W1 Q2: FK鮮度ガード(純関数、モード非依存)。startFinalKillcam 呼び出し時点で
 // 「最終キル」からリングバッファの実時間窓をほぼ使い切るほど経過していれば、そのキルの
 // フレームはもはや信頼できる形でバッファに残っていない(Hardpoint等、over確定がキルと
@@ -145,6 +194,9 @@ export class KillcamController {
   private _ckDollyDist = 0;
   private _ckHitSoundPlayed = false;
   private readonly _kcLook = new THREE.Vector3();
+  private _ckFreezeLeft = 0; // R54-F7: キル瞬間マイクロフリーズの残秒(0=非フリーズ)
+  private fkWeaponName: string | null = null; // R54-F7: 最終キルの武器名(シネマ帯バナー用)
+  private fkKillDistM = 0; // R54-F7: 最終キルの水平距離(m, round済み)
 
   constructor(private readonly deps: KillcamDeps) {}
 
@@ -158,12 +210,32 @@ export class KillcamController {
     return this.fkKillElapsed;
   }
 
-  /** キル発生をマーキングする(旧: Match が fk フィールドへ直接代入していた2サイトの置換)。 */
-  noteKill(killerIsPlayer: boolean, killerBotIdx: number, victimBotIdx: number, elapsed: number): void {
+  /** R54-F7: 最終キルの武器名(未供給=null)。snapshot.fkWeaponName とシネマ帯バナーが読む。 */
+  get weaponName(): string | null {
+    return this.fkWeaponName;
+  }
+
+  /** R54-F7: 最終キルの水平距離(m)。0=未供給。 */
+  get killDistM(): number {
+    return this.fkKillDistM;
+  }
+
+  /** キル発生をマーキングする(旧: Match が fk フィールドへ直接代入していた2サイトの置換)。
+   * R54-F7: 武器名/距離(m)を任意受け取り(シネマ帯の「武器名 — 距離m」バナー用)。 */
+  noteKill(
+    killerIsPlayer: boolean,
+    killerBotIdx: number,
+    victimBotIdx: number,
+    elapsed: number,
+    weaponName?: string,
+    distM?: number,
+  ): void {
     this.fkKillerIsPlayer = killerIsPlayer;
     this.fkKillerBotIdx   = killerBotIdx;
     this.fkVictimBotIdx   = victimBotIdx;
     this.fkKillElapsed    = elapsed;
+    this.fkWeaponName     = weaponName ?? null;
+    this.fkKillDistM      = distM ?? 0;
   }
 
   /** 20Hz 記録カデンス(旧: fkTick インクリメント+fkRecordFrame の2サイトの置換)。 */
@@ -203,6 +275,7 @@ export class KillcamController {
     // ── シネマティックキルカム初期化 ──
     this._ckDollyDist = 0;
     this._ckHitSoundPlayed = false;
+    this._ckFreezeLeft = 0;
     this.fkDisposePlayerAvatar();
     // キラー/ビクティム位置を初期フレームから取得してカメラ基底を計算する
     const [iA0, iB0, t0] = this.fkFindFrames(this.fkCursor);
@@ -362,9 +435,16 @@ export class KillcamController {
     if (!this.fkPlaying) return true;
     // シネマティックランプ速度: ckSpeedAt はモジュールレベル純粋関数
     const speed  = ckSpeedAt(this.fkCursor, this.fkWinKill);
-    this.fkCursor += dt * speed;
-    // ドリー前進(スロー中も同じレートで動かして映画的なヌルっと感を出す)
-    this._ckDollyDist += dt * CK_DOLLY_SPD;
+    // R54-F7 マイクロフリーズ: キル瞬間を跨ぐフレームで killT へ正確に着地→0.12s 完全静止。
+    // 省モーション時はフリーズなし(ckCursorStep 内で分岐、従来の連続前進と同一)
+    const stepped = ckCursorStep(
+      this.fkCursor, dt, speed, this.fkWinKill, this._ckFreezeLeft, this.deps.reduceMotion(),
+    );
+    this.fkCursor = stepped.cursor;
+    this._ckFreezeLeft = stepped.freezeLeft;
+    // ドリー前進(スロー中も同じレートで動かして映画的なヌルっと感を出す)。
+    // フリーズ中のみ freeze frame の意図どおり完全静止させる
+    if (this._ckFreezeLeft <= 0) this._ckDollyDist += dt * CK_DOLLY_SPD;
     const cursor = this.fkCursor;
     if (cursor >= this.fkWinEnd) {
       this.fkPlaying = false;
@@ -567,8 +647,10 @@ export class KillcamController {
     }
     this.deps.getCamera().position.copy(this._ckCamBase).addScaledVector(this._ckDollyDir, this._ckDollyDist);
     this.deps.getCamera().lookAt(this._kcLook);
-    if (Math.abs(this.deps.getCamera().fov - CK_FOV) > 0.01) {
-      this.deps.getCamera().fov = CK_FOV;
+    // R54-F7 FOVランプ: 52(接近)→46(キル瞬間ズームイン)→50(基準)。省モーション時は固定50
+    const targetFov = this.deps.reduceMotion() ? CK_FOV : ckFovAt(cursor, this.fkWinKill);
+    if (Math.abs(this.deps.getCamera().fov - targetFov) > 0.01) {
+      this.deps.getCamera().fov = targetFov;
       this.deps.getCamera().updateProjectionMatrix();
     }
   }

@@ -79,6 +79,7 @@ import { AutoExposure } from '../render/exposure';
 import type { PropMatFamily } from '../render/prop-visuals';
 import { floorDetailGlsl, floorDetailGlslCommon } from '../render/surface-kit';
 import { KillcamController, FK_WIN_POST } from './killcam';
+import { selectHighlights } from './highlights';
 import type { MissionSummary } from './progression';
 import {
   MedalTracker,
@@ -678,6 +679,8 @@ export class Match {
   private resScale = 1; // 現在の解像度スケール 0.6..1
   private hitFlashEnv = 0; // 被弾フラッシュのエンベロープ 0..1
   private killSurgeEnv = 0; // R20: キル確定サージのエンベロープ 0..1(キルで1へ、毎フレーム減衰)
+  private cinemaEnv = 0; // R54-F7: シネマカメラ中のDOF風(uCinema)封筒 0..1
+  private maxKillDistM = 0; // R54-F7: プレイヤーのキル最長水平距離(m)。ハイライト用
   private postfxGrade = 0; // R21: Teal & Orange グレーディング強度(high=0.3, low/mid=0)
   private darkAuraEnv = 0; // R27: 黒帝オーラビネット封筒 0..1(黒帝中のみ > 0)
   private readonly hitDir = new THREE.Vector2(0, 0); // R20: 被弾方向(画面空間の単位ベクトル・平滑)
@@ -3775,6 +3778,11 @@ export class Match {
     }
     // R30 制圧封筒: 近弾連続時に立ち上がり、フレームごとに減衰
     this.suppressEnv = Math.max(0, this.suppressEnv - dt * 3.0);
+    // R54-F7: シネマカメラ(死亡キルカム)所有中は周辺ソフト+浅ビネット(uCinema)を掛ける。
+    // 静的な焦点表現のため reduceMotion ではゲートしない(色/ぼかしのみ・時間脈動なし)
+    const cinemaTarget = this.killcamCamActive ? 1 : 0;
+    this.cinemaEnv += (cinemaTarget - this.cinemaEnv) * Math.min(1, dt * 5);
+    if (cinemaTarget === 0 && this.cinemaEnv < 0.002) this.cinemaEnv = 0;
     if (this.postfx) {
       const rm = this.settings.reduceMotion;
       const pulse = rm ? 0 : this.hitFlashEnv * 0.75;
@@ -3799,13 +3807,15 @@ export class Match {
       // idleゲート: grade>0(high tier)は常時enabled。それ以外は封筒ゼロ時コストゼロ
       this.postfx.enabled =
         this.postfxGrade > 0 || pulse > 0.002 || killSurge > 0.002 || lowHpEnv > 0.01
-        || this.darkAuraEnv > 0.01 || suppress > 0.002 || kokuraiVal > 0.001;
+        || this.darkAuraEnv > 0.01 || suppress > 0.002 || kokuraiVal > 0.001
+        || this.cinemaEnv > 0.002; // R54-F7
       this.postfx.setHitPulse(pulse);
       this.postfx.setCombat(this.hitDir.x, this.hitDir.y, healthRatio, killSurge, rm ? 0 : 1);
       this.postfx.setTime(this.elapsed);
       this.postfx.setDarkAura(this.darkAuraEnv);
       this.postfx.setSuppress(suppress);
       this.postfx.setKokurai(kokuraiVal); // R33
+      this.postfx.setCinema(this.cinemaEnv); // R54-F7
     }
     // R30 雨パーティクル: 時間ユニフォームとカメラ位置を毎フレーム更新
     if (this.rainTimeUniform) this.rainTimeUniform.value = this.elapsed;
@@ -5263,9 +5273,14 @@ export class Match {
     }
     if (died) {
       this.haptic(150, 0.5, 0.75); // キル確定の手応え
-      // ファイナルキルカム: プレイヤーのキルを記録
+      // R54-F7: キル水平距離を計測(ハイライト「ロングショット」+キルカム武器バナー用)
+      const killDistM = Math.round(
+        Math.hypot(bot.position.x - this.player.position.x, bot.position.z - this.player.position.z),
+      );
+      this.maxKillDistM = Math.max(this.maxKillDistM, killDistM);
+      // ファイナルキルカム: プレイヤーのキルを記録(武器名+距離はシネマ帯バナーが消費)
       if (this.config.mode !== 'zombie') {
-        this.killcam.noteKill(true, -1, this.bots.indexOf(bot), this.elapsed);
+        this.killcam.noteKill(true, -1, this.bots.indexOf(bot), this.elapsed, weaponName, killDistM);
       }
       this.killSurgeEnv = 1; // R20 rank4: キル確定サージ(PostFXの彩度/コントラスト+白エッジ)を点火
       this.scoreboardDirty = true; // ★6 キル確定は即時反映
@@ -6780,9 +6795,12 @@ export class Match {
       const dz = killer.position.z - this.player.position.z;
       this.killcamDistM = Math.round(Math.hypot(dx, dz));
       this.killcamFlash = this.settings.reduceMotion ? 0 : 1;
-      // ファイナルキルカム: ボットのキルを記録
+      // ファイナルキルカム: ボットのキルを記録(武器ラベル+距離はシネマ帯バナーが消費)
       if (this.config.mode !== 'zombie') {
-        this.killcam.noteKill(false, this.bots.indexOf(killer), -1, this.elapsed);
+        this.killcam.noteKill(
+          false, this.bots.indexOf(killer), -1, this.elapsed,
+          this.killcamWeaponLabel ?? undefined, this.killcamDistM,
+        );
       }
       this.killcamElapsedS = 0;
       this.killcamArc = 0;
@@ -9003,6 +9021,8 @@ export class Match {
       killcamFinal: this.killcamCamActive && this.killcamTimer < 0.7,
       killcamCamActive: this.killcamCamActive,
       fkCinematicActive: this.killcam.playing,
+      // R54-F7: 最終キルの武器名(SNAPSHOT_KEYSへ意図的追加済み。未発生=undefined)
+      fkWeaponName: this.killcam.weaponName ?? undefined,
       lowHp01: this.player.alive
         ? Math.max(0, Math.min(1, (0.3 - this.player.hp / this.player.maxHp) / 0.3))
         : 0,
@@ -9359,12 +9379,51 @@ export class Match {
 
   /** finalKillcam 中に毎フレーム呼ぶ。完了(窓を抜けた)なら true、継続なら false を返す。 */
   advanceFinalKillcam(dt: number): boolean {
-    return this.killcam.advance(dt);
+    const done = this.killcam.advance(dt);
+    // R54-F7: final killcam 中は frame() が呼ばれない(main.tsの二重update防止ゲート)ため、
+    // uCinema 封筒と postfx.enabled のidleゲートをここで所有する。完了時は必ず0へ戻す
+    if (this.postfx) {
+      this.cinemaEnv = done ? 0 : Math.min(1, this.cinemaEnv + dt * 4);
+      this.postfx.setCinema(this.cinemaEnv);
+      this.postfx.enabled = this.postfxGrade > 0 || this.cinemaEnv > 0.002;
+    }
+    return done;
   }
 
   /** main.ts が読むキル瞬間フラッシュ値(旧 public field の読み取り互換getter)。 */
   get fkFlash(): number {
     return this.killcam.fkFlash;
+  }
+
+  /** R54-F7: 最終キルの武器名/距離(シネマ帯バナー。main.ts が showFinalKillcam へ渡す)。 */
+  get fkWeaponName(): string | null {
+    return this.killcam.weaponName;
+  }
+
+  get fkKillDistM(): number {
+    return this.killcam.killDistM;
+  }
+
+  /** R54-F7 フォトモード: ステージ一辺(m)。自由飛行カメラのAABBクランプ基準。 */
+  get stageSize(): number {
+    return this.config.stage.size;
+  }
+
+  /** R54-F7 フォトモード: フィルタが効く環境か(low tier は PostFX 非搭載=false)。 */
+  get photoFilterAvailable(): boolean {
+    return this.postfx !== null;
+  }
+
+  /**
+   * R54-F7 フォトモード・フィルタ(0=なし/1=ノワール/2=ビビッド/3=帝王)。
+   * photo 中は update()/frame() が停止し idleゲートが再計算されないため、
+   * postfx.enabled の所有をここで行う(退出時は必ず 0 で呼ばれ grade 基準へ復帰)。
+   */
+  setPhotoFilter(mode: 0 | 1 | 2 | 3): void {
+    if (!this.postfx) return;
+    this.postfx.setPhoto(mode);
+    if (mode > 0) this.postfx.enabled = true;
+    else this.postfx.enabled = this.postfxGrade > 0;
   }
 
 
@@ -9449,6 +9508,15 @@ export class Match {
       sndScore: this.story.sndMatch
         ? [this.story.sndMatch.scoreOf(PLAYER_TEAM), this.story.sndMatch.scoreOf(ENEMY_TEAM)]
         : undefined,
+      // R54-F7: ハイライトカード(既存統計のみから選定。リプレイ基盤なし=軽量)
+      highlights: selectHighlights({
+        bestStreak: this.bestStreak,
+        maxKillDistM: this.maxKillDistM,
+        headshots: this.player.headshots,
+        kills: this.player.kills,
+        accuracy: this.player.shotsFired > 0 ? this.player.shotsHit / this.player.shotsFired : 0,
+        medalCounts: this.tracker.counts,
+      }),
     };
   }
 

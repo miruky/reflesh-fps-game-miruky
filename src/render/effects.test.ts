@@ -1036,3 +1036,64 @@ describe('R53: kokuraiteiKillColumn tier格差 / raitenSlashFx / blinkDischargeN
     expect(scene.children.length).toBe(0);
   });
 });
+
+// ── R54-F8' 帝王フェーズ2: 降臨/雷禽/影牙/阿修羅後光 ─────────────────────────
+
+describe('R54 Effects – 帝王フェーズ2 API', () => {
+  it('raiteiDescendBolts (reduceMotion=false): 例外なし、シーンに子が追加される', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    expect(() => fx.raiteiDescendBolts(ORIGIN, false)).not.toThrow();
+    expect(scene.children.length).toBeGreaterThan(before);
+  });
+
+  it('raiteiDescendBolts (reduceMotion=true): 例外なし(柱は減る)', () => {
+    const { fx } = makeEffects();
+    expect(() => fx.raiteiDescendBolts(ORIGIN, true)).not.toThrow();
+  });
+
+  it('raikinStrike (reduceMotion=false): 例外なし、シーンに子が追加される', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    expect(() => fx.raikinStrike(ORIGIN, 0, false)).not.toThrow();
+    expect(scene.children.length).toBeGreaterThan(before);
+  });
+
+  it('raikinStrike (reduceMotion=true): 例外なし(正面1方向のみ)', () => {
+    const { fx } = makeEffects();
+    expect(() => fx.raikinStrike(ORIGIN, Math.PI / 3, true)).not.toThrow();
+  });
+
+  it('kagegaSlash: 例外なし、シーンに子が追加され、寿命(0.35s)経過で自動除去される', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    expect(() => fx.kagegaSlash(ORIGIN, 1.2)).not.toThrow();
+    expect(scene.children.length).toBeGreaterThan(before);
+    for (let i = 0; i < 40; i += 1) fx.update(0.016); // 0.64s > 0.35s
+    expect(scene.children.length).toBe(before);
+  });
+
+  it('asuraDescendAura (reduceMotion=false): 例外なし、シーンに子が追加される', () => {
+    const { fx, scene } = makeEffects();
+    const before = scene.children.length;
+    expect(() => fx.asuraDescendAura(ORIGIN, false)).not.toThrow();
+    expect(scene.children.length).toBeGreaterThan(before);
+  });
+
+  it('asuraDescendAura (reduceMotion=true): 例外なし(後光のみ)', () => {
+    const { fx } = makeEffects();
+    expect(() => fx.asuraDescendAura(ORIGIN, true)).not.toThrow();
+  });
+
+  it('4API同時発火→update→clear が例外なし、clear後シーンが空になる', () => {
+    const { fx, scene } = makeEffects();
+    fx.raiteiDescendBolts(ORIGIN);
+    fx.raikinStrike(ORIGIN, 0);
+    fx.kagegaSlash(ORIGIN, 0);
+    fx.asuraDescendAura(ORIGIN);
+    expect(() => fx.update(0.016)).not.toThrow();
+    expect(() => fx.clear()).not.toThrow();
+    fx.dispose();
+    expect(scene.children.length).toBe(0);
+  });
+});

@@ -52,15 +52,74 @@ export function fanPelletYaw(i: number, total: number, halfSpanRad: number): num
   return -halfSpanRad + (i / (total - 1)) * halfSpanRad * 2;
 }
 
-/** 修羅スピンアップ曲線: 1.5sで400→1800rpm, 0.5sでスピンダウン */
-export function minigunNextRpm(currentRpm: number, dt: number, spinning: boolean): number {
+/** 修羅スピンアップ曲線: 1.5sで400→1800rpm, 0.5sでスピンダウン。
+ * R54-F8' E2: sinceReleasedS(トリガを離してからの経過秒)が MINIGUN_HOLD_GRACE_S 未満の間は
+ * 減衰を保留する「スピン維持猶予」。省略時 Infinity=即減衰(従来挙動と完全互換)。
+ * M-EMP配線: match側は「fireDownが偽になった時刻」からの経過を渡すだけ(状態1個)。 */
+export const MINIGUN_HOLD_GRACE_S = 0.8;
+export function minigunNextRpm(
+  currentRpm: number,
+  dt: number,
+  spinning: boolean,
+  sinceReleasedS = Infinity,
+): number {
   if (spinning) {
     const rate = (1800 - 400) / 1.5;
     return Math.min(1800, currentRpm + rate * dt);
   }
+  if (sinceReleasedS < MINIGUN_HOLD_GRACE_S) return currentRpm; // 猶予中は保留
   const rate = 1800 / 0.5;
   return Math.max(0, currentRpm - rate * dt);
 }
+
+// ── R54-F8' E2: 修羅の相(3段)。連続ヒット数で昇段、被弾 or 3s非発射で降格(降格判定はmatch側)。
+// 段1(20hit)=拡散-15% / 段2(60hit)=RPM上限+10% / 段3(120hit)=バレル赤熱+移動ペナ半減。
+// 数値の適用点はM-EMP配線(spread/rpm cap/moveMul)。viewmodelはsetShuraPhase(視覚)のみ。
+export const SHURA_PHASE_HITS = [20, 60, 120] as const;
+export function shuraPhaseFor(consecutiveHits: number): 0 | 1 | 2 | 3 {
+  if (consecutiveHits >= SHURA_PHASE_HITS[2]) return 3;
+  if (consecutiveHits >= SHURA_PHASE_HITS[1]) return 2;
+  if (consecutiveHits >= SHURA_PHASE_HITS[0]) return 1;
+  return 0;
+}
+export const SHURA_PHASE_SPREAD_MUL = [1, 0.85, 0.85, 0.85] as const; // 段1+
+export const SHURA_PHASE_RPM_CAP_MUL = [1, 1, 1.1, 1.1] as const; // 段2+
+export const SHURA_PHASE_MOVE_PENALTY_MUL = [1, 1, 1, 0.5] as const; // 段3=移動ペナ半減
+
+// ── R54-F8' E1: 段2.5派生奥義(溜め段2リリース時のkit分岐)。段3天壊は黒雷帝専権のまま。
+// M-EMP配線: 溜め段2でリリースした瞬間、activeKit()で分岐 —
+//   雷帝: effects.raikinStrike(origin, aimYaw) + 3方向へ各RAIKIN_DMG(XZ扇、RAIKIN_RANGE_M内の
+//         最近接botへ方向毎1体、occlusionレイあり)
+//   黒帝: 通常斬撃に加え0.4s後(KAGEGA_DELAY_S)に同軌道へ追い斬撃(ダメージ=元×KAGEGA_MUL、
+//         effects.kagegaSlash(pos, yaw)を発火時に呼ぶ)
+//   黒雷帝: 既存どおり(段2=現行フル、段3=天壊)
+export const RAIKIN_DMG = 120;
+export const RAIKIN_DIRS = 3;
+export const RAIKIN_SPREAD_RAD = 0.5; // 中央±0.5radの3方向
+export const RAIKIN_RANGE_M = 14;
+export const KAGEGA_MUL = 0.5;
+export const KAGEGA_DELAY_S = 0.4;
+
+// ── R54-F8' E1: 帝王アトモス定数(M-EMPがupdateKokuraiSkyTurn→updateEmperorAtmos一般化で消費)。
+// 排他優先: kokuraitei > dark > raitei(activeKitと同順)。非発動時は可視空(0.16,0.5)の
+// バイト同値デフォルトへ復帰(R53実証の退避/復元対称パターンを一般化するだけ)。
+// skyScale/skyClamp=null は「可視空を触らない」(黒帝はfogのみ=空の変化は雷系の特権)。
+// envSky/IBLは不可侵(鉄則)。reduceMotionは即時遷移。
+export interface EmperorAtmosSpec {
+  skyScale: number | null;
+  skyClamp: number | null;
+  fogTint: number; // scene.fog色をこの色へmix
+  fogTintMix: number; // 0..1
+  fogDensityMul: number;
+}
+export const EMPEROR_ATMOS: Record<'raitei' | 'dark' | 'kokuraitei', EmperorAtmosSpec> = {
+  // 雷帝: 浅い帯電(空をわずかに沈め、fogを微青に) — 黒雷帝(世界が変わる)との格差を保つ
+  raitei: { skyScale: 0.14, skyClamp: 0.46, fogTint: 0x0a1420, fogTintMix: 0.25, fogDensityMul: 1.0 },
+  // 黒帝: 空は触らず、fogを紫黒へ+8%濃く(闇の気配のみ)
+  dark: { skyScale: null, skyClamp: null, fogTint: 0x0d0114, fogTintMix: 0.3, fogDensityMul: 1.08 },
+  // 黒雷帝: 既存R53実装値(0.06,0.3)+fog 0x0a0114/+15% — 参照の単一真実源をここへ
+  kokuraitei: { skyScale: 0.06, skyClamp: 0.3, fogTint: 0x0a0114, fogTintMix: 1.0, fogDensityMul: 1.15 },
+};
 
 // 拡張マガジン(ext-mag)対象外の武器ID。fists(クナイ)は magazine.fire() を経由しない素手格闘で
 // 弾薬概念自体が無い(999は「表示上の∞」を示すダミー値)ため、容量パークを適用する意味がない。

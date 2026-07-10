@@ -55,6 +55,10 @@ export interface Settings {
   announcerVolume: number;
   // 動的BGM(交戦度連動のアダプティブ打楽器)を鳴らすか
   musicEnabled: boolean;
+  // R54 音響2: BGMの音量(0..1)。既定0.8=従来の実効レベル(bgmBus 1.4)と厳密一致
+  musicVolume: number;
+  // R54 音響2: ボイス(TTSアナウンス/無線)の音量倍率(0..1)。既定1=従来と同一
+  voVolume: number;
   // ── R5 リアル化: 画質ティア(low/medium/high) ──
   graphicsQuality: GraphicsQuality;
   // ── R5 ゲームパッド(PS4 DualShock 等) ──
@@ -108,6 +112,8 @@ export const SETTING_BOUNDS = {
   adsSensMul: { min: 0.3, max: 1.5 },
   screenShake: { min: 0, max: 1 },
   announcerVolume: { min: 0, max: 1 },
+  musicVolume: { min: 0, max: 1 },
+  voVolume: { min: 0, max: 1 },
   gamepadSensX: { min: 0.2, max: 5 },
   gamepadSensY: { min: 0.2, max: 5 },
   gamepadDeadzone: { min: 0.05, max: 0.3 },
@@ -148,6 +154,8 @@ export const DEFAULT_SETTINGS: Settings = {
   radarEnabled: true,
   announcerVolume: 0.65,
   musicEnabled: true,
+  musicVolume: 0.8,
+  voVolume: 1,
   graphicsQuality: 'medium',
   gamepadSensX: 2.5,
   gamepadSensY: 2.0,
@@ -254,6 +262,13 @@ export function sanitizeSettings(raw: Partial<Settings>): Settings {
       DEFAULT_SETTINGS.announcerVolume,
     ),
     musicEnabled: Boolean(merged.musicEnabled),
+    musicVolume: clamp(
+      merged.musicVolume,
+      b.musicVolume.min,
+      b.musicVolume.max,
+      DEFAULT_SETTINGS.musicVolume,
+    ),
+    voVolume: clamp(merged.voVolume, b.voVolume.min, b.voVolume.max, DEFAULT_SETTINGS.voVolume),
     graphicsQuality: GRAPHICS_QUALITIES.includes(merged.graphicsQuality)
       ? merged.graphicsQuality
       : DEFAULT_SETTINGS.graphicsQuality,

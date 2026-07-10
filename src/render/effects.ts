@@ -1614,6 +1614,109 @@ export class Effects {
     this.blasts.push({ obj: flash, life: 0.24, maxLife: 0.24 });
   }
 
+  // ── R54-F8' E1: 雷帝降臨の落雷3本(M-EMP配線: 雷帝永続化の瞬間に1回。
+  // 同時に25m内のbotへ0.3s麻痺(botStunUntil流用)はmatch側)。柱はcap96参加。rm=1本。
+  raiteiDescendBolts(pos: THREE.Vector3, reduceMotion = false): void {
+    this.shockwaveRing(pos.clone(), 5, 0x66ccff);
+    const bolts = reduceMotion ? 1 : 3;
+    for (let i = 0; i < bolts; i += 1) {
+      const a = (i / bolts) * Math.PI * 2 + Math.random() * 0.7;
+      const ground = new THREE.Vector3(
+        pos.x + Math.cos(a) * (2 + Math.random() * 1.5),
+        pos.y,
+        pos.z + Math.sin(a) * (2 + Math.random() * 1.5),
+      );
+      this._spawnLightningColumn(ground, 10, 0.2, false);
+    }
+  }
+
+  // ── R54-F8' E1: 雷禽(段2.5派生・雷帝)— 地を這う電撃3方向。M-EMP配線: 溜め段2リリース時
+  // (雷帝kit限定)、dirYaw=照準yaw。ダメージ(RAIKIN_DMG×3方向、RAIKIN_RANGE_M)はmatch側。
+  // ボルトはbuildBranchBolt=柱cap96参加。rm=中央1方向のみ(光過敏配慮)。
+  raikinStrike(origin: THREE.Vector3, dirYaw: number, reduceMotion = false): void {
+    this.impactRing(origin, 0x66ccff);
+    const dirs = reduceMotion ? [0] : [-0.5, 0, 0.5]; // RAIKIN_SPREAD_RAD と同値(視覚は独立定義)
+    for (const off of dirs) {
+      const yaw = dirYaw + off;
+      const dx = -Math.sin(yaw);
+      const dz = -Math.cos(yaw);
+      // 地表を2ホップで走る低空アーク(高さ0.3m→0.05m)
+      const mid = new THREE.Vector3(origin.x + dx * 3, origin.y + 0.05, origin.z + dz * 3);
+      const far = new THREE.Vector3(origin.x + dx * 6.5, origin.y + 0.05, origin.z + dz * 6.5);
+      this.buildBranchBolt(new THREE.Vector3(origin.x, origin.y + 0.3, origin.z), mid, 2, false, 0.14);
+      this.buildBranchBolt(new THREE.Vector3(mid.x, mid.y + 0.25, mid.z), far, 2, false, 0.12);
+      this.impactRing(far, 0x44aaff);
+    }
+  }
+
+  // ── R54-F8' E1: 影牙(段2.5派生・黒帝)— 0.4s遅れの追い斬撃の視覚(半径0.5×の暗ダイヤ)。
+  // M-EMP配線: 溜め段2リリースの KAGEGA_DELAY_S 後、元斬撃と同軌道でダメージ×KAGEGA_MULを
+  // 適用する瞬間にこれを呼ぶ。crescentsプール(Timed、per-callジオメトリ)で自己管理。
+  kagegaSlash(pos: THREE.Vector3, yaw: number): void {
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    group.rotation.y = yaw;
+    const makeDiamond = (len: number, thick: number, color: number, opacity: number, blending: THREE.Blending): THREE.Mesh => {
+      const geo = new THREE.BufferGeometry();
+      const h = len / 2;
+      const t = thick / 2;
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+        -h, 0, 0, 0, t, 0, 0, -t, 0,
+        h, 0, 0, 0, -t, 0, 0, t, 0,
+      ]), 3));
+      return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity, blending, depthWrite: false, side: THREE.DoubleSide,
+      }));
+    };
+    const core = makeDiamond(2.1, 0.16, 0x0a0812, 0.85, THREE.NormalBlending);
+    core.userData.baseOpacity = 0.85;
+    group.add(core);
+    const edge = makeDiamond(2.3, 0.24, 0x7800cc, 0.5, THREE.AdditiveBlending);
+    edge.userData.baseOpacity = 0.5;
+    edge.position.z = -0.01;
+    group.add(edge);
+    this.scene.add(group);
+    // crescentsはTimed<Mesh>型のためGroupを直接は積めない — shuraKourinFX(Timed<Group>、
+    // baseOpacityフェードtick共有)へ相乗り(寿命0.35s、per-callジオメトリはtick終了時のdispose経路)
+    this.shuraKourinFX.push({ obj: group, life: 0.35, maxLife: 0.35 });
+  }
+
+  // ── R54-F8' E2: 阿修羅降臨の格上げ — 金剛後光(金の背光リング)+光条8本。
+  // M-EMP配線: 阿修羅降臨の発動時、既存shuraKourin(3頭6腕)と同時に1回呼ぶ。
+  // 発光は全て実効≤0.55。shuraKourinFXプール相乗り(baseOpacityフェード)。rm=後光のみ。
+  asuraDescendAura(center: THREE.Vector3, reduceMotion = false): void {
+    const group = new THREE.Group();
+    const base = center.clone().add(new THREE.Vector3(-2, 0, -3)); // shuraKourinのBASEと同基準
+    // 金剛後光: 大リング(縦向き、胴の背後)
+    const halo = new THREE.Mesh(
+      new THREE.TorusGeometry(3.2, 0.12, 8, 40),
+      new THREE.MeshBasicMaterial({
+        color: 0xffb830, transparent: true, opacity: 0.5,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }),
+    );
+    halo.position.copy(base).add(new THREE.Vector3(0, 4.2, -0.6));
+    halo.userData.baseOpacity = 0.5;
+    group.add(halo);
+    if (!reduceMotion) {
+      // 光条8本(後光から放射する金のストリーク)
+      for (let i = 0; i < 8; i += 1) {
+        const a = (i / 8) * Math.PI * 2 + 0.2;
+        const ray = new THREE.Mesh(this.streakGeometry, new THREE.MeshBasicMaterial({
+          color: 0xffd060, transparent: true, opacity: 0.4,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+        ray.position.copy(halo.position).add(new THREE.Vector3(Math.cos(a) * 2.2, Math.sin(a) * 2.2, 0));
+        ray.rotation.z = a + Math.PI / 2;
+        ray.scale.set(0.5, 2.4, 1);
+        ray.userData.baseOpacity = 0.4;
+        group.add(ray);
+      }
+    }
+    this.scene.add(group);
+    this.shuraKourinFX.push({ obj: group, life: 3.5, maxLife: 3.5 });
+  }
+
   // 黒雷帝降臨フラッシュ: 自身を中心に紫電リング+周囲へ黒雷ボルト3本(タイムスロー代替の見得)
   kokuraiteiActivateFlash(center: THREE.Vector3, reduceMotion = false): void {
     this.shockwaveRing(center, 9, 0x8844ff);

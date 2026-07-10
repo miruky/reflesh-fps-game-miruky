@@ -1,0 +1,153 @@
+/* ═══════════════════════════════════════════════════════════════════
+   R54-F7 MK.III Phase 2「CINEMA & CEREMONY」専用スタイル(prefix: p2-)。
+   style.css は追記凍結のため機能別ファイル(mk3-menu.css / rogue.css と同方式)。
+   鉄則: canvas上に filter / backdrop-filter を載せない(全て純色+opacity)。
+   keyframes 不使用(transitionのみ)= 省モーション規約への構造的適合。
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── ファイナルキルカム: 武器バナー(シネマ帯下部・mono) ─────────────
+   .hud-fkc の下帯(10vh)の内側に置く。fixed は viewport 解決のため
+   hudRoot の zoom(--ui-scale)の影響を受けない(hud-fkc-flash と同根拠)。 */
+.p2-fkc-weapon {
+  position: fixed;
+  bottom: 3.4vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 89;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  color: rgba(235, 238, 242, 0.92);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.p2-fkc-weapon[hidden] {
+  display: none;
+}
+
+/* ── リザルト: ハイライトカード(マッチストーリー帯の直上) ───────── */
+.p2-highlights {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin: 10px 0 2px;
+}
+.p2-hl-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 118px;
+  padding: 8px 14px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-top-color: rgba(255, 255, 255, 0.3);
+  background: rgba(10, 12, 15, 0.55);
+}
+.p2-hl-kind {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  opacity: 0.6;
+}
+.p2-hl-label {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.p2-hl-value {
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--accent, #ff9a3c);
+}
+.p2-hl-multikill .p2-hl-value { color: #ffb14d; }
+.p2-hl-longshot .p2-hl-value { color: #6fd3ff; }
+.p2-hl-moment .p2-hl-value { color: #d7b7ff; }
+
+/* ── フォトモード・オーバーレイ ──────────────────────────────────
+   body直下・canvasの上。全て pointer-events:none(操作はキーのみ)。 */
+#p2-photo {
+  position: fixed;
+  inset: 0;
+  z-index: 6; /* canvas(0)とHUD/menuの間。photo中はHUD/menu非表示 */
+  pointer-events: none;
+}
+
+/* 構図グリッド(inline SVG・静的)。gridMode に応じて g を出し分け */
+#p2-photo .p2-grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+#p2-photo .p2-grid line {
+  stroke: rgba(255, 255, 255, 0.32);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+#p2-photo .p2-grid-g-thirds,
+#p2-photo .p2-grid-g-golden {
+  display: none;
+}
+#p2-photo.p2-grid-thirds .p2-grid-g-thirds {
+  display: block;
+}
+#p2-photo.p2-grid-golden .p2-grid-g-golden {
+  display: block;
+}
+
+/* レターボックス(シネマ2.35:1風の上下帯) */
+#p2-photo .p2-lb {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 12vh;
+  background: #05070a;
+  opacity: 0;
+  transition: opacity 0.22s ease-out;
+}
+#p2-photo .p2-lb-t { top: 0; }
+#p2-photo .p2-lb-b { bottom: 0; }
+#p2-photo.p2-letterbox-on .p2-lb { opacity: 1; }
+
+/* 撮影フラッシュ(JSがopacityを駆動。reduceMotion時はJS側でスキップ) */
+#p2-photo .p2-photo-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+}
+
+/* ヘッダ(左上): タイトル+現在フィルタ */
+#p2-photo .p2-photo-head {
+  position: absolute;
+  top: 18px;
+  left: 22px;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+#p2-photo .p2-photo-title {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.26em;
+  color: rgba(235, 238, 242, 0.9);
+}
+#p2-photo .p2-photo-filter {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--accent, #ff9a3c);
+}
+
+/* キーガイド(下部中央・mono) */
+#p2-photo .p2-photo-keys {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: rgba(220, 226, 233, 0.75);
+  white-space: nowrap;
+}

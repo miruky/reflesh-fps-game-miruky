@@ -1,4 +1,5 @@
 import '../mk3-menu.css';
+import '../mk3-phase2.css'; // R54-F7: ハイライトカード/フォトモード様式(p2-)
 import { easeOutCubic } from '../core/easing';
 import { BUILD_LABEL } from '../version';
 import {
@@ -124,6 +125,8 @@ export interface MenuCallbacks {
   onRestart: () => void;
   onQuit: () => void;
   onSettingsChanged: () => void;
+  // R54-F7 フォトモード(ポーズ画面から遷移。main.ts が mode='photo' へ切り替える)
+  onPhoto: () => void;
 }
 
 // 6軸ステータスバーの表示順とラベル(値は computeWeaponBars で WeaponDef から導出)
@@ -1644,6 +1647,7 @@ export class Menu {
         <div class="pause-panel" role="dialog" aria-modal="true" aria-label="一時停止">
           <h1>一時停止</h1>
           <button class="menu-start" data-id="resume">再開する</button>
+          <button class="menu-quiet" data-id="photo">フォトモード</button>
           <section class="menu-section">
             <h2>設定</h2>
             <div data-id="settings"></div>
@@ -1654,6 +1658,7 @@ export class Menu {
     `;
     this.renderSettings(this.query('settings'));
     this.query('resume').addEventListener('click', () => this.callbacks.onResume());
+    this.query('photo').addEventListener('click', () => this.callbacks.onPhoto());
     this.query('quit').addEventListener('click', () => this.callbacks.onQuit());
     this.query('resume').focus({ preventScroll: true });
   }
@@ -1709,6 +1714,7 @@ export class Menu {
             ${result.rogue !== undefined ? `<div class="aar-cell"><span class="aar-k">輪廻・供物</span><span class="aar-v"><b>${result.rogue.cards.length}</b><em>枚</em></span></div>` : ''}
           </div>
           ${result.rogue !== undefined && result.rogue.cards.length > 0 ? `<div class="rogue-aar-cards">${result.rogue.cards.map((c) => `<span class="rogue-chip">${c}</span>`).join('')}</div>` : ''}
+          ${this.highlightsHtml(result)}
           ${this.matchStoryHtml(result, progress)}
           <table class="result-table">
             <thead><tr><th>名前</th><th>キル</th><th>デス</th></tr></thead>
@@ -1737,6 +1743,28 @@ export class Menu {
     this.countUp(this.query('aar-streak'), result.summary.bestStreak);
     this.countUp(this.query('aar-score'), Math.round(grade.score));
     this.query('restart').focus({ preventScroll: true });
+  }
+
+  // R54-F7: ハイライトカード(最大3枚)。マッチストーリー帯の直上に置く「その試合の見どころ」。
+  // 値は全て match 側の内部生成文字列(ユーザー入力なし=HTML安全)。0枚なら帯ごと出さない
+  private highlightsHtml(result: MatchResult): string {
+    const cards = result.highlights ?? [];
+    if (cards.length === 0) return '';
+    const kindCap = { multikill: 'MULTIKILL', longshot: 'LONGSHOT', moment: 'MOMENT' } as const;
+    return (
+      '<div class="p2-highlights">' +
+      cards
+        .map(
+          (c) => `
+        <div class="p2-hl-card p2-hl-${c.kind}">
+          <span class="p2-hl-kind">${kindCap[c.kind]}</span>
+          <span class="p2-hl-label">${c.label}</span>
+          <span class="p2-hl-value">${c.value}</span>
+        </div>`,
+        )
+        .join('') +
+      '</div>'
+    );
   }
 
   // R53 MK.III: マッチストーリー(時系列風イベント帯)。実タイムスタンプは存在しないため

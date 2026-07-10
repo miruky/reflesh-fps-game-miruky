@@ -2,7 +2,7 @@ import type { SoundProfile } from '../game/weapons';
 import type { MoodId, StagePalette } from '../game/stage';
 import type { SurfaceMaterial, SurfaceSet } from '../game/materials';
 import type { PowerUpKind } from '../game/zombie-economy';
-import { AmbienceEngine, deriveAmbientProfile } from './ambience';
+import { AmbienceEngine, deriveAmbientProfile, ZombieHordeBed } from './ambience';
 import { fillBrownNoise, makeSeamlessLoop } from './ambience';
 
 // ── 人間ライクなアナウンサー音声(③) ─────────────────────────────────
@@ -150,6 +150,26 @@ export const REVERB_PRESETS: Record<
   indoor: { durationS: 0.7, t60: 0.28, preDelayS: 0.003, wet: 0.32, ret: 0.65 },
   dead: { durationS: 0.35, t60: 0.12, preDelayS: 0.002, wet: 0.08, ret: 0.5 },
 };
+
+// R54 音響2: 屋内/屋外の残響クロスフェード(0=ステージプリセット素の値、1=屋内寄り)。
+// v=0 は wet/ret/lpf/longMul がプリセット既定と厳密一致(既存挙動不変)。
+// 単一コンボルバのまま return 側の性格(戻り量/暗さ/ロングテール)を混ぜる設計で、
+// IR差し替え(setReverbのWebKitグリッチ回避手順)を跨がずに滑らかな出入りを作る。
+export function indoorReverbBlend(
+  v01: number,
+  preset: ReverbPreset,
+): { wet: number; ret: number; lpfHz: number; longMul: number } {
+  const v = Math.max(0, Math.min(1, v01));
+  const base = REVERB_PRESETS[preset];
+  const ind = REVERB_PRESETS.indoor;
+  const baseLongMul = preset === 'dead' || preset === 'indoor' ? 0.4 : 1;
+  return {
+    wet: base.wet + (ind.wet - base.wet) * v,
+    ret: base.ret + (ind.ret - base.ret) * v,
+    lpfHz: 5200 - 2000 * v,
+    longMul: baseLongMul + (0.4 - baseLongMul) * v,
+  };
+}
 
 // インパルス応答の合成: プリディレイ(先頭ゼロ埋め=DelayNode不要)→初期反射タップ→
 // 指数減衰ノイズテール(250Hz実LPのbassMix+時変ダンピング8k→1.2kで空気吸収を再現)→
@@ -408,6 +428,77 @@ export const BGM_ROOT_HZ = 73.42; // D2
 // 第3引数 rootHz でムード毎の調(基準周波数)を切替。既存の2引数呼び出しは D2 基準で無影響。
 export function bgmNoteHz(semitone: number, octave = 0, rootHz = BGM_ROOT_HZ): number {
   return rootHz * Math.pow(2, semitone / 12 + octave);
+}
+
+// ── R54 音響2: 統一動機「帝王の指紋」= ♭II(ナポリ和音)借用 ──────────────
+// 黒雷帝BGM(emperor-kokurai)のナポリ進行を全プロファイル共通の動機として輸出する。
+// ♭II6(ナポリ6度: B♭・E♭・G = 半音8/13/17)は根音Dに対する古典的な「暗転の予兆」。
+export const NEAPOLITAN_BAR: readonly number[] = [8, 13, 17];
+
+// 最終小節(4小節進行の4小節目)を motifWeight01 で段階的にナポリ化する純関数。
+// w=0 は progression の素の和音と参照同一(バイト同値=既存挙動不変)。
+// 段階は声部連結(voice-leading)で滑らかに:
+//   w<1/3: 素の和音 / 1/3≤w<2/3: 中声のみ♭2(+12)へ寄せた暗転 / w≥2/3: ♭II6 [8,13,17]
+// 3和音以外(将来の拡張)には中間段を持たず w≥2/3 で全置換する。
+export function barFor(
+  bar: number,
+  motifWeight01: number,
+  progression: readonly (readonly number[])[] = BGM_PROGRESSION,
+): readonly number[] {
+  const n = progression.length;
+  const idx = ((bar % n) + n) % n;
+  const base = progression[idx]!;
+  const w = Math.max(0, Math.min(1, motifWeight01));
+  if (w < 1 / 3 || idx !== n - 1) return base;
+  if (base.length !== 3) return w >= 2 / 3 ? NEAPOLITAN_BAR : base;
+  if (w < 2 / 3) return [base[0]!, 13, base[2]!];
+  return NEAPOLITAN_BAR;
+}
+
+// ── R54 音響2: 排他BGMステム ──────────────────────────────────────────
+// 試合状況レイヤ(設置/狂乱/物語動機/ボス決闘)を1本だけ、専用Gain(bgmComp手前)へ差し込む。
+export type BgmStemId = 'snd-planted' | 'zombie-madness' | 'story-motif' | 'boss-duel';
+export const BGM_STEM_IDS: readonly BgmStemId[] = [
+  'snd-planted',
+  'zombie-madness',
+  'story-motif',
+  'boss-duel',
+];
+
+// ステム専用Gainの目標値。強度0でも床0.35で薄く鳴る(存在は消えない)
+export function stemTargetGain(intensity01: number): number {
+  const v = Math.max(0, Math.min(1, intensity01));
+  return 0.9 * (0.35 + 0.65 * v);
+}
+
+// ── R54 音響2: 後方減衰(頭部遮蔽の近似) ──────────────────────────────
+// 後方の音源は -3dB + 高域を15%絞る(方向知覚の補助。遮蔽occludedとは独立に併用可)
+export const BEHIND_GAIN_MUL = 0.708;
+export const BEHIND_LP_MUL = 0.85;
+
+// ── R54 音響2: ゾンビ発声(フォルマント風)の決定的レシピ ─────────────────
+// 声帯(saw)の基音growlHzと、フォルマント2山(f1/f2)のスイープで4種の声を作る。
+// variant(0..2)は音域倍率 0.85/1.0/1.18 の3声(個体差)。範囲外は3で折り返す。
+export type ZombieVocalKind = 'spawn' | 'close' | 'hurt' | 'death';
+export function zombieVocalRecipe(
+  kind: ZombieVocalKind,
+  variant = 0,
+): { f1: number; f1End: number; f2: number; f2End: number; durS: number; gain: number; growlHz: number } {
+  const vMul = [0.85, 1, 1.18][((Math.floor(variant) % 3) + 3) % 3]!;
+  switch (kind) {
+    case 'spawn': // 低い呻き(現れの遠吠え)
+      return { f1: 300 * vMul, f1End: 240 * vMul, f2: 900 * vMul, f2End: 760 * vMul, durS: 0.5, gain: 0.3, growlHz: 82 * vMul };
+    case 'close': // 威嚇の唸り(接近。上ずるフォルマント)
+      return { f1: 520 * vMul, f1End: 620 * vMul, f2: 1500 * vMul, f2End: 1750 * vMul, durS: 0.32, gain: 0.42, growlHz: 96 * vMul };
+    case 'hurt': // 短い悲鳴(急落するフォルマント)
+      return { f1: 640 * vMul, f1End: 430 * vMul, f2: 1800 * vMul, f2End: 1150 * vMul, durS: 0.16, gain: 0.38, growlHz: 120 * vMul };
+    case 'death': // 落ちていく喉鳴り(最長)
+      return { f1: 360 * vMul, f1End: 190 * vMul, f2: 1000 * vMul, f2End: 540 * vMul, durS: 0.62, gain: 0.4, growlHz: 74 * vMul };
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
 }
 
 // combat-heatに応じた各レイヤーの音量(0..1)。
@@ -976,7 +1067,7 @@ export const RAITEI_AURA_SPEC = {
 // PowerUpKind は game/zombie-economy.ts を単一の真実として import する(型の二重定義防止)
 
 // 無線話者。kuroganeのみ電子的歪み(kuroganePhase/Defeatと同系統の黒雷帝トーン)
-export type RadioSpeaker = 'kagerou' | 'homura' | 'hibana' | 'kurogane';
+export type RadioSpeaker = 'kagerou' | 'homura' | 'hibana' | 'kurogane' | 'rei';
 
 // 話者ごとの基準プロソディ(kurogane=低pitch/遅rate、homura=速め)
 const RADIO_PROSODY: Record<RadioSpeaker, Prosody> = {
@@ -984,6 +1075,8 @@ const RADIO_PROSODY: Record<RadioSpeaker, Prosody> = {
   homura: { pitch: 1.05, rate: 1.18 },
   hibana: { pitch: 1.15, rate: 1.02 },
   kurogane: { pitch: 0.52, rate: 0.8 },
+  // R54: アナウンサー'rei'(令) — 落ち着いた司令部の声。ストリーク告知を統一する
+  rei: { pitch: 0.9, rate: 1.05 },
 };
 export function radioProsodyBase(speaker: RadioSpeaker): Prosody {
   return RADIO_PROSODY[speaker];
@@ -1027,6 +1120,8 @@ export const RADIO_SQUELCH_SPECS: Record<
   homura: { carrierHz: 2200, noiseHz: 3800, q: 5 },
   hibana: { carrierHz: 2600, noiseHz: 4200, q: 6 },
   kurogane: { carrierHz: 1200, noiseHz: 2600, q: 3, drive: 6, curve: 'asym' },
+  // R54: アナウンサー'rei' — 明瞭寄りの中庸帯域(司令部回線のクリーンさ)
+  rei: { carrierHz: 2000, noiseHz: 3500, q: 5 },
 };
 
 export class SoundKit {
@@ -1117,7 +1212,20 @@ export class SoundKit {
   // ── 動的BGM(combat-heat連動のアダプティブ・レイヤー。音源ファイル不要) ──
   private bgmBus: GainNode | null = null;
   private bgmComp: DynamicsCompressorNode | null = null; // BGM専用グルーコンプ(duckBus前)
-  private readonly bgmBusGain = 1.4; // V16: SFXの-8〜-10dB下に定位する実効レベル(専用コンプで纏める)
+  // R54 音響2の状態: BGM/VO音量・排他ステム・動機の重み・屋内度・SE用スロットル/ループ
+  private musicVol = 0.8; // 既定0.8で実効1.4(V16基準)= bgmGainNow()参照
+  private voVol = 1;
+  private bgmStemGainNode: GainNode | null = null;
+  private bgmStemPlaying: BgmStemId | null = null;
+  private bgmStemIntensity = 1;
+  private bgmStemFadeOutUntil = 0; // >0=フェードアウト完了予定時刻(tickBgmが到達時に内容を畳む)
+  private bgmMotifWeight = 0;
+  private indoor01 = 0;
+  private lastZombieVocalS = 0;
+  private lastWallKickS = 0;
+  private slideSrc: AudioBufferSourceNode | null = null;
+  private slideGain: GainNode | null = null;
+  private hordeBed: ZombieHordeBed | null = null;
   private combatHeat = 0; // 0(静)..1(交戦)
   private musicEnabled = true;
   private nextBeatTime = 0; // look-aheadスケジューラの次拍時刻(ctx基準)
@@ -1182,7 +1290,7 @@ export class SoundKit {
     // 専用コンプは共有マスターリミッターの手前で BGM のピークだけを纏め、銃声トランジェントを
     // マスターで潰さない(SFXの抜けを保ちつつ、BGMを一段大きく前へ出す)。
     this.bgmBus = this.ctx.createGain();
-    this.bgmBus.gain.value = this.bgmBusGain;
+    this.bgmBus.gain.value = this.bgmGainNow();
     this.bgmComp = this.ctx.createDynamicsCompressor();
     this.bgmComp.threshold.value = -12;
     this.bgmComp.knee.value = 6;
@@ -1282,13 +1390,13 @@ export class SoundKit {
   // 避けるため、returnを一瞬絞ってから差し替えて戻す
   setReverb(p: ReverbPreset): void {
     this.currentPreset = p;
-    this.presetWet = REVERB_PRESETS[p].wet;
+    this.presetWet = indoorReverbBlend(this.indoor01, p).wet;
     if (!this.ctx || !this.convolverStage || !this.reverbReturn) return;
     const now = this.ctx.currentTime;
     const ret = this.reverbReturn.gain;
     ret.cancelScheduledValues(now);
     ret.setTargetAtTime(0.0001, now, 0.02);
-    const target = REVERB_PRESETS[p].ret;
+    const target = indoorReverbBlend(this.indoor01, p).ret;
     setTimeout(() => {
       if (!this.ctx || !this.convolverStage || !this.reverbReturn) return;
       this.convolverStage.buffer = this.buildIr(p);
@@ -1298,11 +1406,26 @@ export class SoundKit {
       // 雪原/屋内でスナイパーだけ数秒響く矛盾を防ぐ(ロングテールも空間に従う)
       if (this.longReturn) {
         this.longReturn.gain.setValueAtTime(
-          p === 'dead' || p === 'indoor' ? 0.7 * 0.4 : 0.7,
+          0.7 * indoorReverbBlend(this.indoor01, p).longMul,
           t,
         );
       }
     }, 60);
+  }
+
+  // R54 音響2: 屋内度(0..1)。屋根下/建屋内の判定はmatch側(M-AU)が与える。
+  // εガードで毎フレーム呼び可。瀕死こもり(setHealthState)とは低い方を採用して共存する。
+  setIndoor01(v: number): void {
+    const t = Math.max(0, Math.min(1, v));
+    if (Math.abs(t - this.indoor01) < 0.02) return;
+    this.indoor01 = t;
+    const b = indoorReverbBlend(t, this.currentPreset);
+    this.presetWet = b.wet;
+    if (!this.ctx || !this.reverbReturn) return;
+    const now = this.ctx.currentTime;
+    this.reverbReturn.gain.setTargetAtTime(b.ret, now, 0.25);
+    this.reverbLpf?.frequency.setTargetAtTime(Math.min(b.lpfHz, this.lastHealthCutoff), now, 0.25);
+    this.longReturn?.gain.setTargetAtTime(0.7 * b.longMul, now, 0.25);
   }
 
   // 端末ローカルの高品位音声を選んでキャッシュする。Chromeは初回getVoices()が空のため
@@ -1353,7 +1476,7 @@ export class SoundKit {
     const { pitch, rate } = opts.prosody ?? prosodyFor(label);
     u.pitch = pitch;
     u.rate = rate;
-    u.volume = volume * this.masterVol;
+    u.volume = volume * this.masterVol * this.voVol;
     if (opts.onEnd) {
       const onEnd = opts.onEnd;
       u.onend = () => onEnd();
@@ -1373,10 +1496,13 @@ export class SoundKit {
 
   // 音量設定は常に cancel+setValueAtTime(ダッキング等の自動化イベント残留で
   // スライダーが恒久破壊されるのを防ぐ規約)。ensure()前の呼び出しに備え全nullガード
-  setVolumes(master: number, sfx: number, ui: number): void {
+  setVolumes(master: number, sfx: number, ui: number, music?: number, vo?: number): void {
     this.masterVol = master;
     this.sfxVol = sfx;
     this.uiVol = ui;
+    // R54: 第4/5引数は省略可(旧3引数呼び出しは music/vo を変更しない=後方互換)
+    if (music !== undefined) this.musicVol = Math.max(0, Math.min(1, music));
+    if (vo !== undefined) this.voVol = Math.max(0, Math.min(1, vo));
     const now = this.ctx?.currentTime ?? 0;
     const setNow = (node: GainNode | null, v: number): void => {
       if (!node) return;
@@ -1388,6 +1514,13 @@ export class SoundKit {
     setNow(this.uiBus, ui);
     setNow(this.wetMaster, sfx);
     setNow(this.ambBus, 0.5 * sfx);
+    // BGM: 停止中(メニュー等)はミュート値を上書きしない(tickBgm再開時にbgmGainNow()適用)
+    if (!this.bgmStopped) setNow(this.bgmBus, this.bgmGainNow());
+  }
+
+  // BGMバスの実効ゲイン。musicVolume既定0.8で従来の1.4(V16: SFXの-8〜-10dB下)と厳密一致
+  private bgmGainNow(): number {
+    return 1.75 * this.musicVol;
   }
 
   // 発音台帳: 現在鳴っている(+予約済みの)ボイス数。縮退梯子の判定に使う。
@@ -1648,8 +1781,13 @@ export class SoundKit {
 
   // 距離と方向を持つ他者の発砲音。統一距離モデル: 緩い減衰(床0.15=索敵キュー保持)
   // +空気吸収LPF+音速到達遅延+距離連動の残響比+壁遮蔽のこもり
-  enemyShot(pan: number, distance: number, occluded = false): void {
+  enemyShot(pan: number, distance: number, occluded = false, behind = false): void {
     const p = enemyShotParams(distance, occluded);
+    // R54: 後方減衰(enemyFootstepと同じ規約)。占有帯域ごと絞る
+    if (behind) {
+      p.att *= BEHIND_GAIN_MUL;
+      p.airLpHz *= BEHIND_LP_MUL;
+    }
     const wet = Math.min(0.85, Math.max(this.presetWet * 0.5, this.presetWet * p.wetMul));
     // 最近接数体はフル3層、混雑時はボディ+トーンの2層へ縮退
     const full = this.liveVoices() < 250;
@@ -1946,8 +2084,14 @@ export class SoundKit {
   // 連続キルのアナウンサー音声。音声ファイルを持たずSpeechSynthesisで読み上げる。
   // 非対応・無音設定時は合成トーンのジングルにフォールバックする。volは0..1の設定値。
   announceStreak(label: string, vol: number): void {
-    // 良い声があれば人間ライクに読み上げ、無ければ上昇ジングルへ退避する
-    this.speakAnnounce(label, vol, { cancel: true, emphasize: true, fallbackJingle: true });
+    // 良い声があれば人間ライクに読み上げ、無ければ上昇ジングルへ退避する。
+    // R54: プロソディはアナウンサー'rei'へ統一(ラベル毎のばらつきを排し司令部の声にする)
+    this.speakAnnounce(label, vol, {
+      cancel: true,
+      emphasize: true,
+      fallbackJingle: true,
+      prosody: radioProsodyFor('rei'),
+    });
   }
 
   // アナウンサー音声が使えない時の上昇ジングル(長三度の3音チェーン)
@@ -2035,11 +2179,90 @@ export class SoundKit {
   // ステージ/ムード別のBGMプロファイルへ切替(試合開始時に main から配線)。
   // 同一キーは早期return。再生中に変わった場合のみ stopBgm() で拍/鳴り残しを畳み、
   // 次の tickBgm で新プロファイルのイントロから立ち上げ直す(launch時は通常bgmStopped=true)。
-  setMusicProfile(key: BgmProfileKey): void {
+  // motifWeight01(省略時0)は「帝王の指紋」♭II動機の重み(barFor参照)。0=既存と同一。
+  setMusicProfile(key: BgmProfileKey, motifWeight01 = 0): void {
+    this.bgmMotifWeight = Math.max(0, Math.min(1, motifWeight01));
     if (key === this.profileKey) return;
     this.profileKey = key;
     this.profile = BGM_PROFILES[key];
     if (!this.bgmStopped) this.stopBgm();
+  }
+
+  // ── R54 音響2: 排他BGMステム(設置/狂乱/物語動機/ボス決闘) ──────────────
+  // 内容(拍スケジュール)は tickBgm が bgmStemPlaying を見て差し込む(帝王レイヤと同形)。
+  // 出力は bgmComp 手前の専用Gainで、0.8秒のクロスフェードで出入りする。
+  // null 指定はフェードアウト完了まで内容を鳴らし切ってから畳む(ブツ切り防止)。
+  setBgmStem(id: BgmStemId | null, intensity01 = 1): void {
+    this.bgmStemIntensity = Math.max(0, Math.min(1, intensity01));
+    if (!this.ctx || !this.bgmBus) {
+      // ensure()前: 状態だけ持ち、ノードはtickBgm経路の初回ensureStemGain()で作る
+      this.bgmStemPlaying = id;
+      this.bgmStemFadeOutUntil = 0;
+      return;
+    }
+    const g = this.ensureStemGain().gain;
+    const now = this.ctx.currentTime;
+    if (id) {
+      this.bgmStemPlaying = id;
+      this.bgmStemFadeOutUntil = 0;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(Math.max(0.0001, g.value), now);
+      g.linearRampToValueAtTime(stemTargetGain(this.bgmStemIntensity), now + 0.8);
+    } else if (this.bgmStemPlaying) {
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(Math.max(0.0001, g.value), now);
+      g.linearRampToValueAtTime(0.0001, now + 0.8);
+      this.bgmStemFadeOutUntil = now + 0.85;
+    }
+  }
+
+  private ensureStemGain(): GainNode {
+    if (this.bgmStemGainNode) return this.bgmStemGainNode;
+    const g = this.ctx!.createGain();
+    g.gain.value = 0.0001;
+    g.connect(this.bgmBus!); // bgmBus→bgmComp→duckBus: ステムもBGMのグルーとダックに従う
+    this.bgmStemGainNode = g;
+    return g;
+  }
+
+  // ステム音色。bus≠sfxBusのためrouteOutのwet送りは掛からない(ドライなBGM内声)
+  private stemVoice(
+    id: BgmStemId,
+    beatInBar: number,
+    chord: readonly number[],
+    delayS: number,
+    beatDur: number,
+    wide: number,
+    p: BgmProfile,
+  ): void {
+    const bus = this.bgmStemGainNode ?? this.ensureStemGain();
+    const dense = this.bgmStemIntensity > 0.6;
+    switch (id) {
+      case 'snd-planted': // 起爆タイマーの緊迫チック(毎拍)+小節頭の沈む脈動
+        this.noiseBurst({ durationS: 0.012, filterHz: 5200, filterType: 'bandpass', q: 9, gain: 0.11, delayS, attackS: 0.0005, pan: wide, bus });
+        if (dense) this.noiseBurst({ durationS: 0.01, filterHz: 6400, filterType: 'bandpass', q: 9, gain: 0.07, delayS: delayS + beatDur / 2, attackS: 0.0005, pan: -wide, bus });
+        if (beatInBar === 0) this.tone({ freq: bgmNoteHz(chord[0]!, 0, p.rootHz), endFreq: bgmNoteHz(chord[0]!, 0, p.rootHz) * 0.94, durationS: beatDur * 1.4, type: 'sine', gain: 0.06, drive: 4, curve: 'asym', delayS, bus });
+        break;
+      case 'zombie-madness': // 三全音の不協刺し(2・4拍)+小節頭の唸り落ち
+        if (beatInBar === 1 || beatInBar === 3) this.tone({ freq: bgmNoteHz(chord[0]! + 6, 1, p.rootHz), durationS: beatDur * 0.5, type: 'sawtooth', gain: 0.035, drive: 5, curve: 'tanh', detuneCents: 12, delayS, pan: wide, bus });
+        if (beatInBar === 0) this.tone({ freq: bgmNoteHz(chord[0]!, 0, p.rootHz) * 0.5, endFreq: bgmNoteHz(chord[0]!, 0, p.rootHz) * 0.47, durationS: beatDur * 1.8, type: 'sawtooth', gain: 0.045, drive: 7, curve: 'asym', delayS, bus });
+        break;
+      case 'story-motif': // 帝王の指紋: ♭II(半音13)→根音オクターブ(12)の解決動機
+        if (beatInBar === 0) this.tone({ freq: bgmNoteHz(13, 1, p.rootHz), durationS: beatDur * 1.4, type: 'triangle', gain: 0.05, attackS: 0.02, detuneCents: 5, pan: wide * 0.6, bus });
+        if (beatInBar === 2) this.tone({ freq: bgmNoteHz(12, 1, p.rootHz), durationS: beatDur * 1.2, type: 'triangle', gain: 0.042, attackS: 0.02, detuneCents: -5, pan: -wide * 0.6, bus });
+        break;
+      case 'boss-duel': // 太鼓の二連打(1・3拍)+小節頭の完全五度ホーン
+        if (beatInBar === 0 || beatInBar === 2) {
+          this.tone({ freq: 96, endFreq: 40, durationS: 0.12, type: 'sine', gain: 0.1, drive: 8, curve: 'tanh', delayS, bus });
+          if (dense) this.tone({ freq: 88, endFreq: 38, durationS: 0.1, type: 'sine', gain: 0.07, drive: 8, curve: 'tanh', delayS: delayS + beatDur * 0.25, bus });
+        }
+        if (beatInBar === 0) this.tone({ freq: bgmNoteHz(chord[0]! + 7, 1, p.rootHz), durationS: beatDur * 2.2, type: 'sawtooth', gain: 0.03, attackS: 0.08, drive: 3, curve: 'tanh', detuneCents: 8, bus });
+        break;
+      default: {
+        const _exhaustive: never = id;
+        return _exhaustive;
+      }
+    }
   }
 
   // R53 帝王BGM転調(M3配線: 帝王状態の遷移時に呼ぶ。既に同状態なら冪等)。
@@ -2052,9 +2275,9 @@ export class SoundKit {
     this.emperorBgmState = state;
     if (state === 'kokuraitei') {
       if (this.profileKey !== 'emperor-kokurai') this.emperorPrevProfileKey = this.profileKey;
-      this.setMusicProfile('emperor-kokurai');
+      this.setMusicProfile('emperor-kokurai', this.bgmMotifWeight);
     } else if (prev === 'kokuraitei') {
-      if (this.emperorPrevProfileKey) this.setMusicProfile(this.emperorPrevProfileKey);
+      if (this.emperorPrevProfileKey) this.setMusicProfile(this.emperorPrevProfileKey, this.bgmMotifWeight);
       this.emperorPrevProfileKey = null;
     }
   }
@@ -2092,7 +2315,7 @@ export class SoundKit {
       this.bgmStopped = false;
       this.prevHeat = this.combatHeat; // 再開直後の立ち上がりをライザー誤発火にしない
       this.bgmBus.gain.cancelScheduledValues(now);
-      this.bgmBus.gain.setTargetAtTime(this.bgmBusGain, now, 0.05);
+      this.bgmBus.gain.setTargetAtTime(this.bgmGainNow(), now, 0.05);
     }
     // 初回/取り残し時は現在時刻へ寄せ直す(過去拍の取り戻しによるノード洪水を防ぐ)
     if (this.nextBeatTime === 0 || this.nextBeatTime < now) this.nextBeatTime = now + 0.1;
@@ -2116,7 +2339,7 @@ export class SoundKit {
       const delay = this.nextBeatTime - now;
       const beatInBar = this.beatIndex % 4;
       const bar = Math.floor(this.beatIndex / 4) % p.progression.length;
-      const chord = p.progression[bar]!;
+      const chord = barFor(bar, this.bgmMotifWeight, p.progression);
       // ステレオ幅: hats/arp/lead を拍パリティで ±0.3 に振る。キック/ベース/sub基音はセンター。
       const wide = this.beatIndex % 2 === 0 ? -0.3 : 0.3;
       // 3層パンチキック(全拍・percレイヤー。sparseは1拍目のみでhalf-time化)
@@ -2176,6 +2399,15 @@ export class SoundKit {
       if (this.emperorBgmState === 'raitei' && beatInBar === 2) {
         this.tone({ freq: bgmNoteHz(chord[2]!, 3, p.rootHz), durationS: 0.12, type: 'triangle', gain: 0.035, delayS: delay, detuneCents: 6, pan: wide, bus: this.bgmBus });
         this.noiseBurst({ durationS: 0.014, filterHz: 8500, filterType: 'highpass', gain: 0.016, delayS: delay + 0.02, attackS: 0.001, pan: -wide, bus: this.bgmBus });
+      }
+      // ── R54 排他ステム差し込み(フェードアウト中は鳴らし切ってから畳む) ──
+      if (this.bgmStemPlaying) {
+        if (this.bgmStemFadeOutUntil > 0 && now >= this.bgmStemFadeOutUntil) {
+          this.bgmStemPlaying = null;
+          this.bgmStemFadeOutUntil = 0;
+        } else {
+          this.stemVoice(this.bgmStemPlaying, beatInBar, chord, delay, beatDur, wide, p);
+        }
       }
       // パッド(小節頭で3和音)+ sub-drone(小節頭で地響きの持続層)。
       // 低heat(<0.4)非sparseは半小節頭にもパッドを重ねidleの空白を埋める
@@ -2657,7 +2889,11 @@ export class SoundKit {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
     this.healthLp?.frequency.setTargetAtTime(cutoff, now, 0.08);
-    this.reverbLpf?.frequency.setTargetAtTime(Math.min(5200, cutoff), now, 0.08);
+    this.reverbLpf?.frequency.setTargetAtTime(
+      Math.min(indoorReverbBlend(this.indoor01, this.currentPreset).lpfHz, cutoff),
+      now,
+      0.08,
+    );
     // 回復したら沈めていたBGMも戻す(直近発砲のダッキングとは競合させない)
     if (this.duckRecoverTarget > prevTarget && this.duckBus && now > this.lastShotS + 0.5) {
       this.duckBus.gain.setTargetAtTime(this.duckRecoverTarget, now, 0.3);
@@ -3566,36 +3802,146 @@ export class SoundKit {
     this.tone({ freq: SHURA_KOURIN_SPEC.auraDroneHz, endFreq: SHURA_KOURIN_SPEC.auraDroneEndHz, durationS: SHURA_KOURIN_SPEC.auraDroneDurationS, type: 'sawtooth', gain: SHURA_KOURIN_SPEC.auraDroneGain, drive: 3, delayS: 0.2 });
   }
 
+  // ── R54 音響2: 移動SE現代化(setSurfaceMaterialの現在材質を反映) ──────────
+  // 材質→摩擦音色の共通スペック(スライド/ウォールラン系で共有)
+  private scrapeSpec(mat: SurfaceMaterial): { hz: number; type: BiquadFilterType; q: number; grit: number } {
+    switch (mat) {
+      case 'metal':
+        return { hz: 1500, type: 'bandpass', q: 2.5, grit: 1 };
+      case 'concrete':
+        return { hz: 900, type: 'bandpass', q: 1.1, grit: 0.8 };
+      case 'wood':
+        return { hz: 650, type: 'bandpass', q: 1.4, grit: 0.5 };
+      case 'sand':
+        return { hz: 480, type: 'lowpass', q: 0.7, grit: 0.3 };
+      case 'dirt':
+        return { hz: 420, type: 'lowpass', q: 0.7, grit: 0.3 };
+      case 'grass':
+        return { hz: 380, type: 'lowpass', q: 0.6, grit: 0.2 };
+      case 'snow':
+        return { hz: 1100, type: 'bandpass', q: 0.8, grit: 0.6 };
+      default: {
+        const _exhaustive: never = mat;
+        return _exhaustive;
+      }
+    }
+  }
+
+  // スライド開始(材質ループ+速度ピッチ)。maxDurSは保険の自動停止(slideStop未配線でも漏れない)
+  slideStart(speed01 = 1, maxDurS = 1.5): void {
+    if (!this.ctx || !this.noiseBuffer || !this.sfxBus) return;
+    this.slideStop(); // 二重開始はまず畳む(ノード漏れ防止)
+    const sp = Math.max(0, Math.min(1, speed01));
+    const spec = this.scrapeSpec(this.surface.floor);
+    const ctx = this.ctx;
+    const t0 = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    src.loop = true;
+    src.playbackRate.value = 0.8 + 0.5 * sp;
+    const filter = ctx.createBiquadFilter();
+    filter.type = spec.type;
+    filter.frequency.value = spec.hz * (0.85 + 0.45 * sp);
+    filter.Q.value = spec.q;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.16 + 0.1 * sp, t0 + 0.05);
+    // 保険の自動停止手前でランプダウン(ブツ切り防止)
+    gain.gain.setTargetAtTime(0.0001, t0 + Math.max(0.1, maxDurS - 0.1), 0.04);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.sfxBus);
+    if (this.wetLow && this.presetWet > 0.001) gain.connect(this.wetLow);
+    src.start(t0, this.rng() * 0.9);
+    src.stop(t0 + maxDurS);
+    this.voiceLog.push(t0 + maxDurS + 0.05);
+    this.longVoices.add(src); // quiesce()で確実に停止
+    src.onended = () => {
+      try {
+        src.disconnect();
+        filter.disconnect();
+        gain.disconnect();
+      } catch {
+        /* already disconnected */
+      } finally {
+        this.longVoices.delete(src);
+        src.onended = null;
+        if (this.slideSrc === src) {
+          this.slideSrc = null;
+          this.slideGain = null;
+        }
+      }
+    };
+    this.slideSrc = src;
+    this.slideGain = gain;
+    // 滑り出しのスカッフ(材質の粒)
+    this.noiseBurst({ durationS: 0.05, filterHz: spec.hz * 1.6, filterType: 'bandpass', q: spec.q, gain: 0.1 + 0.08 * spec.grit, attackS: 0.002 });
+  }
+
+  // スライド終了(80msで畳む)。未開始時は何もしない
+  slideStop(): void {
+    if (!this.ctx || !this.slideSrc || !this.slideGain) return;
+    const now = this.ctx.currentTime;
+    this.slideGain.gain.cancelScheduledValues(now);
+    this.slideGain.gain.setTargetAtTime(0.0001, now, 0.03);
+    try {
+      this.slideSrc.stop(now + 0.15);
+    } catch {
+      /* already stopped */
+    }
+    this.slideSrc = null;
+    this.slideGain = null;
+  }
+
+  // 旧API互換: 一発呼びのスライド(0.42sで自動減衰)。既存呼び出し(player.ts)は無改修で現代音色になる
   slide(): void {
-    this.noiseBurst({ durationS: 0.35, filterHz: 420, filterType: 'lowpass', gain: 0.25 });
+    this.slideStart(0.85, 0.42);
   }
 
+  // 乗り越え: 手つき(材質の芯+粒)→衣擦れ→体の引き上げの三段
   mantle(): void {
-    this.noiseBurst({ durationS: 0.12, filterHz: 500, filterType: 'bandpass', gain: 0.22 });
-    this.noiseBurst({
-      durationS: 0.08,
-      filterHz: 350,
-      filterType: 'lowpass',
-      gain: 0.2,
-      delayS: 0.18,
-    });
+    const spec = this.scrapeSpec(this.surface.wall);
+    this.tone({ freq: this.jit(180, 0.12), endFreq: 95, durationS: 0.05, type: 'triangle', gain: 0.2, attackS: 0.002 });
+    this.noiseBurst({ durationS: 0.05, filterHz: spec.hz * 1.4, filterType: 'bandpass', q: spec.q, gain: 0.14 + 0.1 * spec.grit, attackS: 0.001 });
+    // 衣擦れ(布のこすれ)
+    this.noiseBurst({ durationS: 0.12, filterHz: 620, filterType: 'bandpass', q: 0.8, gain: 0.12, delayS: 0.05 });
+    // 引き上げの踏み切り(遅れて低く)
+    this.tone({ freq: this.jit(120, 0.1), endFreq: 60, durationS: 0.07, type: 'sine', gain: 0.16, delayS: 0.18 });
+    this.noiseBurst({ durationS: 0.08, filterHz: spec.hz, filterType: spec.type, q: spec.q, gain: 0.16, delayS: 0.18 });
   }
 
-  // スラスト(二段)ジャンプ: ブースターの噴射音
+  // スラスト(二段)ジャンプ: デチューン2発のジェット+上昇スイープ+サブの押し出し+排気の尾
   thrust(): void {
-    this.noiseBurst({ durationS: 0.2, filterHz: 1400, filterType: 'bandpass', gain: 0.28 });
-    this.tone({ freq: 220, endFreq: 540, durationS: 0.16, type: 'sawtooth', gain: 0.16 });
+    this.tone({ freq: 200, endFreq: 560, durationS: 0.18, type: 'sawtooth', gain: 0.12, detuneCents: -9, drive: 2, curve: 'tanh' });
+    this.tone({ freq: 205, endFreq: 575, durationS: 0.18, type: 'sawtooth', gain: 0.12, detuneCents: 9, drive: 2, curve: 'tanh' });
+    this.noiseBurst({ durationS: 0.2, filterHz: 1200, filterEndHz: 2600, filterType: 'bandpass', q: 1.2, gain: 0.24, attackS: 0.004 });
+    this.tone({ freq: 68, endFreq: 34, durationS: 0.12, type: 'sine', gain: 0.2, drive: 3, curve: 'asym' });
+    this.noiseBurst({ durationS: 0.3, filterHz: 5200, filterType: 'highpass', gain: 0.05, delayS: 0.05 });
   }
 
-  // ウォールラン取り付き: 壁を擦る低い摩擦音
+  // ウォールラン取り付き: 壁材質の摩擦+最初の一蹴り
   wallRun(): void {
-    this.noiseBurst({ durationS: 0.3, filterHz: 700, filterType: 'lowpass', gain: 0.18 });
+    const spec = this.scrapeSpec(this.surface.wall);
+    this.noiseBurst({ durationS: 0.28, filterHz: spec.hz, filterType: spec.type, q: spec.q, gain: 0.15, attackS: 0.01 });
+    this.wallRunKick();
   }
 
-  // ウォールジャンプ: 壁を蹴る打撃音
+  // ウォールラン中の蹴り足(1歩ごと。M-AU配線用)。matを省略すると現在の壁材質
+  wallRunKick(mat: SurfaceMaterial = this.surface.wall): void {
+    const now = this.ctx?.currentTime ?? 0;
+    if (this.liveVoices() > 200 || now - this.lastWallKickS < 0.03) return;
+    this.lastWallKickS = now;
+    const spec = this.scrapeSpec(mat);
+    this.tone({ freq: this.jit(150, 0.15), endFreq: 80, durationS: 0.05, type: 'triangle', gain: 0.14, attackS: 0.001 });
+    this.noiseBurst({ durationS: 0.035, filterHz: this.jit(spec.hz * 1.3, 0.15), filterType: 'bandpass', q: spec.q, gain: 0.1 + 0.06 * spec.grit, attackS: 0.001 });
+  }
+
+  // ウォールジャンプ: 壁材質の蹴り出し+跳躍トーン+布の風切り
   wallJump(): void {
-    this.tone({ freq: 320, endFreq: 140, durationS: 0.12, type: 'triangle', gain: 0.26 });
-    this.noiseBurst({ durationS: 0.12, filterHz: 900, filterType: 'bandpass', gain: 0.22 });
+    const spec = this.scrapeSpec(this.surface.wall);
+    this.tone({ freq: 320, endFreq: 140, durationS: 0.1, type: 'triangle', gain: 0.24, drive: 2, curve: 'tanh' });
+    this.noiseBurst({ durationS: 0.06, filterHz: spec.hz * 1.5, filterType: 'bandpass', q: spec.q, gain: 0.16 + 0.08 * spec.grit, attackS: 0.001 });
+    this.noiseBurst({ durationS: 0.16, filterHz: 700, filterType: 'lowpass', gain: 0.1, delayS: 0.03 });
   }
 
   // アルティメット充填完了の上昇チャイム
@@ -3904,6 +4250,7 @@ export class SoundKit {
     mat: SurfaceMaterial,
     intensity: number,
     occluded: boolean,
+    behind = false,
   ): void {
     // 距離カリング
     if (distance > 26) return;
@@ -3921,6 +4268,11 @@ export class SoundKit {
     if (occluded) {
       airLpHz = Math.min(airLpHz, 1200);
       att *= 0.5;
+    }
+    // R54: 後方(頭部遮蔽の近似) — -3dB+高域15%減で「背中側」の知覚を作る
+    if (behind) {
+      att *= BEHIND_GAIN_MUL;
+      airLpHz *= BEHIND_LP_MUL;
     }
     const vol = Math.max(0, Math.min(1, intensity)) * att;
     if (vol < 0.001) return;
@@ -3994,6 +4346,67 @@ export class SoundKit {
     }
   }
 
+  // ── R54 音響2: ゾンビ発声(声帯saw→フォルマントBP2本並列+息ノイズ) ──────
+  // variant(0..2)は個体差の3声。0.15sスロットル+距離カリング+予算ガードで大群でも安全
+  zombieVocal(kind: ZombieVocalKind, pan: number, distance: number, variant = 0): void {
+    if (!this.ctx || !this.sfxBus) return;
+    if (distance > 30) return;
+    const now = this.ctx.currentTime;
+    if (this.liveVoices() > 200 || now - this.lastZombieVocalS < 0.15) return;
+    this.lastZombieVocalS = now;
+    const r = zombieVocalRecipe(kind, variant);
+    const att = 1 / (1 + distance * 0.1);
+    const vol = r.gain * att;
+    if (vol < 0.003) return;
+    // 空気吸収: 足音と同系のカーブ(声帯域〜3.8kHz起点)
+    const airLpHz = Math.max(700, 3800 * Math.exp(-0.05 * distance));
+    const ctx = this.ctx;
+    const t0 = now;
+    // 声帯源: sawの基音がフォルマント遷移に沿って揺れる
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(this.jit(r.growlHz, 0.12), t0);
+    osc.frequency.exponentialRampToValueAtTime(
+      Math.max(20, this.jit(r.growlHz * (r.f1End / r.f1), 0.1)),
+      t0 + r.durS,
+    );
+    const f1 = ctx.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.Q.value = 4;
+    f1.frequency.setValueAtTime(Math.min(airLpHz, this.jit(r.f1, 0.08)), t0);
+    f1.frequency.exponentialRampToValueAtTime(Math.min(airLpHz, Math.max(60, r.f1End)), t0 + r.durS);
+    const f2 = ctx.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.Q.value = 6;
+    f2.frequency.setValueAtTime(Math.min(airLpHz, this.jit(r.f2, 0.08)), t0);
+    f2.frequency.exponentialRampToValueAtTime(Math.min(airLpHz, Math.max(120, r.f2End)), t0 + r.durS);
+    const env = ctx.createGain();
+    this.applyEnv(env, vol, t0, r.durS, 0.03);
+    osc.connect(f1);
+    osc.connect(f2);
+    f1.connect(env);
+    f2.connect(env);
+    const extras: AudioNode[] = [f1, f2];
+    this.routeOut(env, t0, r.durS, { pan, wet: Math.min(0.5, this.presetWet) }, extras);
+    osc.start(t0);
+    osc.stop(t0 + r.durS + 0.05);
+    if (r.durS > 0.5) this.longVoices.add(osc);
+    osc.onended = () => {
+      try {
+        osc.disconnect();
+        env.disconnect();
+        for (const n of extras) n.disconnect();
+      } catch {
+        /* already disconnected */
+      } finally {
+        this.longVoices.delete(osc);
+        osc.onended = null;
+      }
+    };
+    // 息の擦過(喉鳴り)
+    this.noiseBurst({ durationS: r.durS * 0.7, filterHz: Math.min(airLpHz, r.f2), filterType: 'bandpass', q: 1.2, gain: vol * 0.35, pan, attackS: 0.02 });
+  }
+
   hurt(): void {
     this.tone({ freq: 150, endFreq: 70, durationS: 0.15, type: 'sine', gain: 0.4 });
   }
@@ -4060,6 +4473,17 @@ export class SoundKit {
   // 4秒のブラウンノイズ・シームレスループを1回だけ生成してエンジンへ渡す
   startAmbience(stage: { palette: StagePalette; size: number; obstacleCount: number }): void {
     if (!this.ctx || !this.ambBus) return;
+    const loop = this.ensureAmbLoopBuffer();
+    if (!loop) return;
+    if (!this.ambience) {
+      this.ambience = new AmbienceEngine(this.ctx, this.ambBus, loop);
+    }
+    this.ambience.start(deriveAmbientProfile(stage.palette, stage.size, stage.obstacleCount));
+  }
+
+  // 4秒ブラウンノイズ・シームレスループの単一生成点(アンビエンス/大群ベッドで共用)
+  private ensureAmbLoopBuffer(): AudioBuffer | null {
+    if (!this.ctx) return null;
     if (!this.ambLoopBuffer) {
       const sr = this.ctx.sampleRate;
       this.ambLoopBuffer = this.ctx.createBuffer(1, sr * 4, sr);
@@ -4067,10 +4491,19 @@ export class SoundKit {
       fillBrownNoise(data);
       makeSeamlessLoop(data, Math.floor(sr * 0.1));
     }
-    if (!this.ambience) {
-      this.ambience = new AmbienceEngine(this.ctx, this.ambBus, this.ambLoopBuffer);
+    return this.ambLoopBuffer;
+  }
+
+  // R54 音響2: ゾンビ大群ベッド。ZombieDirector側(M-AU)が密度(0..1)と平均距離(m)を
+  // 間欠的に与える(毎フレームでも可、εガードはベッド側)。密度0が続けば自動で畳まれる
+  setHordeDensity(density01: number, avgDistM: number): void {
+    if (!this.ctx || !this.ambBus) return;
+    if (!this.hordeBed) {
+      const loop = this.ensureAmbLoopBuffer();
+      if (!loop) return;
+      this.hordeBed = new ZombieHordeBed(this.ctx, this.ambBus, loop);
     }
-    this.ambience.start(deriveAmbientProfile(stage.palette, stage.size, stage.obstacleCount));
+    this.hordeBed.setDensity(density01, avgDistM);
   }
 
   stopAmbience(): void {
@@ -4098,6 +4531,18 @@ export class SoundKit {
       const now = this.ctx.currentTime;
       this._lightningHumGain.gain.cancelScheduledValues(now);
       this._lightningHumGain.gain.setValueAtTime(paused ? 0 : 0.04, now);
+    }
+    // R54 音響2: 大群ベッドと排他ステムもポーズに追従(内容の拍スケジュールはtickBgm側)
+    this.hordeBed?.setPaused(paused);
+    if (this.bgmStemGainNode && this.ctx) {
+      const tp = this.ctx.currentTime;
+      const g = this.bgmStemGainNode.gain;
+      g.cancelScheduledValues(tp);
+      const target =
+        !paused && this.bgmStemPlaying && this.bgmStemFadeOutUntil === 0
+          ? stemTargetGain(this.bgmStemIntensity)
+          : 0.0001;
+      g.setTargetAtTime(target, tp, 0.1);
     }
     if (paused) {
       if (this.distantBattleTimer) {
@@ -4203,6 +4648,18 @@ export class SoundKit {
   quiesce(): void {
     this.stopBgm();
     this.stopAmbience();
+    // R54 音響2: スライドループ/大群ベッド/排他ステム/屋内残響を必ず初期状態へ畳む
+    this.slideStop();
+    this.hordeBed?.finalize();
+    this.hordeBed = null;
+    this.bgmStemPlaying = null;
+    this.bgmStemFadeOutUntil = 0;
+    this.indoor01 = 0;
+    if (this.bgmStemGainNode && this.ctx) {
+      const tq = this.ctx.currentTime;
+      this.bgmStemGainNode.gain.cancelScheduledValues(tq);
+      this.bgmStemGainNode.gain.setValueAtTime(0.0001, tq);
+    }
     this.stopDistantBattle(); // 遠方戦場アンビエンスの setTimeout を確実に解除
     // R53: 帝王BGM転調の後始末 — 次試合が黒雷帝BGMで始まる事故を防ぐ(setMusicProfileは
     // 次のlaunchで正しいムードキーが来れば切り替わるため、状態フラグのみ落とせば安全)

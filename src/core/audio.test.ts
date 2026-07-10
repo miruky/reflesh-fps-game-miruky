@@ -6,6 +6,14 @@ import {
   BGM_ROOT_HZ,
   bgmNoteHz,
   type BgmProfileKey,
+  barFor,
+  BEHIND_GAIN_MUL,
+  BEHIND_LP_MUL,
+  BGM_STEM_IDS,
+  indoorReverbBlend,
+  NEAPOLITAN_BAR,
+  stemTargetGain,
+  zombieVocalRecipe,
   BANJIN_KAGEMAI_SPEC,
   BANJIN_STORM_SPEC,
   BOW_RELEASE_SPEC,
@@ -822,9 +830,9 @@ describe('音響祭 新API 無例外テスト', () => {
 
 // ── R53-W2 コンテンツ拡張(ゾンビ拡充/ストーリー帝王編/S&D)の音API群 ──────────
 describe('R53-W2 無線プロソディ/スケルチ 純ロジック', () => {
-  const SPEAKERS: RadioSpeaker[] = ['kagerou', 'homura', 'hibana', 'kurogane'];
+  const SPEAKERS: RadioSpeaker[] = ['kagerou', 'homura', 'hibana', 'kurogane', 'rei'];
 
-  it('radioProsodyBase: 話者ごとに異なるprosodyを持つ(4種とも相異なる)', () => {
+  it('radioProsodyBase: 話者ごとに異なるprosodyを持つ(R54: rei含む5種とも相異なる)', () => {
     const sigs = SPEAKERS.map((s) => {
       const p = radioProsodyBase(s);
       return `${p.pitch}|${p.rate}`;
@@ -859,7 +867,7 @@ describe('R53-W2 無線プロソディ/スケルチ 純ロジック', () => {
     }
   });
 
-  it('RADIO_SQUELCH_SPECS: 4話者を網羅し、kuroganeのみ歪み(drive+asym)を持つ', () => {
+  it('RADIO_SQUELCH_SPECS: 5話者(R54: rei含む)を網羅し、kuroganeのみ歪み(drive+asym)を持つ', () => {
     expect(Object.keys(RADIO_SQUELCH_SPECS).sort()).toEqual([...SPEAKERS].sort());
     expect(RADIO_SQUELCH_SPECS.kurogane.drive).toBeGreaterThan(0);
     expect(RADIO_SQUELCH_SPECS.kurogane.curve).toBe('asym');
@@ -880,7 +888,7 @@ describe('R53-W2 無線プロソディ/スケルチ 純ロジック', () => {
 });
 
 describe('R53-W2 SoundKit 新API 無例外テスト(AudioContext不要)', () => {
-  const SPEAKERS: RadioSpeaker[] = ['kagerou', 'homura', 'hibana', 'kurogane'];
+  const SPEAKERS: RadioSpeaker[] = ['kagerou', 'homura', 'hibana', 'kurogane', 'rei'];
   const POWER_UP_KINDS: PowerUpKind[] = ['insta', 'double', 'nuke', 'maxammo', 'carpenter'];
 
   it('papUpgrade: 2.5s三段(圧着/研磨/チャイム)で例外なし', () => {
@@ -1105,5 +1113,132 @@ describe("R53: BGM_PROFILES['emperor-kokurai']", () => {
     expect(p.progression[1]![0]).toBe(1);
     // ゾンビ進行(0,1,6クラスタ開始)とは異なる
     expect(p.progression[0]).not.toEqual(BGM_PROFILES.zombie.progression[0]);
+  });
+});
+
+// ═══ R54 音響2 ═══════════════════════════════════════════════════════
+
+describe('R54 音響2: barFor(統一動機「帝王の指紋」♭II借用)', () => {
+  it('w=0 は全小節で progression の素の和音と参照同一(既存挙動不変)', () => {
+    for (let bar = 0; bar < 4; bar += 1) {
+      expect(barFor(bar, 0)).toBe(BGM_PROGRESSION[bar]);
+    }
+  });
+
+  it('最終小節のみ段階的にナポリ化(中間=中声♭2の暗転、最大=♭II6)。他小節は不変', () => {
+    expect(barFor(3, 1)).toBe(NEAPOLITAN_BAR);
+    expect(NEAPOLITAN_BAR).toEqual([8, 13, 17]); // B♭・E♭・G(第一転回=ナポリ6度)
+    expect(barFor(3, 0.5)).toEqual([10, 13, 17]); // C→Cm(中声のみ半音下=声部連結)
+    for (let bar = 0; bar < 3; bar += 1) {
+      expect(barFor(bar, 1)).toBe(BGM_PROGRESSION[bar]);
+    }
+  });
+
+  it('しきい値: w<1/3=素、1/3≤w<2/3=暗転、w≥2/3=♭II6。範囲外はクランプ', () => {
+    expect(barFor(3, 0.33)).toBe(BGM_PROGRESSION[3]);
+    expect(barFor(3, 0.34)).toEqual([10, 13, 17]);
+    expect(barFor(3, 0.67)).toBe(NEAPOLITAN_BAR);
+    expect(barFor(3, -1)).toBe(BGM_PROGRESSION[3]);
+    expect(barFor(3, 99)).toBe(NEAPOLITAN_BAR);
+  });
+
+  it('任意プロファイル進行にも適用でき、小節indexは進行長で折り返す', () => {
+    const prog = BGM_PROFILES.zombie.progression;
+    expect(barFor(3, 1, prog)).toBe(NEAPOLITAN_BAR);
+    expect(barFor(7, 1, prog)).toBe(NEAPOLITAN_BAR);
+    expect(barFor(0, 1, prog)).toBe(prog[0]);
+    expect(barFor(2, 0, prog)).toBe(prog[2]);
+  });
+});
+
+describe('R54 音響2: BGMステム/後方減衰/屋内残響の純関数', () => {
+  it('BGM_STEM_IDS: 4種の排他ステム', () => {
+    expect(BGM_STEM_IDS).toEqual(['snd-planted', 'zombie-madness', 'story-motif', 'boss-duel']);
+  });
+
+  it('stemTargetGain: 強度0でも床(0.9×0.35)、最大0.9。単調・クランプ', () => {
+    expect(stemTargetGain(0)).toBeCloseTo(0.9 * 0.35, 10);
+    expect(stemTargetGain(1)).toBeCloseTo(0.9, 10);
+    expect(stemTargetGain(-5)).toBeCloseTo(stemTargetGain(0), 10);
+    expect(stemTargetGain(9)).toBeCloseTo(stemTargetGain(1), 10);
+    expect(stemTargetGain(0.5)).toBeGreaterThan(stemTargetGain(0.2));
+  });
+
+  it('BEHIND_*: -3dB(×0.708)+高域15%減', () => {
+    expect(BEHIND_GAIN_MUL).toBeCloseTo(dbToGain(-3), 2);
+    expect(BEHIND_LP_MUL).toBe(0.85);
+  });
+
+  it('indoorReverbBlend: v=0 は全プリセットで素の値と厳密一致(既存挙動不変)', () => {
+    for (const p of ['outdoor', 'canyon', 'indoor', 'dead'] as const) {
+      const b = indoorReverbBlend(0, p);
+      expect(b.wet).toBe(REVERB_PRESETS[p].wet);
+      expect(b.ret).toBe(REVERB_PRESETS[p].ret);
+      expect(b.lpfHz).toBe(5200);
+      expect(b.longMul).toBe(p === 'dead' || p === 'indoor' ? 0.4 : 1);
+    }
+  });
+
+  it('indoorReverbBlend: v=1 は屋内特性(wet/ret=indoor、LPF3200、long×0.4)。クランプ・中間単調', () => {
+    const b = indoorReverbBlend(1, 'outdoor');
+    expect(b.wet).toBeCloseTo(REVERB_PRESETS.indoor.wet, 10);
+    expect(b.ret).toBeCloseTo(REVERB_PRESETS.indoor.ret, 10);
+    expect(b.lpfHz).toBe(3200);
+    expect(b.longMul).toBeCloseTo(0.4, 10);
+    expect(indoorReverbBlend(2, 'outdoor')).toEqual(indoorReverbBlend(1, 'outdoor'));
+    expect(indoorReverbBlend(-1, 'canyon')).toEqual(indoorReverbBlend(0, 'canyon'));
+    const mid = indoorReverbBlend(0.5, 'outdoor');
+    expect(mid.lpfHz).toBe(4200);
+    expect(mid.wet).toBeGreaterThan(REVERB_PRESETS.outdoor.wet);
+    expect(mid.wet).toBeLessThan(REVERB_PRESETS.indoor.wet);
+  });
+});
+
+describe('R54 音響2: zombieVocalRecipe(フォルマント発声の決定的レシピ)', () => {
+  it('4種で異なる輪郭: hurt最短・death最長、closeは上ずり、spawn/deathは下降', () => {
+    const kinds = ['spawn', 'close', 'hurt', 'death'] as const;
+    const durs = kinds.map((k) => zombieVocalRecipe(k).durS);
+    expect(Math.min(...durs)).toBe(zombieVocalRecipe('hurt').durS);
+    expect(Math.max(...durs)).toBe(zombieVocalRecipe('death').durS);
+    expect(zombieVocalRecipe('close').f1End).toBeGreaterThan(zombieVocalRecipe('close').f1);
+    expect(zombieVocalRecipe('spawn').f1End).toBeLessThan(zombieVocalRecipe('spawn').f1);
+    expect(zombieVocalRecipe('death').f2End).toBeLessThan(zombieVocalRecipe('death').f2);
+    // フォルマントは常に f1 < f2(声の構造)
+    for (const k of kinds) {
+      const r = zombieVocalRecipe(k);
+      expect(r.f1).toBeLessThan(r.f2);
+      expect(r.growlHz).toBeLessThan(r.f1);
+    }
+  });
+
+  it('variantは3声(×0.85/1.0/1.18)で折り返す。時間・ゲインは声で不変', () => {
+    const base = zombieVocalRecipe('spawn', 1);
+    expect(zombieVocalRecipe('spawn', 0).f1).toBeCloseTo(base.f1 * 0.85, 6);
+    expect(zombieVocalRecipe('spawn', 2).f1).toBeCloseTo(base.f1 * 1.18, 6);
+    expect(zombieVocalRecipe('spawn', 3)).toEqual(zombieVocalRecipe('spawn', 0));
+    expect(zombieVocalRecipe('spawn', -1)).toEqual(zombieVocalRecipe('spawn', 2));
+    expect(zombieVocalRecipe('spawn', 2).durS).toBe(base.durS);
+    expect(zombieVocalRecipe('spawn', 2).gain).toBe(base.gain);
+  });
+});
+
+describe("R54 音響2: アナウンサー'rei'", () => {
+  it("radioProsodyBase('rei')=pitch0.9/rate1.05。既存4話者は不変", () => {
+    expect(radioProsodyBase('rei')).toEqual({ pitch: 0.9, rate: 1.05 });
+    expect(radioProsodyBase('kurogane')).toEqual({ pitch: 0.52, rate: 0.8 });
+    expect(radioProsodyBase('kagerou').pitch).toBeGreaterThan(0);
+  });
+
+  it("radioProsodyFor('rei')はジッタ込みでも基準±0.025/±0.03に収まる", () => {
+    for (let i = 0; i < 20; i += 1) {
+      const p = radioProsodyFor('rei');
+      expect(Math.abs(p.pitch - 0.9)).toBeLessThanOrEqual(0.025 + 1e-9);
+      expect(Math.abs(p.rate - 1.05)).toBeLessThanOrEqual(0.03 + 1e-9);
+    }
+  });
+
+  it("RADIO_SQUELCH_SPECS に 'rei' の帯域が定義されている", () => {
+    expect(RADIO_SQUELCH_SPECS.rei.carrierHz).toBeGreaterThan(0);
+    expect(RADIO_SQUELCH_SPECS.rei.noiseHz).toBeGreaterThan(RADIO_SQUELCH_SPECS.rei.carrierHz);
   });
 });

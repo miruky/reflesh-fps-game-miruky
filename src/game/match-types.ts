@@ -103,6 +103,9 @@ export interface MatchResult {
   sndScore?: [number, number];
   // R54-F5 輪廻(ローグラン)結果: 到達ラウンド+取得カード名列(menuのAAR行が消費)
   rogue?: { round: number; cards: string[] };
+  // R54-F7: ハイライトカード(最大3枚、highlights.ts selectHighlights が既存統計から選定。
+  // menu.showResult がマッチストーリー帯の直上に描画する。0枚=帯なし)
+  highlights?: { kind: 'multikill' | 'longshot' | 'moment'; label: string; value: string }[];
 }
 
 export interface MatchSnapshot {
@@ -170,6 +173,7 @@ export interface MatchSnapshot {
   killcamFinal: boolean; // 終盤(killcamTimer<0.7 && killer生存)の赤ビネット
   killcamCamActive: boolean; // カメラがシネマ姿勢を所有中(HUDシネマ枠の単一の真実)
   fkCinematicActive: boolean; // ファイナルキルカム再生中(main.tsのレターボックス制御用)
+  fkWeaponName?: string; // R54-F7: 最終キルの武器名(未発生=undefined。シネマ帯バナー用)
   lowHp01: number; // 0..1 低HP(juiceのDOMフォールバック用)
   postfxActive: boolean; // medium/high=true(PostFXシェーダ所有), low=false
   feed: FeedEntry[];

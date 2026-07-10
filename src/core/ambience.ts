@@ -538,3 +538,186 @@ export class AmbienceEngine {
     this.profile = null;
   }
 }
+
+// ── R54 音響2: ゾンビ大群ベッド(群れの遠鳴り) ─────────────────────────
+// 密度(0..1)と平均距離(m)から連続ベッドの実効値を導く純関数。
+// 多いほど厚く・近いほど明るい(LPが開く)。40m超は実質無音方向へ減衰する。
+export function hordeBedParams(
+  density01: number,
+  avgDistM: number,
+): { gain: number; lpHz: number; rate: number } {
+  const d = clamp(density01, 0, 1);
+  const dist = Math.max(0, avgDistM);
+  return {
+    gain: (0.5 * d) / (1 + dist * 0.06),
+    lpHz: 380 + 1020 * (1 - clamp(dist / 40, 0, 1)),
+    rate: 0.35 + 0.15 * d, // 群れが増えるほどうねりが速い
+  };
+}
+
+// 群体の唸りベッド。AmbienceEngineと同じ所有権台帳イディオム(ノードは必ず台帳経由)で、
+// ブラウンノイズ低速ループ→LP→フォルマント2山(260/640Hz)を「声の壁」として鳴らし、
+// 別の超低速ループ→LP140で群れの地鳴りを足す。声色のうねりは低速AMで作る。
+// setDensity が実質無音(gain≤0.005)ならフェード後に自動で畳み、正の密度で再構築する。
+export class ZombieHordeBed {
+  private readonly ctx: AudioContext;
+  private readonly out: AudioNode;
+  private readonly loopBuffer: AudioBuffer;
+
+  // 所有権台帳。build()で積み、finalize()で必ず空にする
+  private readonly liveSources: (OscillatorNode | AudioBufferSourceNode)[] = [];
+  private readonly liveNodes: AudioNode[] = [];
+  private master: GainNode | null = null;
+  private lp: BiquadFilterNode | null = null;
+  private amOsc: OscillatorNode | null = null;
+  private pendingStopTimer: ReturnType<typeof setTimeout> | null = null;
+  private paused = false;
+  private lastGain = 0;
+  private lastLpHz = 0;
+
+  constructor(ctx: AudioContext, out: AudioNode, loopBuffer: AudioBuffer) {
+    this.ctx = ctx;
+    this.out = out;
+    this.loopBuffer = loopBuffer;
+  }
+
+  private track<T extends AudioNode>(node: T): T {
+    this.liveNodes.push(node);
+    return node;
+  }
+
+  private makeSrc(playbackRate: number): AudioBufferSourceNode {
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.loopBuffer;
+    src.playbackRate.value = playbackRate;
+    src.loop = true;
+    this.liveSources.push(src);
+    return src;
+  }
+
+  private build(): void {
+    // 停止フェード待ち中の再構築はタイマーを破棄して同期的に畳む(AmbienceEngine.startと同じ規約)
+    if (this.pendingStopTimer !== null) {
+      clearTimeout(this.pendingStopTimer);
+      this.pendingStopTimer = null;
+    }
+    this.finalize();
+    const master = this.track(this.ctx.createGain());
+    master.gain.value = 0.0001;
+    master.connect(this.out);
+    // 声の壁: 低速ノイズ→LP(距離で開閉)→フォルマント2山(260/640Hz)
+    const lp = this.track(this.ctx.createBiquadFilter());
+    lp.type = 'lowpass';
+    lp.frequency.value = 600;
+    const src = this.makeSrc(0.42);
+    src.connect(lp);
+    const f1 = this.track(this.ctx.createBiquadFilter());
+    f1.type = 'bandpass';
+    f1.frequency.value = 260;
+    f1.Q.value = 2.5;
+    const f2 = this.track(this.ctx.createBiquadFilter());
+    f2.type = 'bandpass';
+    f2.frequency.value = 640;
+    f2.Q.value = 3;
+    const fMix = this.track(this.ctx.createGain());
+    fMix.gain.value = 0.9;
+    lp.connect(f1);
+    lp.connect(f2);
+    f1.connect(fMix);
+    f2.connect(fMix);
+    fMix.connect(master);
+    // 地鳴り(群れの足音の総和): さらに低速の別ループ→LP140
+    const rumbleLp = this.track(this.ctx.createBiquadFilter());
+    rumbleLp.type = 'lowpass';
+    rumbleLp.frequency.value = 140;
+    const rumbleGain = this.track(this.ctx.createGain());
+    rumbleGain.gain.value = 0.5;
+    const src2 = this.makeSrc(0.3);
+    src2.connect(rumbleLp);
+    rumbleLp.connect(rumbleGain);
+    rumbleGain.connect(master);
+    // 群れのうねり(低速AM)。深さはfMix基準0.9の4割未満で合成ゲインが負に振れない
+    const am = this.ctx.createOscillator();
+    am.type = 'sine';
+    am.frequency.value = 0.35;
+    this.liveSources.push(am);
+    const amDepth = this.track(this.ctx.createGain());
+    amDepth.gain.value = 0.35;
+    am.connect(amDepth);
+    amDepth.connect(fMix.gain);
+    src.start();
+    src2.start();
+    am.start();
+    this.master = master;
+    this.lp = lp;
+    this.amOsc = am;
+    this.lastGain = 0;
+    this.lastLpHz = 600;
+  }
+
+  // 密度と平均距離を与える(毎フレームでも間欠でも可。εガードで自動化スパムを防ぐ)
+  setDensity(density01: number, avgDistM: number): void {
+    const p = hordeBedParams(density01, avgDistM);
+    const now = this.ctx.currentTime || 0;
+    if (p.gain <= 0.005) {
+      // 実質無音: フェード後に畳む(正の密度が戻れば build し直す)
+      if (this.master) this.stop();
+      this.lastGain = 0;
+      return;
+    }
+    if (!this.master) this.build();
+    if (Math.abs(p.gain - this.lastGain) > 0.008) {
+      this.lastGain = p.gain;
+      this.master!.gain.setTargetAtTime(this.paused ? 0.0001 : p.gain, now, 0.5);
+    }
+    if (this.lp && Math.abs(p.lpHz - this.lastLpHz) > 15) {
+      this.lastLpHz = p.lpHz;
+      this.lp.frequency.setTargetAtTime(p.lpHz, now, 0.6);
+    }
+    this.amOsc?.frequency.setTargetAtTime(p.rate, now, 1);
+  }
+
+  // ポーズ中はほぼ無音へ沈め、解除で直近の実効ゲインへ戻す
+  setPaused(p: boolean): void {
+    if (p === this.paused) return;
+    this.paused = p;
+    this.master?.gain.setTargetAtTime(
+      p ? 0.0001 : Math.max(0.0001, this.lastGain),
+      this.ctx.currentTime || 0,
+      0.15,
+    );
+  }
+
+  // フェードアウトしてから破棄する(即finalizeのブツ切りクリック防止)
+  stop(): void {
+    const master = this.master;
+    if (!master) return;
+    master.gain.setTargetAtTime(0.0001, this.ctx.currentTime || 0, 0.25);
+    if (this.pendingStopTimer !== null) clearTimeout(this.pendingStopTimer);
+    this.pendingStopTimer = setTimeout(() => this.finalize(), 900);
+  }
+
+  // 全ノードを停止・切断して台帳を空にする。冪等(何度呼んでも安全)
+  finalize(): void {
+    for (const src of this.liveSources) {
+      try {
+        src.stop();
+      } catch {
+        // 未start/停止済みのInvalidStateErrorは無視してよい
+      }
+      src.onended = null;
+      src.disconnect();
+    }
+    for (const node of this.liveNodes) node.disconnect();
+    this.liveSources.length = 0;
+    this.liveNodes.length = 0;
+    if (this.pendingStopTimer !== null) {
+      clearTimeout(this.pendingStopTimer);
+      this.pendingStopTimer = null;
+    }
+    this.master = null;
+    this.lp = null;
+    this.amOsc = null;
+    this.paused = false;
+  }
+}

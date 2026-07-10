@@ -186,3 +186,27 @@ describe('sanitizeSettings', () => {
     expect(RETICLE_COLORS.some((r) => r.id === DEFAULT_SETTINGS.reticleColor)).toBe(true);
   });
 });
+
+describe('R54 音響2: musicVolume / voVolume', () => {
+  it('既定はBGM0.8/VO1.0(=従来の実効レベルと厳密一致)', () => {
+    expect(DEFAULT_SETTINGS.musicVolume).toBe(0.8);
+    expect(DEFAULT_SETTINGS.voVolume).toBe(1);
+    expect(sanitizeSettings({}).musicVolume).toBe(0.8);
+    expect(sanitizeSettings({}).voVolume).toBe(1);
+  });
+
+  it('0..1へ丸め、型違い・NaNは既定へ戻す', () => {
+    expect(dirty({ musicVolume: 5 }).musicVolume).toBe(1);
+    expect(dirty({ musicVolume: -1 }).musicVolume).toBe(0);
+    expect(dirty({ voVolume: 99 }).voVolume).toBe(1);
+    expect(dirty({ voVolume: -0.5 }).voVolume).toBe(0);
+    expect(dirty({ musicVolume: 'loud' }).musicVolume).toBe(DEFAULT_SETTINGS.musicVolume);
+    expect(dirty({ voVolume: Number.NaN }).voVolume).toBe(DEFAULT_SETTINGS.voVolume);
+    expect(dirty({ musicVolume: null }).musicVolume).toBe(DEFAULT_SETTINGS.musicVolume);
+  });
+
+  it('境界はSETTING_BOUNDSに登録済み(スライダーと検証の単一情報源)', () => {
+    expect(SETTING_BOUNDS.musicVolume).toEqual({ min: 0, max: 1 });
+    expect(SETTING_BOUNDS.voVolume).toEqual({ min: 0, max: 1 });
+  });
+});

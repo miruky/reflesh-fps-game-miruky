@@ -135,6 +135,7 @@ const SNAPSHOT_KEYS: Record<keyof MatchSnapshot, true> = {
   killcamFinal: true,
   killcamCamActive: true,
   fkCinematicActive: true,
+  fkWeaponName: true, // R54-F7 意図的追加: 最終キル武器名(シネマ帯バナー)
   lowHp01: true,
   postfxActive: true,
   feed: true,
@@ -223,7 +224,7 @@ const SNAPSHOT_KEYS: Record<keyof MatchSnapshot, true> = {
 
 describe('MatchSnapshot構造ゴールデン', () => {
   it('フィールド数が固定値と一致する(143フィールド、main=9ccd851時点)', () => {
-    expect(Object.keys(SNAPSHOT_KEYS).length).toBe(144); // R54-F5: +rogue
+    expect(Object.keys(SNAPSHOT_KEYS).length).toBe(145); // R54-F5: +rogue / R54-F7: +fkWeaponName
   });
 });
 

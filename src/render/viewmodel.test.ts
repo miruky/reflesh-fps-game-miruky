@@ -987,3 +987,187 @@ describe('R53: 帝王溜め段(setEmperorChargeStage)+白芯雷脈(setKatanaVein
     vm.dispose();
   });
 });
+
+// ── R54-F8' 帝王フェーズ2: 修羅の相バレルグロー+クロガネ套装 ─────────────────
+
+describe("R54-F8': setShuraPhase(修羅の相バレルグロー)", () => {
+  const IDLE = {
+    adsProgress: 0,
+    mouseDX: 0,
+    mouseDY: 0,
+    moveFactor: 0,
+    grounded: true,
+    reloadRatio: null,
+    raiseRatio: 0,
+    motionScale: 1,
+    alive: true,
+    scopeReveal01: 0,
+    sprinting: false,
+  };
+
+  function makeShuraVm(): ViewModel {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['shura-lmg'];
+    if (!def) throw new Error('shura-lmg missing');
+    vm.setWeapon(def);
+    return vm;
+  }
+
+  function glowOf(vm: ViewModel): THREE.Mesh | null {
+    return (vm.root.getObjectByName('vm:shuraGlow') as THREE.Mesh | undefined) ?? null;
+  }
+
+  it('相0では何も追加しない、相2で微発光オーバーレイが付く', () => {
+    const vm = makeShuraVm();
+    expect(glowOf(vm)).toBeNull();
+    vm.setShuraPhase(2);
+    const glow = glowOf(vm);
+    expect(glow).toBeTruthy();
+    const mat = glow!.material as THREE.MeshBasicMaterial;
+    expect(mat.opacity).toBeCloseTo(0.16, 5);
+    expect(glow!.visible).toBe(true);
+    vm.dispose();
+  });
+
+  it('相3で赤熱(opacity 0.42 ≤ 0.55 発光鉄則)、相0で消灯', () => {
+    const vm = makeShuraVm();
+    vm.setShuraPhase(3);
+    const glow = glowOf(vm);
+    const mat = glow!.material as THREE.MeshBasicMaterial;
+    expect(mat.opacity).toBeCloseTo(0.42, 5);
+    expect(mat.opacity).toBeLessThanOrEqual(0.55);
+    expect(mat.color.getHex()).toBe(0xff2a10);
+    vm.setShuraPhase(0);
+    expect(glow!.visible).toBe(false);
+    expect(mat.opacity).toBe(0);
+    vm.dispose();
+  });
+
+  it('武器切替で相リセット+キャッシュ銃の旧グローも消灯、再装備で蓄積しない', () => {
+    const vm = makeShuraVm();
+    vm.setShuraPhase(3);
+    const glow = glowOf(vm)!;
+    const ar = WEAPON_DEFS['kaede-ar'];
+    const shura = WEAPON_DEFS['shura-lmg'];
+    if (!ar || !shura) throw new Error('defs missing');
+    vm.setWeapon(ar);
+    // captureRig の切替リセット: 旧(キャッシュ)銃に残るグローは消灯済み
+    expect(glow.visible).toBe(false);
+    expect((glow.material as THREE.MeshBasicMaterial).opacity).toBe(0);
+    // 再装備(キャッシュヒット)→ 再点灯は同一メッシュを再利用(蓄積なし)
+    vm.setWeapon(shura);
+    vm.setShuraPhase(2);
+    let count = 0;
+    vm.root.traverse((o) => {
+      if (o.name === 'vm:shuraGlow') count += 1;
+    });
+    expect(count).toBe(1);
+    vm.dispose();
+  });
+
+  it('バレルを持たない武器(fists)では no-op(例外なし・何も追加しない)', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['fists'];
+    if (!def) throw new Error('fists missing');
+    vm.setWeapon(def);
+    expect(() => vm.setShuraPhase(3)).not.toThrow();
+    expect(vm.root.getObjectByName('vm:shuraGlow')).toBeFalsy();
+    vm.update(1 / 60, IDLE);
+    vm.dispose();
+  });
+});
+
+describe("R54-F8': setKuroganeStyle(クロガネ套装=黒鋼+赤亀裂)", () => {
+  function makeKunaiVm(): ViewModel {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['fists'];
+    if (!def) throw new Error('fists missing');
+    vm.setWeapon(def);
+    return vm;
+  }
+
+  function tintedMats(vm: ViewModel): THREE.MeshStandardMaterial[] {
+    const out: THREE.MeshStandardMaterial[] = [];
+    vm.root.traverse((node) => {
+      if (node instanceof THREE.Mesh && node.userData.lightningMat) {
+        out.push(node.material as THREE.MeshStandardMaterial);
+      }
+    });
+    return out;
+  }
+
+  function arcLineHexes(vm: ViewModel): number[] {
+    const blade = vm.root.getObjectByName('vm:lightningBlade');
+    const hexes: number[] = [];
+    blade?.traverse((node) => {
+      if (node instanceof THREE.Mesh && (node.material as THREE.Material).userData.isArcLine) {
+        hexes.push((node.material as THREE.MeshBasicMaterial).color.getHex());
+      }
+    });
+    return hexes;
+  }
+
+  it('套装ON→雷モード: 刀身が黒鋼(0x0a0a0c)+赤残響 emissive(≤0.55)になる', () => {
+    const vm = makeKunaiVm();
+    vm.setKuroganeStyle(true);
+    vm.setKunaiLightningMode(true);
+    const mats = tintedMats(vm);
+    expect(mats.length).toBeGreaterThan(0);
+    for (const m of mats) {
+      expect(m.color.getHex()).toBe(0x0a0a0c);
+      expect(m.emissive.getHex()).toBe(0x8b0f14);
+      expect(m.emissiveIntensity).toBeLessThanOrEqual(0.55);
+    }
+    // アークラインも赤亀裂系
+    expect(arcLineHexes(vm)).toContain(0xcc1122);
+    vm.dispose();
+  });
+
+  it('雷モード中のトグルで即時再適用され、OFFで通常の氷青(0x55bbff)へ戻る', () => {
+    const vm = makeKunaiVm();
+    vm.setKunaiLightningMode(true);
+    expect(tintedMats(vm)[0]!.emissive.getHex()).toBe(0x55bbff);
+    vm.setKuroganeStyle(true);
+    expect(tintedMats(vm)[0]!.emissive.getHex()).toBe(0x8b0f14);
+    expect(arcLineHexes(vm)).toContain(0xcc1122);
+    vm.setKuroganeStyle(false);
+    expect(tintedMats(vm)[0]!.emissive.getHex()).toBe(0x55bbff);
+    expect(arcLineHexes(vm)).toContain(0x88ddff);
+    vm.dispose();
+  });
+
+  it('黒雷帝(kokuraitei)のビジュアルは套装の影響を受けない(紫アーク維持)', () => {
+    const vm = makeKunaiVm();
+    vm.setKuroganeStyle(true);
+    vm.setKunaiLightningMode(true, true);
+    const hexes = arcLineHexes(vm);
+    expect(hexes).toContain(0x7700cc);
+    expect(hexes).not.toContain(0xcc1122);
+    vm.dispose();
+  });
+
+  it('雷脈(setKatanaVeins)と共存する', () => {
+    const vm = makeKunaiVm();
+    vm.setKatanaVeins(true);
+    vm.setKuroganeStyle(true);
+    vm.setKunaiLightningMode(true);
+    const blade = vm.root.getObjectByName('vm:lightningBlade');
+    expect(blade).toBeTruthy();
+    expect(blade!.getObjectByName('vm:katanaVeins')).toBeTruthy();
+    expect(arcLineHexes(vm)).toContain(0xcc1122);
+    vm.dispose();
+  });
+
+  it('帝王溜め段(setEmperorChargeStage)と干渉しない(套装の赤が維持される)', () => {
+    const vm = makeKunaiVm();
+    vm.setKuroganeStyle(true);
+    vm.setKunaiLightningMode(true);
+    vm.setEmperorChargeStage(3);
+    vm.setEmperorChargeStage(0);
+    expect(tintedMats(vm)[0]!.emissive.getHex()).toBe(0x8b0f14);
+    vm.dispose();
+  });
+});

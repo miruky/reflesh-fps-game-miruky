@@ -4,7 +4,9 @@ import {
   deriveAmbientProfile,
   eventDelayS,
   fillBrownNoise,
+  hordeBedParams,
   makeSeamlessLoop,
+  ZombieHordeBed,
   type AmbientProfile,
 } from './ambience';
 import { mulberry32 } from './rng';
@@ -515,5 +517,88 @@ describe('AmbienceEngine(WebAudioモック)', () => {
     expect(bedMix?.gain.calls.length).toBe(callCount);
     engine.setPaused(false);
     expect(bedMix?.gain.lastTarget()?.[0]).toBeCloseTo(1.0, 10);
+  });
+});
+
+// ═══ R54 音響2: ゾンビ大群ベッド ═══════════════════════════════════════
+
+describe('hordeBedParams(大群ベッドの決定的導出)', () => {
+  it('密度に単調増加・距離に単調減少。density=0で無音、クランプ後の最大は0.5', () => {
+    expect(hordeBedParams(0, 10).gain).toBe(0);
+    expect(hordeBedParams(0.8, 10).gain).toBeGreaterThan(hordeBedParams(0.4, 10).gain);
+    expect(hordeBedParams(0.8, 30).gain).toBeLessThan(hordeBedParams(0.8, 10).gain);
+    expect(hordeBedParams(2, 0).gain).toBe(0.5);
+  });
+
+  it('LPは近いほど開く(380..1400)。40m超と負距離は端へ張り付く', () => {
+    expect(hordeBedParams(1, 0).lpHz).toBe(1400);
+    expect(hordeBedParams(1, 40).lpHz).toBe(380);
+    expect(hordeBedParams(1, 100).lpHz).toBe(380);
+    expect(hordeBedParams(1, -5).lpHz).toBe(1400);
+    expect(hordeBedParams(1, 20).lpHz).toBeCloseTo(380 + 1020 * 0.5, 6);
+  });
+
+  it('うねりrateは密度で0.35→0.5', () => {
+    expect(hordeBedParams(0, 0).rate).toBeCloseTo(0.35, 10);
+    expect(hordeBedParams(1, 0).rate).toBeCloseTo(0.5, 10);
+  });
+});
+
+describe('ZombieHordeBed(WebAudioモック)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function makeBed(): { bed: ZombieHordeBed; ctx: FakeCtx; out: FakeNode } {
+    const ctx = new FakeCtx();
+    const out = new FakeNode();
+    const bed = new ZombieHordeBed(
+      ctx as unknown as AudioContext,
+      out as unknown as AudioNode,
+      {} as unknown as AudioBuffer,
+    );
+    return { bed, ctx, out };
+  }
+  const bedInternals = (bed: ZombieHordeBed): EngineInternals => bed as unknown as EngineInternals;
+
+  it('正の密度で構築(声の壁src+地鳴りsrc+AMosc)、全ソース起動・master→out接続', () => {
+    const { bed, ctx, out } = makeBed();
+    bed.setDensity(0.6, 10);
+    expect(ctx.srcs).toHaveLength(2);
+    expect(ctx.oscs).toHaveLength(1);
+    expect(ctx.allSources().every((s) => s.started)).toBe(true);
+    const master = ctx.gains[0];
+    expect(master?.connections).toContain(out);
+    expect(master?.gain.lastTarget()?.[0]).toBeCloseTo(hordeBedParams(0.6, 10).gain, 10);
+    expect(bedInternals(bed).liveSources).toHaveLength(3);
+  });
+
+  it('実質無音(密度0)でフェード→タイマー後にfinalizeされ台帳が空。正の密度で再構築', () => {
+    const { bed, ctx } = makeBed();
+    bed.setDensity(0.6, 10);
+    bed.setDensity(0, 10);
+    vi.advanceTimersByTime(1000);
+    expect(bedInternals(bed).liveSources).toHaveLength(0);
+    expect(bedInternals(bed).liveNodes).toHaveLength(0);
+    expect(ctx.allSources().every((s) => s.stopped)).toBe(true);
+    bed.setDensity(0.5, 8);
+    expect(bedInternals(bed).liveSources).toHaveLength(3);
+  });
+
+  it('setPausedで沈み、解除で直近の実効ゲインへ戻る。finalizeは冪等', () => {
+    const { bed, ctx } = makeBed();
+    bed.setDensity(0.6, 10);
+    const master = ctx.gains[0]!;
+    bed.setPaused(true);
+    expect(master.gain.lastTarget()?.[0]).toBeCloseTo(0.0001, 10);
+    bed.setPaused(false);
+    expect(master.gain.lastTarget()?.[0]).toBeCloseTo(hordeBedParams(0.6, 10).gain, 10);
+    bed.finalize();
+    bed.finalize();
+    expect(bedInternals(bed).liveSources).toHaveLength(0);
+    expect(bedInternals(bed).liveNodes).toHaveLength(0);
   });
 });

@@ -53,6 +53,7 @@ const POSTFX_SHADER = {
     uniform sampler2D tDiffuse;
     uniform float uTime, uVigInner, uVigOuter, uGrain, uAberration, uDesat, uHitPulse;
     uniform float uHealth, uKillSurge, uMotion, uGrade, uDarkAura, uSuppress, uKokurai;
+    uniform float uCinema, uPhoto;
     uniform vec2 uHitDir;
     uniform vec3 uHitTint;
     varying vec2 vUv;
@@ -135,6 +136,37 @@ const POSTFX_SHADER = {
         col *= 1.0 - kEdge * 0.55;
         col = mix(col, col * vec3(0.06, 0.01, 0.20), kEdge * 0.38);
       }
+      // R54-F7 シネマDOF風(uCinema=0 → 完全no-op): 周辺のみ4tap放射ブラーで柔らかく
+      // 溶かし、浅いビネットを追い込む。中心(被写体)はシャープなまま=擬似的な被写界深度。
+      if (uCinema > 0.0) {
+        float cin = smoothstep(0.28, 0.95, r) * uCinema;
+        if (cin > 0.001) {
+          vec2 o = dir * (0.007 * cin);
+          vec3 soft = texture2D(tDiffuse, vUv + o).rgb
+                    + texture2D(tDiffuse, vUv - o).rgb
+                    + texture2D(tDiffuse, vUv + vec2(-o.y, o.x)).rgb
+                    + texture2D(tDiffuse, vUv + vec2(o.y, -o.x)).rgb;
+          col = mix(col, soft * 0.25, min(cin, 1.0) * 0.75);
+        }
+        col *= 1.0 - cin * 0.22;
+      }
+      // R54-F7 フォトモード・フィルタ(uPhoto=0 → 完全no-op)。全てLDR内で最後にclamp
+      if (uPhoto > 0.5) {
+        float pl = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        if (uPhoto < 1.5) {
+          // 1=ノワール: 強い脱色+軽コントラスト(粒子は既存グレインが担う)
+          col = mix(col, vec3(pl), 0.82);
+          col = (col - 0.5) * 1.12 + 0.5;
+        } else if (uPhoto < 2.5) {
+          // 2=ビビッド: 彩度外挿+軽コントラスト
+          col = mix(vec3(pl), col, 1.35);
+          col = (col - 0.5) * 1.06 + 0.5;
+        } else {
+          // 3=帝王: 紫黒デュオトーン(黒雷帝の意匠。暗部→暗紫/明部→薄紫へ寄せる)
+          col = mix(col, mix(vec3(0.05, 0.0, 0.13), vec3(0.88, 0.76, 1.0), pl), 0.55);
+        }
+        col = clamp(col, 0.0, 1.0);
+      }
       // フィルムグレイン(大係数のhashで擬似高周波、uResolution不要)
       col += (hash(vUv * 1873.0 + uTime) - 0.5) * uGrain;
       gl_FragColor = vec4(max(col, 0.0), 1.0);
@@ -197,5 +229,15 @@ export class PostFXPass extends ShaderPass {
   // R33 黒雷帝ビネット封筒(0=no-op。発動スパイク時は0.85、idle呼吸は0.07-0.10)
   setKokurai(v: number): void {
     this.uniforms['uKokurai']!.value = v;
+  }
+
+  // R54-F7 シネマDOF風封筒(0=no-op。キルカム/シネマカメラ中のみ >0)
+  setCinema(v: number): void {
+    this.uniforms['uCinema']!.value = v;
+  }
+
+  // R54-F7 フォトモード・フィルタ(0=なし/1=ノワール/2=ビビッド/3=帝王)
+  setPhoto(mode: number): void {
+    this.uniforms['uPhoto']!.value = mode;
   }
 }

@@ -11,6 +11,7 @@ import { loadProfile, saveProfile } from './core/profile';
 import { loadSettings, resolveGraphicsTier } from './core/settings';
 import { missionById } from './game/campaign';
 import { Match, type MatchConfig } from './game/match';
+import { PhotoMode } from './game/photo';
 import { applyCampaignMission, applyMatch, applyScoreRecord, XP_MUL_NORMAL, XP_MUL_ZOMBIE } from './game/progression';
 import { stageDefFromId } from './game/biomes';
 import { stageById } from './game/stages';
@@ -139,7 +140,8 @@ applyMotion();
 
 let match: Match | null = null;
 let chromaTimer = 0; // 被弾クロマアベの後始末タイマー(連続被弾で積み重ねない)
-let mode: 'menu' | 'playing' | 'paused' | 'result' | 'finalkillcam' = 'menu';
+let mode: 'menu' | 'playing' | 'paused' | 'result' | 'finalkillcam' | 'photo' = 'menu';
+let photoMode: PhotoMode | null = null; // R54-F7: フォトモード(mode==='photo' 中のみ非null)
 let combatLoopsPaused = false; // 戦闘ループ音の一時停止状態(遷移時のみAPIを叩く)
 let lastSelection: MenuSelection | null = null;
 let activeMissionId: string | null = null; // ストーリー進行中のミッションID(なければ通常戦)
@@ -254,6 +256,41 @@ function startMission(missionId: string, primaryId?: string, missionDifficulty?:
   });
 }
 
+// ── R54-F7 フォトモード遷移 ─────────────────────────────────────────
+// 入場はポーズ画面のボタンのみ。試合は main が update()/frame() を呼ばないことで
+// 「構造的に」凍結する(物理/AI/弾は進まない)。render() だけ再開して自由カメラで映す。
+function enterPhoto(): void {
+  if (!match || mode !== 'paused') return;
+  mode = 'photo';
+  menu.hide();
+  hud.hide(); // HUDルートを非表示(ポーズ復帰時に exitPhoto が戻す)
+  photoMode = new PhotoMode({
+    camera: match.camera,
+    input,
+    stageSize: match.stageSize,
+    canvas: renderer.domElement,
+    filterAvailable: match.photoFilterAvailable,
+    setFilter: (m) => match?.setPhotoFilter(m),
+    reduceMotion: effectiveReduceMotion(),
+  });
+  photoMode.enter();
+  input.requestLock(renderer.domElement);
+}
+
+function exitPhoto(): void {
+  if (!photoMode) return;
+  photoMode.dispose(); // フィルタ0復帰+DOM解除+fov復元(姿勢は次のsyncCameraが取り戻す)
+  photoMode = null;
+  // フォト中に押されたキーの立ち上がり残骸(SPACE=jump等)を再開後の試合へ漏らさない
+  for (const a of ['jump', 'crouch', 'sprint', 'forward', 'back', 'left', 'right',
+    'weapon1', 'weapon2', 'grenade', 'streak1', 'streak2', 'interact'] as const) {
+    input.wasPressed(a);
+  }
+  hud.show();
+  mode = 'paused';
+  menu.showPause();
+}
+
 const menu = new Menu(menuRoot, settings, profile, {
   onStart: startMatch,
   onStartMission: startMission,
@@ -274,6 +311,7 @@ const menu = new Menu(menuRoot, settings, profile, {
     spaceBg?.start(); // メニューへ戻ったら宇宙背景を再開
     menu.showMain();
   },
+  onPhoto: () => enterPhoto(),
   onSettingsChanged: () => {
     sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi);
     applyUiScale();
@@ -291,6 +329,11 @@ spaceBg?.start();
 if (spaceBg) menu.attachBg(spaceBg);
 
 input.onLockChange((locked) => {
+  // R54-F7: フォトモード中のロック離脱(ESC)=フォト終了→ポーズへ復帰
+  if (!locked && mode === 'photo') {
+    exitPhoto();
+    return;
+  }
   // ファイナルキルカム中はロック離脱でもポーズしない(再生を継続させる)
   if (!locked && mode === 'playing' && match && !match.over) {
     mode = 'paused';
@@ -419,12 +462,13 @@ const loop = new GameLoop(
     // 再開はベストエフォート(失敗時はクリックで再開できる)
     // finalkillcam 中は pause ボタンをスキップとして下のブロックで使うため、ここでは消費しない
     if (mode !== 'finalkillcam' && input.consumePausePressed()) {
-      if (mode === 'playing') input.exitLock();
+      // R54-F7: フォト中のOptionsはロック解除=フォト終了(onLockChangeがポーズへ戻す)
+      if (mode === 'playing' || mode === 'photo') input.exitLock();
       else if (mode === 'paused') input.requestLock(renderer.domElement);
     }
     // メニュー(トップページ含む)をコントローラだけで操作する
     const nav = input.consumeUiNav();
-    if (mode !== 'playing') menu.handleGamepad(nav);
+    if (mode !== 'playing' && mode !== 'photo') menu.handleGamepad(nav);
     if (match) {
       // match.over の検出を frame() より前に持ち上げ、突入フレームで frame() を呼ばないことで
       // effects.update の二重呼び出し(frame 内 + advanceFinalKillcam 内)を防ぐ。
@@ -435,15 +479,17 @@ const loop = new GameLoop(
         // R19: ファイナルキルカムが適用できる試合かを確認してから分岐する
         if (match.startFinalKillcam()) {
           mode = 'finalkillcam';
-          hud.showFinalKillcam();
+          // R54-F7: シネマ帯バナー(最終キルの武器名+距離)を供給
+          hud.showFinalKillcam(match.fkWeaponName, match.fkKillDistM);
           letterboxEl.style.opacity = '1';
         } else {
           showResult();
         }
       }
       // finalkillcam 中は advanceFinalKillcam が effects/atmosphere を自分で進めるので
-      // frame() を呼ばない(effects.update の二重呼び出しによるトレーサー早期消滅を防ぐ)
-      if (mode !== 'finalkillcam') match.frame(dt, mode === 'playing');
+      // frame() を呼ばない(effects.update の二重呼び出しによるトレーサー早期消滅を防ぐ)。
+      // photo 中も呼ばない(完全凍結の静止画をカメラだけ動かして眺める仕様)
+      if (mode !== 'finalkillcam' && mode !== 'photo') match.frame(dt, mode === 'playing');
       // 動的BGM/環境音: プレイ中だけ進める。ポーズは環境音を沈め、離脱で拍をリセット
       if (mode === 'playing') {
         sounds.tickBgm();
@@ -452,7 +498,7 @@ const loop = new GameLoop(
         if (combatLoopsPaused) { sounds.pauseCombatLoops(false); combatLoopsPaused = false; }
       } else {
         sounds.stopBgm();
-        if ((mode === 'paused' || mode === 'finalkillcam') && !combatLoopsPaused) {
+        if ((mode === 'paused' || mode === 'finalkillcam' || mode === 'photo') && !combatLoopsPaused) {
           sounds.pauseAmbience(true);
           sounds.pauseCombatLoops(true);
           combatLoopsPaused = true;
@@ -510,9 +556,13 @@ const loop = new GameLoop(
       // ライブなWebGLキャンバスの上にポーズ幕の backdrop-filter が載ると、明るい空の
       // ステージで白く破綻する既知の禁止パターン(=白飛びバグ)を根絶する。GPUも節約。
       // R19: ファイナルキルカム中も描画継続する(再生映像のため必須)。
-      if (mode === 'playing' || mode === 'finalkillcam') {
+      // R54-F7: photo は update/frame 停止のまま render のみ再開(R17ゲートへの意図的追加)
+      if (mode === 'playing' || mode === 'finalkillcam' || mode === 'photo') {
         if (mode === 'playing') adaptResolution(dt, performance.now());
+        if (mode === 'photo') photoMode?.frame(dt); // 自由飛行カメラ(移動+視点)
         match.render();
+        // キャプチャは render と同一タスク内が絶対条件(photo.ts afterRender の規約コメント参照)
+        if (mode === 'photo') photoMode?.afterRender();
       }
     }
     input.endFrame();
