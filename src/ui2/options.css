@@ -1,0 +1,724 @@
+/*
+  W-ENZA2 F7: オプション(mock07 1:1)+ポーズ — .u2-options / .u2-pause 名前空間。
+  モック値をそのまま採用(1920x1080ステージを --u2o-s で等比スケール)。
+  鉄則: filter/backdrop-filter 不使用(ポーズはcanvas直上)。面は不透明0.82+。
+  旧クラス(.mfd-/.ig-/.setting-*)への依存ゼロ。
+*/
+
+/* ── 画面ルート ── */
+.u2-options {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #050608;
+  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  letter-spacing: 0.04em;
+  color: #e8eaec;
+  user-select: none;
+}
+
+/* 1920x1080固定ステージ(モックの座標系をそのまま使う)。JSが --u2o-s を更新 */
+.u2o-stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1920px;
+  height: 1080px;
+  transform: translate(-50%, -50%) scale(var(--u2o-s, 1));
+  background: linear-gradient(180deg, #101114 0%, #0a0b0e 30%, #07080a 100%);
+}
+
+/* 走査線+上部グロー(モック実値) */
+.u2o-scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.012) 0px,
+    rgba(255, 255, 255, 0.012) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+}
+.u2o-topglow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1920px;
+  height: 200px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(24, 26, 30, 0.8), rgba(24, 26, 30, 0));
+}
+
+/* ── ヘッダー ── */
+.u2o-accent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 6px;
+  height: 118px;
+  background: linear-gradient(180deg, #ff7e3f, #c2451a);
+}
+.u2o-head {
+  position: absolute;
+  left: 64px;
+  top: 34px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  white-space: nowrap;
+}
+.u2o-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  height: 50px;
+  background: rgba(16, 17, 20, 0.9);
+  border: 1px solid rgba(232, 234, 236, 0.2);
+  cursor: pointer;
+  padding: 0;
+}
+.u2o-back:hover {
+  border-color: rgba(255, 107, 43, 0.7);
+}
+.u2o-back:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+.u2o-headtxt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.u2o-kicker {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.34em;
+  color: #8f959d;
+}
+.u2o-title {
+  font-weight: 800;
+  font-size: 42px;
+  line-height: 1;
+  letter-spacing: 0.05em;
+  color: #f4f6f8;
+}
+
+/* ── タブ(モック実値: 11px 26px / 橙グラデ現用) ── */
+.u2o-tabs {
+  position: absolute;
+  left: 64px;
+  top: 128px;
+  display: flex;
+  gap: 2px;
+  white-space: nowrap;
+}
+.u2o-tab {
+  padding: 11px 26px;
+  background: rgba(15, 16, 19, 0.85);
+  border: 1px solid rgba(232, 234, 236, 0.12);
+  color: #b9bec5;
+  font-weight: 700;
+  font-size: 14.5px;
+  font-family: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.u2o-tab:hover {
+  color: #ffa061;
+  border-color: rgba(255, 107, 43, 0.5);
+}
+.u2o-tab:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: -3px;
+}
+.u2o-tab.active {
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  color: #1a0b04;
+  font-weight: 800;
+  border: 1px solid transparent;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 190, 0.5);
+}
+
+/* ── 設定リスト(左:64 上:210 幅:760、下帯までの内側スクロール) ── */
+.u2o-list {
+  position: absolute;
+  left: 64px;
+  top: 210px;
+  width: 772px; /* 760+スクロールバー余白 */
+  max-height: 794px; /* 1080-210-52-24 */
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 12px;
+  white-space: nowrap;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 107, 43, 0.45) rgba(15, 16, 19, 0.6);
+}
+.u2o-list::-webkit-scrollbar {
+  width: 8px;
+}
+.u2o-list::-webkit-scrollbar-track {
+  background: rgba(15, 16, 19, 0.6);
+}
+.u2o-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 107, 43, 0.45);
+}
+
+.u2o-row {
+  display: grid;
+  grid-template-columns: 1fr 330px;
+  gap: 6px;
+  flex: none;
+}
+.u2o-label {
+  display: flex;
+  align-items: center;
+  padding: 0 22px;
+  height: 56px;
+  background: rgba(15, 16, 19, 0.88);
+  border: 1px solid rgba(232, 234, 236, 0.1);
+  font-weight: 700;
+  font-size: 15.5px;
+  color: #dde0e4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.u2o-ctl {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  height: 56px;
+  background: rgba(15, 16, 19, 0.88);
+  border: 1px solid rgba(232, 234, 236, 0.1);
+  box-sizing: border-box;
+}
+/* 選択中(フォーカス)の行 = モックの「言語選択」行の実値 */
+.u2o-row.sel .u2o-label {
+  background: rgba(24, 20, 17, 0.95);
+  border-color: rgba(255, 107, 43, 0.35);
+  font-weight: 800;
+  color: #f4f6f8;
+}
+.u2o-row.sel .u2o-ctl {
+  background: rgba(24, 20, 17, 0.95);
+  border: 2px solid #ff6b2b;
+  box-shadow:
+    0 0 22px rgba(255, 107, 43, 0.25),
+    inset 0 0 20px rgba(255, 107, 43, 0.08);
+  padding: 0 17px;
+}
+.u2o-row.sel .u2o-val,
+.u2o-row.sel .u2o-opt {
+  color: #ffb98a;
+  font-weight: 800;
+}
+
+.u2o-step {
+  color: #787e86;
+  font-size: 15px;
+  background: none;
+  border: 0;
+  padding: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  z-index: 2;
+}
+.u2o-step:hover {
+  color: #ffa061;
+}
+.u2o-mid {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+  height: 100%;
+}
+.u2o-segs {
+  display: flex;
+  gap: 3px;
+}
+.u2o-segs > i {
+  width: 12px;
+  height: 14px;
+  background: rgba(232, 234, 236, 0.15);
+}
+.u2o-segs > i.on {
+  background: #e8eaec;
+}
+.u2o-row.sel .u2o-segs > i.on {
+  background: #ffb98a;
+}
+.u2o-val {
+  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
+  font-weight: 700;
+  font-size: 17px;
+  color: #f4f6f8;
+  min-width: 34px;
+  text-align: right;
+}
+.u2o-opt {
+  font-weight: 700;
+  font-size: 15px;
+  color: #f4f6f8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* ネイティブrangeを中央領域に透明で重ねる(クリック/ドラッグ/←→が素で効く) */
+.u2o-range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: ew-resize;
+  margin: 0;
+}
+/* セレクト/トグルの中央はbutton(←→とEnterで循環) */
+.u2o-cycle {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+  background: none;
+}
+/* アクション行(モックの「再生」行の実値) */
+.u2o-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  background: rgba(15, 16, 19, 0.88);
+  border: 1px solid rgba(232, 234, 236, 0.1);
+  font-weight: 700;
+  font-size: 15px;
+  color: #f4f6f8;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: inherit;
+}
+.u2o-action:hover {
+  border-color: rgba(255, 107, 43, 0.6);
+  color: #ffa061;
+}
+.u2o-action:focus-visible,
+.u2o-range:focus-visible ~ .u2o-focusring,
+.u2o-cycle:focus-visible ~ .u2o-focusring {
+  outline: 2px solid #ffa061;
+  outline-offset: -3px;
+}
+
+/* リバインド表(操作タブ末尾) */
+.u2o-rebind {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0 2px;
+}
+.u2o-rebind-row {
+  display: grid;
+  grid-template-columns: 1fr 150px 176px;
+  gap: 6px;
+  align-items: stretch;
+}
+.u2o-rebind-name {
+  display: flex;
+  align-items: center;
+  padding: 0 22px;
+  height: 44px;
+  background: rgba(15, 16, 19, 0.88);
+  border: 1px solid rgba(232, 234, 236, 0.1);
+  font-size: 14px;
+  font-weight: 700;
+  color: #dde0e4;
+}
+.u2o-rebind-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 16, 19, 0.88);
+  border: 1px solid rgba(232, 234, 236, 0.1);
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 13px;
+  color: #ffb98a;
+}
+.u2o-rebind-btn {
+  height: 44px;
+  background: rgba(15, 16, 19, 0.88);
+  border: 1px solid rgba(232, 234, 236, 0.16);
+  color: #b9bec5;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.u2o-rebind-btn:hover {
+  color: #ffa061;
+  border-color: rgba(255, 107, 43, 0.5);
+}
+.u2o-rebind-btn:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: -3px;
+}
+.u2o-rebind-btn.capturing {
+  color: #1a0b04;
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  border-color: transparent;
+}
+.u2o-note {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: #6e747c;
+  line-height: 1.9;
+  white-space: normal;
+  padding: 2px 4px 0;
+}
+
+/* ── 右: 説明パネル(right:120 top:240 width:520) ── */
+.u2o-detail {
+  position: absolute;
+  right: 120px;
+  top: 240px;
+  width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  white-space: normal;
+}
+.u2o-dhead {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.u2o-dicon {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 16, 19, 0.9);
+  border: 1px solid rgba(232, 234, 236, 0.16);
+}
+.u2o-dicon > .dia {
+  width: 38px;
+  height: 38px;
+  background: rgba(255, 107, 43, 0.16);
+  border: 2px solid #ff6b2b;
+  transform: rotate(45deg);
+}
+.u2o-dicon > .dot {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ff6b2b;
+}
+.u2o-dtxt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.u2o-dtitle {
+  font-weight: 800;
+  font-size: 22px;
+  color: #f4f6f8;
+}
+.u2o-den {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: #8f959d;
+}
+.u2o-ddesc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 2;
+  color: #a6acb4;
+}
+.u2o-dnotes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: #6e747c;
+  line-height: 1.9;
+}
+
+/* ── 下帯(モック実値) ── */
+.u2o-foot {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1920px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 60px;
+  box-sizing: border-box;
+  border-top: 1px solid rgba(232, 234, 236, 0.1);
+  background: rgba(5, 6, 8, 0.85);
+  white-space: nowrap;
+}
+.u2o-foot-save {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  color: #6e747c;
+}
+.u2o-hints {
+  display: flex;
+  gap: 24px;
+  font-size: 12.5px;
+  color: #b9bec5;
+}
+.u2o-hints .a {
+  color: #ffb98a;
+}
+
+/* ══ ポーズ(canvas直上: filter禁止・面0.82+) ══ */
+.u2-pause {
+  position: absolute;
+  inset: 0;
+  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  letter-spacing: 0.04em;
+  color: #e8eaec;
+  user-select: none;
+}
+/* 暗転ビネット(グラデのみ。パネルではないので透過可) */
+.u2p-veil {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 90% at 50% 42%, rgba(2, 3, 4, 0.45), rgba(2, 3, 4, 0.88) 78%),
+    linear-gradient(180deg, rgba(2, 3, 4, 0.5), rgba(2, 3, 4, 0.72));
+}
+.u2p-accent {
+  position: absolute;
+  left: 0;
+  top: 8%;
+  width: 6px;
+  height: 118px;
+  background: linear-gradient(180deg, #ff7e3f, #c2451a);
+}
+.u2p-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(28px, 5vw, 96px);
+  padding: 0 clamp(16px, 4vw, 64px);
+}
+.u2p-left {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 2.2vh, 24px);
+  min-width: min(360px, 42vw);
+}
+.u2p-kicker {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.34em;
+  color: #8f959d;
+}
+.u2p-title {
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-weight: 600;
+  font-size: clamp(44px, 7.2vh, 76px);
+  line-height: 1.1;
+  letter-spacing: 0.14em;
+  color: #f4f6f8;
+  text-shadow: 0 0 34px rgba(255, 107, 43, 0.28);
+}
+.u2p-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.u2p-btn {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  padding: 0 22px;
+  background: rgba(15, 16, 19, 0.88);
+  border: 1px solid rgba(232, 234, 236, 0.12);
+  color: #dde0e4;
+  font-weight: 700;
+  font-size: 15.5px;
+  font-family: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease,
+    transform 0.12s ease;
+}
+.u2p-btn:hover,
+.u2p-btn:focus-visible {
+  border-color: rgba(255, 107, 43, 0.55);
+  color: #ffa061;
+  transform: translateX(8px);
+  outline: none;
+}
+.u2p-btn.primary {
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  border-color: transparent;
+  color: #1a0b04;
+  font-weight: 800;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 190, 0.5);
+}
+.u2p-btn.primary:hover,
+.u2p-btn.primary:focus-visible {
+  color: #1a0b04;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 190, 0.5),
+    0 0 26px rgba(255, 107, 43, 0.35);
+}
+/* 右: 実プロファイル統計プレート */
+.u2p-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(380px, 40vw);
+  padding: 26px 28px;
+  background: rgba(10, 11, 14, 0.92);
+  border: 1px solid rgba(232, 234, 236, 0.14);
+}
+.u2p-idrow {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.u2p-stamp {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 16, 19, 0.9);
+  border: 1px solid rgba(232, 234, 236, 0.16);
+}
+.u2p-stamp > .dia {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  background: rgba(255, 107, 43, 0.16);
+  border: 2px solid #ff6b2b;
+  transform: rotate(45deg);
+}
+.u2p-stamp > .ch {
+  position: relative;
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-size: 22px;
+  color: #ffb98a;
+}
+.u2p-rank {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.u2p-rankname {
+  font-weight: 800;
+  font-size: 19px;
+  color: #f4f6f8;
+}
+.u2p-lv {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: #8f959d;
+}
+.u2p-stats {
+  display: flex;
+  gap: 24px;
+}
+.u2p-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.u2p-stat .k {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  color: #6e747c;
+}
+.u2p-stat .v {
+  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
+  font-weight: 700;
+  font-size: 24px;
+  color: #f4f6f8;
+}
+.u2p-xp {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.u2p-xpbar {
+  height: 6px;
+  background: rgba(232, 234, 236, 0.12);
+  overflow: hidden;
+}
+.u2p-xpbar > i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ff7e3f, #e85615);
+  transform-origin: 0 50%;
+}
+.u2p-xplabel {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  color: #6e747c;
+}
+.u2p-hints {
+  position: absolute;
+  right: clamp(16px, 3vw, 60px);
+  bottom: 18px;
+  display: flex;
+  gap: 24px;
+  font-size: 12.5px;
+  color: #b9bec5;
+}
+.u2p-hints .a {
+  color: #ffb98a;
+}
+/* ポーズ内オプションのオーバーレイ層 */
+.u2p-options-layer {
+  position: absolute;
+  inset: 0;
+}
+
+/* ── 省モーション(メディア+アプリ設定の両輪) ── */
+@media (prefers-reduced-motion: reduce) {
+  .u2-options *,
+  .u2-pause * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.15s !important;
+  }
+}
+.u2-options.u2-reduce *,
+.u2-pause.u2-reduce * {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.15s !important;
+}

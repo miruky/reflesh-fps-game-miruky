@@ -1,0 +1,173 @@
+/*
+  W-ENZA2 F8: リザルト戦闘詳報(mock06 1:1移植)
+  モックは1920×1080固定コンポジション+インラインstyle主体。ここには
+  ①ステージのscale-to-fit包装 ②keyframes ③hover/focus(インラインでは書けない)
+  ④スクロール化(実データは行数可変) ⑤reduced-motion短絡 のみを置く。
+  構図・色・寸法はresult.tsのテンプレート内インラインstyle(=モック原文)が正典。
+*/
+
+.u2-result {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  overflow: hidden;
+  background: #020207;
+  display: grid;
+  place-items: center;
+}
+.u2-result-stage {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  flex: none;
+  overflow: hidden;
+  transform: scale(var(--u2s, 1));
+  transform-origin: center center;
+  background: linear-gradient(160deg, #0b0a10 0%, #070609 46%, #030308 100%);
+  color: #e8e3d8;
+  font-family: 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  letter-spacing: 0.04em;
+}
+
+/* ── モックのkeyframes(mock06 <style> 原文どおり) ── */
+@keyframes u2rScan {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}
+@keyframes u2rPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes u2rSpark {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-620px);
+  }
+}
+@keyframes u2rGrow {
+  0% {
+    transform: scaleX(0);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+/* 入場儀式(勝敗題字) — transform/opacityのみ */
+@keyframes u2rHero {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.u2r-hero-in {
+  animation: u2rHero 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ── 実データで行数可変な領域のスクロール化(v1教訓: スクロール不可の根絶) ── */
+.u2r-board-rows {
+  max-height: 300px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 107, 43, 0.4) rgba(232, 227, 216, 0.06);
+}
+.u2r-xp-rows {
+  max-height: 150px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 107, 43, 0.4) rgba(232, 227, 216, 0.06);
+}
+.u2r-medals {
+  max-width: 1310px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 107, 43, 0.4) rgba(232, 227, 216, 0.06);
+}
+
+/* ── CTA/ボタン(hover/focusはインライン不可のためクラスで。基本様式もモック原文) ── */
+.u2r-cta {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: 64px;
+  width: 100%;
+  border: none;
+  cursor: pointer;
+  background: linear-gradient(180deg, #ff7e3f, #e85615 55%, #c2451a);
+  color: #1a0b04;
+  font-family: inherit;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+  box-shadow:
+    0 0 36px rgba(255, 107, 43, 0.4),
+    inset 0 1px 0 rgba(255, 220, 190, 0.5);
+  overflow: hidden;
+}
+.u2r-cta:hover {
+  background: linear-gradient(180deg, #ff9861, #f26722 55%, #d4501e);
+}
+.u2r-cta:focus-visible {
+  outline: 2px solid #fff4e6;
+  outline-offset: 3px;
+}
+.u2r-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 50px;
+  border: 1px solid rgba(232, 227, 216, 0.28);
+  color: #d8d1c2;
+  font-family: inherit;
+  font-size: 14.5px;
+  letter-spacing: 0.04em;
+  background: rgba(14, 12, 11, 0.75);
+  cursor: pointer;
+}
+.u2r-btn--l {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+}
+.u2r-btn--r {
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+}
+.u2r-btn:hover {
+  border-color: rgba(255, 107, 43, 0.6);
+  color: #ffa061;
+}
+.u2r-btn:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+
+/* ── 省モーション: モック原文の短絡+スキャン/火の粉停止 ── */
+@media (prefers-reduced-motion: reduce) {
+  .u2-result * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.15s !important;
+  }
+}
+.u2-result.u2r-reduce * {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.15s !important;
+}

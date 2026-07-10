@@ -1,0 +1,853 @@
+/*
+  W-ENZA2 F4: 武器庫 ARMORY(mock04 逐語移植)
+  正典: scratchpad/enza-mock-04.html — 寸法/色/影/字間は全てモック実測値。
+  構成: 1920×1080固定ステージを zoom(fallback: transform scale)で全ビューポートへ等比フィット。
+  背景の<img>のみCSSグラデーションで再現(アセットレス鉄則)。メニュー画面はcanvas非表示下で
+  表示されるため box-shadow/グラデ表現はモックのまま使用する(HUD系の鉄則とは別領域)。
+*/
+
+.u2-armory {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #050608;
+}
+
+.u2a-stage {
+  position: relative;
+  flex: none;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: #08090c;
+  color: #e8eaec;
+  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+/* 背景(モックの<img>をCSSで再現: 漆黒+斜光柱+下部の熾火残光)+走査線(モック逐語) */
+.u2a-bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 85% at 50% 112%, rgba(255, 107, 43, 0.055) 0%, rgba(255, 107, 43, 0) 55%),
+    linear-gradient(
+      113deg,
+      transparent 10%,
+      rgba(232, 238, 244, 0.03) 20%,
+      transparent 31%,
+      transparent 44%,
+      rgba(232, 238, 244, 0.022) 54%,
+      transparent 66%,
+      transparent 76%,
+      rgba(232, 238, 244, 0.016) 84%,
+      transparent 94%
+    ),
+    radial-gradient(90% 60% at 50% 0%, rgba(16, 18, 24, 0.9) 0%, rgba(8, 9, 12, 0) 70%),
+    linear-gradient(180deg, #0a0b0f 0%, #08090c 55%, #060708 100%);
+}
+.u2a-scan {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.012) 0px,
+    rgba(255, 255, 255, 0.012) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+}
+
+/* ══ ヘッダー(モック: left56 top26 right56) ══ */
+.u2a-header {
+  position: absolute;
+  left: 56px;
+  top: 26px;
+  right: 56px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  white-space: nowrap;
+}
+.u2a-head-left {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.u2a-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  background: rgba(14, 14, 17, 0.85);
+  border: 1px solid rgba(232, 234, 236, 0.2);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 120ms ease;
+}
+.u2a-back:hover {
+  border-color: rgba(255, 107, 43, 0.7);
+}
+.u2a-back:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+.u2a-headings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.u2a-kicker {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.34em;
+  color: #8f959d;
+}
+/* タイトル行=ビュー切替(メイン/サブ/投擲)。activeがモックの44px特大題 */
+.u2a-titles {
+  display: flex;
+  align-items: baseline;
+  gap: 22px;
+}
+.u2a-title {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: 0.05em;
+  color: #6e747c;
+  transition: color 120ms ease;
+}
+.u2a-title:hover {
+  color: #ffa061;
+}
+.u2a-title:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 3px;
+}
+.u2a-title.on {
+  font-weight: 800;
+  font-size: 44px;
+  line-height: 1;
+  color: #f4f6f8;
+  cursor: default;
+}
+
+/* ══ カテゴリタブ(モック: top118 h56) ══ */
+.u2a-tabs {
+  position: absolute;
+  left: 56px;
+  top: 118px;
+  right: 56px;
+  height: 56px;
+  display: flex;
+  align-items: stretch;
+  background: rgba(10, 10, 13, 0.92);
+  border: 1px solid rgba(232, 234, 236, 0.14);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+.u2a-pad {
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  color: #8f959d;
+}
+.u2a-pad--lb {
+  border-right: 1px solid rgba(232, 234, 236, 0.12);
+}
+.u2a-pad--rb {
+  border-left: 1px solid rgba(232, 234, 236, 0.12);
+  margin-left: auto;
+}
+.u2a-tab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 30px;
+  background: none;
+  border: none;
+  border-right: 1px solid rgba(232, 234, 236, 0.07);
+  color: #b9bec5;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 15.5px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
+}
+.u2a-tab:hover {
+  color: #ffa061;
+  background: rgba(255, 107, 43, 0.07);
+}
+.u2a-tab:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: -3px;
+}
+.u2a-tab.on {
+  position: relative;
+  padding: 0 34px;
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  color: #1a0b04;
+  font-weight: 800;
+  font-size: 16.5px;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 190, 0.5);
+}
+.u2a-tab .u2a-tab-n {
+  font-family: 'Bahnschrift', Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6e747c;
+}
+.u2a-tab.on .u2a-tab-n {
+  color: #5a2408;
+}
+/* 特殊兵装タブ(金) */
+.u2a-tab--exotic {
+  color: #eed9a0;
+}
+.u2a-tab--exotic:hover {
+  color: #f7ebc8;
+  background: rgba(214, 178, 94, 0.1);
+}
+.u2a-tab--exotic:focus-visible {
+  outline-color: #eed9a0;
+}
+.u2a-tab--exotic.on {
+  background: linear-gradient(180deg, #f1c55c, #b8862e 60%, #96691f);
+  color: #241503;
+  box-shadow: inset 0 1px 0 rgba(255, 240, 205, 0.55);
+}
+.u2a-dia {
+  width: 8px;
+  height: 8px;
+  background: rgba(238, 217, 160, 0.25);
+  border: 1px solid #d6b25e;
+  transform: rotate(45deg);
+}
+.u2a-tab--exotic.on .u2a-dia {
+  background: rgba(36, 21, 3, 0.35);
+  border-color: #241503;
+}
+
+/* ══ 左: 武器リスト(モック: left56 top192 w436 bottom64) ══ */
+.u2a-list {
+  position: absolute;
+  left: 56px;
+  top: 192px;
+  width: 436px;
+  bottom: 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  white-space: nowrap;
+}
+.u2a-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 107, 43, 0.45) rgba(15, 16, 19, 0.6);
+  flex: 1;
+  min-height: 0;
+  padding-right: 2px;
+}
+.u2a-rows::-webkit-scrollbar {
+  width: 6px;
+}
+.u2a-rows::-webkit-scrollbar-thumb {
+  background: rgba(255, 107, 43, 0.45);
+}
+.u2a-rows::-webkit-scrollbar-track {
+  background: rgba(15, 16, 19, 0.6);
+}
+.u2a-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+  height: 76px;
+  padding: 0 18px 0 10px;
+  background: rgba(15, 16, 19, 0.88);
+  border: 1px solid rgba(232, 234, 236, 0.1);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+.u2a-row:hover {
+  border-color: rgba(255, 107, 43, 0.55);
+  background: rgba(24, 20, 17, 0.9);
+}
+.u2a-row:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+.u2a-row.on {
+  height: 84px;
+  border: none;
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  box-shadow:
+    0 8px 26px rgba(0, 0, 0, 0.5),
+    0 0 26px rgba(255, 107, 43, 0.22),
+    inset 0 1px 0 rgba(255, 220, 190, 0.5);
+}
+.u2a-row.on:focus-visible {
+  outline: 2px solid #fff4e6;
+}
+.u2a-row.locked {
+  background: rgba(11, 12, 14, 0.8);
+  border: 1px solid rgba(232, 234, 236, 0.06);
+  cursor: default;
+}
+.u2a-row.locked:hover {
+  border-color: rgba(232, 234, 236, 0.2);
+  background: rgba(11, 12, 14, 0.8);
+}
+/* シルエット(既存weaponSilSVG流用。currentColorで着色) */
+.u2a-sil {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 146px;
+  height: 54px;
+  flex: none;
+  color: #c8ccd2;
+}
+.u2a-sil svg {
+  width: 100%;
+  height: 100%;
+}
+.u2a-row.on .u2a-sil {
+  width: 158px;
+  height: 59px;
+  color: #2a1508;
+}
+.u2a-row.locked .u2a-sil {
+  opacity: 0.32;
+}
+.u2a-wtext {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.u2a-wname {
+  font-weight: 700;
+  font-size: 17px;
+  color: #dde0e4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.u2a-row.on .u2a-wname {
+  font-weight: 800;
+  font-size: 19px;
+  color: #1a0b04;
+}
+.u2a-row.locked .u2a-wname {
+  color: #6e747c;
+}
+.u2a-wsub {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  color: #787e86;
+}
+.u2a-row.on .u2a-wsub {
+  color: #5a2408;
+}
+.u2a-row.locked .u2a-wsub {
+  color: #565c64;
+}
+/* カモ取得マーカー(菱)。gold/diamond/tokoyami */
+.u2a-mark {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  transform: rotate(45deg);
+}
+.u2a-mark--gold {
+  background: linear-gradient(135deg, #f5d06b, #b8862e);
+  border: 1px solid rgba(90, 36, 8, 0.5);
+}
+.u2a-mark--diamond {
+  background: linear-gradient(135deg, #e8f6ff, #8fb8e0);
+  border: 1px solid rgba(191, 232, 255, 0.6);
+}
+.u2a-mark--tokoyami {
+  background: radial-gradient(circle at 40% 30%, #dfa8ff 0%, #6a18a8 45%, #12041e 88%);
+  border: 1px solid rgba(196, 77, 255, 0.55);
+}
+/* EXOTIC案内プレート(リスト最下部固定) */
+.u2a-exnote {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  margin-top: auto;
+  padding: 12px 14px;
+  background: rgba(30, 25, 13, 0.72);
+  border: 1px solid rgba(214, 178, 94, 0.35);
+}
+.u2a-exnote .u2a-dia {
+  width: 9px;
+  height: 9px;
+}
+.u2a-exnote span:last-child {
+  font-size: 12px;
+  color: #cbb27a;
+}
+
+/* ══ 中央: 武器詳細(モック: left530 top192 right56 bottom64) ══ */
+.u2a-detail {
+  position: absolute;
+  left: 530px;
+  top: 192px;
+  right: 56px;
+  bottom: 64px;
+}
+.u2a-nameplate-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  white-space: nowrap;
+}
+.u2a-nameplate {
+  background: #f2f4f6;
+  color: #101216;
+  font-weight: 800;
+  font-size: 24px;
+  letter-spacing: 0.06em;
+  padding: 7px 20px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+.u2a-spec {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: #8f959d;
+}
+.u2a-chips {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.u2a-chip {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  color: #9aa0a8;
+  border: 1px solid rgba(232, 234, 236, 0.2);
+  padding: 4px 12px;
+  background: rgba(15, 16, 19, 0.6);
+}
+.u2a-chip--gold {
+  color: #cbb27a;
+  border-color: rgba(214, 178, 94, 0.5);
+  background: rgba(30, 25, 13, 0.6);
+}
+.u2a-desc {
+  margin: 14px 0 0 0;
+  max-width: 600px;
+  font-size: 14px;
+  line-height: 1.9;
+  color: #a6acb4;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+}
+
+/* 巨大レンダー(モック: top118 h470)。canvasは既存WeaponPreview */
+.u2a-render {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 118px;
+  height: 470px;
+}
+.u2a-glow {
+  pointer-events: none;
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  transform: translate(-50%, -50%);
+  width: 900px;
+  height: 420px;
+  background: radial-gradient(
+    50% 46% at 50% 50%,
+    rgba(235, 220, 190, 0.1) 0%,
+    rgba(235, 220, 190, 0) 72%
+  );
+}
+.u2a--shrine .u2a-glow {
+  background: radial-gradient(
+    50% 46% at 50% 50%,
+    rgba(214, 178, 94, 0.12) 0%,
+    rgba(106, 24, 168, 0.06) 45%,
+    rgba(235, 220, 190, 0) 74%
+  );
+}
+.u2a-render canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.u2a-floorshadow {
+  pointer-events: none;
+  position: absolute;
+  left: 50%;
+  top: 88%;
+  transform: translateX(-50%);
+  width: 660px;
+  height: 34px;
+  background: radial-gradient(50% 50% at 50% 50%, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 74%);
+}
+.u2a-hint {
+  pointer-events: none;
+  position: absolute;
+  right: 6px;
+  bottom: 2px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: #565c64;
+}
+
+/* 性能セグメント(モック: left6 bottom118) */
+.u2a-stats {
+  position: absolute;
+  left: 6px;
+  bottom: 118px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  white-space: nowrap;
+}
+.u2a-statrow {
+  display: grid;
+  grid-template-columns: 64px auto 34px;
+  align-items: center;
+  gap: 14px;
+}
+.u2a-statlabel {
+  font-weight: 800;
+  font-size: 13px;
+  color: #dde0e4;
+  text-align: right;
+}
+.u2a-pips {
+  display: flex;
+  gap: 3px;
+}
+.u2a-pips i {
+  width: 19px;
+  height: 13px;
+  background: rgba(232, 234, 236, 0.14);
+}
+.u2a-pips i.on {
+  background: #e8eaec;
+}
+.u2a-diffcell {
+  font-family: 'Bahnschrift', Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: #565c64;
+}
+.u2a-diffcell.up {
+  color: #9fe39f;
+}
+.u2a-diffcell.down {
+  color: #e88b8b;
+}
+.u2a-ttk {
+  margin-top: 4px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  color: #6e747c;
+}
+
+/* カモ(モック: right6 bottom132) */
+.u2a-camo {
+  position: absolute;
+  right: 6px;
+  bottom: 132px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  white-space: nowrap;
+}
+.u2a-camohead {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  color: #8f959d;
+}
+.u2a-camohead b {
+  color: #eed9a0;
+  font-weight: 400;
+}
+.u2a-swatches {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 560px;
+}
+.u2a-swatch {
+  width: 40px;
+  height: 30px;
+  border: 1px solid rgba(232, 234, 236, 0.2);
+  padding: 0;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+.u2a-swatch:hover:not(:disabled) {
+  border-color: #ffa061;
+}
+.u2a-swatch:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+.u2a-swatch.on {
+  border: 2px solid #ffa061;
+  box-shadow: 0 0 14px rgba(255, 160, 97, 0.4);
+}
+.u2a-swatch.locked {
+  opacity: 0.6;
+  cursor: default;
+}
+.u2a-swatch--none {
+  background: linear-gradient(135deg, #2c3340, #181b22);
+}
+.u2a-camonext {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  color: #6e747c;
+}
+.u2a-camonote {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  color: #6e747c;
+}
+
+/* 下段: アタッチメント+CTA(モック: bottom0) */
+.u2a-slots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  white-space: nowrap;
+}
+.u2a-slotwrap {
+  position: relative;
+  display: flex;
+}
+.u2a-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 16px;
+  min-width: 150px;
+  background: rgba(15, 16, 19, 0.9);
+  border: 1px solid rgba(255, 107, 43, 0.45);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: border-color 120ms ease;
+}
+.u2a-slot:hover {
+  border-color: rgba(255, 160, 97, 0.85);
+}
+.u2a-slot:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+.u2a-slot.empty {
+  background: rgba(11, 12, 14, 0.75);
+  border: 1px dashed rgba(232, 234, 236, 0.22);
+}
+.u2a-slotkicker {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: #c9865c;
+}
+.u2a-slot.empty .u2a-slotkicker {
+  color: #565c64;
+}
+.u2a-slotname {
+  font-weight: 700;
+  font-size: 14px;
+  color: #e8eaec;
+}
+.u2a-slot.empty .u2a-slotname {
+  color: #6e747c;
+}
+/* アタッチメント選択ポップオーバー(モックのプレート語彙で実機能を足す) */
+.u2a-pop {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  min-width: 280px;
+  max-height: 380px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  background: rgba(10, 10, 13, 0.97);
+  border: 1px solid rgba(255, 107, 43, 0.4);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.65);
+  z-index: 5;
+}
+.u2a-popbtn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 14px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid rgba(232, 234, 236, 0.07);
+  color: #dde0e4;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.u2a-popbtn:hover:not(:disabled) {
+  background: rgba(255, 107, 43, 0.09);
+}
+.u2a-popbtn:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: -2px;
+}
+.u2a-popbtn.on {
+  color: #ffa061;
+}
+.u2a-popbtn:disabled {
+  color: #565c64;
+  cursor: default;
+}
+.u2a-popname {
+  font-weight: 700;
+  font-size: 13.5px;
+}
+.u2a-popsub {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  color: #8f959d;
+}
+.u2a-popbtn:disabled .u2a-popsub {
+  color: #565c64;
+}
+/* CTA(この兵装で出撃) */
+.u2a-cta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 44px;
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  border: none;
+  color: #1a0b04;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  box-shadow:
+    0 8px 26px rgba(0, 0, 0, 0.5),
+    0 0 30px rgba(255, 107, 43, 0.3),
+    inset 0 1px 0 rgba(255, 220, 190, 0.5);
+  transition: background 120ms ease;
+}
+.u2a-cta:hover {
+  background: linear-gradient(180deg, #ff9861, #f26722 60%, #dd5a1e);
+}
+.u2a-cta:focus-visible {
+  outline: 2px solid #fff4e6;
+  outline-offset: 2px;
+}
+.u2a-glyph {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid #3a1505;
+  color: #3a1505;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+/* ══ 下帯(モック: h44) ══ */
+.u2a-band {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1920px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 56px;
+  box-sizing: border-box;
+  background: linear-gradient(0deg, rgba(3, 4, 5, 0.9), rgba(3, 4, 5, 0));
+  white-space: nowrap;
+  pointer-events: none;
+}
+.u2a-band-status {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  color: #6e747c;
+}
+.u2a-band-hints {
+  display: flex;
+  gap: 24px;
+  font-size: 12.5px;
+  color: #b9bec5;
+}
+.u2a-band-hints b {
+  font-weight: 400;
+  color: #ffb98a;
+}
+
+/* 投擲物ビュー: 詳細領域は説明のみ(レンダー/性能/カモ/スロットを隠す) */
+.u2a-stage[data-view='grenade'] .u2a-render,
+.u2a-stage[data-view='grenade'] .u2a-stats,
+.u2a-stage[data-view='grenade'] .u2a-camo,
+.u2a-stage[data-view='grenade'] .u2a-slotwrap,
+.u2a-stage[data-view='secondary'] .u2a-slotwrap {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .u2-armory * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.15s !important;
+  }
+}

@@ -1,0 +1,432 @@
+/*
+  W-ENZA2 F2: タイトル画面(mock01 1:1移植)。
+  1920×1080固定ステージを --u2s の一様スケールで適合。値はモック実測(インラインstyle)から採取。
+  接頭辞 .u2-title / keyframes u2ttl*(他画面との衝突回避のため名前空間化)。
+  メニュー画面のためcanvas非表示前提(ENZA_SPEC_V2ルール5)。
+*/
+.u2-title {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #050607;
+  color: #e8eaec;
+  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  letter-spacing: 0.04em;
+  z-index: 40;
+}
+.u2-title__stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1920px;
+  height: 1080px;
+  transform: translate(-50%, -50%) scale(var(--u2s, 1));
+  overflow: hidden;
+  background: #050607;
+}
+.u2-title__scene {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1920px;
+  height: 1080px;
+  display: block;
+}
+
+/* ── 流れる霧(モック実値) ── */
+.u2-title__fog {
+  position: absolute;
+  pointer-events: none;
+}
+.u2-title__fog--a {
+  left: -10%;
+  top: 30%;
+  width: 120%;
+  height: 46%;
+  background:
+    radial-gradient(42% 60% at 30% 50%, rgba(170, 178, 188, 0.05) 0%, rgba(170, 178, 188, 0) 70%),
+    radial-gradient(36% 52% at 74% 44%, rgba(170, 178, 188, 0.045) 0%, rgba(170, 178, 188, 0) 70%);
+  animation: u2ttlFogA 26s ease-in-out infinite;
+}
+.u2-title__fog--b {
+  left: -10%;
+  top: 52%;
+  width: 120%;
+  height: 42%;
+  background: radial-gradient(46% 58% at 60% 52%, rgba(150, 158, 168, 0.05) 0%, rgba(150, 158, 168, 0) 70%);
+  animation: u2ttlFogB 34s ease-in-out infinite;
+}
+
+/* ── クナイ根元の上昇火の粉(モック実座標) ── */
+.u2-title__ember {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.u2-title__ember--1 {
+  left: 1166px;
+  top: 952px;
+  width: 5px;
+  height: 5px;
+  background: #ffb374;
+  box-shadow: 0 0 8px rgba(255, 150, 80, 0.9);
+  animation: u2ttlEmberRise 7s linear infinite;
+}
+.u2-title__ember--2 {
+  left: 1204px;
+  top: 962px;
+  width: 4px;
+  height: 4px;
+  background: #ffd9ae;
+  box-shadow: 0 0 7px rgba(255, 170, 100, 0.8);
+  animation: u2ttlEmberRise 9s linear infinite 2.2s;
+}
+.u2-title__ember--3 {
+  left: 1146px;
+  top: 958px;
+  width: 3px;
+  height: 3px;
+  background: #ffb374;
+  box-shadow: 0 0 6px rgba(255, 150, 80, 0.8);
+  animation: u2ttlEmberRise 11s linear infinite 4.6s;
+}
+
+/* ── 右上ビルド表記 ── */
+.u2-title__build {
+  position: absolute;
+  right: 60px;
+  top: 44px;
+  text-align: right;
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: #6e747c;
+  line-height: 1.9;
+}
+
+/* ── ロゴ(left:170 top:346) ── */
+.u2-title__logo {
+  position: absolute;
+  left: 170px;
+  top: 346px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.u2-title__kicker {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.u2-title__kicker i {
+  width: 30px;
+  height: 2px;
+  background: #ff6b2b;
+}
+.u2-title__kicker span {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 13px;
+  letter-spacing: 0.42em;
+  color: #9aa0a8;
+}
+.u2-title__word {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: 'Bahnschrift', 'Arial Narrow', 'Avenir Next Condensed', Arial, sans-serif;
+  font-weight: 800;
+  font-size: 118px;
+  line-height: 0.94;
+  letter-spacing: 0.015em;
+}
+.u2-title__word-re {
+  color: #f4f6f8;
+  text-shadow:
+    0 2px 22px rgba(0, 0, 0, 0.85),
+    0 0 60px rgba(200, 214, 228, 0.14);
+}
+.u2-title__word-flesh {
+  color: #ff6b2b;
+  text-shadow:
+    0 2px 22px rgba(0, 0, 0, 0.85),
+    0 0 46px rgba(255, 107, 43, 0.5);
+}
+.u2-title__rule {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 2px;
+}
+.u2-title__rule i {
+  width: 496px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 107, 43, 0.85), rgba(232, 227, 216, 0.2) 60%, rgba(232, 227, 216, 0));
+}
+.u2-title__rule span {
+  width: 9px;
+  height: 9px;
+  background: rgba(255, 107, 43, 0.2);
+  border: 1.5px solid #ff6b2b;
+  transform: rotate(45deg);
+}
+
+/* ── ナビ(left:170 top:648) ── */
+.u2-title__nav {
+  position: absolute;
+  left: 170px;
+  top: 648px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: nowrap;
+}
+.u2-title__nav-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 18px 10px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: #c4c9cf;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: 0.06em;
+  transition:
+    color 120ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.u2-title__nav-item--dim {
+  color: #878d95;
+}
+.u2-title__dia {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid rgba(196, 201, 207, 0.5);
+  transform: rotate(45deg);
+  flex: none;
+}
+.u2-title__nav-item--dim .u2-title__dia {
+  border-color: rgba(135, 141, 149, 0.5);
+}
+.u2-title__nav-item:hover {
+  color: #ffa061;
+  transform: translateX(8px);
+}
+.u2-title__nav-item:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 4px;
+}
+.u2-title__nav-item.sel {
+  color: #ff8b4d;
+  font-weight: 800;
+  font-size: 21px;
+}
+.u2-title__nav-item.sel .u2-title__dia {
+  border: none;
+  background: #ff6b2b;
+  box-shadow: 0 0 10px rgba(255, 107, 43, 0.9);
+  animation: u2ttlBlink 1.6s ease-in-out infinite;
+}
+
+/* ── 下帯 ── */
+.u2-title__foot {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1920px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 60px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  background: linear-gradient(0deg, rgba(3, 4, 5, 0.88), rgba(3, 4, 5, 0));
+}
+.u2-title__copy {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  color: #5e646c;
+}
+.u2-title__hints {
+  display: flex;
+  gap: 26px;
+  font-size: 12.5px;
+  color: #9aa0a8;
+  white-space: nowrap;
+}
+.u2-title__key {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid #ff6b2b;
+  color: #ffb98a;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  font-style: normal;
+}
+
+/* ── クレジット(画面内モーダル) ── */
+.u2-title__credits {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3, 4, 5, 0.72);
+}
+.u2-title__credits[hidden] {
+  display: none;
+}
+.u2-title__credits-panel {
+  min-width: 420px;
+  padding: 34px 44px 28px;
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.96), rgba(11, 10, 9, 0.97));
+  border: 1px solid rgba(232, 227, 216, 0.14);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+}
+.u2-title__credits-panel h2 {
+  margin: 0 0 18px;
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-size: 26px;
+  letter-spacing: 0.12em;
+  color: #f7f2e8;
+}
+.u2-title__credits-panel p {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: #c4bba8;
+}
+.u2-title__credits-tech {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: #8f8778;
+}
+.u2-title__credits-close {
+  margin-top: 14px;
+  padding: 10px 26px;
+  background: rgba(14, 12, 11, 0.82);
+  border: 1px solid rgba(232, 227, 216, 0.28);
+  color: #e8e3d8;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  transition: border-color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.u2-title__credits-close:hover,
+.u2-title__credits-close:focus-visible {
+  border-color: #ffa061;
+  color: #ffd9bc;
+  outline: none;
+}
+
+/* ── 入場儀式(600ms) ── */
+.u2-title__logo,
+.u2-title__nav,
+.u2-title__foot,
+.u2-title__build {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 600ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 600ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.u2-title__nav {
+  transition-delay: 180ms;
+}
+.u2-title__foot,
+.u2-title__build {
+  transform: none;
+  transition-delay: 300ms;
+}
+.u2-title--in .u2-title__logo,
+.u2-title--in .u2-title__nav,
+.u2-title--in .u2-title__foot,
+.u2-title--in .u2-title__build {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── アニメーション定義(モック実値、名前空間化) ── */
+@keyframes u2ttlFogA {
+  0% {
+    transform: translate3d(-40px, 0, 0);
+  }
+  50% {
+    transform: translate3d(50px, -16px, 0);
+  }
+  100% {
+    transform: translate3d(-40px, 0, 0);
+  }
+}
+@keyframes u2ttlFogB {
+  0% {
+    transform: translate3d(30px, 0, 0);
+  }
+  50% {
+    transform: translate3d(-46px, 12px, 0);
+  }
+  100% {
+    transform: translate3d(30px, 0, 0);
+  }
+}
+@keyframes u2ttlBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+@keyframes u2ttlEmberRise {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.8;
+  }
+  88% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateY(-260px);
+    opacity: 0;
+  }
+}
+
+/* ── 省モーション(メディアクエリ+アプリ設定の両輪) ── */
+@media (prefers-reduced-motion: reduce) {
+  .u2-title *,
+  .u2-title__logo,
+  .u2-title__nav,
+  .u2-title__foot,
+  .u2-title__build {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.15s !important;
+    transition-delay: 0ms !important;
+  }
+}
+.u2-title.u2-reduce *,
+.u2-title.u2-reduce .u2-title__logo,
+.u2-title.u2-reduce .u2-title__nav,
+.u2-title.u2-reduce .u2-title__foot,
+.u2-title.u2-reduce .u2-title__build {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.15s !important;
+  transition-delay: 0ms !important;
+}

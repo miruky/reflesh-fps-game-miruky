@@ -1,0 +1,132 @@
+/*
+  W-ENZA2 共有基盤(F1所有)。
+  モックは1920×1080固定コンポジション+インラインスタイル。コーディネータが
+  .u2-stage を viewport に scale-to-fit(レターボックス)するため、画面オーナーは
+  モック座標を逐語移植できる。画面固有スタイルは各自のCSSへ(ここは共有のみ)。
+*/
+.u2-letterbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #020207;
+  overflow: hidden;
+}
+.u2-stage {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  flex: none;
+  transform-origin: center center;
+  color: #e8e3d8;
+  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  letter-spacing: 0.04em;
+}
+/* ポーズ等の「試合の上に薄く載る」画面はコーディネータがこのクラスを付ける */
+.u2-letterbox--overlay {
+  background: transparent;
+  pointer-events: none;
+}
+.u2-letterbox--overlay .u2-stage {
+  pointer-events: auto;
+}
+
+/* ボタンの素地リセット(モックはa/divで組まれている — 実装はbuttonで組み直すため) */
+.u2-stage button {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.u2-stage button:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 3px;
+}
+
+/* ═══ モック共通keyframes(mock helmetから逐語。単一定義でscreen間の重複を防ぐ) ═══ */
+@keyframes enzaTwinkle {
+  0%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+@keyframes enzaTwinkle2 {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes enzaPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes enzaOrbit {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+@keyframes enzaShoot {
+  0% {
+    transform: translate(0, 0) rotate(-28deg);
+    opacity: 0;
+  }
+  6% {
+    opacity: 0.9;
+  }
+  16% {
+    transform: translate(-420px, 224px) rotate(-28deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(-420px, 224px) rotate(-28deg);
+    opacity: 0;
+  }
+}
+@keyframes enzaTicker {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+@keyframes enzaFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .u2-stage *,
+  .u2-stage {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.15s !important;
+  }
+}

@@ -1,0 +1,851 @@
+/*
+  W-ENZA2 F3: 出撃ロビー(mock03「公開マッチ」1:1移植)。
+  正典: scratchpad/enza-mock-03.html — 1920×1080固定ステージ+インラインstyle構成。
+  ステージのscale-to-fitはF1の共通基盤(.u2-letterbox/.u2-stage)が行うため、
+  ここはステージ内の絶対配置(モック実測座標そのまま)のみを持つ。
+  背景のみモックはPNGビットマップのためアセットレス鉄則により、同じ夕暮れ都市情景を
+  手続きSVG(v1 FA4実装をgit d3a9a43から回収・改名)+シード固定LCGで決定論再現している。
+  名前空間: .u2d-*。keyframesは u2d- 接頭(グローバル衝突回避)。
+*/
+
+/* ── 背景情景: 残照の空+雲+星+都市+幟+塵+接地(mock03のPNG背景の手続き再現) ── */
+.u2d-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background: linear-gradient(
+    180deg,
+    #0b0806 0%,
+    #150e09 30%,
+    #241811 50%,
+    #402816 66%,
+    #6b4322 78%,
+    #33200f 86%,
+    #0d0807 94%,
+    #070405 100%
+  );
+}
+.u2d-bg-cloud {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: var(--w, 880px);
+  height: var(--h, 110px);
+  background: radial-gradient(50% 50% at 50% 50%, rgba(255, 160, 97, 0.06) 0%, transparent 70%);
+  animation: u2d-cloud-drift var(--d, 110s) ease-in-out var(--delay, 0s) infinite alternate;
+}
+@keyframes u2d-cloud-drift {
+  from {
+    transform: translate3d(-48px, 0, 0);
+  }
+  to {
+    transform: translate3d(48px, 0, 0);
+  }
+}
+.u2d-bg-stars {
+  position: absolute;
+  inset: 0 0 55% 0;
+}
+.u2d-bg-stars svg {
+  width: 100%;
+  height: 100%;
+}
+.u2d-tw1 {
+  animation: u2d-tw 5s ease-in-out infinite alternate;
+}
+.u2d-tw2 {
+  animation: u2d-tw 8s ease-in-out 2.2s infinite alternate;
+}
+@keyframes u2d-tw {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 0.9;
+  }
+}
+.u2d-bg-city {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 800px;
+}
+.u2d-bg-city svg {
+  width: 100%;
+  height: 100%;
+}
+.u2d-bg-banner {
+  position: absolute;
+  bottom: 43px;
+  width: 118px;
+  transform-origin: 50% 0;
+}
+.u2d-bg-banner svg {
+  width: 100%;
+  height: 100%;
+}
+.u2d-bg-banner-a {
+  left: 61%;
+  height: 562px;
+  animation: u2d-sway 9s ease-in-out infinite alternate;
+}
+.u2d-bg-banner-b {
+  left: 74%;
+  height: 713px;
+  animation: u2d-sway 11s ease-in-out 3s infinite alternate;
+}
+@keyframes u2d-sway {
+  from {
+    transform: rotate(-0.7deg);
+  }
+  to {
+    transform: rotate(0.7deg);
+  }
+}
+.u2d-bg-ground {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 119px;
+  background: linear-gradient(0deg, #050304 38%, transparent 100%);
+}
+.u2d-ember {
+  position: absolute;
+  left: var(--x);
+  bottom: -32px;
+  width: var(--s, 2px);
+  height: var(--s, 2px);
+  border-radius: 50%;
+  background: var(--c, #ffb98a);
+  opacity: 0;
+  animation: u2d-rise var(--d, 12s) linear var(--delay, 0s) infinite;
+}
+@keyframes u2d-rise {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  7% {
+    opacity: var(--o, 0.8);
+  }
+  82% {
+    opacity: calc(var(--o, 0.8) * 0.45);
+  }
+  100% {
+    transform: translate3d(var(--dx, 0px), var(--ty, -1145px), 0);
+    opacity: 0;
+  }
+}
+/* mock03実装のもや(enzaFogA相当) */
+.u2d-bg-fog {
+  position: absolute;
+  left: -6%;
+  top: 40%;
+  width: 112%;
+  height: 44%;
+  background: radial-gradient(
+    40% 60% at 40% 50%,
+    rgba(220, 170, 120, 0.05) 0%,
+    rgba(220, 170, 120, 0) 70%
+  );
+  animation: u2d-fog 30s ease-in-out infinite;
+}
+@keyframes u2d-fog {
+  0% {
+    transform: translate3d(-30px, 0, 0);
+  }
+  50% {
+    transform: translate3d(40px, -10px, 0);
+  }
+  100% {
+    transform: translate3d(-30px, 0, 0);
+  }
+}
+
+/* ── 見出し(mock実測: left150/top96、kicker 0.38em #B08A66、題72px #F6F4F0) ── */
+.u2d-head {
+  position: absolute;
+  left: 150px;
+  top: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.u2d-kicker {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.38em;
+  color: #b08a66;
+}
+.u2d-title {
+  font-weight: 800;
+  font-size: 72px;
+  line-height: 1;
+  letter-spacing: 0.05em;
+  color: #f6f4f0;
+  text-shadow:
+    0 3px 26px rgba(0, 0, 0, 0.9),
+    0 0 60px rgba(255, 150, 80, 0.12);
+}
+.u2d-rule {
+  width: 430px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 107, 43, 0.8),
+    rgba(232, 227, 216, 0.16) 70%,
+    rgba(232, 227, 216, 0)
+  );
+  margin-top: 6px;
+}
+
+/* ── 左ナビ(mock実測: left150/top318、23px/800/0.07em、選択=橙面+菱ノッチ) ── */
+.u2d-nav {
+  position: absolute;
+  left: 150px;
+  top: 318px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  white-space: nowrap;
+  align-items: flex-start;
+}
+.u2d-nav-item {
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 11px 22px 11px 2px;
+  color: #edebe6;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 23px;
+  letter-spacing: 0.07em;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
+  transition:
+    transform 120ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.u2d-nav-item:hover {
+  color: #ffa061;
+  transform: translateX(8px);
+}
+.u2d-nav-item:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 3px;
+}
+.u2d-nav-item.selected {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 12px 34px 12px 18px;
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  color: #1a0b04;
+  text-shadow: none;
+  box-shadow:
+    0 6px 22px rgba(0, 0, 0, 0.5),
+    0 0 30px rgba(255, 107, 43, 0.25),
+    inset 0 1px 0 rgba(255, 220, 190, 0.55);
+  width: max-content;
+  transform: none;
+}
+.u2d-nav-item.selected:hover {
+  background: linear-gradient(180deg, #ff9861, #f26722 60%, #dd5a1e);
+  color: #1a0b04;
+}
+.u2d-nav-item.selected:focus-visible {
+  outline: 2px solid #fff4e6;
+}
+.u2d-nav-item.selected::after {
+  content: '';
+  position: absolute;
+  right: -8px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  background: #e85615;
+  transform: translateY(-50%) rotate(45deg);
+  box-shadow: inset 1px -1px 0 rgba(255, 220, 190, 0.4);
+}
+
+/* ── 分隊情報(mock実測: left152/top646、14.5px #B9B4AC) — 実データ行 ── */
+.u2d-squadnote {
+  position: absolute;
+  left: 152px;
+  top: 646px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14.5px;
+  color: #b9b4ac;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+}
+
+/* ── 右上ロビー情報カード(mock実測: right96/top96/width400、3段プレート) ── */
+.u2d-lobby {
+  position: absolute;
+  right: 96px;
+  top: 96px;
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  white-space: nowrap;
+}
+.u2d-lobby-row1 {
+  background: rgba(8, 7, 9, 0.9);
+  border: 1px solid rgba(232, 227, 216, 0.16);
+  border-bottom: none;
+  padding: 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.u2d-lobby-count {
+  font-weight: 800;
+  font-size: 17px;
+  color: #f6f4f0;
+}
+.u2d-lobby-count small {
+  font-weight: 700;
+  font-size: 13px;
+  color: #9aa0a8;
+}
+.u2d-lobby-net {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: #9fe39f;
+}
+.u2d-lobby-row2 {
+  background: rgba(8, 7, 9, 0.86);
+  border: 1px solid rgba(232, 227, 216, 0.16);
+  border-top: 1px solid rgba(232, 227, 216, 0.08);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.u2d-lobby-dia {
+  width: 12px;
+  height: 12px;
+  background: rgba(255, 107, 43, 0.25);
+  border: 1.5px solid #ff6b2b;
+  transform: rotate(45deg);
+  flex: none;
+}
+.u2d-lobby-lv {
+  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+  color: #ffb98a;
+}
+.u2d-lobby-name {
+  font-weight: 800;
+  font-size: 16px;
+  color: #f0eee9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.u2d-lobby-sub {
+  font-size: 12px;
+  color: #8f8b84;
+}
+.u2d-lobby-role {
+  margin-left: auto;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: #77705f;
+}
+.u2d-lobby-row3 {
+  background: rgba(8, 7, 9, 0.8);
+  border: 1px solid rgba(232, 227, 216, 0.16);
+  border-top: none;
+  padding: 11px 20px;
+  font-size: 12.5px;
+  color: #9aa0a8;
+}
+
+/* ── セクションパネル(実機能の作業面。ロビーカードと同じプレート言語) ── */
+.u2d-panel {
+  position: absolute;
+  right: 96px;
+  top: 252px;
+  width: 640px;
+  bottom: 200px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(8, 7, 9, 0.86);
+  border: 1px solid rgba(232, 227, 216, 0.16);
+}
+.u2d-panel-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid rgba(232, 227, 216, 0.1);
+}
+.u2d-panel-title {
+  font-weight: 800;
+  font-size: 17px;
+  color: #f6f4f0;
+  letter-spacing: 0.07em;
+}
+.u2d-panel-kicker {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  color: #8f8b84;
+}
+.u2d-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 20px 20px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 107, 43, 0.45) rgba(232, 227, 216, 0.08);
+}
+
+/* 選択行(モード/難易度/お守り): 選択=橙面+黒銘(mockクラス作成の文法) */
+.u2d-opt {
+  width: 100%;
+  border: 1px solid rgba(232, 227, 216, 0.14);
+  background: rgba(14, 12, 11, 0.6);
+  color: #e8eaec;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition:
+    border-color 120ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.u2d-opt:hover {
+  border-color: rgba(255, 160, 97, 0.55);
+}
+.u2d-opt:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+.u2d-opt .u2d-opt-name {
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.05em;
+  color: #f0eee9;
+}
+.u2d-opt .u2d-opt-desc {
+  font-size: 12.5px;
+  color: #9aa0a8;
+}
+.u2d-opt.selected {
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  border-color: rgba(255, 220, 190, 0.55);
+  box-shadow:
+    0 4px 18px rgba(0, 0, 0, 0.45),
+    0 0 26px rgba(255, 107, 43, 0.22);
+}
+.u2d-opt.selected .u2d-opt-name {
+  color: #1a0b04;
+}
+.u2d-opt.selected .u2d-opt-desc {
+  color: rgba(58, 21, 5, 0.85);
+}
+.u2d-opt.locked,
+.u2d-opt:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ステージカード(2列グリッド+16:9プレビュー+3Dサムネ) */
+.u2d-stages {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.u2d-stagecard {
+  border: 1px solid rgba(232, 227, 216, 0.14);
+  background: rgba(14, 12, 11, 0.6);
+  color: #e8eaec;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  padding: 0 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.u2d-stagecard:hover {
+  border-color: rgba(255, 160, 97, 0.55);
+}
+.u2d-stagecard:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+.u2d-stagecard.selected {
+  border-color: #ff6b2b;
+  box-shadow:
+    0 0 0 1px rgba(255, 107, 43, 0.6),
+    0 0 26px rgba(255, 107, 43, 0.2);
+}
+.u2d-stage-preview {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+.u2d-stage-preview img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.u2d-stage-no {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: rgba(247, 242, 232, 0.85);
+  background: rgba(5, 6, 7, 0.65);
+  padding: 3px 7px;
+}
+.u2d-stagecard.selected .u2d-stage-no {
+  color: #1a0b04;
+  background: #ff6b2b;
+}
+.u2d-stage-name {
+  font-weight: 800;
+  font-size: 15px;
+  padding: 0 12px;
+  color: #f0eee9;
+}
+.u2d-stage-meta {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  color: #77705f;
+  padding: 0 12px;
+  white-space: normal;
+}
+
+/* トグル行(特殊設定/輪廻) */
+.u2d-toggle {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 16px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(232, 227, 216, 0.14);
+  background: rgba(14, 12, 11, 0.6);
+}
+.u2d-toggle input {
+  appearance: none;
+  width: 40px;
+  height: 20px;
+  flex: none;
+  border: 1px solid rgba(232, 227, 216, 0.3);
+  background: rgba(232, 227, 216, 0.08);
+  position: relative;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.u2d-toggle input::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 14px;
+  height: 14px;
+  background: #9aa0a8;
+  transition: transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.u2d-toggle input:checked {
+  background: rgba(255, 107, 43, 0.35);
+  border-color: #ff6b2b;
+}
+.u2d-toggle input:checked::after {
+  transform: translateX(20px);
+  background: #ff6b2b;
+}
+.u2d-toggle input:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+.u2d-toggle input:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.u2d-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.u2d-toggle-name {
+  font-weight: 800;
+  font-size: 14.5px;
+  color: #f0eee9;
+}
+.u2d-toggle-desc {
+  font-size: 12px;
+  color: #9aa0a8;
+}
+.u2d-rogue-locked {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* ゾンビ開始ラウンド: ステッパー+プリセット(旧zr-*の実装を移植) */
+.u2d-zr-stepper {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+.u2d-zr-step {
+  width: 44px;
+  height: 40px;
+  border: 1px solid rgba(232, 227, 216, 0.25);
+  background: rgba(14, 12, 11, 0.7);
+  color: #f0eee9;
+  font-size: 20px;
+  font-weight: 800;
+  cursor: pointer;
+  font-family: inherit;
+}
+.u2d-zr-step:hover:not(:disabled) {
+  border-color: #ffa061;
+  color: #ffa061;
+}
+.u2d-zr-step:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+.u2d-zr-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.u2d-zr-val {
+  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
+  font-weight: 800;
+  font-size: 30px;
+  color: #ffb98a;
+}
+.u2d-zr-val small {
+  font-size: 13px;
+  color: #77705f;
+  margin-left: 8px;
+}
+.u2d-zr-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.u2d-chip {
+  border: 1px solid rgba(232, 227, 216, 0.2);
+  background: rgba(14, 12, 11, 0.6);
+  color: #c4c0b8;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.u2d-chip:hover {
+  border-color: #ffa061;
+  color: #ffa061;
+}
+.u2d-chip:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+.u2d-chip.selected {
+  background: linear-gradient(180deg, #ff7e3f, #e85615);
+  border-color: rgba(255, 220, 190, 0.55);
+  color: #1a0b04;
+  font-weight: 700;
+}
+
+/* ── 下中央: 次のステージ帯+出撃CTA(mockのタイマーブロック位置に実CTA) ── */
+.u2d-band {
+  position: absolute;
+  left: 50%;
+  bottom: 106px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  white-space: nowrap;
+}
+.u2d-band-info {
+  background: rgba(6, 5, 8, 0.9);
+  border: 1px solid rgba(232, 227, 216, 0.18);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.u2d-band-label {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  color: #8f8b84;
+}
+.u2d-band-value {
+  font-weight: 800;
+  font-size: 17px;
+  color: #f0eee9;
+}
+.u2d-launch {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, #ff7e3f, #e85615);
+  padding: 12px 26px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  box-shadow: 0 0 24px rgba(255, 107, 43, 0.3);
+  cursor: pointer;
+  font-family: inherit;
+}
+.u2d-launch:hover {
+  background: linear-gradient(180deg, #ff9861, #f26722);
+}
+.u2d-launch:focus-visible {
+  outline: 2px solid #fff4e6;
+  outline-offset: 3px;
+}
+.u2d-launch-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: #3a1505;
+  letter-spacing: 0.1em;
+}
+.u2d-launch-main {
+  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
+  font-weight: 800;
+  font-size: 22px;
+  color: #1a0b04;
+  animation: u2d-blink 2s ease-in-out infinite;
+}
+@keyframes u2d-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+/* hold-to-launch進行フィル(300ms) */
+.u2d-launch::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  background: rgba(255, 244, 230, 0.35);
+  transform: scaleX(0);
+  transform-origin: left;
+  pointer-events: none;
+}
+.u2d-launch.holding::after {
+  transition: transform 300ms linear;
+  transform: scaleX(1);
+}
+
+/* ── 下帯(mock実測: 高さ56px、A/Bヒント+中央mono+右メニュー) ── */
+.u2d-foot {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 60px;
+  box-sizing: border-box;
+  background: linear-gradient(0deg, rgba(3, 4, 5, 0.9), rgba(3, 4, 5, 0));
+  white-space: nowrap;
+}
+.u2d-hints {
+  display: flex;
+  gap: 26px;
+  font-size: 13px;
+  color: #c4c0b8;
+  align-items: center;
+}
+.u2d-key {
+  display: inline-flex;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(232, 227, 216, 0.45);
+  color: #c4c0b8;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  margin-right: 4px;
+}
+.u2d-key.accent {
+  border-color: #ff6b2b;
+  color: #ffb98a;
+}
+.u2d-foot-mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: #6e6a62;
+}
+.u2d-foot-menu {
+  background: none;
+  color: #c4c0b8;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 10px;
+}
+.u2d-foot-menu:hover {
+  color: #ffa061;
+}
+.u2d-foot-menu:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+
+/* ── 省モーション(mockの短絡+情景静止。u2d-reduceはアプリ設定連動でF3が付与) ── */
+@media (prefers-reduced-motion: reduce) {
+  .u2d-bg *,
+  .u2d-launch-main,
+  .u2d-launch::after,
+  .u2d-nav-item,
+  .u2d-opt,
+  .u2d-stagecard {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.15s !important;
+  }
+  .u2d-ember {
+    display: none;
+  }
+}
+.u2d-reduce .u2d-bg *,
+.u2d-reduce .u2d-launch-main,
+.u2d-reduce .u2d-launch::after,
+.u2d-reduce .u2d-nav-item,
+.u2d-reduce .u2d-opt,
+.u2d-reduce .u2d-stagecard {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.15s !important;
+}
+.u2d-reduce .u2d-ember {
+  display: none;
+}

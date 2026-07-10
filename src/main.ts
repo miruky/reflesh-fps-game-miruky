@@ -17,7 +17,10 @@ import { stageDefFromId } from './game/biomes';
 import { stageById } from './game/stages';
 import { motifWeightForMission } from './game/story-engine';
 import { Hud } from './ui/hud';
-import { Menu, type MenuSelection } from './ui/menu';
+import { Hud2 } from './ui2/hud2';
+import { Menu, type MenuCallbacks, type MenuSelection } from './ui/menu';
+import { Menu2 } from './ui2/menu2';
+import type { MenuApi } from './ui2/types';
 import { SpaceBg } from './ui/menu-bg';
 
 const appRoot = document.getElementById('app');
@@ -25,6 +28,9 @@ const hudRoot = document.getElementById('hud');
 const menuRoot = document.getElementById('menu');
 const spaceCanvas = document.getElementById('space-bg') as HTMLCanvasElement | null;
 if (!appRoot || !hudRoot || !menuRoot) throw new Error('マウント先の要素が見つからない');
+
+// W-ENZA2: ?ui2 で新UI層(モック正典)を使用。検証完了後に既定反転+?classicフォールバック予定
+const USE_UI2 = new URLSearchParams(location.search).has('ui2');
 
 // WebGLも物理エンジンも無い環境では黒画面で詰まらせず、理由を示して止める。
 function showFatal(message: string): void {
@@ -86,7 +92,7 @@ input.setGamepadBindings(settings.gamepadBindings);
 input.setVibration(settings.gamepadVibration);
 sounds.setMusicEnabled(settings.musicEnabled);
 
-const hud = new Hud(hudRoot);
+const hud = USE_UI2 ? new Hud2(hudRoot) : new Hud(hudRoot); // W-ENZA2: 同時生成禁止(FKカム/data-emperor二重化防止)
 
 // シネマティックキルカム用レターボックス(canvas上・HUD下)
 const letterboxEl = document.createElement('div');
@@ -102,7 +108,7 @@ letterboxEl.appendChild(lbTop); letterboxEl.appendChild(lbBot);
 document.body.appendChild(letterboxEl);
 
 // メニュー背景の宇宙(独立レンダラ)。WebGLが使えない環境では生成しない
-const spaceBg = spaceCanvas ? new SpaceBg(spaceCanvas) : null;
+const spaceBg = spaceCanvas && !USE_UI2 ? new SpaceBg(spaceCanvas) : null;
 
 // UIスケールはzoomで反映する。投影座標(ダメージ数値など)は
 // ズーム後の座標系で算出するため、HUDへ渡す画面サイズも同じ倍率で割る
@@ -292,7 +298,7 @@ function exitPhoto(): void {
   menu.showPause();
 }
 
-const menu = new Menu(menuRoot, settings, profile, {
+const menuCallbacks: MenuCallbacks = {
   onStart: startMatch,
   onStartMission: startMission,
   onResume: () => {
@@ -322,9 +328,12 @@ const menu = new Menu(menuRoot, settings, profile, {
     input.setVibration(settings.gamepadVibration);
     sounds.setMusicEnabled(settings.musicEnabled);
   },
-}, input);
+};
+const menu: MenuApi = USE_UI2
+  ? new Menu2(menuRoot, settings, profile, menuCallbacks, input)
+  : new Menu(menuRoot, settings, profile, menuCallbacks, input);
 
-// 初回はメニュー表示なので宇宙背景を起動する
+// 初回はメニュー表示なので宇宙背景を起動する(ui2ではspaceBg=nullのため自然に不使用)
 spaceBg?.start();
 // メニューへ宇宙背景を渡す(ページ連動カメラ/DoF風/初回focus即送出はattachBg内で駆動)
 if (spaceBg) menu.attachBg(spaceBg);

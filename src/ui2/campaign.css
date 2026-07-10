@@ -1,0 +1,864 @@
+/*
+  W-ENZA2 キャンペーン/ブリーフィング/戦役リザルト(F6所有)。
+  正典: mock03(祭壇ナビ/プレート/下帯)+mock06(詳報言語/統計カード/儀式見出し)。
+  1920×1080ステージ(.u2-stage)前提の逐語座標。接頭辞 u2c-。
+*/
+
+/* ═══ 共通地(mock06基調) ═══ */
+.u2-campaign {
+  background: linear-gradient(160deg, #0b0a10 0%, #070609 46%, #030308 100%);
+}
+.u2c-scanline {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.012) 0px,
+    rgba(255, 255, 255, 0.012) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  pointer-events: none;
+}
+.u2c-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(130% 100% at 50% 45%, rgba(0, 0, 0, 0) 60%, rgba(2, 2, 7, 0.5) 100%);
+  pointer-events: none;
+}
+.u2c-fog {
+  position: absolute;
+  left: -6%;
+  top: 40%;
+  width: 112%;
+  height: 44%;
+  background: radial-gradient(
+    40% 60% at 40% 50%,
+    rgba(220, 170, 120, 0.05) 0%,
+    rgba(220, 170, 120, 0) 70%
+  );
+  animation: enzaPulse 14s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* ═══ 見出し(mock03逐語) ═══ */
+.u2c-head {
+  position: absolute;
+  left: 150px;
+  top: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.u2c-kicker {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.38em;
+  color: #b08a66;
+}
+.u2c-title {
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-weight: 700;
+  font-size: 64px;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  color: #f6f4f0;
+  text-shadow:
+    0 3px 26px rgba(0, 0, 0, 0.9),
+    0 0 60px rgba(255, 150, 80, 0.12);
+}
+.u2c-rule {
+  width: 430px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 107, 43, 0.8),
+    rgba(232, 227, 216, 0.16) 70%,
+    rgba(232, 227, 216, 0)
+  );
+  margin-top: 6px;
+}
+.u2c-progressline {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 13px;
+  color: #a79f90;
+  white-space: nowrap;
+}
+.u2c-progressline b {
+  color: #ffb98a;
+  font-weight: 700;
+}
+.u2c-growbar {
+  width: 220px;
+  height: 3px;
+  background: rgba(232, 227, 216, 0.12);
+  overflow: hidden;
+}
+.u2c-growbar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ff7e3f, #e85615);
+  transform-origin: left center;
+  animation: u2cGrow 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ═══ 章リスト(左・スクロール) ═══ */
+.u2c-chapters {
+  position: absolute;
+  left: 150px;
+  top: 296px;
+  width: 900px;
+  bottom: 96px;
+  overflow-y: auto;
+  padding-right: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 107, 43, 0.4) rgba(232, 227, 216, 0.06);
+}
+.u2c-chapters::-webkit-scrollbar {
+  width: 6px;
+}
+.u2c-chapters::-webkit-scrollbar-thumb {
+  background: rgba(255, 107, 43, 0.35);
+}
+.u2c-chapter {
+  background: rgba(8, 7, 9, 0.86);
+  border: 1px solid rgba(232, 227, 216, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  padding: 16px 20px 14px 20px;
+}
+.u2c-chapter.locked {
+  opacity: 0.55;
+}
+.u2c-chapter-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  white-space: nowrap;
+}
+.u2c-chapter-no {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  color: #b08a66;
+}
+.u2c-chapter-title {
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-weight: 700;
+  font-size: 21px;
+  color: #f0eee9;
+}
+.u2c-chapter-sub {
+  font-size: 12.5px;
+  color: #9aa0a8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.u2c-chapter-prog {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  color: #a79f90;
+}
+.u2c-chapter-prog b {
+  color: #ffb98a;
+}
+.u2c-chapter-prog .u2c-growbar {
+  width: 90px;
+}
+.u2c-missions {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ミッション行(mock03ナビ行の文法: hoverで橙+右スライド) */
+.u2c-mission {
+  display: grid;
+  grid-template-columns: 74px 1fr auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 12px 9px 8px;
+  color: #edebe6;
+  white-space: nowrap;
+  transition:
+    transform 120ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 120ms;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
+  border-left: 2px solid transparent;
+}
+.u2c-mission:hover:not(:disabled),
+.u2c-mission:focus-visible {
+  color: #ffa061;
+  transform: translateX(8px);
+  border-left-color: rgba(255, 107, 43, 0.7);
+}
+.u2c-mission:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+.u2c-mission-code {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: #b08a66;
+}
+.u2c-mission-name {
+  font-weight: 800;
+  font-size: 16.5px;
+  letter-spacing: 0.05em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.u2c-mission-name small {
+  margin-left: 12px;
+  font-weight: 400;
+  font-size: 12px;
+  color: #8f8b84;
+}
+.u2c-mission-reward {
+  font-size: 10.5px;
+  color: #f5d06b;
+  border: 1px solid rgba(184, 134, 46, 0.5);
+  padding: 1px 8px;
+}
+.u2c-mission-lock {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: #77705f;
+}
+
+/* 菱スター(◆=獲得) */
+.u2c-stars {
+  display: inline-flex;
+  gap: 9px;
+  align-items: center;
+}
+.u2c-star {
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg);
+  border: 1.5px solid rgba(232, 227, 216, 0.3);
+  flex: none;
+}
+.u2c-star.on {
+  background: rgba(255, 107, 43, 0.25);
+  border-color: #ffa061;
+  box-shadow: 0 0 8px rgba(255, 107, 43, 0.6);
+}
+
+/* ═══ 右レール: 次の任務/章lore ═══ */
+.u2c-rail {
+  position: absolute;
+  right: 96px;
+  top: 296px;
+  width: 430px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.u2c-plate {
+  background: rgba(8, 7, 9, 0.9);
+  border: 1px solid rgba(232, 227, 216, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  padding: 16px 20px;
+}
+.u2c-plate-kicker {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  color: #8f8b84;
+  display: block;
+  margin-bottom: 10px;
+}
+.u2c-plate p {
+  font-size: 13px;
+  line-height: 1.8;
+  color: #b9b4ac;
+}
+.u2c-next-name {
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-weight: 700;
+  font-size: 22px;
+  color: #f0eee9;
+  display: block;
+  margin-bottom: 4px;
+}
+.u2c-next-sub {
+  font-size: 12.5px;
+  color: #9aa0a8;
+  display: block;
+  margin-bottom: 14px;
+}
+
+/* 熾火CTA(mock03「クラス作成」/mock06「再出撃」逐語) */
+.u2c-cta {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 13px 34px 13px 20px;
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  color: #1a0b04;
+  font-weight: 800;
+  font-size: 19px;
+  letter-spacing: 0.07em;
+  box-shadow:
+    0 6px 22px rgba(0, 0, 0, 0.5),
+    0 0 30px rgba(255, 107, 43, 0.25),
+    inset 0 1px 0 rgba(255, 220, 190, 0.55);
+  width: max-content;
+  overflow: visible;
+}
+.u2c-cta:hover {
+  background: linear-gradient(180deg, #ff9861, #f26722 60%, #dd5a1e);
+}
+.u2c-cta:focus-visible {
+  outline: 2px solid #fff4e6;
+  outline-offset: 3px;
+}
+.u2c-cta .u2c-spur {
+  position: absolute;
+  right: -8px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  background: #e85615;
+  transform: translateY(-50%) rotate(45deg);
+  box-shadow: inset 1px -1px 0 rgba(255, 220, 190, 0.4);
+}
+.u2c-cta .u2c-shine {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.18) 45%,
+    rgba(255, 255, 255, 0) 60%
+  );
+  width: 40%;
+  animation: u2cScan 3.6s ease-in-out infinite;
+  pointer-events: none;
+}
+.u2c-quiet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 26px;
+  border: 1px solid rgba(232, 227, 216, 0.28);
+  background: rgba(14, 12, 11, 0.82);
+  color: #c4c0b8;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  transition:
+    border-color 120ms,
+    color 120ms;
+}
+.u2c-quiet:hover {
+  border-color: rgba(255, 160, 97, 0.7);
+  color: #ffa061;
+}
+
+/* ═══ 下帯(mock03逐語) ═══ */
+.u2c-hintbar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1920px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 60px;
+  box-sizing: border-box;
+  background: linear-gradient(0deg, rgba(3, 4, 5, 0.9), rgba(3, 4, 5, 0));
+  white-space: nowrap;
+  font-size: 13px;
+  color: #c4c0b8;
+}
+.u2c-hintbar .u2c-hints {
+  display: flex;
+  gap: 26px;
+  align-items: center;
+}
+.u2c-key {
+  display: inline-flex;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(232, 227, 216, 0.45);
+  color: #c4c0b8;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  margin-right: 6px;
+}
+.u2c-key.accent {
+  border-color: #ff6b2b;
+  color: #ffb98a;
+}
+.u2c-hint-note {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: #6e6a62;
+}
+
+/* ═══ ブリーフィング ═══ */
+.u2c-brief-body {
+  position: absolute;
+  left: 150px;
+  top: 300px;
+  width: 860px;
+  bottom: 170px;
+  overflow-y: auto;
+  padding-right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.u2c-brief-body > p {
+  font-size: 15px;
+  line-height: 2;
+  color: #d8d1c2;
+  opacity: 0;
+  animation: u2cRise 480ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(var(--i, 0) * 140ms);
+}
+.u2c-intel {
+  border-left: 2px solid rgba(255, 107, 43, 0.5);
+  padding-left: 16px;
+}
+.u2c-intel h3 {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: #b08a66;
+  margin-bottom: 8px;
+}
+.u2c-intel p {
+  font-size: 13px;
+  line-height: 1.9;
+  color: #a79f90;
+}
+.u2c-cast {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  font-size: 12.5px;
+  color: #9aa0a8;
+  flex-wrap: wrap;
+}
+.u2c-cast i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  transform: rotate(45deg);
+  margin-right: 7px;
+}
+.u2c-meta {
+  position: absolute;
+  right: 96px;
+  top: 300px;
+  width: 430px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.u2c-meta-row {
+  background: rgba(8, 7, 9, 0.88);
+  border: 1px solid rgba(232, 227, 216, 0.16);
+  padding: 13px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.u2c-meta-row + .u2c-meta-row {
+  border-top: none;
+}
+.u2c-meta-row dt {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  color: #8f8b84;
+  width: 84px;
+  flex: none;
+}
+.u2c-meta-row dd {
+  font-size: 14px;
+  color: #e8e3d8;
+  margin: 0;
+  min-width: 0;
+}
+.u2c-meta-row dd.num {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  color: #ffb98a;
+}
+.u2c-select {
+  width: 100%;
+  background: rgba(20, 17, 14, 0.95);
+  border: 1px solid rgba(232, 227, 216, 0.25);
+  color: #e8e3d8;
+  font-size: 13.5px;
+  padding: 8px 10px;
+}
+.u2c-chip {
+  padding: 6px 16px;
+  border: 1px solid rgba(232, 227, 216, 0.25);
+  color: #c4c0b8;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  transition:
+    color 120ms,
+    border-color 120ms,
+    background 120ms;
+}
+.u2c-chip:hover {
+  border-color: rgba(255, 160, 97, 0.7);
+  color: #ffa061;
+}
+.u2c-chip.selected {
+  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  border-color: transparent;
+  color: #1a0b04;
+}
+.u2c-brief-actions {
+  position: absolute;
+  right: 96px;
+  bottom: 96px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* ═══ 戦役リザルト(mock06言語) ═══ */
+.u2c-band {
+  position: absolute;
+  left: 56px;
+  top: 34px;
+  right: 56px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.u2c-band-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.u2c-dash {
+  width: 34px;
+  height: 2px;
+  background: #ff6b2b;
+  box-shadow: 0 0 12px rgba(255, 107, 43, 0.8);
+}
+.u2c-band-kicker {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  color: #a79f90;
+}
+.u2c-band-meta {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: #5e594f;
+  white-space: nowrap;
+}
+.u2c-band-rule {
+  position: absolute;
+  left: 56px;
+  top: 76px;
+  right: 56px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 107, 43, 0.5), rgba(232, 227, 216, 0.13));
+}
+.u2c-ritual {
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-weight: 800;
+  font-size: 128px;
+  line-height: 0.96;
+  letter-spacing: 0.06em;
+  color: #f7f2e8;
+  text-shadow:
+    0 0 80px rgba(255, 107, 43, 0.5),
+    0 0 26px rgba(255, 140, 70, 0.35),
+    0 4px 12px rgba(0, 0, 0, 0.8);
+}
+.u2c-ritual.lost {
+  color: #b9b4ac;
+  text-shadow:
+    0 0 40px rgba(160, 160, 170, 0.25),
+    0 4px 12px rgba(0, 0, 0, 0.8);
+}
+.u2c-mr-left {
+  position: absolute;
+  left: 56px;
+  top: 150px;
+  width: 1100px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+.u2c-mr-mission {
+  font-size: 17px;
+  color: #b9b4ac;
+}
+.u2c-mr-mission b {
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-size: 21px;
+  color: #f0eee9;
+  margin-right: 12px;
+}
+.u2c-stars-big {
+  display: inline-flex;
+  gap: 20px;
+  align-items: center;
+}
+.u2c-stars-big .u2c-star {
+  width: 20px;
+  height: 20px;
+  opacity: 0;
+  animation: u2cPop 420ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(var(--i, 0) * 180ms + 240ms);
+}
+.u2c-note {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.u2c-note.unlock {
+  color: #ffb98a;
+}
+.u2c-note.first {
+  color: #9fe39f;
+}
+.u2c-note.challenge {
+  color: #f5d06b;
+}
+.u2c-statcards {
+  display: flex;
+  gap: 14px;
+}
+.u2c-statcard {
+  position: relative;
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.94), rgba(11, 10, 9, 0.95));
+  border: 1px solid rgba(232, 227, 216, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+  padding: 16px 20px 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 168px;
+}
+.u2c-statcard .label {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: #77705f;
+}
+.u2c-statcard .value {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 36px;
+  line-height: 1;
+  color: #e8e3d8;
+}
+.u2c-statcard .sub {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  color: #8f8778;
+}
+.u2c-statcard.ember {
+  border-color: rgba(255, 107, 43, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 180, 120, 0.12),
+    0 0 22px rgba(255, 107, 43, 0.12);
+}
+.u2c-statcard.ember .label {
+  color: #c9865c;
+}
+.u2c-statcard.ember .value {
+  color: #ffb98a;
+  text-shadow: 0 0 18px rgba(255, 107, 43, 0.4);
+}
+.u2c-mr-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* 進行(XP)カード — mock06右列逐語(左上断ち22px) */
+.u2c-mr-rail {
+  position: absolute;
+  right: 56px;
+  top: 150px;
+  width: 452px;
+  bottom: 96px;
+  overflow-y: auto;
+}
+.u2c-xpcard {
+  background: linear-gradient(180deg, rgba(20, 17, 14, 0.95), rgba(11, 10, 9, 0.96));
+  border: 1px solid rgba(232, 227, 216, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  clip-path: polygon(22px 0, 100% 0, 100% 100%, 0 100%, 0 22px);
+  padding: 22px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.u2c-xpcard-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.u2c-xpcard-head .k {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.26em;
+  color: #a79f90;
+}
+.u2c-xpcard-head .v {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: #9fe39f;
+}
+.u2c-xplist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.u2c-xplist li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+  color: #a79f90;
+  opacity: 0;
+  animation: u2cRise 360ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+.u2c-xplist li .xp {
+  font-family: ui-monospace, Consolas, monospace;
+  color: #9fe39f;
+  flex: none;
+}
+.u2c-xplist li.daily {
+  color: #f5d06b;
+}
+.u2c-xptotal {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 15px;
+  color: #a79f90;
+}
+.u2c-xptotal b {
+  font-size: 26px;
+  color: #ffb98a;
+  font-weight: 400;
+  margin: 0 6px;
+}
+.u2c-levelrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+.u2c-levelrow .lv {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 15px;
+  color: #f5f0e6;
+}
+.u2c-title-badge {
+  font-size: 11px;
+  color: #ffd9bc;
+  border: 1px solid rgba(255, 107, 43, 0.5);
+  padding: 1px 9px;
+}
+.u2c-xpbar {
+  flex: 1;
+  height: 3px;
+  background: rgba(232, 227, 216, 0.12);
+  overflow: hidden;
+}
+.u2c-xpbar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ff7e3f, #e85615);
+}
+.u2c-progress-note {
+  font-size: 12.5px;
+  color: #b9b4ac;
+}
+.u2c-progress-note.up {
+  color: #ffb98a;
+  font-weight: 700;
+}
+.u2c-progress-note.rec {
+  color: #9fe39f;
+}
+.u2c-unlocks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: #f5d06b;
+}
+
+/* ═══ keyframes(u2c名前空間 — 他画面と衝突しない) ═══ */
+@keyframes u2cScan {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}
+@keyframes u2cGrow {
+  0% {
+    transform: scaleX(0);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+@keyframes u2cRise {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes u2cPop {
+  0% {
+    opacity: 0;
+    transform: rotate(45deg) scale(2.1);
+  }
+  100% {
+    opacity: 1;
+    transform: rotate(45deg) scale(1);
+  }
+}
