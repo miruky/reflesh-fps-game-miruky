@@ -7,8 +7,9 @@
 
 /* ── 画面ルート ── */
 .u2-options {
-  position: absolute;
-  inset: 0;
+  /* W-C6[0]: position:absolute/inset は共有 .u2-stage(position:relative + 1920x1080固定)へ
+     付与されるクラスなので、上書きすると親 .u2-letterbox の flex中央寄せから外れ、非16:9
+     ウィンドウで画面全体が右下へずれ右端/下端がクリップされる。.u2-stage の既定配置に任せる。 */
   overflow: hidden;
   background: #050608;
   font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
@@ -502,8 +503,8 @@
 
 /* ══ ポーズ(canvas直上: filter禁止・面0.82+) ══ */
 .u2-pause {
-  position: absolute;
-  inset: 0;
+  /* W-C6[0]: .u2-options と同じ理由で position:absolute/inset を外す(共有 .u2-stage の
+     中央寄せに任せる)。ポーズはcanvas直上の常設UIなので毎試合この中央ズレが出ていた。 */
   font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
   letter-spacing: 0.04em;
   color: #e8eaec;
@@ -600,7 +601,8 @@
   box-shadow: inset 0 1px 0 rgba(255, 220, 190, 0.5);
 }
 .u2p-btn.primary:hover,
-.u2p-btn.primary:focus-visible {
+#menu .u2-stage .u2p-btn.primary:focus-visible,
+#menu .u2-stage .u2p-btn.primary:focus {
   color: #1a0b04;
   box-shadow:
     inset 0 1px 0 rgba(255, 220, 190, 0.5),

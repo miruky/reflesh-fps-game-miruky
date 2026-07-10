@@ -7,8 +7,10 @@
 */
 
 .u2-result {
-  position: fixed;
-  inset: 0;
+  /* W-C6[0]同根: .u2-result は共有 .u2-stage(position:relative,1920x1080固定)へ付与される
+     クラス。position:fixed/inset で上書きすると親 .u2-letterbox の flex中央寄せから外れ、
+     非16:9ウィンドウで右下へずれてクリップする。.u2-stage の既定配置に任せる(z-indexは
+     relativeの.u2-stage上で有効)。 */
   z-index: 30;
   overflow: hidden;
   background: #020207;

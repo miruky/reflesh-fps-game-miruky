@@ -505,6 +505,10 @@ export class Hud2 {
   // ── R21 マルチキルバナー ──
   private mkBannerMs = 0;   // Date.now() at last multi-kill banner show(upgrade window 判定用)
   private mkTimerId = 0;    // setTimeout handle(自動消去・中断再設定用)
+  // R55 W-C6 [9]: キルコンファーム CONFIRMED/DENIED バナー(単一要素使い回し)の消去タイマー。
+  // mkTimerId と同じ流儀で個別ハンドル管理し、連続発火時の早期消灯/状態漏れを防ぐ
+  private kcEventTimerId = 0;
+  private kcEventOutTimerId = 0;
   // ── BO2 ミニマップ ──
   private minimapCtx: CanvasRenderingContext2D | null = null;
   private minimapStageSize = 60;
@@ -1111,6 +1115,14 @@ export class Hud2 {
     if (mkbanner) {
       mkbanner.hidden = true;
       mkbanner.classList.remove('mk-enter', 'mk-punch', 'mk-exit');
+    }
+    // R55 W-C6 [9]: キルコンファームバナーのリセット(前試合の残表示・タイマーを完全クリア)
+    if (this.kcEventTimerId) { window.clearTimeout(this.kcEventTimerId); this.kcEventTimerId = 0; }
+    if (this.kcEventOutTimerId) { window.clearTimeout(this.kcEventOutTimerId); this.kcEventOutTimerId = 0; }
+    const kcEventEl = this.el['kcevent'];
+    if (kcEventEl) {
+      kcEventEl.hidden = true;
+      kcEventEl.classList.remove('kc-show', 'kc-out');
     }
     // R11 キルカメラ状態の完全クリア(試合開始/離脱で黒幕やビネットを残さない)
     document.body.classList.remove('killcam-active');
@@ -2464,15 +2476,24 @@ export class Hud2 {
   private pushKcEvent(ev: 'confirmed' | 'denied'): void {
     const el = this.el['kcevent'];
     if (!el) return;
+    // R55 W-C6 [9]: 単一要素使い回しのため、直前の消去タイマー(out遷移/hidden化とも)を
+    // 必ずキャンセルしてから再スケジュールする(mkTimerId方式に統一)
+    if (this.kcEventTimerId) { window.clearTimeout(this.kcEventTimerId); this.kcEventTimerId = 0; }
+    if (this.kcEventOutTimerId) { window.clearTimeout(this.kcEventOutTimerId); this.kcEventOutTimerId = 0; }
     el.textContent = ev === 'confirmed' ? 'CONFIRMED' : 'DENIED';
     el.dataset.kind = ev;
     el.hidden = false;
     el.classList.remove('kc-show', 'kc-out');
     void (el as HTMLElement).offsetWidth;
     el.classList.add('kc-show');
-    window.setTimeout(() => {
+    this.kcEventTimerId = window.setTimeout(() => {
+      this.kcEventTimerId = 0;
       el.classList.add('kc-out');
-      window.setTimeout(() => { el.hidden = true; el.classList.remove('kc-show', 'kc-out'); }, 350);
+      this.kcEventOutTimerId = window.setTimeout(() => {
+        this.kcEventOutTimerId = 0;
+        el.hidden = true;
+        el.classList.remove('kc-show', 'kc-out');
+      }, 350);
     }, 900);
   }
 

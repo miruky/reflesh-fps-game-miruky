@@ -340,7 +340,12 @@
 .u2c-cta:hover {
   background: linear-gradient(180deg, #ff9861, #f26722 60%, #dd5a1e);
 }
-.u2c-cta:focus-visible {
+/* R55 W-C6[18]: 単体セレクタ.u2c-cta:focus-visible=(0,2,0)はui2.cssの
+   #menu .u2-stage button:focus-visible=(1,2,1)にid桁で負け、意図の#fff4e6が
+   熾火橙#ffa061にすり替わっていた(.u2c-selectで既修の同型再発)。#menu .u2-stageを
+   前置して(1,3,0)まで詳細度を上げ、実際に勝たせる。 */
+#menu .u2-stage .u2c-cta:focus-visible,
+#menu .u2-stage .u2c-cta:focus {
   outline: 2px solid #fff4e6;
   outline-offset: 3px;
 }
@@ -705,8 +710,13 @@
 .u2c-note.first {
   color: #9fe39f;
 }
-.u2c-note.challenge {
-  color: #f5d06b;
+/* R55 W-C6[17]: 金(#f5d06b)は鉄則(金=EXOTIC/経済のみ)違反だったため、
+   達成/未達で意味付きの色に分離する(達成=熾火橙/未達=無彩色)。 */
+.u2c-note.challenge.met {
+  color: #ffb98a;
+}
+.u2c-note.challenge.unmet {
+  color: #8f8778;
 }
 .u2c-statcards {
   display: flex;

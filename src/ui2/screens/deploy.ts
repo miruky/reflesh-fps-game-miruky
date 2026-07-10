@@ -328,9 +328,12 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     // R55 W-C2: 輪廻(ローグラン)はR1固定で始まるため、開始ラウンド設定値ではなく
     // 常にR1を表示する(rogueRun中はzrWrapもロックされ設定値は無視される)
     const zRound = sel.rogueRun ? 1 : (sel.zombieStartRound ?? 1);
+    // R55 W-C6[3]: row1「最大N人」はhellBotCountでtierクランプ済みだが、row3が
+    // クランプ前の生値(stageDef.botCount)を出すと超鬼畜ON/低tier時に両者が食い違う。
+    // row3もクランプ後のhellBotCountへ揃える(実際にスポーンする実効値と一致させる)。
     const row3 = isZombie
       ? `ゾンビ ${zombieTotal(zRound)}体/R${zRound}\u3000—\u3000参戦準備完了`
-      : `AIボット ${stageDef.botCount}体\u3000—\u3000参戦準備完了`;
+      : `AIボット ${hellBotCount}体\u3000—\u3000参戦準備完了`;
     q('lobby-card').innerHTML = `
       <div class="u2d-lobby-row1">
         <span class="u2d-lobby-count">1人\u3000<small>(${capLabel})</small></span>
@@ -562,9 +565,16 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
         </div>
       `;
       const setRound = (v: number, focusSel?: string): void => {
-        sel.zombieStartRound = Math.max(1, Math.min(999, v));
+        const next = Math.max(1, Math.min(999, v));
+        sel.zombieStartRound = next;
         host.saveLoadout();
-        renderZr(locked, focusSel);
+        // R55 W-C6[4]: 境界(1/999)まで±すると押した側のボタンがdisabled化する。
+        // disabled要素へfocus()してもフォーカスは移らずbodyへ落ちてしまうため、押した側が
+        // 境界でdisabledになる場合は反対側の有効なボタンへ差し替える。
+        let nextFocus = focusSel;
+        if (nextFocus === '[data-id="zr-dec"]' && next <= 1) nextFocus = '[data-id="zr-inc"]';
+        else if (nextFocus === '[data-id="zr-inc"]' && next >= 999) nextFocus = '[data-id="zr-dec"]';
+        renderZr(locked, nextFocus);
         refreshShared();
       };
       zrWrap

@@ -3888,10 +3888,16 @@ export class ViewModel {
           const lb = this.gun.getObjectByName('vm:lightningBlade');
           if (lb) {
             lb.traverse((child) => {
-              if (!(child instanceof THREE.Mesh) || !child.userData['isArcLine']) return;
+              // R55 W-C6 [10]根治: isArcLine は makeArcLine() が material.userData に立てる
+              // マーキング(Mesh.userData ではない)。従来は Mesh 側を見ていたため常に false で
+              // 発火せず、雷刀ビルボードリボンが明滅しなかった。charge-glow収集側(4248行)や
+              // arcLineHexes テストヘルパと同じ material.userData.isArcLine 規約に統一する
+              if (!(child instanceof THREE.Mesh)) return;
+              const mat = child.material as THREE.MeshBasicMaterial;
+              if (mat.userData['isArcLine'] !== true) return;
               const base = this._kokuraiteiMode ? 0.35 : 0.38;
               const flicker = base + Math.random() * 0.25;
-              (child.material as THREE.MeshBasicMaterial).opacity = Math.min(1, flicker);
+              mat.opacity = Math.min(1, flicker);
             });
           }
         }

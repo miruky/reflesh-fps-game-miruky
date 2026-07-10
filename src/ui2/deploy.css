@@ -407,6 +407,23 @@
   padding: 16px 20px 20px;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 107, 43, 0.45) rgba(232, 227, 216, 0.08);
+  /* R55 W-C6[13]: 最終行(例: モード選択のガンゲーム説明)が下端でハードクリップされ、
+     スクロールで続きが読める可視ヒントも無かった。filter/backdrop-filter(禁則)ではなく
+     mask-imageで下端だけ柔らかくフェードさせ、クリップを和らげつつ「続きがある」ことを
+     示す(過剰にならないよう控えめな28pxのみ)。 */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+}
+/* Firefoxはscrollbar-width/scrollbar-colorで足りるが、WebKit系(Chrome/Safari)は
+   専用疑似要素が無いと極細+ほぼ不可視になりスクロール可能性が伝わらないため明示する。 */
+.u2d-panel-body::-webkit-scrollbar {
+  width: 7px;
+}
+.u2d-panel-body::-webkit-scrollbar-track {
+  background: rgba(232, 227, 216, 0.08);
+}
+.u2d-panel-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 107, 43, 0.45);
 }
 
 /* 選択行(モード/難易度/お守り): 選択=橙面+黒銘(mockクラス作成の文法) */

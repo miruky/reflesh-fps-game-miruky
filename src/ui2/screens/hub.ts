@@ -13,7 +13,7 @@ import {
   type DailyChallengeDef,
 } from '../../game/dailies';
 import { MODE_IDS } from '../../game/modes';
-import { levelFromXp, rankNameFor } from '../../game/progression';
+import { isMissionUnlocked, levelFromXp, rankNameFor } from '../../game/progression';
 import { STAGES } from '../../game/stages';
 import { WEAPON_DEFS } from '../../game/weapons';
 import { BUILD_LABEL } from '../../version';
@@ -49,7 +49,23 @@ export function hubSublines(profile: Profile): {
   const weapons = Object.keys(WEAPON_DEFS).length;
   const exotics = Object.values(WEAPON_DEFS).filter((d) => d.class === 'exotic').length;
   const sizes = STAGES.map((s) => s.size);
-  const total = CAMPAIGN.reduce((a, c) => a + c.missions.length, 0);
+  // R55 W-C6[2]: campaign.ts の chapterVisible と同じ可視性判定(解放済み or 1つでも
+  // クリア済みの章のみ)で集計する。秘匿章chB(ch10全制圧まで解放されない)を無条件に
+  // 分母へ含めると、全通常章を制圧してもhub側だけ100%に届かない食い違いが生じる。
+  // isMissionUnlockedはprofile.campaign.unlockedChaptersを参照するため、hubSublinesは
+  // 純関数として最小形状のprofile(unlockedChapters省略)で呼ばれてもクラッシュしない
+  // よう防御的に補完してから渡す(実プロフィールは常に配列を持つため通常は素通り)。
+  const unlockSafeProfile: Profile = profile.campaign.unlockedChapters
+    ? profile
+    : { ...profile, campaign: { ...profile.campaign, unlockedChapters: [] } };
+  const visible = CAMPAIGN.filter((c) =>
+    c.missions.some(
+      (m) =>
+        isMissionUnlocked(unlockSafeProfile, m.id) ||
+        profile.campaign.clearedMissions.includes(m.id),
+    ),
+  );
+  const total = visible.reduce((a, c) => a + c.missions.length, 0);
   const cleared = Math.min(total, profile.campaign.clearedMissions.length);
   const stageNames = STAGES.slice(0, 3)
     .map((s) => s.name)
@@ -263,7 +279,8 @@ function dailyBodyHtml(daily: DailyChallengeDef, done: number): string {
 
 export const mountHub: ScreenMount = (host, root) => {
   root.setAttribute('data-id', 'hub-root');
-  root.classList.toggle('u2h-reduce', host.reducedMotion());
+  const reduced = host.reducedMotion();
+  root.classList.toggle('u2h-reduce', reduced);
   const p = host.profile;
   const lv = levelFromXp(p.xp);
   const rank = rankNameFor(lv.level).name;
@@ -307,9 +324,16 @@ export const mountHub: ScreenMount = (host, root) => {
     `生涯撃破 ${fmtInt(p.stats.kills)} · 戦役制圧 ${camp.cleared}/${camp.total}`,
     `ゾンビ最高到達 R${p.bestZombieRound ?? 0} · メダル図鑑 ${p.unlockedMedals.length}種`,
   ];
-  const tickerHtml = [...ticker, ...ticker]
-    .map((t) => `<span style="font-size:12.5px;color:#A79F90;">${t}</span>`)
-    .join('');
+  // R55 W-C6[12]: 省モーション時は.u2h-reduce *のanimation:none!importantでenzaTicker
+  // 横流しが静止し、複製した6行のうち最初の1行しか可視域に入らない代替導線も無かった。
+  // 省モーション時は複製せず縦積み(1行ずつ改行)にして3行の実データを常時可読にする。
+  const tickerHtml = reduced
+    ? ticker
+        .map((t) => `<span style="display:block;font-size:12.5px;line-height:1.3;color:#A79F90;">${t}</span>`)
+        .join('')
+    : [...ticker, ...ticker]
+        .map((t) => `<span style="font-size:12.5px;color:#A79F90;">${t}</span>`)
+        .join('');
 
   root.innerHTML = `
   <div style="position:absolute;inset:0;background:radial-gradient(130% 100% at 74% 8%, #151129 0%, #0D0B1D 30%, #070610 55%, #030308 80%, #020207 100%);"></div>
@@ -494,7 +518,7 @@ export const mountHub: ScreenMount = (host, root) => {
     <div style="display:flex;align-items:center;gap:18px;overflow:hidden;width:900px;">
       <span style="flex:none;${MONO}font-size:10.5px;letter-spacing:0.22em;color:#FF8B4D;border:1px solid rgba(255,107,43,0.5);padding:3px 10px;">報\u3000INTEL</span>
       <div style="overflow:hidden;flex:1;">
-        <div style="display:flex;gap:64px;white-space:nowrap;animation:enzaTicker 26s linear infinite;width:max-content;">${tickerHtml}</div>
+        <div style="display:flex;${reduced ? 'flex-direction:column;gap:2px;width:100%;' : 'gap:64px;animation:enzaTicker 26s linear infinite;width:max-content;'}white-space:nowrap;">${tickerHtml}</div>
       </div>
     </div>
     <div style="display:flex;gap:30px;font-size:13px;color:#A79F90;flex:none;white-space:nowrap;">

@@ -77,10 +77,12 @@ export class Menu2 implements MenuApi {
     if (this.root.hidden) return;
     if (ev.key !== 'Escape' || ev.defaultPrevented) return;
     const t = ev.target;
-    // selectはネイティブのEsc処理(ドロップダウンを閉じる)を尊重して素通しする。
-    // inputはテキスト打鍵系の型(text/number/search等)のみ除外し、checkbox/radio/range/button型は
-    // Esc=戻るを通す(R55 W-C4[5]: 特殊/ゾンビ設定のcheckboxフォーカス時にEscでhubへ戻れなかった)。
-    if (t instanceof HTMLSelectElement) return;
+    // R55 W-C6[16]: selectはポップアップ展開中、ブラウザがEscをネイティブに消費して
+    // ドロップダウンを閉じるだけで、このwindow keydownまでは伝播してこない(素通しは不要)。
+    // 一方、ポップアップが閉じている状態でselectにフォーカスが残っているだけのEscは
+    // ここまで届くため、無条件除外すると「戻る」が効かなくなっていた。よって選択要素自体は
+    // 除外せず、テキスト打鍵系のinput型(text/number/search等)のみ除外する。
+    // checkbox/radio/range/button型はEsc=戻るを通す(R55 W-C4[5]の判定と同型)。
     if (t instanceof HTMLInputElement && TEXT_ENTRY_INPUT_TYPES.has(t.type)) return;
     // タイトル画面は自前でEscを処理する(クレジットモーダル)
     if (this.active?.id === 'title') return;

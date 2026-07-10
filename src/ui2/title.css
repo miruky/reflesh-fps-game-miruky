@@ -20,7 +20,10 @@
   top: 50%;
   width: 1920px;
   height: 1080px;
-  transform: translate(-50%, -50%) scale(var(--u2s, 1));
+  /* R55 W-C6[11]: --u2sはこの画面では誰も設定しない(title.tsコメントのとおり独自の
+     再スケールは持たない)ため常に既定値1で死んでいた。scale()を除去する
+     (外側.u2-stageの一様スケールが実際の適合を担う)。 */
+  transform: translate(-50%, -50%);
   overflow: hidden;
   background: #050607;
 }

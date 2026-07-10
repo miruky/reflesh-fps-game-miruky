@@ -111,7 +111,8 @@
   font-size: 11px;
   color: var(--hagane-3);
   letter-spacing: 0.2em;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
+  /* R55 W-C6 [8]: 明るい空でも視認できるよう密着ハロー+広域ドロップの二層縁取り */
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.95), 0 2px 6px rgba(0, 0, 0, 0.9);
 }
 
 /* ════ 上中央下: モードプレート(mine | モード名+残時間 | enemy) ════ */
@@ -165,6 +166,8 @@
   letter-spacing: 0.18em;
   color: var(--hagane-3);
   white-space: nowrap;
+  /* R55 W-C6 [8]: 背景プレート無しの素の文字なので明るい空で不可視だった→縁取りで確保 */
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
 }
 #hud.u2-hud .u2h-dia {
   width: 8px;

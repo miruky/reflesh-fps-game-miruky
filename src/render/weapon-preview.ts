@@ -32,6 +32,15 @@ export function collectInspectNodes(root: THREE.Object3D): InspectNode[] {
   return out;
 }
 
+// R55 W-C6[5]: buildGunBody は銃身をローカル -Z 方向へ伸ばす(FPV慣習: muzzle は
+// z が負)。カメラはワールド+Z側からほぼ真後ろ(-Z方向)を見ているため、
+// pivot.rotation.y=0(加算ゼロ)のままだと銃身の長さが奥行きに潰れて「縦に潰れた箱」に
+// 見える。横向きプロファイル(銃身が画面水平)で見せるため、pivotの基準yawを-90°回し、
+// ローカル-Z(銃口)をワールド+X(=画面右)へ向ける。menu.ts weaponSilSVG の2Dシルエットも
+// 「銃口=右/ストック=左」で統一されているため、この向きを3Dプレビューにも揃える。
+// ターンテーブル/ドラッグの回転量はこの基準角に対して加算される(yawフィールドを直接動かす)。
+const PROFILE_YAW = -Math.PI / 2;
+
 // 台座(祭壇)のホロ光輪。アセットレス: CircleGeometry + 手続きGLSLの加算合成のみ。
 // 同心リング + 外周エッジ + レーダー掃引で「兵装を捧げる祭壇」の質感を作る。
 const PEDESTAL_VERT = /* glsl */ `
@@ -80,7 +89,7 @@ export class WeaponPreview {
   private reduceMotion = false;
   private lastT = 0;
 
-  private yaw = 0; // 累積ヨー(オートスピン+ドラッグ+慣性)
+  private yaw = PROFILE_YAW; // 累積ヨー(横向きプロファイル基準+オートスピン+ドラッグ+慣性)
   private pitch = 0;
   private velYaw = 0; // ドラッグ離した後の慣性
   private dragging = false;

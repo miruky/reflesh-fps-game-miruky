@@ -122,6 +122,15 @@ const ZOMBIE_HARD_STUCK_CHECK_S = 1.0;   // 位置ドリフトのサンプリン
 const ZOMBIE_HARD_STUCK_MOVE_M = 0.4;    // このサンプル間隔での移動距離がこれ未満なら「停滞」1票
 const ZOMBIE_HARD_STUCK_RELOCATE_S = 5;  // 停滞の累積がこの秒数に達したら救済テレポート対象(視界外優先)
 const ZOMBIE_HARD_STUCK_FORCE_S = 9;     // 視界外を待っても救済できない場合の強制テレポート閾値
+// R55 W-C6: 登坂『成功終了』(climbMinS経過&&grounded&&!blocked。updateZombie内)の直後クールダウン。
+// 旧実装はこの終了パスにだけクールダウンを設定しておらず(!underCap/timeout側の2経路のみ設定)、
+// 越えられない縁でgrounded&&!blockedが一瞬だけ成立→即成功終了→次フレーム即再点火、という
+// climbing on/off チャタリングを起こし得た。その1フレームの隙間(climbing=false)は
+// ZOMBIE_HARD_STUCK_CHECK_S(1.0s)未満のため、下のhardStuckサンプリング窓が完走できず
+// 最終安全弁(hardStuckS)が永久に発火しなかった。ZOMBIE_HARD_STUCK_CHECK_S超の値にすることで、
+// 成功終了のたびに必ずCHECK_Sを上回るclimbing=false区間が生まれ、サンプリング窓を完走できる
+// ことを保証する(ZOMBIE_HARD_STUCK_CHECK_S定義に追随して自動的に安全側へ保たれる)。
+const ZOMBIE_CLIMB_SUCCESS_COOLDOWN = ZOMBIE_HARD_STUCK_CHECK_S + 0.1; // = 1.1s
 const TANK_SMOKE_OPACITY = 0.85;
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -1085,6 +1094,9 @@ export class Bot {
   private hardStuckCheckS = ZOMBIE_HARD_STUCK_CHECK_S;
   private hardStuckAnchorX = 0;
   private hardStuckAnchorZ = 0;
+  // R55 W-C6: climbing中もサンプリング窓を止めず高度側の進捗判定に使うYアンカー
+  // (XZアンカーと同じ箇所で同時に据え直す。詳細はupdateZombie本体のコメント参照)。
+  private hardStuckAnchorY = 0;
   // R55 W-C3: 前フレームの blocked(前進を実際に阻まれたか)。meleeRange以内かの判定は
   // 直線距離だけでは「壁越しの偽近接」(壁の向こうにプレイヤーがいて距離だけは近い)を
   // 見分けられないため、「近接射程内 かつ 前フレーム時点で前進ブロックされていない」
@@ -1702,6 +1714,7 @@ export class Bot {
     this.hardStuckCheckS = ZOMBIE_HARD_STUCK_CHECK_S;
     this.hardStuckAnchorX = x;
     this.hardStuckAnchorZ = z;
+    this.hardStuckAnchorY = by;
     this.prevZombieBlocked = false; // R55 W-C3: 前個体/転移前の壁越しblocked状態を持ち越さない
   }
 
@@ -2530,30 +2543,49 @@ export class Bot {
     // 1s間隔で独立にサンプリングする。stuckTimer(短周期の検知→ラッチ試行)とは別の
     // 絶対タイマーとして働くため、迂回ロジック自体に死角(完全に囲まれたポケット等)が
     // あっても、zombie-director側のテレポート救済(zombieHardStuck/zombieHardStuckForce)
-    // が最終的にラウンド進行を保証できる。登坂中/近接交戦中(意図的低速)/目標喪失中は
+    // が最終的にラウンド進行を保証できる。近接交戦中(意図的低速)/目標喪失中は
     // 誤検知するため測定を一時停止し、その間はアンカーだけ現在地に据え直す。
     // R55 W-C3: 「近接交戦中」の判定は直線距離(distToPlayer<=meleeRange)だけでは
     // 「壁越しの偽近接」(壁の向こうにプレイヤーがいて距離だけ近い=実際は前進ブロックされ
     // 詰まっている)を意図的低速と誤判定してしまい、最終安全弁ごと無効化されてしまう。
     // 前フレームで実際に前進ブロックされていた(prevZombieBlocked)場合は「本当に密着」
     // とはみなさず、サンプリングを止めない(壁越し偽近接でもhardStuckSが積算される)。
-    if (!target || this.climbing || (distToPlayer <= meleeRange && !this.prevZombieBlocked)) {
+    //
+    // R55 W-C6: 旧実装は「登坂中(this.climbing)はまるごと測定停止」だったため、越えられない
+    // 縁/段差での登坂チャタリング(climbMinS経過直後にgrounded&&!blockedが一瞬だけ成立→
+    // 即座に登坂終了→次フレーム即再点火、を繰り返す)が起きると、climbing=falseの区間が
+    // 常にZOMBIE_HARD_STUCK_CHECK_S(1.0s)未満しか続かず、hardStuckCheckSが1.0sへ戻り続けて
+    // 一度もサンプル評価まで到達できず、hardStuckSが永久に0のまま=最終安全弁が発火しなかった
+    // (ZOMBIE_CLIMB_SUCCESS_COOLDOWN側の点火間隔対策と合わせ、こちらは検知ロジック自体の
+    // 根治: climbing中でも計測は止めない)。climbing中は「XZが進んでいなくても高度
+    // (climbBaseYを起点に実際に登れているか)が進んでいれば停滞ではない」とみなし、
+    // 良性の登坂(本当に高さを稼げている最中)を停滞と誤検知しないようにする。
+    if (!target || (distToPlayer <= meleeRange && !this.prevZombieBlocked)) {
       this.hardStuckCheckS = ZOMBIE_HARD_STUCK_CHECK_S;
       this.hardStuckAnchorX = pos.x;
       this.hardStuckAnchorZ = pos.z;
+      this.hardStuckAnchorY = pos.y;
     } else {
       this.hardStuckCheckS -= dt;
       if (this.hardStuckCheckS <= 0) {
         this.hardStuckCheckS = ZOMBIE_HARD_STUCK_CHECK_S;
         const hdx = pos.x - this.hardStuckAnchorX;
         const hdz = pos.z - this.hardStuckAnchorZ;
-        if (hdx * hdx + hdz * hdz < ZOMBIE_HARD_STUCK_MOVE_M * ZOMBIE_HARD_STUCK_MOVE_M) {
-          this.hardStuckS += ZOMBIE_HARD_STUCK_CHECK_S;
+        const noXZProgress = hdx * hdx + hdz * hdz < ZOMBIE_HARD_STUCK_MOVE_M * ZOMBIE_HARD_STUCK_MOVE_M;
+        if (noXZProgress) {
+          // climbing中のみ高度側も見る(非climbing中は!this.climbingでtrue固定=従来どおりXZのみ)。
+          // 高度が実際に稼げていれば(noYProgress=false)「まだ停滞と断定しない」が、水平に
+          // 逃げ切れた確証もないため0クリアはしない(据え置き)。真に逃げ切れば次回サンプルで
+          // noXZProgress=falseとなり下のelse枝で確実にクリアされる。
+          const noYProgress =
+            !this.climbing || Math.abs(pos.y - this.hardStuckAnchorY) < ZOMBIE_HARD_STUCK_MOVE_M;
+          if (noYProgress) this.hardStuckS += ZOMBIE_HARD_STUCK_CHECK_S;
         } else {
           this.hardStuckS = 0;
         }
         this.hardStuckAnchorX = pos.x;
         this.hardStuckAnchorZ = pos.z;
+        this.hardStuckAnchorY = pos.y;
       }
     }
 
@@ -2701,7 +2733,12 @@ export class Bot {
         if (blocked) this.heading += (ctx.rand() - 0.5) * 1.6;
       } else if (this.climbMinS <= 0 && grounded && !blocked) {
         // 最小継続時間を過ぎ、接地でき、前進を妨げられていない → 乗り上げ完了
+        // R55 W-C6: ここにクールダウンを設定していなかったため、越えられない縁で
+        // grounded&&!blockedが一瞬だけ成立→即終了→次フレーム即再点火のチャタリングを
+        // 起こし得た(hardStuckサンプリング窓を完走させる区間が作れない)。
+        // ZOMBIE_HARD_STUCK_CHECK_S超のクールダウンを必ず挟む。
         this.climbing = false;
+        this.climbCooldownS = ZOMBIE_CLIMB_SUCCESS_COOLDOWN;
         this.climbElapsedS = 0;
       }
       // それ以外(最小時間内 / 空中 / まだ blocked): 登坂継続
@@ -3285,6 +3322,7 @@ export class Bot {
     this.hardStuckCheckS = ZOMBIE_HARD_STUCK_CHECK_S;
     this.hardStuckAnchorX = spawn.x;
     this.hardStuckAnchorZ = spawn.z;
+    this.hardStuckAnchorY = spawn.y + this.feetOffset;
     this.prevZombieBlocked = false; // R55 W-C3: 前個体の壁越しblocked状態を持ち越さない
     // ゾンビKCC距離LODの前回movedキャッシュもリセット(プール再利用の取りこぼし防止。
     // 新スポーンの初フレームがLODスキップ側に回っても前個体の移動量を引き継がない)

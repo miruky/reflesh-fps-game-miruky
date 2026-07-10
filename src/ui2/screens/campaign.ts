@@ -487,9 +487,12 @@ export const mountMissionResult: ScreenMount = (host, root, opts) => {
     progress.firstClear && firstClearBonus != null
       ? `<p class="u2c-note first">初制圧ボーナス +${firstClearBonus.toLocaleString('en-US')} XP</p>`
       : '';
+  // R55 W-C6[17]: 挑戦達成/未達を問わず金(#f5d06b)で塗っていたのは
+  // 鉄則(金=EXOTIC/経済のみ)違反。達成/未達をクラスで出し分け、CSS側で
+  // 達成=熾火橙・未達=無彩色に分離する。
   const challengeNote =
     won && mission?.challenge
-      ? `<p class="u2c-note challenge">${progress.challengeMet ? '挑戦達成！' : '挑戦未達'}\u3000${esc(mission.challenge.label)}</p>`
+      ? `<p class="u2c-note challenge ${progress.challengeMet ? 'met' : 'unmet'}">${progress.challengeMet ? '挑戦達成！' : '挑戦未達'}\u3000${esc(mission.challenge.label)}</p>`
       : '';
   const nextId = mission && won ? nextMissionId(mission.id) : null;
   const nextUnlocked = nextId ? isMissionUnlocked(host.profile, nextId) : false;
