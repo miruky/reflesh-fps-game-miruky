@@ -1,5 +1,4 @@
 import './style.css';
-import './enza-core.css'; // W-ENZA: 焔座デザイン基盤トークン(FA1が部品を拡充)
 import { cancelPendingThumbs } from './render/stage-thumbs';
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';

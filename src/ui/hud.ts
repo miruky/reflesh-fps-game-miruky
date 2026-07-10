@@ -1,6 +1,5 @@
 import './rogue.css'; // R54-F5 輪廻HUD/メニュー様式(style.css追記凍結のため機能別ファイル)
 import '../mk3-phase2.css'; // R54-F7 MK.III Phase 2(キルカム武器バナー/ハイライト/フォト)
-import './enza-hud.css'; // W-ENZA FA3: 焔座 戦闘HUD(.ehud-*。style.css追記凍結のため機能別ファイル)
 import { RADAR_RANGE_M, RETICLE_COLORS } from '../core/settings';
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match';
@@ -473,18 +472,6 @@ export function deriveEmperorState(snap: Mk3Snapshot): EmperorState | null {
   return null;
 }
 
-// ── W-ENZA 帝王転調: EmperorState → documentElement の data-emperor 属性値。
-// enza-core.css の :root[data-emperor=…] が --emperor / --emperor-ground を全UIへ転調させる。
-// ゲーム内部の状態名(dark/raitei/kokuraitei)とデザイン言語のテーマ名(kotei/raitei/kokurai)の
-// 対応はここが唯一の翻訳点。
-export type EmperorThemeAttr = 'kotei' | 'raitei' | 'kokurai';
-export function emperorThemeAttr(state: EmperorState | null): EmperorThemeAttr | null {
-  if (state === 'dark') return 'kotei';
-  if (state === 'raitei') return 'raitei';
-  if (state === 'kokuraitei') return 'kokurai';
-  return null;
-}
-
 // ── チャージ弧(クロスヘア直下90°、r=56。旧hud-charge-gaugeと同一データの新表示) ──
 export const MK3_CHARGE_ARC_LEN = (Math.PI / 2) * 56; // ≈ 87.96
 export function chargeArcDashoffset(ratio01: number): number {
@@ -536,15 +523,8 @@ export class Hud {
   private mk3EmperorApplied = ''; // 帝王枠 data-state の直近値(変化時のみ書換)
   private mk3ArcVisible = false;
   private mk3LastArcOffset = ''; // チャージ弧 dashoffset の直近書込み(無変化スキップ)
-  // ── W-ENZA ──
-  private curEmperorTheme: EmperorThemeAttr | null = null; // キルフィード銘/転調用の現在テーマ
-  private lastHpSeg = ''; // 生命セグメントの scaleX 直近書込み(無変化フレームの書込み抑止)
-  private lastUlt01 = ''; // ウルトリングの --ult01 直近書込み(無変化フレームの書込み抑止)
 
   constructor(private readonly root: HTMLElement) {
-    // W-ENZA: 焔座スキンのスコープフック。enza-hud.css は #hud.ehud 配下のみ有効
-    // (style.css の旧規則に specificity で確実に勝つための2点目のクラス)
-    root.classList.add('ehud');
     root.innerHTML = `
       <div class="hud-top-left ig-panel ig-panel--hud">
         <div class="hud-match-chip"><span data-id="modename">フリーフォーオール</span><i>LIVE</i></div>
@@ -555,13 +535,10 @@ export class Hud {
         <div class="hud-streak" data-id="streak" hidden></div>
       </div>
       <div class="hud-top-center">
-        <div class="hud-compass"><i class="ehud-compass-ticks" aria-hidden="true"></i><div class="hud-compass-strip" data-id="compass"></div><div class="hud-compass-needle"></div></div>
-        <div class="hud-heading" aria-hidden="true"><i class="ehud-hdg-wing" aria-hidden="true"></i><span data-id="hdg">0</span><i>°</i><i class="ehud-hdg-wing" aria-hidden="true"></i></div>
+        <div class="hud-compass"><div class="hud-compass-strip" data-id="compass"></div><div class="hud-compass-needle"></div></div>
+        <div class="hud-heading" aria-hidden="true"><span data-id="hdg">0</span><i>°</i></div>
+        <div class="hud-timer"><small>TIME</small><strong data-id="timer">5:00</strong></div>
         <div class="hud-objective">
-          <!-- W-ENZA: スコアプレート(味方=熾火面/中央=残り時間/敵=白鋼)。timerは.hud-timerごと
-               プレート中央へ絶対配置(親div=display:none切替のJS経路は不変)。teamscore非表示の
-               ミッション等では :has で静的センター表示へ退避する -->
-          <div class="hud-timer"><small>TIME</small><strong data-id="timer">5:00</strong></div>
           <div class="hud-teamscore" data-id="teamscore">
             <span class="ts-mine" data-id="scoremine">0</span>
             <span class="ts-target" data-id="scoretarget"></span>
@@ -798,7 +775,7 @@ export class Hud {
         <div class="hud-cook-bar"><div data-id="cookfill"></div></div>
       </div>
       <div class="hud-bottom-left ig-panel ig-panel--hud">
-        <div class="hud-vitals-heading"><span>生命</span><small data-id="hpmax">/ 100</small></div>
+        <div class="hud-vitals-heading"><span>VITAL</span><small data-id="hpmax">/ 100</small></div>
         <div class="hud-vitals-row">
           <div class="hud-hp-ring">
             <svg class="hp-ring-svg" viewBox="-50 -50 100 100" aria-hidden="true">
@@ -806,13 +783,6 @@ export class Hud {
               <circle class="hp-ring-fill" data-id="hpring" r="38" transform="rotate(-210)" fill="none" stroke-dasharray="159.17 238.76" stroke-dashoffset="0"></circle>
             </svg>
             <div class="hud-hp-num" data-id="hp">100</div>
-          </div>
-          <!-- W-ENZA: 生命セグメントゲージ+脈拍線(円環リングの後継表示。hpring自体はCSSで退役) -->
-          <div class="ehud-vit" aria-hidden="true">
-            <div class="ehud-hpseg"><i class="ehud-hpseg-fill" data-id="hpsegfill"></i></div>
-            <svg class="ehud-pulse" viewBox="0 0 120 16" preserveAspectRatio="none" aria-hidden="true">
-              <path class="ehud-pulse-path" d="M0 8 H34 L40 8 L44 2 L48 14 L52 5 L55 8 H74 L79 8 L83 3 L87 12 L90 8 H120" fill="none"></path>
-            </svg>
           </div>
         </div>
       </div>
@@ -907,9 +877,6 @@ export class Hud {
       <div class="hud-medal-stack" data-id="medalstack"></div>
       <div class="hud-badge-stack" data-id="badgestack"></div>
       <div class="hud-ult" data-id="ult">
-        <!-- W-ENZA: ウルト充填リング(conic-gradient、--ult01駆動)。旧バー(ultfill)は
-             データ供給互換のためDOMに残しCSSで退役。リング中央に充填%を刻む -->
-        <div class="ehud-ult-ring" data-id="ultring" aria-hidden="true"><b class="ehud-ult-pct" data-id="ultpct">0%</b></div>
         <div class="hud-ult-bar"><div data-id="ultfill"></div></div>
         <span class="hud-ult-label" data-id="ultlabel">ULT</span>
       </div>
@@ -926,7 +893,7 @@ export class Hud {
         <div class="hud-gg-top3" data-id="ggtop3"></div>
       </div>
       <div class="hud-death" data-id="death" hidden>
-        <div class="hud-death-title">戦死</div>
+        <div class="hud-death-title">やられた</div>
         <div class="hud-death-sub">リスポーンまで <span data-id="respawn">0.0</span> 秒</div>
       </div>
       <!-- R11 キルカメラ・シネマ: #hud直下(生存時は.hud-death暗幕の外)。
@@ -1045,9 +1012,6 @@ export class Hud {
 
   hide(): void {
     this.root.hidden = true;
-    // W-ENZA: メニュー/リザルトへ帝王転調を持ち出さない(HUD退場時に必ず解除)
-    this.curEmperorTheme = null;
-    delete document.documentElement.dataset.emperor;
   }
 
   reset(): void {
@@ -1072,11 +1036,6 @@ export class Hud {
     this.mk3CountUpTarget = null;
     this.mk3EmperorApplied = '';
     this.mk3ArcVisible = false;
-    // W-ENZA: 帝王転調/セグメントゲージ/ウルトリングのキャッシュを前試合から持ち越さない
-    this.curEmperorTheme = null;
-    delete document.documentElement.dataset.emperor;
-    this.lastHpSeg = '';
-    this.lastUlt01 = '';
     const mk3moment = this.el['mk3moment'];
     if (mk3moment) {
       mk3moment.hidden = true;
@@ -1600,12 +1559,12 @@ export class Hud {
 
     ctx.clearRect(0, 0, MAP, MAP);
 
-    // 背景(W-ENZA: 漆黒 --sumi-1 系。canvasはCSS変数を読めないためトークン同値hexを直書き)
-    ctx.fillStyle = 'rgba(11,10,13,0.9)';
+    // 背景
+    ctx.fillStyle = 'rgba(8,12,18,0.88)';
     ctx.fillRect(0, 0, MAP, MAP);
 
-    // 外枠(罫線 --keisen 同値)
-    ctx.strokeStyle = 'rgba(232,227,216,0.2)';
+    // 外枠
+    ctx.strokeStyle = 'rgba(180,160,100,0.35)';
     ctx.lineWidth = 1;
     ctx.strokeRect(0.5, 0.5, MAP - 1, MAP - 1);
 
@@ -1614,8 +1573,8 @@ export class Hud {
     ctx.translate(CX, CY);
     ctx.rotate(-yaw);
 
-    // 障害物ボックス(白鋼の微線)
-    ctx.strokeStyle = 'rgba(232,227,216,0.13)';
+    // 障害物ボックス
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
     ctx.lineWidth = 0.7;
     for (const b of this.minimapBoxes) {
       // V31: 破壊済みプロップはミニマップからも消す
@@ -1623,18 +1582,18 @@ export class Hud {
       ctx.strokeRect(b.x * scale - b.w * scale / 2, b.z * scale - b.d * scale / 2, b.w * scale, b.d * scale);
     }
 
-    // 味方ドット (装甲/味方の意味色 --sofu)
-    ctx.fillStyle = '#9fb5c9';
+    // 味方ドット (青)
+    ctx.fillStyle = '#5ab0ff';
     for (const ally of snap.minimapAllies) {
       ctx.beginPath();
       ctx.arc(ally.relX * scale, ally.relZ * scale, 2.6, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // 敵ドット (敵性 --teki, UAV スナップ, opacity フェード)
+    // 敵ドット (赤, UAV スナップ, opacity フェード)
     for (const enemy of snap.minimapEnemies) {
       ctx.globalAlpha = enemy.opacity;
-      ctx.fillStyle = '#d24545';
+      ctx.fillStyle = '#ff5040';
       ctx.beginPath();
       ctx.arc(enemy.relX * scale, enemy.relZ * scale, 3, 0, Math.PI * 2);
       ctx.fill();
@@ -1647,10 +1606,10 @@ export class Hud {
       const zz = snap.hardpointZoneRelZ * scale;
       const zr = ZONE_R * scale;
       const hpColor = snap.hardpointOwner === 'mine'
-        ? 'rgba(255,107,43,0.9)'
+        ? 'rgba(90,176,255,0.85)'
         : snap.hardpointOwner === 'enemy'
-          ? 'rgba(210,69,69,0.9)'
-          : 'rgba(245,208,107,0.9)';
+          ? 'rgba(255,80,64,0.85)'
+          : 'rgba(255,215,0,0.85)';
       ctx.strokeStyle = hpColor;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -1666,7 +1625,7 @@ export class Hud {
     // ── キルコンファーム ドッグタグ(回転コンテキスト内) ──
     if (snap.kcTagPositions) {
       for (const tag of snap.kcTagPositions) {
-        ctx.fillStyle = tag.isEnemy ? 'rgba(245,208,107,0.9)' : 'rgba(210,69,69,0.9)';
+        ctx.fillStyle = tag.isEnemy ? 'rgba(255,215,0,0.9)' : 'rgba(255,60,60,0.9)';
         ctx.beginPath();
         ctx.arc(tag.relX * scale, tag.relZ * scale, 2.5, 0, Math.PI * 2);
         ctx.fill();
@@ -1679,7 +1638,7 @@ export class Hud {
         const alpha = (1 - blip.age01) * 0.9;
         if (alpha <= 0) continue;
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = '#d24545';
+        ctx.fillStyle = '#ff3020';
         ctx.beginPath();
         ctx.arc(blip.relX * scale, blip.relZ * scale, 1.8, 0, Math.PI * 2);
         ctx.fill();
@@ -1689,9 +1648,9 @@ export class Hud {
 
     ctx.restore();
 
-    // プレイヤーアロー (中心固定・常に上向き。W-ENZA: 橙自機 --hibana)
-    ctx.fillStyle = '#ff6b2b';
-    ctx.strokeStyle = 'rgba(2,2,7,0.85)';
+    // プレイヤーアロー (中心固定・常に上向き)
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#000';
     ctx.lineWidth = 0.5;
     ctx.beginPath();
     ctx.moveTo(CX, CY - 6);
@@ -1705,7 +1664,7 @@ export class Hud {
     // UAV アクティブ時: 上部に "UAV" ラベル
     if (snap.streakUavActive) {
       const t = Math.floor(snap.streakUavTimeLeft);
-      ctx.fillStyle = 'rgba(245,208,107,0.92)';
+      ctx.fillStyle = 'rgba(255,200,60,0.9)';
       ctx.font = '8px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(`UAV ${t}s`, CX, 11);
@@ -1865,17 +1824,6 @@ export class Hud {
       }
       ring.classList.toggle('hp-low', ratio < 0.35);
     }
-    // W-ENZA: 生命セグメントゲージ(scaleX)。低HP色分岐はパネル側クラスで一括
-    const seg = this.el['hpsegfill'];
-    if (seg) {
-      const ratio = clampN(snap.hp / snap.maxHp, 0, 1);
-      const sx = ratio.toFixed(3);
-      if (sx !== this.lastHpSeg) {
-        this.lastHpSeg = sx;
-        seg.style.transform = `scaleX(${sx})`;
-        seg.classList.toggle('ehud-hp-low', ratio < 0.35);
-      }
-    }
     const vignette = this.el['vignette'];
     if (vignette) {
       const ratio = snap.hp / snap.maxHp;
@@ -1902,11 +1850,6 @@ export class Hud {
       const row = document.createElement('div');
       row.className = 'hud-feed-row';
       row.dataset.kind = entry.headshot ? 'hs' : entry.weapon === '近接' ? 'melee' : '';
-      // W-ENZA: 帝王状態中の自分のキルは「銘付きの転調行」(紫電/氷青/深紫)。
-      // 行生成時のテーマで固定する(後から色が変わらない=戦闘記録としての一貫性)
-      if (this.curEmperorTheme && entry.killer === 'あなた') {
-        row.dataset.emp = this.curEmperorTheme;
-      }
       const killer = document.createElement('span');
       killer.className = entry.killer === 'あなた' ? 'feed-you' : 'feed-name';
       killer.textContent = entry.killer;
@@ -2360,17 +2303,6 @@ export class Hud {
   private updateUlt(snap: MatchSnapshot): void {
     const fill = this.el['ultfill'];
     if (fill) fill.style.width = `${Math.min(100, snap.ultCharge * 100)}%`;
-    // W-ENZA: 充填リング(conic-gradient)+中央%。無変化フレームは書込みスキップ
-    const ring = this.el['ultring'];
-    if (ring) {
-      const u01 = clampN(snap.ultCharge, 0, 1);
-      const key = u01.toFixed(3);
-      if (key !== this.lastUlt01) {
-        this.lastUlt01 = key;
-        ring.style.setProperty('--ult01', key);
-        this.text('ultpct', `${Math.round(u01 * 100)}%`);
-      }
-    }
     const ult = this.el['ult'];
     if (ult) {
       ult.hidden = !snap.alive;
@@ -3041,16 +2973,6 @@ export class Hud {
       if (frame) {
         frame.hidden = empKey === '';
         if (empKey !== '') frame.dataset.state = empKey;
-      }
-      // W-ENZA 帝王転調: documentElement へ data-emperor を設定/解除。
-      // enza-core.css の :root[data-emperor=…] が --emperor を全転調し、
-      // 枠灯り/プレート縁/スコア面/ウルトリング/キルフィード銘が状態色へ沈む。
-      // 解除(null)はここ+reset()+hide()の三重で保証(メニューへ残さない)
-      this.curEmperorTheme = emperorThemeAttr(emperor);
-      if (this.curEmperorTheme) {
-        document.documentElement.dataset.emperor = this.curEmperorTheme;
-      } else {
-        delete document.documentElement.dataset.emperor;
       }
     }
 
