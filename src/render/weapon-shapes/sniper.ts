@@ -1,11 +1,12 @@
 import type { ModelKey } from '../../game/weapons';
 import type { Silhouette } from './types';
-import type { ShapePainter } from './toolkit';
+import { hasMuzzleAttachment, type ShapePainter } from './toolkit';
 
 // AWM のオリーブ樹脂ストックシェル(頂点カラー・アセットレス。メタル/ポリの頂点色なので
 // arm hex 制約=glass 材の話とは無関係)。寒色パレットの中で唯一の暖緑=一目で AWM と分かる。
-const AWM_GREEN = 0x3a4726;
-const AWM_GREEN_HI = 0x4a5a30;
+// R58 E2 nit: 旧 0x3a4726 はやや黄緑(G−R=13)→ 沈んだオリーブ寄り(G−R≈4/低彩度)へ寄せる。
+const AWM_GREEN = 0x3d4129;
+const AWM_GREEN_HI = 0x4e5334;
 
 // ── 狙撃/DMR/対物系 シルエット ─────────────────────────────────────────
 // R58 shape共有解消: 汎用エントリ + 実在武器ごとの固有 ModelKey。
@@ -112,6 +113,7 @@ export const SNIPER_SHAPES = {
     furniture: 'wood',
     gripStyle: 'wood', // 木製グリップ
     barrelProfile: 'plain', // SVD 銃身は滑らか(fluted 上書き)
+    muzzleExtend: 0.04, // F4: スリットハイダー前端まで muzzleZ を前進(実測≈4cm 埋没)
   },
   // hibari-mk / WA2200 ← Walther WA2000
   // 決定的特徴: ブルパップ + 前方に太く長大なバレルシュラウド(頭でっかち・質量前方)
@@ -147,6 +149,7 @@ export const SNIPER_SHAPES = {
     accentBand: 'receiver',
     bodyScale: 1.25,
     barrelProfile: 'fluted', // フルーテッド露出ステンレス銃身
+    muzzleExtend: 0.06, // F4: 多ポートブレーキ前端まで muzzleZ を前進(実測≈6cm 埋没)
   },
   // shirayuki-sniper / TRG-44 ← Sako TRG-42
   // 決定的特徴: 多軸調整バットプレート(直方体突起の集合)がストック後端輪郭
@@ -214,60 +217,76 @@ export const SNIPER_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
     }
     // 左側面オフセット・サイドマウントスコープ基部(SVD特徴)。レンズ本体は buildGunBody が
     // 中央 s.y に描く=painter は「左から生えるマウント」でオフセット感を出す(scope.y 不変=ADS契約)。
+    // R58 E2 nit: 左オフセット感をやや強調(基部外装のみ厚く/左へ張り出す。レンズ中央 s.y は不変=ADS契約)。
     const mz = -recD * 0.06;
-    boxP(metalParts, C.RAIL, 0.012, 0.03, recD * 0.5, -(r.w / 2 + 0.008), 0.012, mz, 0, 0, 0, 'flat'); // ドブテイル・レール
-    for (let i = 0; i < 3; i += 1) {
-      boxP(metalParts, C.GROOVE, 0.014, 0.004, 0.01, -(r.w / 2 + 0.012), 0.012, mz - 0.05 + i * 0.05, 0, 0, 0, 'flat');
+    const mx = r.w / 2;
+    boxP(metalParts, C.RAIL, 0.016, 0.034, recD * 0.54, -(mx + 0.012), 0.012, mz, 0, 0, 0, 'flat'); // ドブテイル・レール(厚く長く)
+    for (let i = 0; i < 4; i += 1) {
+      boxP(metalParts, C.GROOVE, 0.018, 0.004, 0.01, -(mx + 0.017), 0.012, mz - 0.06 + i * 0.04, 0, 0, 0, 'flat'); // レール刻み
     }
-    bakeAt(metalParts, chamferBox(0.016, 0.06, 0.05, 0.004), C.DARK, -(r.w / 2 + 0.004), 0.045, mz); // 縦アーム
-    boxP(metalParts, C.DARK, 0.035, 0.014, 0.04, -(r.w / 2 - 0.012), 0.07, mz, 0, 0, 0, 'flat'); // 中央スコープへ寄る水平アーム
-    boxP(polishParts, C.POLISH, 0.01, 0.022, 0.014, -(r.w / 2 + 0.016), 0.03, mz, 0, 0, 0, 'flat'); // QDレバー
+    bakeAt(metalParts, chamferBox(0.02, 0.072, 0.056, 0.004), C.DARK, -(mx + 0.008), 0.05, mz); // 縦アーム(太く高く=オフセット強調)
+    boxP(metalParts, C.RIM, 0.016, 0.02, 0.03, -(mx + 0.006), 0.028, mz, 0, 0, 0, 'flat'); // 基部ナックル(左張り出し)
+    boxP(metalParts, C.DARK, 0.04, 0.016, 0.042, -(mx - 0.014), 0.078, mz, 0, 0, 0, 'flat'); // 中央スコープへ寄る水平アーム
+    boxP(polishParts, C.POLISH, 0.012, 0.026, 0.016, -(mx + 0.02), 0.032, mz, 0, 0, 0, 'flat'); // QDレバー(大)
     // 右チャージングハンドル(静的ノブ)
     boxP(polishParts, C.POLISH, 0.012, 0.012, 0.03, r.w / 2 + 0.012, 0.02, -recD * 0.06, 0, 0, 0, 'flat');
-    // スリット・フラッシュハイダー(開口スロット筒)
-    const fhZ = barFrontZ - 0.028;
-    tubeZ(metalParts, C.DARK, barR + 0.007, 0.05, 0, BARREL_Y, fhZ, true);
-    for (let i = 0; i < 4; i += 1) {
-      const a = (i / 4) * Math.PI * 2;
-      boxP(metalParts, C.GROOVE, 0.004, 0.004, 0.036,
-        Math.cos(a) * (barR + 0.005), BARREL_Y + Math.sin(a) * (barR + 0.005), fhZ, 0, 0, 0, 'flat');
+    // スリット・フラッシュハイダー(開口スロット筒)。R58 F2: マズルアタッチメント(サプ/コンペ)
+    // 装着時は skip(generic-pass の銃口デバイスとハイダーの二重造形・串刺しを防ぐ)。
+    if (!hasMuzzleAttachment(ctx)) {
+      const fhZ = barFrontZ - 0.028;
+      tubeZ(metalParts, C.DARK, barR + 0.007, 0.05, 0, BARREL_Y, fhZ, true);
+      for (let i = 0; i < 4; i += 1) {
+        const a = (i / 4) * Math.PI * 2;
+        boxP(metalParts, C.GROOVE, 0.004, 0.004, 0.036,
+          Math.cos(a) * (barR + 0.005), BARREL_Y + Math.sin(a) * (barR + 0.005), fhZ, 0, 0, 0, 'flat');
+      }
     }
   },
 
-  // ── WA2000: ブルパップ + 前方巨大バレルシュラウド + 一体スコープブリッジ + 前方バイポッド ──
+  // ── WA2000: 低く長いスレンダーな一直線シルエット + 露出フルーテッド銃身 + 一体スコープ + 前方バイポッド ──
+  // 頭でっかちの箱を廃し、低い前方フォアエンドの上に生きたフルーテッド銃身を露出させ、
+  // 受け上に一体スコープを低いレール一枚で載せる。WA2000特有の「低・長・細」を側面/俯瞰の両方で立てる。
   'dmr-wa2000': (ctx) => {
     const {
-      boxP, bakeAt, tubeZ, chamferBox, C, metalParts, polishParts, polyParts,
-      gauge, barLen, recD, recHalf, barCenterZ, barFrontZ, BARREL_Y, r,
+      boxP, bakeAt, chamferBox, C, metalParts, polishParts, polyParts,
+      gauge, barR, barLen, recD, recHalf, barCenterZ, BARREL_Y, r,
     } = ctx;
-    // 前方の太く長大なバレルシュラウド(頭でっかち・質量前方)= WA2000決定的特徴
-    const shroudZ = barCenterZ - barLen * 0.08;
-    bakeAt(metalParts, chamferBox(gauge * 2.7, gauge * 2.5, barLen * 0.72, 0.006), C.DARK, 0, BARREL_Y, shroudZ);
-    boxP(metalParts, C.RIM, 0.012, 0.008, barLen * 0.6, 0, BARREL_Y + gauge * 1.28, shroudZ, 0, 0, 0, 'flat'); // 上リブ
+    // 低く長い前方フォアエンド(銃身の下半分だけを抱え、上半分の銃身を露出)。上端≒銃身中心=細身の一直線。
+    const feZ = barCenterZ - barLen * 0.04;
+    const feH = gauge * 1.5;
+    const feY = BARREL_Y - gauge * 0.7; // 銃身より下へオフセット=上面に銃身を残す(上端≒銃身中心)
+    const feBot = feY - feH * 0.5;
+    bakeAt(metalParts, chamferBox(gauge * 2.0, feH, barLen * 0.94, 0.004), C.DARK, 0, feY, feZ);
+    boxP(metalParts, C.RAIL, gauge * 1.4, 0.006, barLen * 0.86, 0, feBot, feZ, 0, 0, 0, 'flat'); // 底面レール(長い一直線で低長を締める)
+    // ベンチレーテッド・ハンドガードの側面スロット(抜き)
     for (const sx of [-1, 1] as const) {
-      for (let i = 0; i < 4; i += 1) {
-        const zz = shroudZ - barLen * 0.26 + i * (barLen * 0.17);
-        boxP(metalParts, C.GROOVE, 0.005, gauge * 1.6, 0.05, sx * gauge * 1.28, BARREL_Y, zz, 0, 0, 0, 'flat'); // 側面フルート溝
+      for (let i = 0; i < 5; i += 1) {
+        const zz = feZ - barLen * 0.34 + i * (barLen * 0.16);
+        boxP(metalParts, C.GROOVE, 0.004, feH * 0.5, 0.042, sx * gauge, feY, zz, 0, 0, 0, 'flat');
       }
     }
-    tubeZ(metalParts, C.BARREL, gauge * 0.6, 0.05, 0, BARREL_Y, barFrontZ + 0.02, true); // 前端露出銃身
-    // 一体スコープブリッジ(アイアン無し・レンズは本体が s.y に描く)
-    const brZ = -recD * 0.05;
-    boxP(metalParts, C.RAIL, 0.03, 0.016, recD * 0.66, 0, r.h / 2 + 0.012, brZ, 0, 0, 0, 'flat');
-    for (const zz of [-recD * 0.22, recD * 0.18] as const) {
-      boxP(metalParts, C.DARK, 0.026, 0.03, 0.024, 0, r.h / 2 + 0.03, zz, 0, 0, 0, 'flat'); // ブリッジ支柱
+    // 露出フルーテッド銃身の上面フルート(上から見える縦溝 = WA2000決定的特徴)+ 稜のハイライト
+    for (const dx of [-0.009, 0, 0.009] as const) {
+      boxP(metalParts, C.GROOVE, 0.0032, 0.004, barLen * 0.72, dx, BARREL_Y + barR * 0.92, feZ, 0, 0, 0, 'flat');
     }
-    // 前方バイポッド
-    const bpZ = shroudZ - barLen * 0.28;
-    boxP(metalParts, C.DARK, 0.022, 0.02, 0.03, 0, BARREL_Y - gauge * 1.5, bpZ, 0, 0, 0, 'flat');
+    boxP(polishParts, C.POLISH, 0.006, 0.004, barLen * 0.7, barR * 0.5, BARREL_Y + barR * 0.95, feZ, 0, 0, 0, 'flat');
+    // 一体スコープの低い連続レール(受け天板に一枚。旧2支柱=第二リザー誤読を廃す)。レンズは本体が s.y=0.085 に描く。
+    const brZ = -recD * 0.03;
+    bakeAt(metalParts, chamferBox(0.03, 0.016, recD * 0.62, 0.003), C.RAIL, 0, r.h / 2 + 0.006, brZ);
+    boxP(metalParts, C.RIM, 0.03, 0.004, recD * 0.58, 0, r.h / 2 + 0.015, brZ, 0, 0, 0, 'flat'); // レール上稜
+    // 前方バイポッド(フォアエンド先端の下)
+    const bpZ = feZ - barLen * 0.34;
+    boxP(metalParts, C.DARK, 0.022, 0.02, 0.03, 0, feBot - 0.006, bpZ, 0, 0, 0, 'flat');
     for (const sx of [-1, 1] as const) {
-      bakeAt(metalParts, chamferBox(0.008, 0.10, 0.01, 0.002), C.DARK, sx * 0.03, BARREL_Y - gauge * 1.5 - 0.05, bpZ, 0, 0, sx * 0.42);
-      boxP(polishParts, C.POLISH, 0.014, 0.006, 0.014, sx * 0.052, BARREL_Y - gauge * 1.5 - 0.10, bpZ, 0, 0, 0, 'flat'); // 脚先
+      bakeAt(metalParts, chamferBox(0.008, 0.10, 0.01, 0.002), C.DARK, sx * 0.03, feBot - 0.06, bpZ, 0, 0, sx * 0.42);
+      boxP(polishParts, C.POLISH, 0.014, 0.006, 0.014, sx * 0.052, feBot - 0.11, bpZ, 0, 0, 0, 'flat'); // 脚先
     }
-    // ブルパップ頬当てコム + 角ばった肩当て(後端)
-    boxP(polyParts, C.POLY, 0.042, 0.022, 0.13, 0, r.h / 2 + 0.006, recHalf - 0.03, 0, 0, 0, 'gradY'); // 頬当てコム
-    bakeAt(polyParts, chamferBox(0.05, 0.115, 0.032, 0.006), C.POLY, 0, -0.008, recHalf + 0.03); // 角ばった肩当て
-    boxP(metalParts, C.DARK, 0.052, 0.10, 0.016, 0, -0.008, recHalf + 0.052, 0, 0, 0, 'flat'); // バットプレート
+    // ブルパップ後端: 一続きの低いウェッジ・ストック(締まった連続輪郭)。旧・分離した頬当て/肩当て箱を統合。
+    const stZ = recHalf + 0.03;
+    bakeAt(polyParts, chamferBox(0.05, 0.088, 0.20, 0.008), C.POLY, 0, 0.004, stZ); // 主ストック塊(低く一続き)
+    boxP(polyParts, C.POLY, 0.042, 0.016, 0.15, 0, 0.05, stZ - 0.02, -0.05, 0, 0, 'gradY'); // 低い頬当てコム(わずかに前傾)
+    bakeAt(metalParts, chamferBox(0.052, 0.092, 0.014, 0.004), C.DARK, 0, 0.004, stZ + 0.108); // バットプレート
+    boxP(metalParts, C.RIM, 0.03, 0.026, 0.012, 0, -0.05, stZ + 0.09, 0, 0, 0, 'flat'); // 低い下端フック(締めた輪郭の底)
   },
 
   // ── AWM: 太角アルミシャーシ + 緑樹脂ストックシェル + 先端大型多ポートブレーキ + 前方バイポッド ──
@@ -291,18 +310,21 @@ export const SNIPER_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
     const feZ = barCenterZ + barLen * 0.12;
     bakeAt(polyParts, chamferBox(gauge + 0.05, 0.03, barLen * 0.5, 0.005), AWM_GREEN, 0, BARREL_Y - gauge * 0.95, feZ);
     boxP(metalParts, C.RAIL, gauge + 0.03, 0.006, barLen * 0.44, 0, BARREL_Y - gauge * 1.7, feZ, 0, 0, 0, 'flat'); // 底面レール
-    // 先端・大型多ポートマズルブレーキ
-    const mbZ = barFrontZ - 0.03;
-    bakeAt(metalParts, chamferBox(gauge * 2.9, gauge * 2.6, 0.085, 0.004), C.DARK, 0, BARREL_Y, mbZ);
-    for (let i = 0; i < 4; i += 1) {
-      const zz = mbZ - 0.03 + i * 0.02;
-      boxP(metalParts, C.GROOVE, gauge * 2.0, 0.006, 0.012, 0, BARREL_Y + gauge * 1.35, zz, 0, 0, 0, 'flat');
-      boxP(metalParts, C.GROOVE, gauge * 2.0, 0.006, 0.012, 0, BARREL_Y - gauge * 1.35, zz, 0, 0, 0, 'flat');
+    // 先端・大型多ポートマズルブレーキ。R58 F2: マズルアタッチメント(サプ/コンペ)装着時は skip
+    // (サプ管に多ポートブレーキが串刺し浮遊するのを防ぐ)。
+    if (!hasMuzzleAttachment(ctx)) {
+      const mbZ = barFrontZ - 0.03;
+      bakeAt(metalParts, chamferBox(gauge * 2.9, gauge * 2.6, 0.085, 0.004), C.DARK, 0, BARREL_Y, mbZ);
+      for (let i = 0; i < 4; i += 1) {
+        const zz = mbZ - 0.03 + i * 0.02;
+        boxP(metalParts, C.GROOVE, gauge * 2.0, 0.006, 0.012, 0, BARREL_Y + gauge * 1.35, zz, 0, 0, 0, 'flat');
+        boxP(metalParts, C.GROOVE, gauge * 2.0, 0.006, 0.012, 0, BARREL_Y - gauge * 1.35, zz, 0, 0, 0, 'flat');
+      }
+      for (const sx of [-1, 1] as const) {
+        boxP(metalParts, C.GROOVE, 0.006, gauge * 1.6, 0.05, sx * gauge * 1.4, BARREL_Y, mbZ, 0, 0, 0, 'flat');
+      }
+      tubeZ(polishParts, C.POLISH_HI, barR * 1.05, 0.012, 0, BARREL_Y, mbZ - 0.05, false, 'edgeHi'); // クラウン
     }
-    for (const sx of [-1, 1] as const) {
-      boxP(metalParts, C.GROOVE, 0.006, gauge * 1.6, 0.05, sx * gauge * 1.4, BARREL_Y, mbZ, 0, 0, 0, 'flat');
-    }
-    tubeZ(polishParts, C.POLISH_HI, barR * 1.05, 0.012, 0, BARREL_Y, mbZ - 0.05, false, 'edgeHi'); // クラウン
     // 前方バイポッド(フォアエンド先端)
     const bpZ = feZ - barLen * 0.2;
     boxP(metalParts, C.DARK, 0.022, 0.02, 0.03, 0, BARREL_Y - gauge * 1.9, bpZ, 0, 0, 0, 'flat');
@@ -330,20 +352,31 @@ export const SNIPER_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
     for (const sx of [-1, 1] as const) {
       bakeAt(metalParts, chamferBox(0.007, 0.095, 0.009, 0.002), C.DARK, sx * 0.028, BARREL_Y - gauge * 1.6 - 0.05, bpZ, 0, 0, sx * 0.4);
     }
-    // 多軸調整バットプレート(直方体突起の集合)= TRG決定的特徴
-    const bZ = stockZ + 0.06;
-    boxP(polyParts, C.POLY, 0.034, 0.024, 0.085, 0, 0.05, bZ - 0.05, 0, 0, 0, 'gradY'); // 調整式チークピース(縦ポストで持ち上がる直方体)
+    // ── 多軸調整バットプレート(直方体突起の集合)= TRG最大の識別子(誇張版) ──
+    // AWMの滑らかな樹脂シェルと明確に差別化するため、可調チーク/段積みスペーサー/貫通ロッド/
+    // 鉤状トウを「分節した直方体の塊」として立てる。
+    const bZ = stockZ + 0.055;
+    // 可調式チークピース: 2本の縦ポストで持ち上げた直方体(浮遊=調整感を誇張)
     for (const sx of [-1, 1] as const) {
-      boxP(metalParts, C.RIM, 0.006, 0.032, 0.006, sx * 0.012, 0.028, bZ - 0.06, 0, 0, 0, 'flat'); // 縦調整ポスト
+      boxP(metalParts, C.RIM, 0.008, 0.05, 0.008, sx * 0.014, 0.03, bZ - 0.06, 0, 0, 0, 'flat'); // 縦調整ポスト(長く)
     }
-    for (let i = 0; i < 3; i += 1) {
-      boxP(metalParts, C.RIM, 0.046, 0.016, 0.014, 0, -0.03 + i * 0.024, bZ + 0.04, 0, 0, 0, 'flat'); // スペーサー塊(突起の集合)
+    boxP(polyParts, C.POLY, 0.038, 0.026, 0.11, 0, 0.062, bZ - 0.05, 0, 0, 0, 'gradY'); // 持ち上がったチーク直方体
+    // 長さ調整スペーサー・スタック(段積み直方体群)を明暗交互+段間スリットで分節明確化
+    const stkZ = bZ + 0.05;
+    for (let i = 0; i < 5; i += 1) {
+      const yy = -0.05 + i * 0.028;
+      boxP(metalParts, i % 2 === 0 ? C.RIM : C.POLISH, 0.052, 0.022, 0.028, 0, yy, stkZ, 0, 0, 0, 'flat'); // 段スペーサー
+      boxP(metalParts, C.GROOVE, 0.054, 0.005, 0.03, 0, yy + 0.014, stkZ, 0, 0, 0, 'flat'); // 段間スリット(境界を彫る)
     }
+    // 多軸調整ロッド(バットプレートを前後に貫く水平2本=可動の示唆)
     for (const sy of [-1, 1] as const) {
-      tubeZ(polishParts, C.POLISH, 0.005, 0.05, 0, -0.01 + sy * 0.035, bZ + 0.05, true, 'flat'); // 水平調整ロッド
+      tubeZ(polishParts, C.POLISH_HI, 0.006, 0.075, 0, sy * 0.042, stkZ + 0.012, true, 'flat');
     }
-    bakeAt(metalParts, chamferBox(0.05, 0.12, 0.02, 0.004), C.DARK, 0, -0.008, bZ + 0.085); // バットプレート本体
-    boxP(metalParts, C.RIM, 0.03, 0.03, 0.016, 0, -0.06, bZ + 0.06, 0, 0, 0, 'flat'); // フックド・トウ(下端突起)
+    // バットプレート面(縦長プレート)
+    bakeAt(metalParts, chamferBox(0.05, 0.14, 0.02, 0.004), C.DARK, 0, 0.004, stkZ + 0.05);
+    // 誇張フックド・トウ(下端が下へ長く垂れ、前へ鉤状に張り出すL字=標的銃の識別子)
+    boxP(metalParts, C.RIM, 0.038, 0.05, 0.02, 0, -0.08, stkZ + 0.042, 0, 0, 0, 'flat'); // トウ縦(下へ垂れる)
+    boxP(metalParts, C.RIM, 0.038, 0.022, 0.048, 0, -0.093, stkZ + 0.012, 0.18, 0, 0, 'flat'); // トウ前フック(前へ張り出す)
   },
 
   // ── SR-25: AR全体形状 + フラットトップ + 太いフリーフロートハンドガード + A2固定ストック ──

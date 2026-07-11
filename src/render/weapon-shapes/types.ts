@@ -111,6 +111,11 @@ export interface Silhouette {
   // 15. 八角バレルの帯金本数(0=なし)/ベルト箱(左側面弾薬箱)。
   octalBarrelBands?: number;
   beltBox?: boolean;
+  // R58 F4: painter が固有マズル(一体ハイダー/多ポートブレーキ/一体サプ/スリットハイダー)を
+  //   barFrontZ より前方まで伸ばす機で、トレーサ/マズルフラッシュ原点(muzzleZ)を造形前端まで
+  //   前進させる量(m・前方=正)。viewmodel が muzzleZ を算出後 `muzzleZ -= muzzleExtend` で加味する
+  //   (サプ/コンペ装着時は painter マズルが skip されるため適用しない=z<0 契約は不変)。→FAMAS/AWM/MP5SD/SVD。
+  muzzleExtend?: number;
 }
 
 // シルエット行(寸法)から導出する「造形ディテール」。resolveDetail(viewmodel) が生成する。

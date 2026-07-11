@@ -48,6 +48,7 @@ export const LMG_SHAPES = {
     boltHandle: false,
     muzzle: 'none',
     accentBand: 'receiver',
+    accentEmissive: false, // R58 A4: 照準ドット直下に露出する tracer色(0xd16bff)発光帯を消す(受け上帯を非発光=metalParts へ)。WWII 木銃に発光は不整合。
     bodyScale: 1.12,
     topMag: 'pan',
     furniture: 'wood',

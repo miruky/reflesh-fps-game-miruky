@@ -97,16 +97,32 @@ const MAGNIFIED_EXCLUDE: ReadonlySet<ViewModelShape> = new Set<ViewModelShape>([
   'fists',
 ]);
 
-// 1x ドット: 内蔵スコープ機と素手を除く全武器に付く(拳銃OK)。
+// R58 E1: buildGunBody が専用の早期分岐で組む特殊形状(素手/火縄銃/exotic world系)。
+// これらは早期 return で「着脱光学ハウジング」の switch へ到達しない=物理サイト(ハウジング/レンズ/
+// ドット)が一切描かれない。かつ resolveSightY も 0 / 火縄銃ビードYへ短絡し光学 sightY を無視する。
+// にもかかわらず fitsDot/fitsMagnified が true を返すと、ARMORY/装備UIで光学が装備可能に見え、
+// HUD が幻レティクルを描き(火縄銃は光学装着時 48mm ドリフト)、物理ハウジングは存在しない=幻となる。
+// これらを一律に光学非適合(fits=false)へ落とし、幻レティクル/幻ハウジングを構造的に根絶する。
+const NO_OPTIC_SHAPES: ReadonlySet<ViewModelShape> = new Set<ViewModelShape>([
+  'fists',
+  'musket',
+  'shuriken-hand',
+  'bow-japanese',
+  'war-fan',
+  'lightning-staff',
+  'minigun',
+]);
+
+// 1x ドット: 内蔵スコープ機・光学非適合の特殊形状(素手/火縄銃/exotic world系)を除く全武器に付く(拳銃OK)。
 function fitsDot(def: WeaponDef): boolean {
   const shape = resolveShape(def);
-  return !SCOPED_SHAPES.has(shape) && shape !== 'fists';
+  return !SCOPED_SHAPES.has(shape) && !NO_OPTIC_SHAPES.has(shape);
 }
-// 倍率光学: 内蔵スコープ機・拳銃系・素手を除外。
+// 倍率光学: 内蔵スコープ機・拳銃系・光学非適合の特殊形状を除外。
 // export: OPTIC_SPECS外の倍率サイト(legacy telescopic)の適合判定にもUI側から使う。
 export function fitsMagnified(def: WeaponDef): boolean {
   const shape = resolveShape(def);
-  return !SCOPED_SHAPES.has(shape) && !MAGNIFIED_EXCLUDE.has(shape);
+  return !SCOPED_SHAPES.has(shape) && !MAGNIFIED_EXCLUDE.has(shape) && !NO_OPTIC_SHAPES.has(shape);
 }
 
 // 光学レジストリ(12=光学を倍以上)。9着脱ハウジング + 3内蔵スコープ。

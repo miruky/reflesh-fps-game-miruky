@@ -81,8 +81,8 @@ export const SMG_SHAPES = {
     bodyScale: 1.0,
     receiverStyle: 'tube', // 鋼管状レシーバ(本体角箱を抑止→painter が円筒)
   },
-  // hayabusa-smg / TMP-2(Steyr TMP): 上下ポリマー一体成形の丸い卵型レシーバ(painter)拳銃的・
-  // ストック無 + グリップ内直マグ + 短銃身レシーバ内収。
+  // hayabusa-smg / TMP-2(Steyr TMP): 上下ポリマー一体成形の角ばった樹脂胴(painter)拳銃的・
+  // ストック無 + グリップ内直マグ + 短銃身レシーバ内収 + 長めバレルシュラウド。
   'smg-tmp': {
     receiver: { w: 0.066, h: 0.092, d: 0.2 },
     barrelGauge: 0.026,
@@ -94,10 +94,14 @@ export const SMG_SHAPES = {
     boltHandle: false,
     muzzle: 'none',
     accentBand: 'receiver',
+    // R58 E2: 発光帯を非発光化(metalParts へ)。短い樹脂胴の後方へ約4cm貫通・露出した
+    // ピンク発光旗を抑止(TMPは発光を増やさず抑える方針)。加えて painter が樹脂胴を後方へ
+    // 延ばし帯を内包=露出そのものを根絶する(二重の保険)。
+    accentEmissive: false,
     bodyScale: 0.9,
     feedZ: 0.1, // グリップ内直マグ
     magInGrip: true,
-    receiverStyle: 'tube', // 角箱レシーバを抑止→painter が卵型ポリマー塊
+    receiverStyle: 'tube', // 角箱レシーバを抑止→painter が角ポリマー塊
   },
   // sasameki-smg / MP6SD(HK MP5SD): 銃身〜マズルまで一定太さの寸胴円筒(一体型サプレッサ=painter,
   // パンチ穴列)+ 湾曲9mmマグ + 固定ストック + アイアン(フードフロント+ドラムリアは本体アイアン)。
@@ -114,6 +118,7 @@ export const SMG_SHAPES = {
     accentBand: 'receiver',
     bodyScale: 1.0,
     integralSuppressor: true, // 寸胴一体サプは painter が描く(muzzle アタッチと排他扱い)
+    muzzleExtend: 0.05, // F4: 一体サプ前端まで muzzleZ を前進(実測≈4-5cm 埋没)
   },
   // mozu-smg / UZI-10(IWI Uzi): グリップ自体がマガジンウェルを兼ねる角型太グリップ(feedZ=グリップ内
   // + painter で肥厚)+ 箱型プレス鋼レシーバ上面トンネル(painter)+ 上面ノブコッキング(painter)+
@@ -201,18 +206,25 @@ export const SMG_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
   // PM12: 鋼管状レシーバ(receiverStyle:'tube'で本体角箱を抑止→円筒)+ 穴あき鋼板ハンドガード +
   // サイド折りたたみワイヤーストック + グリップセーフティ。
   'smg-pm12': (ctx) => {
-    const { tubeZ, boxP, bakeAt, chamferBox, metalParts, polyParts, C, r, recD, gauge, BARREL_Y, barCenterZ, barLen } = ctx;
-    // 細い鋼管レシーバ(円筒アッパー)。バレル射線に同軸。
+    const { tubeZ, boxP, bakeAt, chamferBox, metalParts, polyParts, C, r, recD, gauge, BARREL_Y, barCenterZ, barLen, recHalf } = ctx;
+    // 細い鋼管レシーバ(円筒アッパー)。バレル射線に同軸。前面 z≈-recHalf*0.9(≈-0.117)。
     tubeZ(metalParts, C.BASE, r.h * 0.44, recD * 0.9, 0, BARREL_Y + 0.008, 0, true, 'machined');
-    // 穴あき鋼板ハンドガード(前部シェル + パンチング穴グリッド)
-    const hgZ = barCenterZ + barLen * 0.1;
-    bakeAt(metalParts, chamferBox(gauge + 0.02, gauge + 0.018, barLen * 0.68, 0.003), C.DARK, 0, BARREL_Y, hgZ, 0, 0, 0, 'gradY');
+    // R58 E2: 連結バレルスリーブ(太く明るい削り出し鋼)。レシーバ前面〜ハンドガード後端の
+    // 細暗バレル区間を太い明るい筒で覆い、side profile で連結を消さない(浮遊ブロック根治の芯)。
+    const recFront = -recHalf * 0.9;
+    tubeZ(metalParts, C.RIM, gauge * 0.5 + 0.012, (recFront - barCenterZ) + barLen * 0.1, 0, BARREL_Y, (recFront + barCenterZ) / 2 - barLen * 0.05, true, 'machined');
+    // 穴あき鋼板ハンドガード。R58 E2: 後方へ延ばし後端をレシーバ前面へ接続(hgBack≈-0.115=
+    // レシーバ前面 -0.117 と重畳)+ 明るい C.BASE で「連結した鋼の塊」として読ませる。
+    const hgLen = barLen * 1.36;
+    const hgBack = recFront + 0.002;
+    const hgZ = hgBack - hgLen / 2;
+    bakeAt(metalParts, chamferBox(gauge + 0.022, gauge + 0.02, hgLen, 0.004), C.BASE, 0, BARREL_Y, hgZ, 0, 0, 0, 'gradY');
     for (const sx of [-1, 1] as const) {
-      for (let i = 0; i < 3; i += 1) {
+      for (let i = 0; i < 4; i += 1) {
         for (let j = 0; j < 2; j += 1) {
           boxP(
             metalParts, C.GROOVE, 0.004, 0.008, 0.008,
-            sx * (gauge * 0.5 + 0.014), BARREL_Y + (j ? 0.008 : -0.008), hgZ + (i - 1) * 0.022, 0, 0, 0, 'flat',
+            sx * (gauge * 0.5 + 0.015), BARREL_Y + (j ? 0.008 : -0.008), hgZ + (i - 1.5) * 0.028, 0, 0, 0, 'flat',
           );
         }
       }
@@ -223,18 +235,34 @@ export const SMG_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
     paintWireStock(ctx, 0.12);
   },
 
-  // TMP: 上下ポリマー一体成形の丸い卵型レシーバ(拳銃的・ストック無)+ 前方垂直グリップ +
-  // 短銃身の突出。receiverStyle:'tube'で本体角箱は抑止済み。
+  // TMP: 上下ポリマー一体成形の角ばった樹脂胴(拳銃的・ストック無)+ 長めバレルシュラウド +
+  // 前方垂直グリップ。receiverStyle:'tube'で本体角箱は抑止済み。
+  // R58 E2: (1)胴を小ベベルの角ポリマー塊にして「じゃがいも卵」感を解消し TMP 識別性を上げる、
+  // (2)胴を後方へ延ばして receiver 発光帯(非発光化済み・z≈0.03〜0.13)を内包し後方貫通露出を根絶、
+  // (3)シュラウドを長く角ばらせバレルシュラウド寄りに。サイト(耳/浮遊ドット)は本体所有=不干渉。
   'smg-tmp': (ctx) => {
-    const { tubeZ, bakeAt, chamferBox, metalParts, polyParts, C, r, recD, gauge, BARREL_Y, barCenterZ, barFrontZ } = ctx;
-    // 卵型ポリマー塊(大ベベルで丸める=上下一体成形の胴)
-    bakeAt(polyParts, chamferBox(r.w + 0.006, r.h + 0.004, recD * 1.06, 0.03), C.POLY, 0, 0.004, -0.008, 0, 0, 0, 'gradY');
-    // 前方の丸い銃身シュラウド膨らみ(卵の鼻先)
-    bakeAt(polyParts, chamferBox(0.05, 0.05, 0.11, 0.022), C.POLY, 0, BARREL_Y + 0.008, barCenterZ + 0.03, 0, 0, 0, 'gradY');
-    // 短銃身の突出チップ(レシーバ内収=僅かに出る)
-    tubeZ(metalParts, C.BARREL, gauge * 0.5 + 0.003, 0.05, 0, BARREL_Y, barFrontZ + 0.012, true, 'gradY');
+    const { tubeZ, boxP, bakeAt, chamferBox, metalParts, polyParts, C, r, recD, gauge, BARREL_Y, barCenterZ, barFrontZ } = ctx;
+    // 角ポリマー胴。幅 r.w+0.02(半 0.043)で発光帯(半 0.0345)を余裕を持って包み、depth を
+    // recD*1.4 に延ばし center を +0.026 後退させ後端 z≈0.152 で帯後端(z≈0.13)をベベル外で内包
+    // (不透明ポリマーが帯を全周遮蔽=+X面貫通/後方露出ともゼロ)。小ベベル 0.014 で角い樹脂塊に。
+    bakeAt(polyParts, chamferBox(r.w + 0.02, r.h + 0.006, recD * 1.4, 0.014), C.POLY, 0, 0.004, 0.026, 0, 0, 0, 'gradY');
+    // 上面の角い機械リブ(非発光アクセント。ポリマー一体成形の稜線)
+    boxP(metalParts, C.DARK, 0.028, 0.008, recD * 0.72, 0, r.h / 2 + 0.002, 0.01, 0, 0, 0, 'flat');
+    // 長めの角バレルシュラウド(前方ハンドガード=TMP の決定的前部)。角ばらせて樹脂胴と連続。
+    // center を barCenterZ+0.025 へ後退させ後端(z≈-0.09)を胴前面(z≈-0.10)へ重ね、分断ギャップを消す。
+    bakeAt(polyParts, chamferBox(0.05, 0.052, 0.13, 0.012), C.POLY, 0, BARREL_Y + 0.004, barCenterZ + 0.025, 0, 0, 0, 'gradY');
+    // シュラウド側面の放熱スリット(角い機械ディテール・両側3列)
+    for (let i = 0; i < 3; i += 1) {
+      const zz = barCenterZ - 0.01 + i * 0.026;
+      for (const sx of [-1, 1] as const) {
+        boxP(metalParts, C.GROOVE, 0.004, 0.022, 0.01, sx * 0.026, BARREL_Y + 0.004, zz, 0, 0, 0, 'flat');
+      }
+    }
+    // 短銃身の突出チップ + 暗マズルキャップ(シュラウド前端から僅かに出る=短銃身レシーバ内収)
+    tubeZ(metalParts, C.BARREL, gauge * 0.5 + 0.004, 0.05, 0, BARREL_Y, barFrontZ - 0.004, true, 'gradY');
+    tubeZ(metalParts, C.DARK, gauge * 0.5 + 0.008, 0.014, 0, BARREL_Y, barFrontZ - 0.026, true, 'gradY');
     // 前方垂直グリップ(TMP 特有のハンドストップ)
-    bakeAt(polyParts, chamferBox(0.03, 0.058, 0.03, 0.006), C.POLY, 0, -0.05, barCenterZ + 0.02, 0.12, 0, 0, 'gradY');
+    bakeAt(polyParts, chamferBox(0.03, 0.06, 0.03, 0.006), C.POLY, 0, -0.052, barCenterZ + 0.02, 0.1, 0, 0, 'gradY');
   },
 
   // MP7(PDW): 折りたたみ垂直フォアグリップ(レール前端)+ 上面コッキングノブ + 銃口ナット。
@@ -249,22 +277,43 @@ export const SMG_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
     tubeZ(metalParts, C.DARK, barR + 0.004, 0.016, 0, BARREL_Y, barFrontZ + 0.006, true, 'gradY');
   },
 
-  // APS(機関拳銃): 中空ホルスターストックが本体後方へ(決定的特徴)+ リアサイト偏心回転ドラム +
+  // APS(機関拳銃): 中空ホルスターストック(Mauser C96 風)+ リアサイト偏心回転ドラム +
   // 露出ハンマー。角スライド / グリップ内複列マグは本体が描く(フォアグリップ無)。
+  // R58 E2: 旧「幅広の平板スラブ」を全面刷新 — 幅を絞り縦長化し、下後方へ傾いだ薄壁フレームで
+  // 開口面をカメラ側(+X=PROFILE_YAW視点)へ向け、内部を暗く落として「中空ホルスター」を露出。
+  // 後端は大ベベルの丸いバットプレート + 前下フックで C96 の湾曲 butt を読ませる。
   'machine-pistol': (ctx) => {
-    const { tubeZ, boxP, metalParts, polyParts, C, r, recHalf } = ctx;
-    // 中空ホルスターストック(グリップ後方の角い箱枠=4壁で「中空」を表現・下へ傾ぐ)
-    const cz = recHalf + 0.16; // グリップ(z=0.1)後方
-    const top = 0.02;
-    const bot = -0.1;
-    const hy = (top + bot) / 2;
-    const hh = top - bot;
-    boxP(polyParts, C.GRIP, 0.05, 0.008, 0.2, 0, top, cz, 0, 0, 0, 'gradY'); // 天板
-    boxP(polyParts, C.GRIP, 0.05, 0.008, 0.2, 0, bot, cz, 0, 0, 0, 'gradY'); // 底板
-    for (const sx of [-1, 1] as const) {
-      boxP(polyParts, C.GRIP, 0.008, hh, 0.2, sx * 0.021, hy, cz, 0, 0, 0, 'gradY'); // 側板
+    const { tubeZ, boxP, bakeAt, chamferBox, metalParts, polyParts, C, r, recHalf } = ctx;
+    // ホルスターは下後方へ傾ぐ。ローカル(ly=上, lz=後)→ gun ローカル [y, z] へ回転写像。
+    const a = 0.26;
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    const PY = -0.015;
+    const PZ = 0.095;
+    const hy = (ly: number, lz: number): number => PY + ly * ca - lz * sa;
+    const hz = (ly: number, lz: number): number => PZ + ly * sa + lz * ca;
+    // ホルスターローカル空間で薄壁ボックスを焼く(全て樹脂/ベークライト=polyParts へ merge)
+    const hbox = (color: number, wX: number, hYl: number, dZl: number, ly: number, lz: number, xOff: number): void =>
+      boxP(polyParts, color, wX, hYl, dZl, xOff, hy(ly, lz), hz(ly, lz), a, 0, 0, 'gradY');
+    // グリップ後方の首(レシーバ後端へ連結=浮かせない)
+    boxP(polyParts, C.GRIP, 0.034, 0.05, 0.07, 0, -0.005, 0.09, 0, 0, 0, 'gradY');
+    // 薄い背板(中空の底=暗く落として奥行きを出す=カメラ側からの中空露出)
+    hbox(C.GROOVE, 0.006, 0.135, 0.17, -0.0175, 0.085, -0.011);
+    // リムフレーム4辺(カメラ側へ立てる薄壁=中空トレイの縁)
+    hbox(C.GRIP, 0.024, 0.014, 0.17, 0.05, 0.085, 0.001); // 天リム
+    hbox(C.GRIP, 0.024, 0.014, 0.17, -0.085, 0.085, 0.001); // 底リム
+    hbox(C.GRIP, 0.024, 0.135, 0.014, -0.0175, 0.006, 0.001); // 前リム
+    hbox(C.GRIP, 0.024, 0.135, 0.016, -0.0175, 0.164, 0.001); // 後リム(butt 基部)
+    // 丸いバットプレート(大ベベル=C96 の湾曲した尻)
+    bakeAt(polyParts, chamferBox(0.026, 0.16, 0.024, 0.024), C.GRIP, 0.001, hy(-0.006, 0.178), hz(-0.006, 0.178), a, 0, 0, 'gradY');
+    // C96 の湾曲 butt-hook: 底後端から前下へ弧を描く2節トゥ(角度を段階的に立て湾曲を読ませる)
+    for (let i = 0; i < 3; i += 1) {
+      const t = i / 2;
+      const ang = a + 0.35 + t * 0.55;
+      const lly = -0.09 - t * 0.016;
+      const llz = 0.158 - t * 0.032;
+      boxP(polyParts, C.GRIP, 0.024, 0.034, 0.02, 0.001, hy(lly, llz), hz(lly, llz), ang, 0, 0, 'gradY');
     }
-    boxP(polyParts, C.DARK, 0.05, hh, 0.008, 0, hy, cz + 0.1, 0, 0, 0, 'gradY'); // バット板(後端)
     // リアサイト偏心回転ドラム(スライド後端上・短横シリンダ。※照準ドットではない cosmetic)
     tubeZ(metalParts, C.POLISH, 0.011, 0.02, 0, r.h / 2 + 0.008, recHalf * 0.62, true, 'flat');
     // 露出ハンマー(後端の小突起)

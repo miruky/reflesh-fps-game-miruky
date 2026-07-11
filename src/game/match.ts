@@ -9588,6 +9588,12 @@ export class Match {
     else this.postfx.enabled = this.postfxGrade > 0;
   }
 
+  // R58-F W3: フォトモード用 — viewmodel(銃+腕)はカメラ子のため自由カメラでも画面右下に
+  // 映り込み構図を塞ぐ。enterPhoto で隠し exitPhoto で戻す(killcam の setViewmodelVisible と同じ操作)。
+  setViewmodelVisibleForPhoto(v: boolean): void {
+    this.viewModel.root.visible = v;
+  }
+
 
   // 描画。composer(medium/high)があればそれ、無ければ素のレンダラ。
   render(): void {

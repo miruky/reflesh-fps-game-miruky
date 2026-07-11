@@ -240,9 +240,12 @@ export class ZombieDirector {
       grp.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
           obj.geometry.dispose();
+          // R58-F W2: 壁買いラックの武器モデル(buildGunBody)は共有シングルトン材
+          // (metalVC/polishVC/glassScope/reflexDot/camoキャッシュ等, userData.shared=true)を
+          // 参照する。無条件disposeは viewmodel の共有材契約違反(全dispose経路でsharedはスキップ)。
           if (Array.isArray(obj.material)) {
-            for (const m of obj.material) m.dispose();
-          } else {
+            for (const m of obj.material) if (m.userData?.['shared'] !== true) m.dispose();
+          } else if (obj.material.userData?.['shared'] !== true) {
             obj.material.dispose();
           }
         }
@@ -1151,7 +1154,10 @@ export class ZombieDirector {
           const { gun } = buildGunBody(wdef);
           gun.scale.setScalar(0.7);
           gun.position.set(0, 1.1, 0.09);
-          gun.rotation.set(0, Math.PI, -Math.PI / 2);
+          // R58-F W1: 旧回転(0,π,-π/2)は銃身(ローカル-Z)がパネル法線=プレイヤー方向へ垂直突出し、
+          // 正面から端面しか見えず武器シルエットが判別不能だった。銃身を+X(ラック横方向)へ寝かせ
+          // 右側面をプレイヤーへ向ける(scale0.7で全長≤0.8m=パネル幅1.0m内)。
+          gun.rotation.set(0, -Math.PI / 2, 0);
           group.add(gun);
         } catch {
           const barGeo = new THREE.BoxGeometry(0.65, 0.06, 0.06);

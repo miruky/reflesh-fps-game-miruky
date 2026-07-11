@@ -85,7 +85,10 @@ describe('R58 AR系 実在シルエット化', () => {
     }
   });
 
-  it('reflex 装着=光学ドット(plane)1個のみ・二重ドット無し・plane.Y=resolveSightY(0.08)', () => {
+  it('reflex 装着=光学ドット(plane)1個のみ・二重ドット無し・plane.Y=resolveSightY(carryHandle機は0.116)', () => {
+    // R58 E1後続: carryHandle 機(FAMAS/SG550)は装着光学もハンドル最上面(0.116)へマウント
+    // (Phase D: ハンドル下潜り不可視の根治)。他は従来どおり OPTIC_SPECS.reflex=0.08。
+    const CARRY_IDS = new Set(['kaede-ar', 'kagerou-br']);
     for (const [id] of AR9) {
       const d: WeaponDef = { ...def(id), attachmentIds: ['reflex'] };
       const { gun } = buildGunBody(d);
@@ -93,7 +96,7 @@ describe('R58 AR系 実在シルエット化', () => {
       expect(planes.length, `${id} reflex planes`).toBe(1);
       expect(microSpheres.length, `${id} reflex microSpheres`).toBe(0); // アイアン抑止(二重ドット根絶)
       expect(planes[0]!.position.y, `${id} reflex plane Y`).toBeCloseTo(resolveSightY(d), 6);
-      expect(resolveSightY(d), `${id} reflex sightY`).toBeCloseTo(0.08, 6);
+      expect(resolveSightY(d), `${id} reflex sightY`).toBeCloseTo(CARRY_IDS.has(id) ? 0.116 : 0.08, 6);
     }
   });
 

@@ -12,6 +12,9 @@ import {
   type AttachmentSlot,
 } from '../../game/attachments';
 import { OPTIC_SPECS, fitsMagnified } from '../../game/optics';
+// R58 F1: 一体型サプレッサ機(MP5SD 等)は muzzle スロット(サプレッサ/コンペンセイター)を
+// 装着不能にする(装着効果ゼロで射程-15%だけ食らうトラップ + 描画二重化を根治)。
+import { weaponHasIntegralSuppressor } from '../../render/viewmodel';
 import {
   CAMO_IDS,
   CAMO_TIERS,
@@ -418,10 +421,15 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
   const ensureAttachmentGates = (): void => {
     const base = WEAPON_DEFS[loadout.primaryId] ?? WEAPON_DEFS['kaede-ar']!;
     const m = slotMap();
+    const noMuzzle = weaponHasIntegralSuppressor(base);
     for (const { slot } of ATTACHMENT_SLOTS) {
       const sel = m[slot];
       if (!sel) continue;
-      if (!isUnlocked('attachment', sel, level()) || (slot === 'sight' && !opticFits(sel, base))) {
+      if (
+        !isUnlocked('attachment', sel, level()) ||
+        (slot === 'sight' && !opticFits(sel, base)) ||
+        (slot === 'muzzle' && noMuzzle)
+      ) {
         m[slot] = null;
       }
     }
@@ -809,8 +817,11 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
           const choices: Array<{ id: string | null; name: string; sub: string; locked: boolean }> =
             [
               { id: null, name: 'なし', sub: '素の取り回し', locked: false },
+              // R58 F1: 一体型サプレッサ機は muzzle スロットの選択肢(サプ/コンペ)を「なし」だけに絞る
+              // (sight の opticFits と同型の UI 挙動=不適合品を静かに隠す)。
               ...attachmentsForSlot(slot)
                 .filter((a) => slot !== 'sight' || opticFits(a.id, base))
+                .filter((_a) => slot !== 'muzzle' || !weaponHasIntegralSuppressor(base))
                 .map((a) => ({
                   id: a.id,
                   name: a.name,

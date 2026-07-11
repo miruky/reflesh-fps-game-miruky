@@ -281,6 +281,8 @@ function enterPhoto(): void {
     setFilter: (m) => match?.setPhotoFilter(m),
     reduceMotion: effectiveReduceMotion(),
   });
+  // R58-F W3: viewmodel(銃+腕)はカメラ子のため自由カメラでも右下に映り込む → フォト中は隠す
+  match.setViewmodelVisibleForPhoto(false);
   photoMode.enter();
   input.requestLock(renderer.domElement);
 }
@@ -289,6 +291,7 @@ function exitPhoto(): void {
   if (!photoMode) return;
   photoMode.dispose(); // フィルタ0復帰+DOM解除+fov復元(姿勢は次のsyncCameraが取り戻す)
   photoMode = null;
+  match?.setViewmodelVisibleForPhoto(true); // R58-F W3: フォト退出でviewmodel復元
   // フォト中に押されたキーの立ち上がり残骸(SPACE=jump等)を再開後の試合へ漏らさない
   for (const a of ['jump', 'crouch', 'sprint', 'forward', 'back', 'left', 'right',
     'weapon1', 'weapon2', 'grenade', 'streak1', 'streak2', 'interact'] as const) {

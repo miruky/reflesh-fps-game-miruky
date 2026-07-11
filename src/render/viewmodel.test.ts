@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { buildGunBody, CamoStandardMaterial, resolveSightY, sightYOverride, ViewModel } from './viewmodel';
+import { buildGunBody, CamoStandardMaterial, resolveSightY, sightYOverride, ViewModel, weaponHasIntegralSuppressor } from './viewmodel';
 import { WEAPON_DEFS, type ModelKey, type ViewModelShape, type WeaponDef } from '../game/weapons';
-import { classDefault, OPTIC_SPECS, resolveOpticId } from '../game/optics';
+import { classDefault, fitsMagnified, OPTIC_SPECS, resolveOpticId } from '../game/optics';
 import { SHAPE_SPECS, SHAPE_PAINTERS } from './weapon-shapes';
 import { CAMO_IDS, CAMO_VISUALS } from '../game/camo';
 
@@ -391,8 +391,12 @@ describe('resolveSightY', () => {
   });
 
   it('着脱光学の各 housing が組め、ADS収束Yが OPTIC_SPECS.sightY と一致する', () => {
-    const ar = WEAPON_DEFS['kaede-ar'];
-    if (!ar) throw new Error('kaede-ar missing');
+    // R58 E1: carryHandle 非搭載の汎用AR(kasasagi-ar=SCAR-H)を光学ホストに使う。kaede-ar(FAMAS)は
+    // carryHandle 機で、着脱光学のハンドル持ち上げ(0.116)を landing すると本テストの前提が変わる
+    // (=E2 所有 ar.test.ts と衝突するため本便では光学ハンドル持ち上げは見送り=kaede は現状 0.08)。
+    // 光学 sightY==resolveSightY の純粋検証には非carryHandle機が適切=盲点(kaede単独依存)の解消。
+    const ar = WEAPON_DEFS['kasasagi-ar'];
+    if (!ar) throw new Error('kasasagi-ar missing');
     for (const id of ['reflex', 'holographic', 'delta', 'pico', 'canted', 'acog', 'variable', 'thermal', 'hybrid'] as const) {
       const def: WeaponDef = { ...ar, attachmentIds: [id] };
       const { gun, muzzle } = buildGunBody(def);
@@ -405,9 +409,10 @@ describe('resolveSightY', () => {
     }
   });
 
-  it('着脱reflex のドット(plane)は依然として最初かつ 0.08 面(倍増後も不変)', () => {
-    const ar = WEAPON_DEFS['kaede-ar'];
-    if (!ar) throw new Error('kaede-ar missing');
+  it('着脱reflex のドット(plane)は依然として最初かつ 0.08 面(倍増後も不変・carryHandle非搭載機)', () => {
+    // 汎用AR(非carryHandle)なので reflex は素の 0.08 面。carryHandle 機の持ち上げは越境のため見送り(別記)。
+    const ar = WEAPON_DEFS['kasasagi-ar'];
+    if (!ar) throw new Error('kasasagi-ar missing');
     const { gun } = buildGunBody({ ...ar, attachmentIds: ['reflex'] });
     let dotY = Number.NaN;
     gun.traverse((o) => {
@@ -575,6 +580,184 @@ describe('R57⑧ サイトドット統一/二重ドット根絶', () => {
   });
 });
 
+// ── R58 E1: 拳銃再モデリング(耳抑止/スライド延長/シリンダー膨出/接地)+ 特殊武器/carryHandle 光学の
+//    ADSドリフト・幻レティクル根治(サイト契約=reflex/iron/resolveSightY/二重ドット/camo-immune を維持) ──
+describe('R58 E1 拳銃形状 + サイトドリフト/幻レティクル横断', () => {
+  const base = Object.values(WEAPON_DEFS)[0]!;
+  const withShape = (shape: ViewModelShape, attachmentIds: string[] = []): WeaponDef => ({
+    ...base,
+    shape,
+    modelKey: undefined,
+    attachmentIds,
+  });
+
+  // 個別 Mesh のスフィアを半径帯で数える(アイアン狙点ドット r0.0021 と 耳の琥珀点 r0.0024 を区別)。
+  function sphereCountByR(gun: THREE.Object3D, lo: number, hi: number): number {
+    let n = 0;
+    gun.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.geometry instanceof THREE.SphereGeometry) {
+        const rr = o.geometry.parameters.radius;
+        if (rr > lo && rr <= hi) n += 1;
+      }
+    });
+    return n;
+  }
+  function firstMicroDotY(gun: THREE.Object3D): number {
+    let y = Number.NaN;
+    gun.traverse((o) => {
+      if (!Number.isNaN(y)) return;
+      if (o instanceof THREE.Mesh && o.geometry instanceof THREE.SphereGeometry && o.geometry.parameters.radius <= 0.0022) {
+        y = o.position.y;
+      }
+    });
+    return y;
+  }
+  function firstPlaneDotY(gun: THREE.Object3D): number {
+    let y = Number.NaN;
+    gun.traverse((o) => {
+      if (!Number.isNaN(y)) return;
+      if (o instanceof THREE.Mesh && o.geometry instanceof THREE.PlaneGeometry) y = o.position.y;
+    });
+    return y;
+  }
+  // vm:slide のマージ済みジオメトリの最前 z(前端がバレル銃口近くまで延びているか)。
+  function slideMinZ(gun: THREE.Object3D): number {
+    let minZ = Number.POSITIVE_INFINITY;
+    const slide = gun.getObjectByName('vm:slide');
+    if (!slide) return minZ;
+    slide.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.geometry.computeBoundingBox();
+        const bb = o.geometry.boundingBox;
+        if (bb) minZ = Math.min(minZ, bb.min.z + o.position.z);
+      }
+    });
+    return minZ;
+  }
+
+  it('(i) 拳銃系(pistol/machine-pistol/revolver)は耳0本・狙点マイクロドット1個@0.075(契約維持)', () => {
+    for (const def of [withShape('pistol'), withShape('machine-pistol'), withShape('revolver')]) {
+      const { gun } = buildGunBody(def);
+      // ライフル式の耳=琥珀点(r0.0024)は出ない(兎耳の根絶)
+      expect(sphereCountByR(gun, 0.0022, 0.0026), def.shape).toBe(0);
+      // 狙点マイクロドット(r≤0.0022)は1個だけ = 二重ドット無し。Yは resolveSightY(0.075)と一致
+      // (接地させたリアノッチ塊は Box なのでドットの数/Yには一切触れない=サイト契約維持)。
+      expect(sphereCountByR(gun, 0, 0.0022), def.shape).toBe(1);
+      expect(firstMicroDotY(gun), def.shape).toBeCloseTo(resolveSightY(def), 6);
+      expect(resolveSightY(def), def.shape).toBeCloseTo(0.075, 6);
+    }
+  });
+
+  it('(i) 対比: 汎用ライフルは耳の琥珀点を4個持つ(拳銃系の0との差=耳抑止の実測)', () => {
+    expect(sphereCountByR(buildGunBody(withShape('rifle')).gun, 0.0022, 0.0026)).toBe(4);
+  });
+
+  it('(i) 実在拳銃4挺(Glock/CZ75/93R/GP100)が例外なく組め、耳0本・狙点ドット=resolveSightY', () => {
+    for (const id of ['suzume', 'kawasemi-pistol', 'misago-pistol', 'taka-revolver'] as const) {
+      const d = WEAPON_DEFS[id];
+      expect(d, id).toBeDefined();
+      const { gun, muzzle } = buildGunBody(d!);
+      expect(muzzle.position.z, id).toBeLessThan(0);
+      expect(sphereCountByR(gun, 0.0022, 0.0026), id).toBe(0); // 耳なし
+      expect(sphereCountByR(gun, 0, 0.0022), id).toBe(1); // 狙点ドット1個(二重ドット無)
+      expect(firstMicroDotY(gun), id).toBeCloseTo(resolveSightY(d!), 6);
+    }
+  });
+
+  it('(i) スライド機(pistol/machine-pistol/93R)は前方延長で露出バレルを覆う(旧≈-0.08→新<-0.13)', () => {
+    // 旧スライドは受け筒しか覆わず前端 z≈-0.08〜-0.11。延長後はバレル銃口(barFrontZ)近傍へ前進。
+    for (const id of ['suzume', 'kawasemi-pistol', 'kogarashi', 'misago-pistol'] as const) {
+      const d = WEAPON_DEFS[id]!;
+      expect(slideMinZ(buildGunBody(d).gun), id).toBeLessThan(-0.13);
+    }
+    // revolver(GP100)はスライド無し=バレル+シリンダー胴を維持(vm:slide ノードが存在しない)
+    expect(buildGunBody(WEAPON_DEFS['taka-revolver']!).gun.getObjectByName('vm:slide')).toBeUndefined();
+  });
+
+  it('(i) GP100(revolver)は回転シリンダー(vm:cylinder)を持ち、frame 上端(0.04)より膨出する', () => {
+    const gun = buildGunBody(WEAPON_DEFS['taka-revolver']!).gun;
+    const cyl = gun.getObjectByName('vm:cylinder');
+    expect(cyl).toBeDefined();
+    // シリンダーのマージ済みジオメトリ上端(group.position.y + bbox.max.y)がレシーバ天面 0.04 を超える
+    let maxY = Number.NEGATIVE_INFINITY;
+    cyl!.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.geometry.computeBoundingBox();
+        const bb = o.geometry.boundingBox;
+        if (bb) maxY = Math.max(maxY, cyl!.position.y + bb.max.y);
+      }
+    });
+    expect(maxY).toBeGreaterThan(0.04);
+  });
+
+  it('(ii) 火縄銃+reflex: ドリフト無(resolveSightY=物理ビードY 0.032)・幻ハウジング無・光学非適合', () => {
+    const musket = WEAPON_DEFS['gouen-musket']!;
+    const musketReflex: WeaponDef = { ...musket, attachmentIds: ['reflex'] };
+    // (a) 光学装着でも sightY はビードY=非装着時と同一(48mmドリフトの根絶)
+    expect(resolveSightY(musketReflex)).toBeCloseTo(resolveSightY(musket), 6);
+    expect(resolveSightY(musketReflex)).toBeCloseTo(0.012 + 0.02 * 0.6 + 0.008, 6); // = 0.032
+    // (b) 早期分岐でハウジング/レンズ(Plane/Circle)を描かない=幻レティクル無
+    const { gun } = buildGunBody(musketReflex);
+    let planes = 0;
+    let circles = 0;
+    gun.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      if (o.geometry instanceof THREE.PlaneGeometry) planes += 1;
+      if (o.geometry instanceof THREE.CircleGeometry) circles += 1;
+    });
+    expect(planes).toBe(0);
+    expect(circles).toBe(0);
+    // (c) 物理ビード(r≤0.0022)が唯一の狙点で resolveSightY と一致
+    expect(firstMicroDotY(gun)).toBeCloseTo(resolveSightY(musketReflex), 6);
+    // (d) optics.ts ゲート: musket は 1x/倍率とも光学非適合(UIから幻光学を消す)
+    expect(OPTIC_SPECS['reflex']!.fits?.(musket)).toBe(false);
+    expect(fitsMagnified(musket)).toBe(false);
+  });
+
+  it('(ii) 他の早期分岐特殊(minigun/staff/bow/fan/shuriken)も光学非適合=幻ハウジング根絶', () => {
+    for (const shape of ['minigun', 'lightning-staff', 'bow-japanese', 'war-fan', 'shuriken-hand'] as const) {
+      const def = withShape(shape);
+      expect(OPTIC_SPECS['reflex']!.fits?.(def), shape).toBe(false);
+      expect(fitsMagnified(def), shape).toBe(false);
+      // resolveSightY は光学に依らず 0(短絡)=Yドリフト無
+      expect(resolveSightY({ ...def, attachmentIds: ['reflex'] }), shape).toBe(0);
+    }
+  });
+
+  it('(iii) ランチャー+reflex: resolveSightY=光学sightY で焼きドットと一致(旧0.088短絡のドリフト解消)', () => {
+    const rl = WEAPON_DEFS['gouka-rl']!;
+    const rlReflex: WeaponDef = { ...rl, attachmentIds: ['reflex'] };
+    // 光学装着時は 0.088 短絡でなく光学 sightY(0.08)
+    expect(resolveSightY(rlReflex)).toBeCloseTo(OPTIC_SPECS['reflex']!.sightY, 6);
+    expect(Math.abs(resolveSightY(rlReflex) - 0.088)).toBeGreaterThan(0.005);
+    // 焼き reflex ドット(plane)Y と一致(ドリフト0)
+    expect(firstPlaneDotY(buildGunBody(rlReflex).gun)).toBeCloseTo(resolveSightY(rlReflex), 6);
+    // 光学未装着なら従来通りゴーストリング 0.088(非回帰)
+    expect(resolveSightY(rl)).toBeCloseTo(0.088, 6);
+  });
+
+  it('(iv) carryHandle機(FAMAS/SG550)+reflex: 焼きドットY==resolveSightY(=ドリフト無)を維持', () => {
+    // R58 E1 見送り: 「光学をハンドル最上面(0.116)へ持ち上げて可視化」する修正は、resolveSightY を
+    // carryHandle+光学時に 0.116 へ変える必要があり、E2 所有 ar.test.ts:96(kaede+reflex==0.08 を前提)
+    // と衝突する越境変更になるため本便では landing しない([MED-LOW]・「難しければ」対象)。
+    // 本テストは少なくとも「焼き reflex ドット Y == resolveSightY(ドリフト無=サイト契約)」を担保する
+    // (現状は両方 om.sightY=0.08。ハンドル持ち上げは E1/E2 協調の後続便で 0.116 一致へ移す)。
+    for (const id of ['kaede-ar', 'kagerou-br'] as const) {
+      const d = WEAPON_DEFS[id]!;
+      const withReflex: WeaponDef = { ...d, attachmentIds: ['reflex'] };
+      const dotY = firstPlaneDotY(buildGunBody(withReflex).gun);
+      expect(dotY, id).toBeCloseTo(resolveSightY(withReflex), 6); // ドリフト無(契約)
+    }
+  });
+
+  it('(iv) 非回帰: carryHandle 未搭載の汎用AR+reflex は素の 0.08 面(焼きドット=resolveSightY)', () => {
+    const scar = WEAPON_DEFS['kasasagi-ar']!;
+    const withReflex: WeaponDef = { ...scar, attachmentIds: ['reflex'] };
+    expect(resolveSightY(withReflex)).toBeCloseTo(0.08, 6);
+    expect(firstPlaneDotY(buildGunBody(withReflex).gun)).toBeCloseTo(0.08, 6);
+  });
+});
+
 // ── R57⑦ アタッチメントのジオメトリ反映 ──────────────────────────────────
 describe('R57⑦ アタッチメント視覚反映(buildGunBody)', () => {
   const ar = WEAPON_DEFS['kaede-ar'];
@@ -589,8 +772,12 @@ describe('R57⑦ アタッチメント視覚反映(buildGunBody)', () => {
   }
 
   it('コンペンセイターは銃口デバイスを追加し、マズル原点を前進させる(サプレッサ非装着時)', () => {
-    const plain = buildGunBody(ar);
-    const comp = buildGunBody({ ...ar, attachmentIds: ['compensator'] });
+    // R58 F4: kaede-ar=FAMAS は painter 一体ハイダー + muzzleExtend で plain 原点が既に前方にある。
+    // この汎用コントラクト(コンペ装着で muzzle 原点が前進)は painter マズルを持たない素の汎用 AR
+    // (modelKey 無し=rifle シルエット)で検証する(FAMAS 固有の前方ハイダーに引きずられない)。
+    const gen: WeaponDef = { ...ar, modelKey: undefined, shape: 'rifle' };
+    const plain = buildGunBody(gen);
+    const comp = buildGunBody({ ...gen, attachmentIds: ['compensator'] });
     // マズル原点(トレーサー原点)が前進(z がより負)
     expect(comp.muzzle.position.z).toBeLessThan(plain.muzzle.position.z);
   });
@@ -1554,5 +1741,101 @@ describe('R56 W3: 電弧フリッカーの早期return根治', () => {
       for (let i = 0; i < 60; i += 1) vm.update(1 / 60, IDLE);
     }).not.toThrow();
     vm.dispose();
+  });
+});
+
+// ── R58 F/A: アタッチメント×新モデル相互作用 + キャリーハンドルADS視界窓 ──
+describe('R58 F/A アタッチメント相互作用 + ADS視界窓', () => {
+  const build = (id: string, att: string[] = []): ReturnType<typeof buildGunBody> => {
+    const d = WEAPON_DEFS[id];
+    if (!d) throw new Error(`missing ${id}`);
+    return buildGunBody({ ...d, attachmentIds: att });
+  };
+  const vtx = (g: THREE.Object3D): number => {
+    let n = 0;
+    g.traverse((o) => {
+      if (o instanceof THREE.Mesh) n += o.geometry.getAttribute('position')?.count ?? 0;
+    });
+    return n;
+  };
+  const firstMicroSphere = (g: THREE.Object3D): THREE.Mesh | null => {
+    let m: THREE.Mesh | null = null;
+    g.traverse((o) => {
+      if (m) return;
+      if (o instanceof THREE.Mesh && o.geometry instanceof THREE.SphereGeometry && o.geometry.parameters.radius <= 0.0022) m = o;
+    });
+    return m;
+  };
+  // (x,y,z) から前方(-Z)へレイし距離 dist 内で銃メッシュにヒットするか(内蔵サイト射線コリドー検査)。
+  const hitsForward = (g: THREE.Object3D, x: number, y: number, z: number, dist: number): boolean => {
+    g.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster(new THREE.Vector3(x, y, z), new THREE.Vector3(0, 0, -1), 0, dist);
+    return rc.intersectObject(g, true).some((h) => h.object instanceof THREE.Mesh);
+  };
+
+  // F1: 一体型サプレッサ機(MP5SD)は着脱サプ/コンペを無効化(装着効果ゼロ+射程トラップ+造形二重化を防ぐ)。
+  it('F1: MP5SD は integralSuppressor 機で suppressor/compensator 装着でも muzzle 原点・頂点数が完全一致(排他ゲート)', () => {
+    expect(weaponHasIntegralSuppressor(WEAPON_DEFS['sasameki-smg']!)).toBe(true);
+    expect(weaponHasIntegralSuppressor(WEAPON_DEFS['kasasagi-ar']!)).toBe(false);
+    const plain = build('sasameki-smg');
+    const supp = build('sasameki-smg', ['suppressor']);
+    const comp = build('sasameki-smg', ['compensator']);
+    expect(supp.muzzle.position.z).toBeCloseTo(plain.muzzle.position.z, 6);
+    expect(comp.muzzle.position.z).toBeCloseTo(plain.muzzle.position.z, 6);
+    expect(vtx(supp.gun)).toBe(vtx(plain.gun)); // 二重サプ管が描かれない
+    expect(vtx(comp.gun)).toBe(vtx(plain.gun)); // コンペ半埋込が描かれない
+  });
+
+  // F2: 非一体機はサプレッサ有効=muzzle 原点がサプ位置へ前進(painter ブレーキ skip でも generic サプ管が前方)。
+  it('F2: SCAR-H は suppressor で muzzle 原点が前進する(サプは非一体機で有効)', () => {
+    const plain = build('kasasagi-ar');
+    const supp = build('kasasagi-ar', ['suppressor']);
+    expect(supp.muzzle.position.z).toBeLessThan(plain.muzzle.position.z);
+  });
+
+  // F4: painter 固有マズルを持つ4挺に muzzleExtend が設定され、muzzle 原点は常に前方(z<0)。
+  it('F4: FAMAS/AWM/MP5SD/SVD に muzzleExtend が設定され muzzle 原点は前方(z<0)', () => {
+    expect(SHAPE_SPECS['ar-famas'].muzzleExtend).toBeCloseTo(0.045, 6);
+    expect(SHAPE_SPECS['sniper-awm'].muzzleExtend).toBeCloseTo(0.06, 6);
+    expect(SHAPE_SPECS['smg-mp5sd'].muzzleExtend).toBeCloseTo(0.05, 6);
+    expect(SHAPE_SPECS['dmr-svd'].muzzleExtend).toBeCloseTo(0.04, 6);
+    for (const id of ['kaede-ar', 'raicho-sniper', 'sasameki-smg', 'shirasagi-mk']) {
+      expect(build(id).muzzle.position.z, id).toBeLessThan(0);
+    }
+  });
+
+  // F5: 既にフォアグリップ造形を持つ機(MP7)は着脱グリップを描かない(頂点不変)。汎用ARは増える。
+  it('F5: MP7 は vertical/angled 装着でも頂点不変(自前フォアグリップと二重化しない)。汎用ARは増える', () => {
+    const mp7 = vtx(build('enaga-pdw').gun);
+    expect(vtx(build('enaga-pdw', ['vertical']).gun)).toBe(mp7);
+    expect(vtx(build('enaga-pdw', ['angled']).gun)).toBe(mp7);
+    const ar = vtx(build('kasasagi-ar').gun);
+    expect(vtx(build('kasasagi-ar', ['vertical']).gun)).toBeGreaterThan(ar);
+  });
+
+  // A1: FAMAS/SG550 の内蔵サイト(0.116)射線コリドーが中央 x=0 で貫通(標的が見える窓)、脇 x±0.016 は支柱にヒット。
+  it('A1: FAMAS/SG550 は内蔵サイト中央の射線が貫通し(視界窓)、脇には支柱がある', () => {
+    for (const id of ['kaede-ar', 'kagerou-br']) {
+      const { gun } = build(id);
+      const dot = firstMicroSphere(gun);
+      expect(dot, `${id} dot`).not.toBeNull();
+      const y = dot!.position.y;
+      const z0 = dot!.position.z - 0.002;
+      expect(hitsForward(gun, 0, y, z0, 0.2), `${id} center corridor clear`).toBe(false);
+      expect(hitsForward(gun, 0.008, y, z0, 0.2), `${id} inner corridor clear`).toBe(false);
+      const sides = hitsForward(gun, 0.016, y, z0, 0.2) || hitsForward(gun, -0.016, y, z0, 0.2);
+      expect(sides, `${id} side posts present`).toBe(true);
+    }
+  });
+
+  // A3: AA-12(fukurou-sg) の低平ロングトップハンドル前後支柱を中央 x=0 で分割し、ゴースト照準
+  // (dotY=IRON_POST_Y=0.075, z=0.14)からの前方射線が中央で貫通する(標的が見える)ことを検証。
+  it('A3: AA-12 は低平ハンドル支柱が中央を空け、ゴースト照準の中央射線が貫通する', () => {
+    const { gun } = build('fukurou-sg');
+    const dot = firstMicroSphere(gun);
+    expect(dot).not.toBeNull();
+    expect(dot!.position.y).toBeCloseTo(0.075, 6);
+    const z0 = dot!.position.z - 0.002;
+    expect(hitsForward(gun, 0, dot!.position.y, z0, 0.3), 'center corridor clear').toBe(false);
   });
 });

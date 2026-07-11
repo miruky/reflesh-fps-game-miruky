@@ -1,6 +1,6 @@
 import type { ModelKey } from '../../game/weapons';
 import type { Silhouette } from './types';
-import type { PainterCtx, ShapePainter } from './toolkit';
+import { hasMuzzleAttachment, type PainterCtx, type ShapePainter } from './toolkit';
 
 // ── AR系(ライフル/カービン/ブルパップ) シルエット ─────────────────────────────────────────
 // R58 Phase C: 各 ModelKey を「名前の元ネタ実在銃」の決定的シルエットへ再モデリング。
@@ -76,6 +76,7 @@ export const AR_SHAPES = {
     carryHandle: 'famas', // 逆U字トンネル → sightY 0.116(内蔵サイト)
     railTop: 'none',
     ironSight: 'flip',
+    muzzleExtend: 0.045, // F4: 細長一体ハイダー前端まで muzzleZ を前進(実測≈4.5cm 埋没)
   },
   // ── miyama-br / FAL-53(FN FAL)── 在来式 + 折りたたみキャリーハンドルが寝た状態
   //    + 木製ハンドガード/ストック(他ARと異質)+ ラッパ状スリットフラッシュハイダー + 直線的20連。
@@ -227,21 +228,28 @@ const paintFamas: ShapePainter = (ctx: PainterCtx): void => {
   const hLen = hBackZ - hFrontZ;
   const legY = (barY + recTop) / 2;
   const legH = barY - recTop;
-  boxP(metalParts, C.RAIL, 0.028, 0.02, hLen, 0, barY, hMidZ, 0, 0, 0, 'gradY'); // 厚い天面バー
-  boxP(metalParts, C.DARK, 0.022, 0.008, hLen * 0.96, 0, 0.104, hMidZ, 0, 0, 0, 'flat'); // トラフ床
-  boxP(metalParts, C.DARK, 0.024, legH, 0.026, 0, legY, hFrontZ + 0.012); // 前脚(前照星フード)
-  boxP(metalParts, C.DARK, 0.018, legH, 0.016, 0, legY, hMidZ); // 中脚
-  boxP(metalParts, C.DARK, 0.028, legH, 0.032, 0, legY, hBackZ - 0.02); // 後脚(アパーチャ座)
-  tubeZ(metalParts, C.POLISH, 0.012, 0.014, 0, 0.116, hBackZ + 0.004, false, 'flat'); // 後照星ドラム(ドット後方)
+  boxP(metalParts, C.RAIL, 0.028, 0.02, hLen, 0, barY, hMidZ, 0, 0, 0, 'gradY'); // 厚い天面バー(窓の上=底0.124)
+  boxP(metalParts, C.DARK, 0.022, 0.008, hLen * 0.96, 0, 0.104, hMidZ, 0, 0, 0, 'flat'); // トラフ床(窓の下=上端0.108)
+  // R58 A1: 中央支柱を x=±0.014 のサイドポスト対に分割し、内蔵サイト(0.116)の貫通視界窓(中央 x±0.0095)を
+  // 構造的に確保する(ADS で「ドットだけ見えて標的が見えない」を根治。天面バー↔レシーバは左右脚が支える)。
+  for (const sx of [-1, 1] as const) {
+    boxP(metalParts, C.DARK, 0.009, legH, 0.026, sx * 0.014, legY, hFrontZ + 0.012); // 前脚(前照星フード)左右
+    boxP(metalParts, C.DARK, 0.008, legH, 0.016, sx * 0.013, legY, hMidZ); // 中脚 左右
+    boxP(metalParts, C.DARK, 0.010, legH, 0.032, sx * 0.015, legY, hBackZ - 0.02); // 後脚(アパーチャ座)左右
+    tubeZ(metalParts, C.POLISH, 0.008, 0.014, sx * 0.017, 0.113, hBackZ + 0.004, false, 'flat'); // 後照星ドラム(ドット両脇=射線外)
+  }
   // ハンドガード上に折り畳みバイポッド(常設): ヒンジ + 前方へ寝た2脚。
   const hgTopY = BARREL_Y + gauge * 0.5 + 0.006;
   boxP(metalParts, C.DARK, 0.02, 0.012, 0.016, 0, hgTopY, barCenterZ - barLen * 0.12);
   for (const sx of [-1, 1] as const) {
     boxP(metalParts, C.POLISH, 0.005, 0.006, 0.11, sx * 0.008, hgTopY + 0.006, barCenterZ - barLen * 0.36, 0.34, 0, 0);
   }
-  // 細長い一体フラッシュハイダー(FAMAS の特徴的な長い筒)。
-  tubeZ(metalParts, C.BARREL, gauge * 0.5, 0.1, 0, BARREL_Y, barFrontZ - 0.05, true);
-  tubeZ(metalParts, C.RIM, gauge * 0.56, 0.012, 0, BARREL_Y, barFrontZ - 0.095, false, 'flat');
+  // 細長い一体フラッシュハイダー(FAMAS の特徴的な長い筒)。R58 F3: マズルアタッチメント(サプ/コンペ)
+  // 装着時は generic-pass が銃口デバイスを描くため skip(ハイダーがコンペ箱を貫通/二重造形を防ぐ)。
+  if (!hasMuzzleAttachment(ctx)) {
+    tubeZ(metalParts, C.BARREL, gauge * 0.5, 0.1, 0, BARREL_Y, barFrontZ - 0.05, true);
+    tubeZ(metalParts, C.RIM, gauge * 0.56, 0.012, 0, BARREL_Y, barFrontZ - 0.095, false, 'flat');
+  }
   // 三角バットプレート(stock:'none' の後端)。頬当てリッジ + 傾斜バットパッド。
   boxP(metalParts, C.DARK, 0.05, 0.014, 0.03, 0, recTop - 0.006, recHalf + 0.006, 0, 0, 0, 'flat'); // 頬当てリッジ
   ctx.bakeAt(metalParts, ctx.chamferBox(0.05, 0.088, 0.02, 0.006), C.DARK, 0, -0.006, recHalf + 0.018, -0.22, 0, 0); // 傾斜バットパッド
@@ -271,18 +279,33 @@ const paintFal: ShapePainter = (ctx: PainterCtx): void => {
   }
 };
 
-// SCAR-H: 右側面後方の台形FAパドル + 角押出アルミアッパー + 折りたたみ伸縮スケルトン + 太銃身。
+// SCAR-H: 右側面後方の大型トラペゾイドFAパドル + 誇張した角押出アッパー(角ハンプ) + 箱型マズルブレーキ
+// + 折りたたみ伸縮スケルトン + 太銃身。HK416(角ハンプ無し・handguardガスブロック持ち)との決定的相互差。
 const paintScarH: ShapePainter = (ctx: PainterCtx): void => {
-  const { boxP, bakeAt, tubeZ, chamferBox, metalParts, polyParts, C, r, recD, recHalf, barCenterZ, barLen, gauge, bs, BARREL_Y } = ctx;
+  const { boxP, bakeAt, tubeZ, chamferBox, metalParts, polyParts, C, r, recD, recHalf, barCenterZ, barFrontZ, barLen, gauge, bs, BARREL_Y } = ctx;
   const recTop = r.h / 2;
   const stockZ = recHalf + 0.05 * bs;
-  // 角押出アルミアッパー: レシーバ上に角ばった隆起(SCAR の特徴的な角ハンプ)。
-  bakeAt(metalParts, chamferBox(r.w * 0.86, 0.024, recD * 0.72, 0.003), C.BASE, 0, recTop + 0.006, -recD * 0.06, 0, 0, 0);
-  // 右側面後方の台形フォワードアシストパドル(+X=カメラ側で視認)。Z長×薄X の平パドルで前方へ張り出す。
-  bakeAt(metalParts, chamferBox(0.016, 0.04, 0.058, 0.003), C.DARK, r.w / 2 + 0.016, 0.006, recD * 0.26);
-  bakeAt(metalParts, chamferBox(0.012, 0.028, 0.03, 0.002), C.RIM, r.w / 2 + 0.022, 0.006, recD * 0.32); // 前縁の台形段
+  // 角押出アルミアッパー(SCAR の決定的な角ハンプ)を誇張: 背高の隆起 + 明色ピーク稜 + 前方の傾斜面。
+  bakeAt(metalParts, chamferBox(r.w * 0.82, 0.04, recD * 0.56, 0.004), C.BASE, 0, recTop + 0.016, recD * 0.03, 0, 0, 0); // 背高ハンプ本体
+  bakeAt(metalParts, chamferBox(r.w * 0.5, 0.022, recD * 0.44, 0.004), C.RIM, 0, recTop + 0.04, recD * 0.03, 0, 0, 0); // 明色ピーク稜(角押出天面)
+  bakeAt(metalParts, chamferBox(r.w * 0.72, 0.03, 0.036, 0.004), C.DARK, 0, recTop + 0.02, -recD * 0.24, -0.55, 0, 0); // 前方の傾斜面(角ばり)
+  // 右側面後方の大型トラペゾイド・フォワードアシストパドル(+X=カメラ側)。台形=背高後部+短前部、+Xへ大きく張り出す。
+  bakeAt(metalParts, chamferBox(0.026, 0.058, 0.055, 0.004), C.DARK, r.w / 2 + 0.016, 0.006, recD * 0.24); // パドル基部(背高後部)
+  bakeAt(metalParts, chamferBox(0.024, 0.036, 0.032, 0.003), C.DARK, r.w / 2 + 0.018, -0.006, recD * 0.315); // 前方テーパ(台形の短い前部)
+  boxP(metalParts, C.POLISH_HI, 0.005, 0.05, 0.058, r.w / 2 + 0.03, 0.008, recD * 0.25, 0, 0, 0, 'gradY'); // 外面の明色リップ(パドルを立たせる)
+  boxP(metalParts, C.RIM, 0.028, 0.006, 0.05, r.w / 2 + 0.016, 0.035, recD * 0.24, 0, 0, 0, 'flat'); // 上稜ハイライト
   // 太銃身のガスブロック(ヘビーバレル座)。
   tubeZ(metalParts, C.DARK, gauge * 0.62, 0.04, 0, BARREL_Y, barCenterZ - barLen * 0.24, true);
+  // 箱型マズルブレーキを明示: generic brake 前方に一回り大きい角ブロック + 上稜 + 側面ポートで「箱」を強調。
+  // R58 F2: マズルアタッチメント(サプ/コンペ)装着時は skip(サプ管に箱ブレーキが串刺し浮遊するのを防ぐ)。
+  if (!hasMuzzleAttachment(ctx)) {
+    const mbZ = barFrontZ - 0.086;
+    bakeAt(metalParts, chamferBox(gauge * 2.7, gauge * 2.3, 0.028, 0.003), C.DARK, 0, BARREL_Y, mbZ);
+    boxP(metalParts, C.RIM, gauge * 2.4, 0.005, 0.026, 0, BARREL_Y + gauge * 1.12, mbZ, 0, 0, 0, 'flat'); // 上稜ハイライト
+    for (const sx of [-1, 1] as const) {
+      boxP(metalParts, C.GROOVE, 0.006, gauge * 1.6, 0.016, sx * gauge * 1.32, BARREL_Y, mbZ, 0, 0, 0, 'flat'); // 側面ポート
+    }
+  }
   // 折りたたみヒンジ + 伸縮スケルトンストック(ポリマー角/調整コム/バットパッド)。
   boxP(metalParts, C.DARK, 0.03, 0.05, 0.028, 0, 0.004, recHalf + 0.012); // ヒンジ
   tubeZ(metalParts, C.POLISH, 0.012, 0.1, 0, 0.006, stockZ + 0.04, false); // 伸縮チューブ
@@ -301,8 +324,8 @@ const paintScarL: ShapePainter = (ctx: PainterCtx): void => {
   const monoLen = monoZ0 - monoZ1;
   bakeAt(metalParts, chamferBox(gauge + 0.03, gauge + 0.026, monoLen, 0.004), C.RIM, 0, BARREL_Y + 0.006, (monoZ0 + monoZ1) / 2, 0, 0, 0); // 一体上部(明色=2トーン上)
   boxP(metalParts, C.POLISH, r.w * 0.42, 0.008, monoLen * 0.98, 0, BARREL_Y + gauge * 0.6 + 0.012, (monoZ0 + monoZ1) / 2, 0, 0, 0, 'flat'); // 連続天面レール
-  // 2トーン: 上=明色(RIM)アッパークラムシェル / 下=既存の暗レシーバ。
-  bakeAt(metalParts, chamferBox(r.w + 0.004, r.h * 0.46, recD * 0.9, 0.004), C.RIM, 0, r.h * 0.24, 0, 0, 0, 0);
+  // 2トーン: 上=明色(POLISH_HI)アッパークラムシェル / 下=既存の暗レシーバ。上下コントラストを一段強化。
+  bakeAt(metalParts, chamferBox(r.w + 0.004, r.h * 0.46, recD * 0.9, 0.004), C.POLISH_HI, 0, r.h * 0.24, 0, 0, 0, 0);
   // 小型FAパドル(SCAR-L も右側面に持つ)。
   bakeAt(metalParts, chamferBox(0.04, 0.03, 0.022, 0.003), C.DARK, r.w / 2 + 0.01, 0.006, recD * 0.22, 0, 0.32, 0);
   // 折りたたみ伸縮スケルトンストック(SCAR-H より小型)。
@@ -316,9 +339,13 @@ const paintScarL: ShapePainter = (ctx: PainterCtx): void => {
 const paintHk416: ShapePainter = (ctx: PainterCtx): void => {
   const { boxP, bakeAt, tubeZ, chamferBox, metalParts, polyParts, C, recHalf, barCenterZ, barFrontZ, barLen, gauge, bs, BARREL_Y } = ctx;
   const stockZ = recHalf + 0.05 * bs;
-  // 決定的特徴: ハンドガード中程で角ばったガスブロック膨らみ(ピストン)。天面レール上へ突出。
-  bakeAt(metalParts, chamferBox(gauge + 0.006, 0.026, 0.05, 0.003), C.DARK, 0, BARREL_Y + gauge * 0.55 + 0.008, barCenterZ + barLen * 0.02);
-  boxP(metalParts, C.GROOVE, gauge + 0.008, 0.006, 0.008, 0, BARREL_Y + gauge * 0.55 + 0.02, barCenterZ + barLen * 0.02, 0, 0, 0, 'flat');
+  // 決定的特徴: ハンドガード中程で角ばった大型ガスブロック膨らみ(ピストン)。一段大型化し SCAR-H(角ハンプ持ち)との相互差を付ける。
+  const gbY = BARREL_Y + gauge * 0.5 + 0.02;
+  const gbZ = barCenterZ + barLen * 0.06;
+  bakeAt(metalParts, chamferBox(gauge + 0.016, 0.04, 0.072, 0.004), C.DARK, 0, gbY, gbZ); // 大型ガスブロック本体
+  boxP(metalParts, C.RIM, gauge + 0.014, 0.005, 0.06, 0, gbY + 0.021, gbZ, 0, 0, 0, 'flat'); // 上稜ハイライト
+  boxP(metalParts, C.GROOVE, gauge + 0.02, 0.006, 0.01, 0, gbY + 0.019, gbZ - 0.024, 0, 0, 0, 'flat'); // ガス調整ノブ座
+  bakeAt(metalParts, chamferBox(gauge + 0.012, 0.026, 0.02, 0.003), C.DARK, 0, gbY - 0.008, gbZ - 0.046, -0.5, 0, 0); // 前方の傾斜ステップ(角ばり)
   // M4 バッファーチューブ + 伸縮スケルトンストック(castle nut + 傾斜バット)。
   tubeZ(metalParts, C.DARK, 0.017, 0.15, 0, 0.008, stockZ + 0.05, true); // バッファーチューブ
   tubeZ(metalParts, C.RIM, 0.021, 0.01, 0, 0.008, recHalf + 0.014, false, 'flat'); // castle nut
@@ -358,11 +385,24 @@ const paintArx: ShapePainter = (ctx: PainterCtx): void => {
   // 丸みを帯びたポリマー多面ボディ(大ベベル=丸みのクラムシェルでレシーバを覆う)。
   bakeAt(polyParts, chamferBox(r.w + 0.008, r.h + 0.008, recD * 0.94, 0.016), C.POLY, 0, 0, 0);
   bakeAt(polyParts, chamferBox(r.w * 0.7, 0.03, recD * 0.6, 0.012), C.GRIP, 0, recTop - 0.004, recD * 0.04); // 上面ファセット
-  // アンビ45度排莢口(斜めスロット + 台形デフレクタ)。+X=カメラ側。
-  boxP(metalParts, C.GROOVE, 0.006, 0.044, 0.03, r.w / 2 + 0.002, 0.012, -recD * 0.12, 0, 0, Math.PI / 4);
-  bakeAt(metalParts, chamferBox(0.016, 0.02, 0.02, 0.003), C.RIM, r.w / 2 + 0.006, 0.026, -recD * 0.08, 0, 0, Math.PI / 4);
-  // クイックチェンジバレルナット(銃身付け根の太リング)。
-  tubeZ(metalParts, C.RIM, gauge + 0.014, 0.022, 0, BARREL_Y, barCenterZ + barLen * 0.42, true);
+  // 角ファセットの稜線(ベベルエッジのハイライト)= 丸ボディを"多面ポリマー"に見せる明色チャイン。
+  //   +X=カメラ側の上下チャイン + 中段の面割りシーム(細帯=ブロブ化しない)。
+  boxP(metalParts, C.POLISH_HI, 0.007, 0.006, recD * 0.82, r.w / 2 + 0.004, r.h * 0.3, -recD * 0.02, 0, 0, 0.34, 'gradY'); // 上チャイン
+  boxP(metalParts, C.POLISH_HI, 0.007, 0.006, recD * 0.82, r.w / 2 + 0.004, -r.h * 0.3, -recD * 0.02, 0, 0, -0.34, 'gradY'); // 下チャイン
+  boxP(metalParts, C.RIM, 0.005, 0.004, recD * 0.74, r.w / 2 + 0.008, r.h * 0.02, -recD * 0.02, 0, 0, 0, 'flat'); // 中段の面割りシーム
+  // アンビ45度排莢口/デフレクタを大型・明色で側面に明示。+X=カメラ側、X軸まわりに傾け斜めスロットに。
+  const portZ = -recD * 0.1;
+  bakeAt(metalParts, chamferBox(0.013, 0.024, 0.072, 0.004), C.POLISH, r.w / 2 + 0.016, 0.016, portZ, 0.7, 0, 0); // 明色ポート枠(斜め・張り出し)
+  boxP(metalParts, C.GROOVE, 0.01, 0.014, 0.06, r.w / 2 + 0.022, 0.016, portZ, 0.7, 0, 0, 'flat'); // 暗色スロット(開口)
+  bakeAt(metalParts, chamferBox(0.018, 0.03, 0.024, 0.003), C.RIM, r.w / 2 + 0.02, -0.006, portZ - recD * 0.12, 0.5, 0, 0); // 大型台形デフレクタ(明色)
+  // クイックチェンジバレルナット(銃身付け根の太リング)を強調: 太径 + 内段 + 6面ノッチの締めリング。
+  const nutZ = barCenterZ + barLen * 0.42;
+  tubeZ(metalParts, C.RIM, gauge + 0.02, 0.032, 0, BARREL_Y, nutZ, true, 'gradY'); // 太リング
+  tubeZ(metalParts, C.POLISH, gauge + 0.006, 0.036, 0, BARREL_Y, nutZ, true, 'flat'); // 内段
+  for (let i = 0; i < 6; i += 1) {
+    const a = (i / 6) * Math.PI * 2;
+    boxP(metalParts, C.GROOVE, 0.004, 0.012, 0.034, Math.cos(a) * (gauge + 0.02), BARREL_Y + Math.sin(a) * (gauge + 0.02), nutZ, 0, 0, a, 'flat'); // ノッチ
+  }
   // 4段折りたたみ伸縮ストック(ポリマー角、位置ノッチ)。
   boxP(metalParts, C.DARK, 0.028, 0.048, 0.024, 0, 0.004, recHalf + 0.01);
   bakeAt(polyParts, chamferBox(0.044, 0.072, 0.11, 0.008), C.POLY, 0, 0.004, stockZ + 0.08);
@@ -375,13 +415,16 @@ const paintArx: ShapePainter = (ctx: PainterCtx): void => {
 // + 段付き大型フラッシュハイダー。内蔵サイトドットは本体パスが 0.116 に描く(carryHandle)。
 const paintSg550: ShapePainter = (ctx: PainterCtx): void => {
   const { boxP, bakeAt, tubeZ, chamferBox, metalParts, C, r, recD, recHalf, barFrontZ, gauge, BARREL_Y } = ctx;
-  const recTop = r.h / 2;
-  // 大型キャリーハンドル本体(レシーバ上部一体の背高ブロック)+ 掴みアーチ。
-  bakeAt(metalParts, chamferBox(0.03, 0.052, 0.17, 0.006), C.DARK, 0, 0.098, 0.01);
-  boxP(metalParts, C.DARK, 0.024, 0.04, 0.018, 0, (recTop + 0.072) / 2 + 0.03, -0.06); // 前支柱
-  // 内蔵ダイヤル丸窓サイト(回転ドラム=SG550 の決定的丸窓)。ハンドル後部側面の丸ドラム。
-  tubeZ(metalParts, C.POLISH, 0.022, 0.02, 0, 0.102, 0.09, true, 'gradY');
-  tubeZ(metalParts, C.GROOVE, 0.012, 0.024, 0, 0.102, 0.09, false, 'flat'); // ダイヤル丸窓インセット
+  // R58 A1: 大型キャリーハンドルを「天面バー(内蔵サイト窓の上=底 y0.126>0.124)+左右サイドレール(中央に
+  // 貫通視界窓 x±0.013)」へ再構成。旧・中実ブロック(y0.072-0.124)は狙点0.116の射線を塞いでいた。
+  boxP(metalParts, C.DARK, 0.03, 0.018, 0.17, 0, 0.135, 0.01, 0, 0, 0, 'gradY'); // 天面バー(底0.126)
+  for (const sx of [-1, 1] as const) {
+    boxP(metalParts, C.DARK, 0.008, 0.09, 0.17, sx * 0.017, 0.081, 0.01, 0, 0, 0, 'gradY'); // サイドレール(中央窓を開ける)
+    boxP(metalParts, C.DARK, 0.008, 0.05, 0.018, sx * 0.016, 0.086, -0.06); // 前支柱 左右(中央を塞がない)
+  }
+  // 内蔵ダイヤル丸窓サイト(回転ドラム=SG550 の決定的丸窓)。ハンドル左側面へ寄せ射線外へ。
+  tubeZ(metalParts, C.POLISH, 0.02, 0.02, -0.032, 0.104, 0.085, true, 'gradY');
+  tubeZ(metalParts, C.GROOVE, 0.011, 0.024, -0.032, 0.104, 0.085, false, 'flat'); // ダイヤル丸窓インセット
   // AK的プレス鋼板レシーバ(丸みダストカバー天面 + リベット列)。
   bakeAt(metalParts, chamferBox(r.w + 0.003, r.h * 0.42, recD * 0.86, 0.008), C.BASE, 0, r.h * 0.26, 0);
   for (let i = 0; i < 4; i += 1) {

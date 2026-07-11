@@ -192,3 +192,13 @@ export interface PainterCtx {
 }
 
 export type ShapePainter = (ctx: PainterCtx) => void;
+
+// R58 F2/F3: マズルスロットのアタッチメント(サプレッサ/コンペンセイター)が装着されているか。
+// 装着時は generic-pass が銃口デバイス(サプ管/コンペ箱)を描くため、painter 固有のマズル造形
+// (FAMAS 一体ハイダー/SCAR-H・AWM ブレーキ/USAS バードケージ/SVD スリットハイダー)は skip して
+// 二重造形・造形串刺しを防ぐ。integralSuppressor 機(MP5SD)は viewmodel がサプ/コンペを無効化済み
+// なので、その painter の一体サプ本体は常に描く(この判定は使わない)。
+export function hasMuzzleAttachment(ctx: PainterCtx): boolean {
+  const a = ctx.def.attachmentIds;
+  return a !== undefined && (a.includes('suppressor') || a.includes('compensator'));
+}
