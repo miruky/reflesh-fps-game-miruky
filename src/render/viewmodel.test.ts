@@ -139,29 +139,26 @@ describe('R58 ModelKey shape共有解消', () => {
     expect(splitWeapons.length).toBe(24);
   });
 
-  it('各固有 modelKey の SHAPE_SPECS は元の粗粒度 shape の逐語コピー(=寸法同一)', () => {
+  it('各固有 modelKey は SHAPE_SPECS に定義済みで buildable(Phase C 実在化後)', () => {
     for (const d of splitWeapons) {
-      const coarse = (d.shape ?? classDefault(d.class)) as ModelKey;
-      const fineEntry = SHAPE_SPECS[d.modelKey!];
-      const coarseEntry = SHAPE_SPECS[coarse];
-      expect(fineEntry, d.id).toBeDefined();
-      // 値が完全一致(receiver 等ネストも含めて deep equal)
-      expect(fineEntry, d.id).toEqual(coarseEntry);
+      expect(SHAPE_SPECS[d.modelKey!], d.id).toBeDefined();
+      expect(() => buildGunBody(d), d.id).not.toThrow();
     }
   });
 
-  it('固有 modelKey 版と粗粒度 shape 版でジオメトリが完全一致(視覚不変)', () => {
-    for (const d of splitWeapons) {
-      const fine = buildGunBody(d);
-      const coarse = buildGunBody({ ...d, modelKey: undefined });
-      expect(geomSig(fine.gun), d.id).toBe(geomSig(coarse.gun));
-      // サイト契約(resolveSightY)も modelKey で変わらない(shape 基準のため)
-      expect(resolveSightY(d), d.id).toBeCloseTo(resolveSightY({ ...d, modelKey: undefined }), 6);
-    }
+  it('Phase C: 固有 modelKey 版は粗粒度版とジオメトリが異なる(=実在シルエット化された)', () => {
+    // 代表挺(FAMAS)で、固有 modelKey(=FAMAS外装)と粗粒度 rifle(=汎用)のジオメトリが
+    // 明確に異なることを確認(Phase C で実在化=視覚が変わった証明)。
+    const famas = WEAPON_DEFS['kaede-ar'];
+    if (!famas) throw new Error('kaede-ar missing');
+    const fine = geomSig(buildGunBody(famas).gun);
+    const coarse = geomSig(buildGunBody({ ...famas, modelKey: undefined }).gun);
+    expect(fine).not.toBe(coarse);
   });
 
-  it('Phase B の SHAPE_PAINTERS は全空(painter フックは no-op=視覚不変)', () => {
-    expect(Object.keys(SHAPE_PAINTERS).length).toBe(0);
+  it('Phase C: SHAPE_PAINTERS に各クラスの固有外装 painter が登録されている', () => {
+    // 6クラス(AR/SMG/狙撃/散弾/LMG/拳銃)が実在シルエットの painter を登録済み。
+    expect(Object.keys(SHAPE_PAINTERS).length).toBeGreaterThanOrEqual(18);
   });
 
   it('蜃気楼(shinkirou-sniper)は sniper-beam へ分離しつつ内蔵スコープを維持', () => {
@@ -198,10 +195,18 @@ describe('R58 sightYOverride フレーム', () => {
     expect(sightYOverride({ ...rifleSil, carryHandle: 'famas' })!).toBeGreaterThan(0.075);
   });
 
-  it('shipping 武器は誰も carryHandle を立てていない(dormant=視覚不変)', () => {
-    for (const d of Object.values(WEAPON_DEFS)) {
+  it('Phase C: carryHandle を立てた武器(FAMAS/SG550)は sightYOverride=0.116 かつ resolveSightY と一致(3点co-witness=ADSドリフトなし)', () => {
+    const carryWeapons = Object.values(WEAPON_DEFS).filter((d) => {
       const sil = SHAPE_SPECS[(d.modelKey ?? d.shape ?? classDefault(d.class)) as ModelKey];
-      expect(sightYOverride(sil), d.id).toBeNull();
+      return sightYOverride(sil) !== null;
+    });
+    // FAMAS(kaede-ar)/SG550(kagerou-br) 等が carryHandle を立てている
+    expect(carryWeapons.length).toBeGreaterThan(0);
+    for (const d of carryWeapons) {
+      const sil = SHAPE_SPECS[(d.modelKey ?? d.shape ?? classDefault(d.class)) as ModelKey];
+      expect(sightYOverride(sil), d.id).toBeCloseTo(0.116, 6);
+      // ADS収束Y(resolveSightY)がキャリーハンドル狙点(0.116)と一致=焼きドットYと3点整合
+      expect(resolveSightY(d), d.id).toBeCloseTo(0.116, 6);
     }
   });
 });
