@@ -108,7 +108,10 @@ export const SHOTGUN_SHAPES = {
 // Remington 870: バレル真下のチューブマガジンを前方へ延長しマグキャップで締め、
 // 吊り金具+バレルバンドで「バレル上/チューブ下」の二段レイアウトを明示。側面に大きめの排莢口。
 const paint870: ShapePainter = (ctx) => {
-  const { metalParts, polishParts, boxP, tubeZ, coneZ, C, barR, barCenterZ, recD, r, BARREL_Y } = ctx;
+  const { metalParts, polishParts, boxP, tubeZ, coneZ, bakeAt, chamferBox, C, barR, barCenterZ, recD, recHalf, r, BARREL_Y } = ctx;
+  // R59 FLOAT: generic 固定ストック(+スリングループ)が受け後端から 30mm 浮いていた。
+  // 870 のグリップスルー・リスト(受け後端→ストック前端)を渡して構造接続する。
+  bakeAt(metalParts, chamferBox(0.046, 0.068, 0.07, 0.008), C.DARK, 0, -0.024, recHalf + 0.022, 0, 0, 0, 'gradY');
   const tubeY = -0.025; // 汎用 feed:'tube' が敷くマガジンチューブ中心Y(バレル下)
   // マガジンキャップ(チューブ前端の丸い蓋)
   coneZ(polishParts, C.POLISH, 0.021, 0.012, 0.024, 0, tubeY, -0.397);
@@ -153,7 +156,10 @@ const paintIthaca: ShapePainter = (ctx) => {
 //   ④ 大型ドラム(基礎ドラムへ外周リム+太い本体面を重ねて大容量に見せる)。
 // ゴースト照準の耳/ドットは本体が描く(このシュラウド前端の上に前照星として収まる=AR/散弾サイト)。
 const paintAA12: ShapePainter = (ctx) => {
-  const { metalParts, polishParts, boxP, tubeZ, bakeAt, chamferBox, C, r, recD, gauge, barLen, barCenterZ, BARREL_Y, sil } = ctx;
+  const { metalParts, polishParts, boxP, tubeZ, bakeAt, chamferBox, C, r, recD, recHalf, gauge, barLen, barCenterZ, BARREL_Y, sil } = ctx;
+  // R59 FLOAT: generic 固定ストック(+スリングループ)が受け後端から 29mm 浮いていた。
+  // スラブボディ続きのストックアダプタブロックを渡して構造接続する(角箱の塊感も増す)。
+  bakeAt(metalParts, chamferBox(0.056, 0.08, 0.075, 0.006), C.BASE, 0, -0.008, recHalf + 0.02, 0, 0, 0, 'machined');
 
   // ① スラブ状の増厚ボディ(角箱の塊感)+ 側面補強リブ。
   const slabH = r.h + 0.028;
@@ -258,8 +264,10 @@ const paintUSAS: ShapePainter = (ctx) => {
   bakeAt(metalParts, chamferBox(0.058, 0.05, 0.08, 0.004), C.DARK, 0, -r.h / 2 - 0.012, dz2);
 
   // ⑦ A2固定ストック(基礎の木製fixedへ黒コム+バットプレートを足す)。
+  // R59 FLOAT: generic 固定ストック一式が受け後端から 13mm+ 浮いていた → コムを受け後端まで
+  // 前方延長し(A2 のコム+リストが受けへ流れ込む輪郭)、ストック集合を構造接続する。
   const stockZ = recHalf + 0.05 * bs;
-  boxP(metalParts, C.DARK, 0.036, 0.022, 0.12, 0, 0.03, stockZ + 0.02, 0, 0, 0, 'gradY'); // コム(かさ上げ)
+  boxP(metalParts, C.DARK, 0.036, 0.022, 0.17, 0, 0.03, stockZ - 0.005, 0, 0, 0, 'gradY'); // コム(受けへ食い込む)
   boxP(metalParts, C.RIM, 0.044, 0.07, 0.012, 0, -0.008, stockZ + 0.085, 0, 0, 0, 'flat'); // バットプレート
 };
 

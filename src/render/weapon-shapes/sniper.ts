@@ -11,7 +11,8 @@ const AWM_GREEN_HI = 0x4e5334;
 // ── 狙撃/DMR/対物系 シルエット ─────────────────────────────────────────
 // R58 shape共有解消: 汎用エントリ + 実在武器ごとの固有 ModelKey。
 // Phase C: 5挺(dmr-svd/dmr-wa2000/sniper-awm/sniper-trg/sniper-semi)を実在シルエットへ改修。
-// 据え置き3挺(antimateriel=黒鷲/dsr-bp=DSR/sniper-beam=蜃気楼)は逐語コピーのまま=painter無し。
+// 据え置き3挺(antimateriel=黒鷲/dsr-bp=DSR/sniper-beam=蜃気楼)はシルエット逐語コピーのまま。
+// R59: この3挺にも「浮遊パーツ接続」だけを行う最小 painter を追加(造形刷新はしない)。
 // 各 scope.y は不変(=OPTIC_SPECS.sightY と一致=ADS照準ずれ防止)。改修は scope.r/len と
 // 非サイト外装(painter)のみ。
 export const SNIPER_SHAPES = {
@@ -230,6 +231,8 @@ export const SNIPER_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
     boxP(polishParts, C.POLISH, 0.012, 0.026, 0.016, -(mx + 0.02), 0.032, mz, 0, 0, 0, 'flat'); // QDレバー(大)
     // 右チャージングハンドル(静的ノブ)
     boxP(polishParts, C.POLISH, 0.012, 0.012, 0.03, r.w / 2 + 0.012, 0.02, -recD * 0.06, 0, 0, 0, 'flat');
+    // R59 FLOAT: generic スリングループ(受け後端左)が単独で浮いていた → 吊り座で接続。
+    boxP(metalParts, C.DARK, 0.008, 0.012, 0.055, -(r.w / 2) - 0.001, -0.02, recHalf + 0.022, 0, 0, 0, 'flat');
     // スリット・フラッシュハイダー(開口スロット筒)。R58 F2: マズルアタッチメント(サプ/コンペ)
     // 装着時は skip(generic-pass の銃口デバイスとハイダーの二重造形・串刺しを防ぐ)。
     if (!hasMuzzleAttachment(ctx)) {
@@ -355,6 +358,9 @@ export const SNIPER_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
     // ── 多軸調整バットプレート(直方体突起の集合)= TRG最大の識別子(誇張版) ──
     // AWMの滑らかな樹脂シェルと明確に差別化するため、可調チーク/段積みスペーサー/貫通ロッド/
     // 鉤状トウを「分節した直方体の塊」として立てる。
+    // R59 FLOAT: バット集合全体(20パーツ)が受け後端から 35mm+ 浮いていた → TRG のアルミシャーシ・
+    // リスト(受け後端→バット前端を貫く角材)を渡して構造接続する。
+    bakeAt(metalParts, chamferBox(0.05, 0.064, 0.09, 0.006), C.DARK, 0, -0.01, recHalf + 0.028, 0, 0, 0, 'machined');
     const bZ = stockZ + 0.055;
     // 可調式チークピース: 2本の縦ポストで持ち上げた直方体(浮遊=調整感を誇張)
     for (const sx of [-1, 1] as const) {
@@ -405,5 +411,32 @@ export const SNIPER_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
     boxP(metalParts, C.DARK, 0.012, 0.016, 0.016, r.w / 2 + 0.006, 0.004, recD * 0.12, 0, 0, 0, 'flat');
     // 太い7.62給弾部リップ強調
     boxP(metalParts, C.RIM, 0.05, 0.012, 0.066, 0, -r.h / 2 - 0.004, -0.04, -0.15, 0, 0, 'flat');
+  },
+
+  // ── 黒鷲(Barrett 対物): R59 FLOAT 接続 painter ──
+  // generic スケルトンストック(バー群+バット)が受け後端から 52mm 浮き、スリングループも孤立。
+  // Barrett らしい大型リアフレーム(バッファ塊)を受け後端に渡し、バー群/ループをまとめて接続する。
+  antimateriel: (ctx) => {
+    const { bakeAt, chamferBox, C, metalParts, recHalf } = ctx;
+    bakeAt(metalParts, chamferBox(0.082, 0.082, 0.095, 0.008), C.DARK, 0, -0.008, recHalf + 0.032, 0, 0, 0, 'machined');
+  },
+
+  // ── 蜃気楼(sniper-beam): R59 FLOAT 接続 painter ──
+  // generic 固定ストック+スリングループが受け後端から 25mm 浮いていた → リスト塊で接続。
+  'sniper-beam': (ctx) => {
+    const { bakeAt, chamferBox, C, metalParts, recHalf } = ctx;
+    bakeAt(metalParts, chamferBox(0.05, 0.066, 0.075, 0.006), C.DARK, 0, -0.016, recHalf + 0.024, 0, 0, 0, 'gradY');
+  },
+
+  // ── DSR(dsr-bp): R59 FLOAT 接続 painter ──
+  // vented ハンドガード(generic)の側面レール(±(gauge+0.02))がシュラウド(±0.036)から浮いていた
+  // → 3対の standoff ウェブで接続(ベンチレーテッドシュラウドの支持リブの意匠)。
+  'dsr-bp': (ctx) => {
+    const { boxP, C, metalParts, gauge, barLen, barCenterZ, BARREL_Y } = ctx;
+    for (const sx of [-1, 1] as const) {
+      for (let i = 0; i < 3; i += 1) {
+        boxP(metalParts, C.DARK, 0.026, 0.008, 0.018, sx * (gauge + 0.008), BARREL_Y + 0.012, barCenterZ + (i - 1) * barLen * 0.28, 0, 0, 0, 'flat');
+      }
+    }
   },
 };

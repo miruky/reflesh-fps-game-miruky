@@ -2,11 +2,12 @@
 // Matchのthisに依存しない、スポーン/チューニング/ゾンビ経済/LOD/無線などの判定・計算関数。
 // 公開面は match.ts の re-export シム経由でも従来どおり import できる。
 import { ZOMBIE_CROWD_INSTANCED } from '../render/zombie-crowd';
+import { penetrationFactor } from './ballistics';
 import type { BotKind, BotTier, BotTuning } from './bot';
 import type { RadioLine } from './campaign';
 import type { GameMode } from './modes';
 import type { PapTier } from './zombie-economy';
-import type { WeaponDef } from './weapons';
+import type { WeaponClass, WeaponDef } from './weapons';
 
 /**
  * ② BO2式スポーンスコアリング(純関数・テスト可能)。
@@ -130,7 +131,7 @@ export const EXT_MAG_EXCLUDED_IDS = new Set(['fists']);
 // このテーブルを介して明示的に設定する(viewmodel.setWeaponのキャッシュキー分離に必須)。
 export const PAP_CAMO_BY_TIER: ReadonlyArray<WeaponDef['papCamo']> = [undefined, 'pap1', 'pap2', 'pap3'];
 // 超鬼畜の敵チューニング倍率(純粋関数)。HP×3 / ダメージ×2.5 / 速度×1.3。
-// spawnBot が KIND_TUNING 合成の「後」に適用する(合成前だと達人600/巨躯1500の
+// spawnBot が KIND_TUNING 合成の「後」に適用する(合成前だと達人200/巨躯1500の
 // maxHp が KIND_TUNING の後勝ちで倍率を打ち消してしまうため)
 export function applyHellTuning(t: BotTuning): BotTuning {
   return {
@@ -183,6 +184,41 @@ export function papTierAfterWallBuy(currentlyHeld: boolean, currentTier: PapTier
 export function applyHellTierTuning(merged: BotTuning, tier: BotTier, kind: BotKind): BotTuning {
   const hell = applyHellTuning(merged);
   return tier === 'boss' && kind === 'zombie' ? { ...hell, maxHp: merged.maxHp } : hell;
+}
+
+// ── R59③: SR(sniperクラス)の無限貫通・連鎖 ────────────────────────────
+// プレイヤーのSR弾道は何にヒットしても停止しない: 敵は減衰なしで貫通して後ろの敵へ連鎖、
+// 壁は枚数無制限(減衰は累積するが下限0.35=遠くの敵にも致命傷が残る)。跳弾はなし。
+// bot側の射撃レイは不変(プレイヤー専用の爽快感=理不尽回避)。marksman(scope無しDMR)は
+// 対象外 — スコープSR(class==='sniper')だけの対物ライフル的ファンタジーとして差別化する。
+export const SNIPER_PIERCE_MIN_FACTOR = 0.35; // 壁N枚後の累積ダメージ係数の下限
+export const SNIPER_PIERCE_MAX_LEGS = 16; // 1弾道の最大レグ数(無限ループ防止)
+export const SNIPER_WALL_PROBE_M = 4.5; // SRの壁厚計測上限(m)。これ以上の厚み=地形級は停止
+export function sniperPiercesAll(cls: WeaponClass): boolean {
+  return cls === 'sniper';
+}
+// 壁1枚抜けるごとの累積係数更新。通常武器の penetrationFactor(厚み≥貫通力で0=停止)と違い、
+// SRは下限 SNIPER_PIERCE_MIN_FACTOR で必ず生き残る(=無限枚数貫通の数値保証)
+export function sniperWallDamageFactor(
+  prev: number,
+  thicknessM: number,
+  penetrationM: number,
+): number {
+  return Math.max(SNIPER_PIERCE_MIN_FACTOR, prev * penetrationFactor(thicknessM, penetrationM));
+}
+
+// ── R59④: SRの吸着部位選択 — “真の角度”最近接(頭バイアス排除) ─────────────
+// rankAimPoints の eff(angle−headバイアス0.4°)は微プルのタイブレーク用。吸着(磁力/スナップ)を
+// eff先頭で選ぶと遠距離(≈100m超)で頭が常勝になり自動HS化するため、吸着点だけは真の角度が
+// 最小の部位を選ぶ=「頭が明確に近い時だけ頭」。候補は呼び出し側で可視部位に絞って渡す。
+export function nearestPartByTrueAngle<T extends { angle: number }>(
+  cands: readonly T[],
+): T | null {
+  let best: T | null = null;
+  for (const c of cands) {
+    if (best === null || c.angle < best.angle) best = c;
+  }
+  return best;
 }
 
 // R53-W3 M3: 帝王溜めの段判定(純関数)。0.5/1.2/2.2sの閾値、段3=黒雷・天壊(黒雷帝限定)

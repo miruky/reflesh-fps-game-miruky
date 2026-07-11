@@ -118,16 +118,19 @@ function starsHtml(stars: number, big: boolean): string {
   return `<span class="${big ? 'u2c-stars-big' : 'u2c-stars'}" role="img" aria-label="評価 ${stars} / 3">${cells}</span>`;
 }
 
-// 下帯(mock03逐語)。Bキー側のボタンが data-id="back-to-hub" 契約
+// 下帯(mock03逐語)。戻る導線ボタンが data-id="back-to-hub" 契約。
+// R59②: 旧実装は左下の裸テキストボタン(高さ21px・面/枠なし)で導線が沈んでいた。
+// 全画面共通の「右下=Esc+メニューへ/戻る」プレート(.u2-menubtn/ui2.css)へ統一し、
+// 左のヒント群にはⒷバッジを純表示で残す(ゲームパッドBはmenu2のbackAction経由で実動)。
 function hintbarHtml(note: string, backLabel: string): string {
   return `
     <div class="u2c-hintbar">
       <div class="u2c-hints">
         <span><span class="u2c-key accent">A</span> 選択</span>
-        <button type="button" data-id="back-to-hub"><span class="u2c-key">B</span> ${esc(backLabel)}</button>
+        <span><span class="u2c-key">B</span> 戻る</span>
       </div>
       <span class="u2c-hint-note">${esc(note)}</span>
-      <div class="u2c-hints"><span>OPERATION <span style="color:#b08a66">//</span> CINDER</span></div>
+      <div class="u2c-hints"><span>OPERATION <span style="color:#b08a66">//</span> CINDER</span><button type="button" class="u2-menubtn" data-id="back-to-hub"><span class="u2-key-esc">Esc</span>${esc(backLabel)}</button></div>
     </div>`;
 }
 
@@ -253,7 +256,7 @@ export const mountCampaign: ScreenMount = (host, root) => {
     <div class="u2c-chapters" data-id="chapter-list">${chaptersHtml}</div>
     </div>
     <div style="position:absolute;right:0;top:0;transform-origin:top right;transform:scale(var(--u2s, 1));">${railHtml}</div>
-    ${hintbarHtml(`CINDER 鎮圧作戦 · 制圧率 ${Math.round((cleared / Math.max(1, totalMissions)) * 100)}%`, '戻る')}
+    ${hintbarHtml(`CINDER 鎮圧作戦 · 制圧率 ${Math.round((cleared / Math.max(1, totalMissions)) * 100)}%`, 'メニューへ')}
   `;
 
   root.querySelectorAll<HTMLButtonElement>('[data-mission]').forEach((btn) => {

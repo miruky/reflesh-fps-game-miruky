@@ -279,7 +279,7 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
         <span><span class="u2d-key">B</span> 戻る</span>
       </div>
       <span class="u2d-foot-mono">reFlesh · BUILD ${esc(host.buildLabel)}</span>
-      <button type="button" class="u2d-foot-menu" data-id="back-to-hub">☰ メニューへ</button>
+      <button type="button" class="u2d-foot-menu u2-menubtn" data-id="back-to-hub"><span class="u2-key-esc">Esc</span>メニューへ</button>
     </div>
   `;
 

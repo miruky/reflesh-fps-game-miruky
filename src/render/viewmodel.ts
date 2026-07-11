@@ -67,6 +67,11 @@ const BARREL_Y = 0.012;
 // ドリフトを構造的に防ぐ(どちらか片方だけ変更すると照準がズレるため)。
 const IRON_POST_Y = 0.075;
 const BEAD_FLOAT = 0.008;
+// R59: 火縄銃のビード狙点Y。旧式(BARREL_Y+0.020*0.6+BEAD_FLOAT=0.032)はレシーバ(火挟座)実上端
+// 0.041(chamferBox は bevel 分外へ拡張: h0.072+2*0.005)より低く、射線コリドーが自分のレシーバを
+// 貫通していた(全レイ遮蔽の実測)。レシーバ実上端+余裕へ持ち上げる。buildGunBody(musket 早期分岐の
+// 焼きビード)と resolveSightY(musket 短絡)の両方がこの定数を参照=ドリフト構造排除。
+const MUSKET_BEAD_Y = 0.05;
 // R58 サイト位置を動かす外装の狙点Y(単一真実源)。キャリーハンドル内蔵アイアンは
 // レシーバより高い位置に狙点が来る(FAMAS/SG-512)。buildGunBody(焼きドットY)と
 // resolveSightY(ADS収束契約値)が同じ CARRY_HANDLE_SIGHT_Y / sightYOverride を参照して
@@ -183,13 +188,34 @@ function resolveDetail(sil: Silhouette, def: WeaponDef): DetailSpec {
   };
 }
 
+// R59 SIGHT-CORE: 非 ar/lmg シルエット行(shotgun/smg/pistol .ts は並行担当のため本ラウンドでは
+// 行編集不可)への暫定 sightY 上書きテーブル。painter 造形が既定狙点の射線コリドー
+// (|x|<0.006, |y-sightY|<0.006, 眼→バレル前端)を塞ぐ機を「遮蔽物の上から覗く」高さへ持ち上げる。
+// 実測遮蔽(コリドー全数検証):
+//   shotgun-auto  (AA-12/fukurou) 低平トップハンドル barTop=0.105 → 0.112
+//   shotgun-double(USAS/raijin)   三角キャリングハンドル+照門塊 top=0.1445 → 0.152
+//   smg-uzi       (Uzi/mozu)      トップカバー後照星ガード top≈0.0705 → 0.08
+//   pistol-cz75   (CZ75/kawasemi) 露出スパーハンマー・パッド top≈0.095 → 0.104
+// 将来 MODEL-FLOAT のシルエット行が空いたら各 .ts の Silhouette.sightY へ移設する(挙動同一)。
+const MODEL_SIGHT_Y: Partial<Record<ModelKey, number>> = {
+  'shotgun-auto': 0.112,
+  'shotgun-double': 0.152,
+  'smg-uzi': 0.08,
+  'pistol-cz75': 0.104,
+};
+
 // R58 フレーム: サイト位置を動かす外装(キャリーハンドル等)の狙点Yオーバーライド。
-// buildGunBody(焼きドットY)と resolveSightY(契約値)が同一関数を参照=ドリフト構造排除。
-// 未指定(=Phase B の全 shipping 武器)は null を返し、従来のアイアン/ビードYが使われる。
-// Phase C が Silhouette.carryHandle を立てると、両呼び出し側が同じ CARRY_HANDLE_SIGHT_Y を返す。
-// 注: topMag='pan'/receiverStyle='tube' は ADS収束Y(=射線基準の高さ)を実質変えない
-//     (パンは側方/レシーバ形状差)ため Y オーバーライドは持たせない(painter が造形で対処)。
-export function sightYOverride(sil: Silhouette): number | null {
+// buildGunBody(焼きドット/耳/装着光学ハウジングY)と resolveSightY(契約値)が同一関数を参照=
+// ドリフト構造排除。未指定は null を返し、従来のアイアン/ビードYが使われる。
+// R59 優先順位: Silhouette.sightY(データ駆動) > MODEL_SIGHT_Y(暫定テーブル) > carryHandle 既定。
+// carryHandle 機(FAMAS/SG550)は R59 で sil.sightY=0.152 を明示(ハンドル上端 0.144 の上から覗く。
+// 旧 0.116 はハンドルトンネル内=「サイト見づらすぎ」のユーザー報告を受けた持ち上げ)。
+export function sightYOverride(sil: Silhouette, modelKey?: ModelKey): number | null {
+  if (sil.sightY !== undefined) return sil.sightY;
+  if (modelKey !== undefined) {
+    const v = MODEL_SIGHT_Y[modelKey];
+    if (v !== undefined) return v;
+  }
   if (sil.carryHandle && sil.carryHandle !== 'none') return CARRY_HANDLE_SIGHT_Y;
   return null;
 }
@@ -1152,11 +1178,12 @@ export function buildGunBody(
     const acbm = new THREE.Mesh(accentBand, accent);
     acbm.position.set(0, 0.0, 0.06);
     gun.add(acbm);
-    // ビード照準: bead Y = BARREL_Y + 0.020*0.6 + BEAD_FLOAT = 0.032(resolveSightY 契約)
+    // ビード照準: bead Y = MUSKET_BEAD_Y(resolveSightY 契約)
     // R49: BO3スタイルの浮遊マイクロドットへ統一(旧brassビード球+太い琥珀点を置換)。
     // R50: ベゼルリングはユーザー要望で撤去(円形不要、ドットのみ)。
     // R51: BEAD_FLOAT を加算しドットを浮かせる(視界改善)。
-    const beadY = BARREL_Y_M + 0.020 * 0.6 + BEAD_FLOAT;
+    // R59: 旧 0.032 はレシーバ上端 0.036 より低く射線が自分のレシーバを貫通 → 0.046 へ(定数共有)。
+    const beadY = MUSKET_BEAD_Y;
     const microMusket = getAccent(0xff3b1a);
     const microM = new THREE.Mesh(new THREE.SphereGeometry(0.0019, 8, 6), microMusket);
     microM.position.set(0, beadY, -0.156);
@@ -1723,37 +1750,10 @@ export function buildGunBody(
       d.position.set(x, y, z);
       gun.add(d);
     };
-    // 後照星の「耳」2本(参考画像のクワガタ型フレーム)+ 基部/先端の琥珀点。
-    // R50: 画像に寄せて長く(h 0.04→0.065)・細く(w 0.008→0.005/d 0.01→0.008)、
-    // ロール 0.34→0.18(画像の耳はほぼ垂直で先端がわずかに開く)。
-    // R51: ユーザー要望「ベゼル(クワガタ耳)を横に広く」— 耳X ±0.028→±0.038(寸法h/w/d/rollは不変、
-    // 新規リング/ベゼル形状は追加しない)。ドット上昇(IRON_POST_Y)に合わせ枠も追従させる:
-    // earPy 0.066→0.070 / full-rail 0.072→0.076。先端琥珀点は新しい耳先端へ追従
-    // (x = 0.038 + sin0.18*h/2 ≈ 0.044, y = earPy + cos0.18*h/2 ≈ earPy+0.03)。
-    // bead機(ショットガン)は前ビードがバレル上(高い)で耳と挟まないため耳を出さず単ドット構成に。
-    // R58 フレーム: carryHandle 機(FAMAS/SG-512)は内蔵アイアンがハンドル内へ上がる=耳を出さない
-    // (painter がハンドル+内蔵サイトを描く)。dormant(Phase B に carryHandle 武器は無い)。
-    const hasCarryHandle = sil.carryHandle !== undefined && sil.carryHandle !== 'none';
-    // R58 E1: 拳銃系(拳銃/機関拳銃/リボルバー)にはライフル式の保護ウイング(耳=クワガタ)は無い。
-    // 耳を出すと兎耳に見えるため抑止し、下の post 分岐でリアノッチ塊+銃口寄りブレードへ置換する。
-    if (det.iron !== 'bead' && !hasCarryHandle && !isPistolFamily) {
-      // full-rail機は耳を少し上げて上端レール線に枠を揃える(0.076)。他機は 0.070。
-      const earPy = det.railTop === 'full' ? 0.076 : 0.070;
-      for (const sx of [-1, 1] as const) {
-        // R55 W-C3 Fix-6: 耳の直下(y=BARREL_Y〜earPy)を埋める細いサイト基部を追加し、
-        // バレル/ハンドガードへ接地させる — 耳だけが本体から浮いた棒に見える問題の根治。
-        // 耳と同じ幅/奥行(0.005×0.008)・同じx/zでロール無しの縦ポストなので silhouette は不変。
-        boxP(
-          metalParts, 0x6a7e9a, 0.005, earPy - BARREL_Y, 0.008,
-          sx * 0.038, (BARREL_Y + earPy) / 2, -recD - 0.006,
-        );
-        // Fix-1: 後照星耳を明るいミリタリーグレー(0x6a7e9a)へ。暗ステージで照門が消える問題の根治
-        boxP(metalParts, 0x6a7e9a, 0.005, 0.065, 0.008, sx * 0.038, earPy, -recD - 0.006, 0, 0, sx * 0.18);
-        amberDot(sx * 0.031, 0.064, -recD - 0.009, 0.0024);
-        amberDot(sx * 0.044, earPy + 0.03, -recD - 0.009, 0.0024);
-      }
-    }
-    if (det.iron === 'bead') {
+    // R59 SIGHT-CORE: 持ち上げ狙点(sil.sightY / MODEL_SIGHT_Y / carryHandle)の解決。
+    // buildGunBody(焼きドット/耳Y)・光学ハウジングY・resolveSightY が同一関数=3点整合。
+    const ovSight = sightYOverride(sil, resolveModelKey(def));
+    if (det.iron === 'bead' && ovSight === null) {
       if (def.shape === 'launcher') {
         // ランチャー: マウンティングポスト+浮遊マイクロドット(R50: アパーチャリングは撤去=円形不要)。
         // ADS時にドット(y=0.088)が射線へ来る — resolveSightY 0.088 と一致させること。
@@ -1778,24 +1778,27 @@ export function buildGunBody(
     } else if (det.iron !== 'none') {
       // R49: 前照星の黒ポスト箱+太い琥珀ビードを撤去し、支柱なしで浮かぶマイクロドットへ統一
       // (BO3参考画像スタイル)。狙点=resolveSightY IRON_POST_Y に一致・凍結(x0/z0.14 は不変)。
-      // R50: ベゼルリング撤去 — 長く細くした耳の間に中央で浮かぶ。
       // R51: ユーザー要望「ドットをもう少し浮かせて」— 0.062→IRON_POST_Y(0.075)。
-      // R58 フレーム: carryHandle 機は狙点Yを CARRY_HANDLE_SIGHT_Y へ持ち上げる(resolveSightY と同一関数)。
-      // 未使用時は sightYOverride が null=IRON_POST_Y のまま(視覚不変)。
-      const dotY = sightYOverride(sil) ?? IRON_POST_Y;
+      // R59: 持ち上げ機(FAMAS/SG550/SCAR-H/AA-12/USAS/DP-29 等)は ovSight の高さで
+      // 「遮蔽物の上から覗く」。bead 機でも ovSight があればこの post 様式で描く(USAS)。
+      const dotY = ovSight ?? IRON_POST_Y;
       microDot(0, dotY, 0.14, 0.0021);
-      // R58 E1: 拳銃系は狙点マイクロドット(z0.14/Y0.075契約=不変)の直下へ「リアノッチ塊」を接地させ、
+      // R58 E1: 拳銃系は狙点マイクロドット(z0.14 契約=不変)の直下へ「リアノッチ塊」を接地させ、
       // 銃口寄りに小フロントブレードを立てる(ライフル式の耳=クワガタの代替)。塊は装飾(metalParts
       // へ merge=+0DC)でドットYには一切触れない=サイト契約維持。フロントブレードは開放スライド式のみ
       // 本体が描く(revolver は painter=paintGp100 が高ブレードを描くため二重にしない)。
       if (isPistolFamily) {
         const notchZ = 0.14; // 狙点ドットZ(契約)
         // リアノッチ土台: レシーバ/スライド後端 → ドット直下 を橋渡しして浮遊ドットを接地
+        // (CZ75 等の持ち上げ機は土台が自動で高くなり「フレーム上のリアサイトタワー」になる)
         const baseBot = Math.min(r.h / 2 - 0.004, dotY - 0.03);
         const baseTop = dotY - 0.006;
         const baseCz = (notchZ + recHalf) / 2;
         const baseDepth = notchZ - recHalf + 0.02;
-        boxP(metalParts, C_DARK, r.w * 0.6, baseTop - baseBot, baseDepth, 0, (baseTop + baseBot) / 2, baseCz, 0, 0, 0, 'flat');
+        // R59: 持ち上げ拳銃(CZ75=露出ハンマー越え 0.104)は土台が自動で高くなるため、幅を絞って
+        // 「リアサイトタワー」化(標的の遮蔽面積を減らす)。標準機(0.075)は従来幅=視覚不変。
+        const baseW = dotY > 0.09 ? r.w * 0.4 : r.w * 0.6;
+        boxP(metalParts, C_DARK, baseW, baseTop - baseBot, baseDepth, 0, (baseTop + baseBot) / 2, baseCz, 0, 0, 0, 'flat');
         // 角ノッチの左右壁(ドットを挟む極小2ポスト。ライフル式の長い耳ではない小塊)
         for (const sx of [-1, 1] as const) {
           boxP(metalParts, 0x6a7e9a, 0.007, 0.012, 0.014, sx * 0.014, dotY - 0.003, notchZ, 0, 0, 0, 'flat');
@@ -1803,6 +1806,46 @@ export function buildGunBody(
         // フロントブレード(スライド式のみ。銃口寄りのスライド上に立つ細い前照星)
         if (!sil.cylinder) {
           boxP(metalParts, C_DARK, 0.006, 0.018, 0.01, 0, BARREL_Y + 0.03, barFrontZ + 0.03, 0, 0, 0, 'flat');
+        }
+      } else if (dotY >= 0.1) {
+        // ── R59 リアタワー耳(大きく持ち上げた機: FAMAS/SG550/SCAR-H/AA-12/USAS/DP-29) ──
+        // 遮蔽物(キャリーハンドル/パンマグ/レシーバハンプ)の上に立つ後照星タワー。狙点ドット(z0.14)
+        // を挟む2本の細い照門耳+レシーバ天面まで届く支柱+耳をつなぐ下部ブリッジで確実に「接地」させる。
+        // 耳内側面 x≈0.0115 / ブリッジ上端 dotY-0.0195 は射線コリドー(|x|<0.006, |y-dotY|<0.006)の外。
+        const towerX = 0.0145;
+        const earPy = dotY - 0.005;
+        for (const sx of [-1, 1] as const) {
+          // 支柱: レシーバ天面 → 耳下部(z=0.14 はどの持ち上げ機でもレシーバ天面の上=必ず接地)
+          boxP(metalParts, 0x6a7e9a, 0.006, earPy - 0.02 - r.h / 2, 0.01, sx * towerX, (r.h / 2 + earPy - 0.02) / 2, 0.14);
+          // 照門耳(クワガタ様式のまま短く。先端がわずかに開くロール 0.10)
+          boxP(metalParts, 0x6a7e9a, 0.006, 0.05, 0.012, sx * towerX, earPy, 0.14, 0, 0, sx * 0.10);
+          // 琥珀点: 基部(ブリッジ端)+ 先端(耳の開き先)— 既存耳と同じ 2+2 構成
+          amberDot(sx * (towerX - 0.001), dotY - 0.016, 0.137, 0.0024);
+          amberDot(sx * (towerX + 0.0025), earPy + 0.025, 0.137, 0.0024);
+        }
+        // 下部ブリッジ(左右タワーを繋ぐ照門座。ドット直下=コリドー外)
+        boxP(metalParts, C_DARK, towerX * 2 + 0.006, 0.005, 0.012, 0, dotY - 0.022, 0.14, 0, 0, 0, 'flat');
+      } else {
+        // ── 前方ウイング耳(従来のクワガタ様式=標準機) ──
+        // R50: 長く(h 0.065)・細く、R51: 耳X ±0.038。R59 接地の根治:
+        //  (1) 耳列の z を「バレル前端より 0.03 内側」へクランプ(小型機で耳が銃口より前へ
+        //      浮いていた=何にも繋がらない棒に見えた)。
+        //  (2) 左右の基部支柱を繋ぐ「クロスバー」をバレル/ハンドガード上面に追加し、
+        //      サイトブロックとして本体へ物理的に接続(旧: 支柱がバレル脇の空中で終端)。
+        //  (3) 耳をわずかに厚く(w0.005→0.006 / d0.008→0.011)・ロール 0.18→0.14 でほぼ垂直へ
+        //      (「曲がった薄板」に見える問題の緩和)。
+        // full-rail機は耳を少し上げて上端レール線に枠を揃える(+0.006)。
+        const earPy = dotY - 0.005 + (det.railTop === 'full' ? 0.006 : 0);
+        const earZ = Math.max(-recD - 0.006, barFrontZ + 0.03);
+        const crossY = BARREL_Y + gauge * 0.5 + 0.0035;
+        boxP(metalParts, 0x6a7e9a, 0.082, 0.007, 0.012, 0, crossY, earZ); // 接地クロスバー
+        for (const sx of [-1, 1] as const) {
+          // 基部支柱(クロスバー端 → 耳基部)。耳と同じ幅/奥行で一体に見せる。
+          boxP(metalParts, 0x6a7e9a, 0.006, earPy - crossY, 0.011, sx * 0.038, (crossY + earPy) / 2, earZ);
+          // Fix-1: 後照星耳は明るいミリタリーグレー(0x6a7e9a)= 暗ステージでも照門が読める
+          boxP(metalParts, 0x6a7e9a, 0.006, 0.065, 0.011, sx * 0.038, earPy, earZ, 0, 0, sx * 0.14);
+          amberDot(sx * 0.031, dotY - 0.011, earZ - 0.003, 0.0024);
+          amberDot(sx * 0.0425, earPy + 0.032, earZ - 0.003, 0.0024);
         }
       }
     }
@@ -2197,9 +2240,10 @@ export function buildGunBody(
   if (sil.scope === null) {
     const om = OPTIC_SPECS[resolveOpticId(def)];
     if (om) {
-      // R58 E1後続: carryHandle 機は光学をハンドル最上面(0.116)へ(resolveSightY と同一の
-      // sightYOverride 参照=描画Y↔ADS収束Yドリフト無し。Phase D: ハンドル下潜り不可視の根治)
-      const sy = sightYOverride(sil) ?? om.sightY;
+      // R58 E1後続/R59: 持ち上げ機(sil.sightY/テーブル/carryHandle)は装着光学も同じ狙点Yへ
+      // マウントする(resolveSightY と同一の sightYOverride 参照=描画Y↔ADS収束Yドリフト無し。
+      // 遮蔽物の下に光学が潜って不可視/遮蔽になる問題の根治)。
+      const sy = sightYOverride(sil, resolveModelKey(def)) ?? om.sightY;
       switch (om.housing) {
         case 'reflex': {
           // 開口フレーム(底レール+上リム+左右ピラー)。bore を塞がず素通し。
@@ -2240,16 +2284,26 @@ export function buildGunBody(
         }
         case 'delta': {
           // デルタ(プリズム)サイト: コンパクト本体+上レール+etchedレティクル。
-          bakeAt(metalParts, chamferBox(0.038, 0.05, 0.05, 0.004), C_DARK, 0, sy - 0.01, 0.05);
-          boxP(metalParts, C_RIM, 0.038, 0.006, 0.05, 0, sy + 0.016, 0.05, 0, 0, 0, 'flat');
+          // R59: 旧・中実 chamferBox(0.038,0.05,0.05)が照準面 sy を跨ぎ、ADS射線を全武器で
+          // 完全に塞いでいた(コリドー全数検証 9/9 遮蔽)→ 底ベース+左右プリズム胴+上レールの
+          // 開放「窓」構造へ再構成(bore |x|<0.012, |y-sy|<0.021 を開放)。
+          boxP(metalParts, C_DARK, 0.038, 0.014, 0.05, 0, sy - 0.028, 0.05, 0, 0, 0, 'flat'); // 底ベース
+          for (const sx of [-1, 1] as const) {
+            boxP(metalParts, C_DARK, 0.007, 0.05, 0.05, sx * 0.0155, sy - 0.003, 0.05, 0, 0, 0, 'flat'); // プリズム胴(左右)
+          }
+          boxP(metalParts, C_RIM, 0.038, 0.006, 0.05, 0, sy + 0.024, 0.05, 0, 0, 0, 'flat'); // 上レール
           // R13: レンズ/ドットは筐体の射手側面(z≈0.075)より手前へ。ソリッド箱に潜ると
           // 不透明筐体が先に深度を書き、depthTestでドット断片が破棄されて見えなくなる
           reflexDotWindow(sy, 0.014, OPTIC_DOT_SIZE, 0.09); // R57⑧: アイアン風の極小ドットへ統一
           break;
         }
         case 'canted': {
-          // カンテッド(副照準): 左へ僅かにロールした小型ハウジング。ADS整合のため dot は sy 中心。
-          bakeAt(metalParts, chamferBox(0.03, 0.03, 0.04, 0.003), C_DARK, 0, sy - 0.006, 0.055, 0, 0, 0.5);
+          // カンテッド(副照準): 傾き意匠の小型ハウジング。ADS整合のため dot は sy 中心。
+          // R59: 旧・中実 chamferBox(0.03,0.03,0.04, ロール0.5)が照準面 sy を跨ぎ全武器で射線を
+          // 塞いでいた → 開放Cフレーム(ロールした底ベース+垂直サイドピラー+ロールした上フード)。
+          boxP(metalParts, C_DARK, 0.028, 0.01, 0.04, 0, sy - 0.02, 0.055, 0, 0, 0.5, 'flat'); // 底ベース(傾き)
+          boxP(metalParts, C_DARK, 0.006, 0.034, 0.04, 0.0145, sy - 0.002, 0.055, 0, 0, 0, 'flat'); // サイドピラー
+          boxP(metalParts, C_DARK, 0.026, 0.005, 0.04, 0, sy + 0.019, 0.055, 0, 0, 0.5, 'flat'); // 上フード(傾き)
           // R13: dz を筐体の射手側面(z≈0.075)より手前へ出しドット埋没(深度オクルージョン)を回避
           reflexDotWindow(sy, 0.01, OPTIC_DOT_SIZE, 0.088); // R57⑧: アイアン風の極小ドットへ統一
           break;
@@ -2301,8 +2355,8 @@ export function buildGunBody(
   // ── 着脱テレスコピック(レジストリ外レガシー・倍率マグ)── ③透過根治
   // 主筒 openEnded + 前後リング中空アニュラス + glassScope レンズで覗いて背後が透ける。
   if (attachments.includes('telescopic') && sil.scope === null) {
-    // R58 E1後続: carryHandle 機はテレスコピックもハンドル最上面へ(resolveSightY と同一参照)
-    const ty = sightYOverride(sil) ?? 0.08;
+    // R58 E1後続/R59: 持ち上げ機はテレスコピックも同じ狙点Yへ(resolveSightY と同一参照)
+    const ty = sightYOverride(sil, resolveModelKey(def)) ?? 0.08;
     const tr = 0.026;
     const tube = new THREE.CylinderGeometry(tr, tr, 0.14, 16, 1, true);
     bakeAt(metalParts, tube, C_DARK, 0, ty, 0.0, Math.PI / 2, 0, 0, 'gradY');
@@ -2386,6 +2440,7 @@ export function buildGunBody(
 //   iron bead                → BARREL_Y + gauge*0.6 + BEAD_FLOAT (buildGunBody アイアンサイト bead microDot(…, beadY, …). R51でBEAD_FLOAT(+0.008)を加算)
 //   iron post(fixed/flip/ghost)→ IRON_POST_Y(0.075)  (buildGunBody 前照星 microDot(0, IRON_POST_Y, 0.14, …)。R51でユーザー要望によりドットを浮かせる(旧0.062))
 //   launcher ghost-ring        → 0.088               (buildGunBody launcher: amberDot(0, 0.088, …) ゴーストリング中心。R51では変更なし)
+//   R59 持ち上げ機             → sightYOverride      (sil.sightY / MODEL_SIGHT_Y / carryHandle。bead機(USAS)でも優先=post様式へ)
 export function resolveSightY(def: WeaponDef): number {
   if (def.shape === 'fists') return 0;
   // R33 特殊形状(早期分岐): 照準線を射線中心(0)に固定してADS時に武器ジオメトリが射線へ寄る。
@@ -2397,14 +2452,15 @@ export function resolveSightY(def: WeaponDef): number {
   const sil = resolveSilhouette(def);
   // R58 E1: 火縄銃(musket)は buildGunBody が早期分岐でビードのみ描き、光学ハウジング/
   // ironSuppressedByOptic へ未到達。optics.ts で musket を光学非適合にした(幻レティクル根絶)ため、
-  // ここでも装着光学を無視し常に物理ビードY(BARREL_Y + gauge*0.6 + BEAD_FLOAT = 0.032)を返す。
+  // ここでも装着光学を無視し常に物理ビードY(MUSKET_BEAD_Y)を返す。
   // これで光学装着時に OPTIC_SPECS(0.08)へドリフトしていた48mmズレを構造的に排除する(ADS収束Y=焼きビードY)。
-  if (def.shape === 'musket') return BARREL_Y + sil.barrelGauge * 0.6 + BEAD_FLOAT;
-  // R58 E1後続: carryHandle 機(FAMAS/SG550)は光学もキャリーハンドル最上面(0.116)へマウントする
-  // (Phase D: ハンドル下に光学が潜って不可視だった)。housing 側も同じ sightYOverride を参照する
-  // ため、装着光学の描画Y=ADS収束Y=0.116 の3点が構造的に一致(ドリフト無し)。
-  // carryHandle を立てる sil は内蔵 scope を持たない(ar-famas/ar-sg550 のみ)ので scope 機と干渉しない。
-  const ovCarry = sightYOverride(sil);
+  // R59: 旧 0.032 は火挟座レシーバ(上端0.036)を射線が貫通していたため 0.046 へ(定数は焼きビードと共有)。
+  if (def.shape === 'musket') return MUSKET_BEAD_Y;
+  // R58 E1後続/R59: 持ち上げ機(sil.sightY / MODEL_SIGHT_Y / carryHandle)は、アイアン狙点も
+  // 装着光学マウントも同じ高さへ上がる(buildGunBody の焼きドット/耳/ハウジングと同一の
+  // sightYOverride を参照=描画Y↔ADS収束Yの3点が構造的に一致・ドリフト無し)。
+  // 持ち上げ機は内蔵 scope を持たない(scope 機に sightY を設定しない契約)ので scope 機と干渉しない。
+  const ovCarry = sightYOverride(sil, resolveModelKey(def));
   if (ovCarry !== null) return ovCarry;
   // 光学(内蔵スコープ/着脱reflex/holo/…)は OPTIC_SPECS.sightY を単一真実源に。
   // 内蔵スコープは resolveOpticId が shape から scope-dmr/sniper/dsr を最優先で返す。

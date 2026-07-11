@@ -128,6 +128,10 @@
 .u2a-headings {
   display: flex;
   flex-direction: column;
+  /* R59①: 既定のalign-items:stretchだとキッカー行のboxがタイトル行(ビュー切替で44px特大題が
+     移動し幅が変わる)へ追随して伸縮していた。テキストは左寄せで見た目は同一のため、
+     shrink-wrap化して各行のboxをビュー切替に依らず不変にする(bbox実測の安定化)。 */
+  align-items: flex-start;
   gap: 4px;
 }
 .u2a-kicker {
@@ -235,13 +239,16 @@
   outline: 2px solid #ffa061;
   outline-offset: -3px;
 }
+/* R59①: 旧実装は選択時に padding 0 34px + font-size 16.5px を与えており、選択タブの幅が
+   約+11px変わって後続タブ帯全体が横ズレするリフローの真因だった(軽機関銃選択で実測
+   Δx=-11.33px)。選択状態で box サイズを1pxも変えない鉄則に従い、寸法系(padding/font-size)は
+   非選択と完全同値のまま触らず、強調は面(橙グラデ)/色/インセット光のみで行う。
+   font-weight 800 は CJK ラベル(全角等幅)のため幅不変 — playwright 実測で bbox 不変を確認済み。 */
 .u2a-tab.on {
   position: relative;
-  padding: 0 34px;
   background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
   color: #1a0b04;
   font-weight: 800;
-  font-size: 16.5px;
   box-shadow: inset 0 1px 0 rgba(255, 220, 190, 0.5);
 }
 .u2a-tab .u2a-tab-n {
@@ -339,9 +346,12 @@
   outline: 2px solid #ffa061;
   outline-offset: 2px;
 }
+/* R59①: 旧実装は選択行だけ height 84px(+8px)で、選択のたびに下の行全部が縦ズレしていた。
+   高さは非選択と同値(76px)に固定し、border は none ではなく transparent 1px を予約して
+   box-sizing に依らず外形を完全一致させる。強調は面/影のみ。 */
 .u2a-row.on {
-  height: 84px;
-  border: none;
+  height: 76px;
+  border: 1px solid transparent;
   background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
   box-shadow:
     0 8px 26px rgba(0, 0, 0, 0.5),
@@ -377,9 +387,9 @@
   width: 100%;
   height: 100%;
 }
+/* R59①: 選択時のシルエット拡大(146→158px)/銘の増量(17→19px)は行内の文字・マーカー位置を
+   横ズレさせるため撤去。ピクセル差分は選択ハイライト(色)のみに限定する。 */
 .u2a-row.on .u2a-sil {
-  width: 158px;
-  height: 59px;
   color: #2a1508;
 }
 .u2a-row.locked .u2a-sil {
@@ -401,7 +411,6 @@
 }
 .u2a-row.on .u2a-wname {
   font-weight: 800;
-  font-size: 19px;
   color: #1a0b04;
 }
 .u2a-row.locked .u2a-wname {
@@ -894,6 +903,7 @@
 }
 .u2a-band-hints {
   display: flex;
+  align-items: center;
   gap: 24px;
   font-size: 12.5px;
   color: #b9bec5;
@@ -901,6 +911,11 @@
 .u2a-band-hints b {
   font-weight: 400;
   color: #ffb98a;
+}
+/* R59②: 下帯右端の共有導線ボタン(ui2.cssの.u2-menubtn)。帯自体はpointer-events:noneの
+   ヒント帯なので、ボタンだけ実クリック可能へ戻す(全画面「右下=メニューへ」の配置統一)。 */
+.u2a-band-hints .u2-menubtn {
+  pointer-events: auto;
 }
 
 /* 投擲物ビュー: 詳細領域は説明のみ(レンダー/性能/カモ/スロットを隠す) */

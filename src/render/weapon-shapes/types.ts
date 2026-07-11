@@ -116,6 +116,13 @@ export interface Silhouette {
   //   前進させる量(m・前方=正)。viewmodel が muzzleZ を算出後 `muzzleZ -= muzzleExtend` で加味する
   //   (サプ/コンペ装着時は painter マズルが skip されるため適用しない=z<0 契約は不変)。→FAMAS/AWM/MP5SD/SVD。
   muzzleExtend?: number;
+  // R59 SIGHT-CORE: データ駆動の狙点Y上書き(m)。painter 造形(キャリーハンドル/パンマグ/レシーバ
+  //   ハンプ等)が既定狙点(IRON_POST_Y 0.075 / 光学 0.08 等)の射線コリドーを塞ぐ機で、「遮蔽物の
+  //   上から覗く」高さへ持ち上げる。viewmodel の sightYOverride が最優先で参照し、
+  //   buildGunBody(焼きドット/耳/装着光学ハウジングY)と resolveSightY(ADS収束Y)の3点が
+  //   構造的に一致する(ドリフト排除)。carryHandle の既定 0.116 より優先される。
+  //   ※内蔵 scope 機(sil.scope 非null)には設定しないこと(スコープ管Yが単一真実源)。
+  sightY?: number;
 }
 
 // シルエット行(寸法)から導出する「造形ディテール」。resolveDetail(viewmodel) が生成する。

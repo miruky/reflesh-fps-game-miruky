@@ -242,6 +242,11 @@ import {
   HOSTILE_SLASH_DAMAGE,
   refundRound,
   shurikenDiscLife,
+  nearestPartByTrueAngle,
+  sniperPiercesAll,
+  sniperWallDamageFactor,
+  SNIPER_PIERCE_MAX_LEGS,
+  SNIPER_WALL_PROBE_M,
 } from './match-helpers';
 import {
   planPropVisualsV2,
@@ -880,6 +885,9 @@ export class Match {
   // 修羅ミニガン
   private minigunCurrentRpm = 0;
   private minigunSpinWasActive = false;
+  // R59①: トリガーを離してからの経過秒。MINIGUN_HOLD_GRACE_S(0.8s)未満はバレル回転を維持し、
+  // 再押下で即発射できる(実ミニガンのバレル慣性)。Infinity=猶予外(初期状態/武器切替後)
+  private minigunSinceReleasedS = Infinity;
   // スタン追跡(天雷杖AoE)
   private readonly botStunUntil = new WeakMap<import('./bot').Bot, number>();
   // 手裏剣ディスク visual(life=F8: hitscan着弾距離でクランプした飛行寿命s)
@@ -3371,8 +3379,16 @@ export class Match {
     // ── R33 修羅スピンアップ/ダウン ──
     if (weapon.def.special === 'minigun') {
       const triggerHeld = this.input.fireDown() && this.player.alive && !this.player.sprinting;
+      // R59①: スピン維持猶予を配線(minigunNextRpm 第4引数、R54-F8' E2で設計済み・未配線だった)。
+      // 離した直後0.8sはRPMを保留=指切り/リロード確認で回転を失わない「本物のミニガン」挙動
+      this.minigunSinceReleasedS = triggerHeld ? 0 : this.minigunSinceReleasedS + dt;
       const prevRpm = this.minigunCurrentRpm;
-      this.minigunCurrentRpm = minigunNextRpm(this.minigunCurrentRpm, dt, triggerHeld);
+      this.minigunCurrentRpm = minigunNextRpm(
+        this.minigunCurrentRpm,
+        dt,
+        triggerHeld,
+        this.minigunSinceReleasedS,
+      );
       this.viewModel.setMinigunSpin(this.minigunCurrentRpm / 1800);
       if (prevRpm < 50 && this.minigunCurrentRpm >= 50 && !this.minigunSpinWasActive) {
         this.sounds.minigunSpin(true);
@@ -3383,6 +3399,8 @@ export class Match {
         this.sounds.minigunSpin(false);
       }
     } else if (this.minigunCurrentRpm > 0) {
+      // 武器切替中は猶予なしで即減衰(従来挙動)。猶予状態も破棄して持ち帰りを防ぐ
+      this.minigunSinceReleasedS = Infinity;
       this.minigunCurrentRpm = minigunNextRpm(this.minigunCurrentRpm, dt, false);
       this.viewModel.setMinigunSpin(this.minigunCurrentRpm / 1800);
       // F6: 切替後スピンダウン完了時に音/フラグを同期
@@ -3680,8 +3698,10 @@ export class Match {
         this.player.yaw += delta.dYaw;
         pitch += delta.dPitch;
         this.aimAssistEngaged = true;
-        // 弾道補正/スナップは頭ではなく胸(中心質量)に固定する。磁力による自動
-        // ヘッドショット化を防ぎ、頭はあくまで“狙えば寄る”ソフトプルの範疇に留める
+        // 弾道補正/スナップは通常武器では頭ではなく胸(中心質量)に固定する。磁力による自動
+        // ヘッドショット化を防ぎ、頭はあくまで“狙えば寄る”ソフトプルの範疇に留める。
+        // R59④ SR(sniperクラス)のみ“クロスヘアに最も近い可視部位”へ — 頭が明確に近ければ
+        // 頭に吸着する(胴へ引っ張られる違和感の根治。真の角度比較なので頭常勝にはならない)
         const eyeNow = this.player.eyePosition;
         const bp = target.bot.position;
         const chest = this._aimScratch.set(
@@ -3690,16 +3710,24 @@ export class Match {
           bp.z - eyeNow.z,
         );
         const chestDist = chest.length();
-        const chestDir =
+        let aimDir =
           chestDist > 1e-4 ? chest.clone().multiplyScalar(1 / chestDist) : target.dir.clone();
-        this.aimAssistTargetDir = chestDir;
+        let aimDist = chestDist;
+        if (weapon.def.class === 'sniper') {
+          const np = this.sniperNearestPartAim(target.bot, weapon.def.range);
+          if (np) {
+            aimDir = np.dir;
+            aimDist = np.dist;
+          }
+        }
+        this.aimAssistTargetDir = aimDir;
         this.aimAssistTargetAngle = Math.acos(
-          THREE.MathUtils.clamp(this.cameraForward().dot(chestDir), -1, 1),
+          THREE.MathUtils.clamp(this.cameraForward().dot(aimDir), -1, 1),
         );
-        this.aimAssistTargetDist = chestDist;
-        // スコープ覗き込み直後の窓(0.4s以内)で対象が索敵円錐内なら、1回だけスナップ補正(胸へ)。
-        // スコープADS時に限定することで、非スコープ武器/ゲームパッドの腰だめで毎フレーム
-        // 発火して胴ロック化する不具合を防ぐ(クイックスコープ専用)。
+        this.aimAssistTargetDist = aimDist;
+        // スコープ覗き込み直後の窓(0.4s以内)で対象が索敵円錐内なら、1回だけスナップ補正
+        // (通常=胸へ、SR=最近接部位へ)。スコープADS時に限定することで、非スコープ武器/
+        // ゲームパッドの腰だめで毎フレーム発火して胴ロック化する不具合を防ぐ(クイックスコープ専用)。
         if (
           weapon.def.scope === true &&
           weapon.adsProgress > 0.5 &&
@@ -3707,10 +3735,10 @@ export class Match {
           this.adsEntryElapsed < 0.4 &&
           target.angle < ACQUIRE_CONE_DEG * DEG
         ) {
-          const chestYaw = Math.atan2(-chestDir.x, -chestDir.z);
-          const chestPitch = Math.asin(THREE.MathUtils.clamp(chestDir.y, -1, 1));
-          const dYaw = wrapAngle(chestYaw - this.player.yaw);
-          const dPitch = chestPitch - pitch;
+          const aimYaw = Math.atan2(-aimDir.x, -aimDir.z);
+          const aimPitch = Math.asin(THREE.MathUtils.clamp(aimDir.y, -1, 1));
+          const dYaw = wrapAngle(aimYaw - this.player.yaw);
+          const dPitch = aimPitch - pitch;
           const err = Math.hypot(dYaw, dPitch);
           if (err > 1e-6) {
             const f = snapPulse(err, this.settings.aimAssistStrength) / err;
@@ -5041,26 +5069,34 @@ export class Match {
         ? Math.min(SNIPER_SNAP_CONE_DEG * DEG, Math.atan(4 / snapCand.dist))
         : SNIPER_SNAP_CONE_DEG * DEG;
       if (snapCand && snapCand.angle <= effSnapConeRad) {
-        const bp = snapCand.bot.position;
-        const chest = new THREE.Vector3(bp.x, bp.y + 0.15, bp.z);
-        // V32修正: 胸点が遮蔽されている(頭出しだけの敵)なら可視エイム点へフォールバック
-        // (胸へ曲げて壁に吸われる=「絶対当たる」の逆効果を防ぐ)
-        const chestBlocked = this.castRay(
-          origin,
-          chest.clone().sub(origin).normalize(),
-          origin.distanceTo(chest) - 0.4,
-          this.player.body,
-          (c) => {
-            const k = this.tags.get(c.handle)?.kind;
-            return k === 'world' || k === 'boundary';
-          },
-        );
-        if (chestBlocked) {
-          base = snapCand.dir.clone().normalize(); // 可視部位(頭出し等)へのスナップ
+        if (weapon.def.class === 'sniper') {
+          // R59④: 胴固定スナップを廃止 — クロスヘアと真の角度が最小の“可視”部位へ。
+          // 頭が明確に近ければ頭に当たる(狙いの正当な報酬)、胴が近ければ従来どおり胴。
+          // 部位ごとに可視判定済みなので壁に吸われるケースもない(旧chestBlockedを包含)
+          const np = this.sniperNearestPartAim(snapCand.bot, weapon.def.range);
+          base = (np ? np.dir : snapCand.dir).clone().normalize();
         } else {
-          const snapVec = chest.clone().sub(origin);
-          const snapLen = snapVec.length();
-          if (snapLen > 1e-4) base = snapVec.multiplyScalar(1 / snapLen);
+          const bp = snapCand.bot.position;
+          const chest = new THREE.Vector3(bp.x, bp.y + 0.15, bp.z);
+          // V32修正: 胸点が遮蔽されている(頭出しだけの敵)なら可視エイム点へフォールバック
+          // (胸へ曲げて壁に吸われる=「絶対当たる」の逆効果を防ぐ)
+          const chestBlocked = this.castRay(
+            origin,
+            chest.clone().sub(origin).normalize(),
+            origin.distanceTo(chest) - 0.4,
+            this.player.body,
+            (c) => {
+              const k = this.tags.get(c.handle)?.kind;
+              return k === 'world' || k === 'boundary';
+            },
+          );
+          if (chestBlocked) {
+            base = snapCand.dir.clone().normalize(); // 可視部位(頭出し等)へのスナップ
+          } else {
+            const snapVec = chest.clone().sub(origin);
+            const snapLen = snapVec.length();
+            if (snapLen > 1e-4) base = snapVec.multiplyScalar(1 / snapLen);
+          }
         }
       }
     }
@@ -5125,7 +5161,8 @@ export class Match {
         this.effects.shurikenImpact(result.point);
       }
     }
-    // 1トリガーで2体以上 = コラテラル(ショットガンのペレット拡散でのみ成立)
+    // 1トリガーで2体以上 = コラテラル(ショットガンのペレット拡散、R59③からはSRの
+    // 敵貫通連鎖でも成立=一直線の敵を1発で撃ち抜くとコラテラルメダルが自然に乗る)
     if (kills >= 2) {
       const out: MedalEvent[] = [];
       this.tracker.onCollateral(kills, out);
@@ -5134,7 +5171,11 @@ export class Match {
     return nearestHit;
   }
 
-  // 1本の弾道を追う。世界ジオメトリに当たった場合は貫通力の範囲で1枚だけ抜ける
+  // 1本の弾道を追う。世界ジオメトリに当たった場合は貫通力の範囲で壁を抜ける。
+  // 通常武器: 従来どおり壁1枚のみ・bot/標的ヒットで停止(挙動不変)。
+  // R59③ SR(sniperクラス): 何にヒットしても停止しない — 敵は減衰なしで貫通して後ろの敵へ
+  // 連鎖(部位判定は各ヒットごと)、壁は枚数無制限(累積減衰に下限0.35)、死体/訓練標的/味方も
+  // 素通し。跳弾はなし。bot側の射撃レイ(botFire)は不変=プレイヤー専用の爽快感。
   private tracePellet(
     origin: THREE.Vector3,
     dir: THREE.Vector3,
@@ -5143,64 +5184,104 @@ export class Match {
     trainingResults?: Map<TrainingTarget, { damage: number; headshot: boolean; point: THREE.Vector3 }>,
   ): void {
     const weapon = this.activeWeapon;
+    const pierceAll = sniperPiercesAll(weapon.def.class);
+    const maxLegs = pierceAll ? SNIPER_PIERCE_MAX_LEGS : 2;
     let from = origin.clone();
     let tracerFrom = muzzle;
     let remainingRange = weapon.def.range;
     let traveled = 0;
     let damageFactor = 1;
+    // R59③: 貫通済みコライダーの恒久除外セット。同一bot(胴→頭)の多重ヒットと
+    // ゼロ前進による無限ループを構造的に防ぐ(maxLegs上限と二重の安全網)
+    const pierced = new Set<number>();
 
     // 契約(line ~537): boundary(ghost壁)は弾/視線/斬撃が素通りする。predicateでレイから
     // 完全に除外し、境界の奥にある本当の着弾(またはレンジ切れ)まで貫通させる
     // (playerCanSee/hasLineOfSightと同じ除外原則。以前はboundaryヒットで弾道を打ち切って
     // いたため、この関数だけ契約上の「素通り」に反していた=R57 ⑥任意LOW)
-    const notBoundary = (c: RAPIER.Collider): boolean => this.tags.get(c.handle)?.kind !== 'boundary';
+    const passRay = (c: RAPIER.Collider): boolean =>
+      this.tags.get(c.handle)?.kind !== 'boundary' && !pierced.has(c.handle);
 
-    for (let leg = 0; leg < 2; leg += 1) {
-      const hit = this.castRayWithNormal(from, dir, remainingRange, this.player.body, notBoundary);
+    for (let leg = 0; leg < maxLegs; leg += 1) {
+      const hit = this.castRayWithNormal(from, dir, remainingRange, this.player.body, passRay);
       const end = hit
         ? from.clone().addScaledVector(dir, hitToi(hit))
         : from.clone().addScaledVector(dir, remainingRange);
       this.effects.tracer(tracerFrom, end, weapon.def.tracerColor);
       this.killcam.recordShot(tracerFrom, end, weapon.def.tracerColor, this.elapsed);
       if (!hit) return;
+      const toi = hitToi(hit);
+
+      // SR連鎖: 非worldヒットを素通しして弾道を継続する共通処理
+      const advanceThrough = (): void => {
+        traveled += toi;
+        remainingRange = Math.max(0, remainingRange - toi);
+        from = end.clone().addScaledVector(dir, 0.01);
+        tracerFrom = from;
+      };
 
       const tag = this.tags.get(hit.collider.handle);
       if (tag?.kind === 'trainingTarget' && !tag.target.isDown && trainingResults) {
-        const distance = traveled + hitToi(hit);
+        const distance = traveled + toi;
         const base = damageAtDistance(weapon.def.damage, distance, weapon.def.falloff);
-        const damage = base * (tag.part === 'head' ? (weapon.def.headshotMultiplier ?? 2) : 1);
+        // damageFactor(壁減衰)はSRの連鎖時のみ適用(通常武器の従来挙動=満額を不変に保つ)
+        const damage =
+          base *
+          (tag.part === 'head' ? (weapon.def.headshotMultiplier ?? 2) : 1) *
+          (pierceAll ? damageFactor : 1);
         const entry = trainingResults.get(tag.target) ?? { damage: 0, headshot: false, point: end };
         entry.damage += damage;
         entry.headshot = entry.headshot || tag.part === 'head';
         entry.point = end;
         trainingResults.set(tag.target, entry);
-        return;
+        if (!pierceAll) return;
+        // 訓練標的も貫通対象(後ろの標的へ連鎖)
+        pierced.add(tag.target.bodyCollider.handle);
+        pierced.add(tag.target.headCollider.handle);
+        advanceThrough();
+        continue;
       }
       if (tag?.kind === 'bot' && tag.bot.alive) {
-        // 味方への誤射はダメージなしで弾が止まる
-        if (tag.bot.team === PLAYER_TEAM) return;
-        const distance = traveled + hitToi(hit);
-        let part: HitPart = tag.part;
-        // 高さによる部位再分類は人型のみ。戦車/ドローン等は車体下部が「脚」扱いで
-        // 減衰しないようbody満額を維持する(弱点=headコライダーは別枠で成立)
-        if (part === 'body' && (tag.bot.kind === 'humanoid' || tag.bot.kind === 'master' || tag.bot.kind === 'giant')) {
-          part = partFromHitHeight(end.y - tag.bot.position.y, HIP_OFFSET_Y);
+        if (tag.bot.team === PLAYER_TEAM) {
+          // 味方への誤射はダメージなし。通常武器は弾が止まる(従来)、SRは素通しで奥へ
+          if (!pierceAll) return;
+        } else {
+          const distance = traveled + toi;
+          let part: HitPart = tag.part;
+          // 高さによる部位再分類は人型のみ。戦車/ドローン等は車体下部が「脚」扱いで
+          // 減衰しないようbody満額を維持する(弱点=headコライダーは別枠で成立)
+          if (part === 'body' && (tag.bot.kind === 'humanoid' || tag.bot.kind === 'master' || tag.bot.kind === 'giant')) {
+            part = partFromHitHeight(end.y - tag.bot.position.y, HIP_OFFSET_Y);
+          }
+          const base = damageAtDistance(weapon.def.damage, distance, weapon.def.falloff);
+          const damage = base * partMultiplier(part, weapon.def.headshotMultiplier) * damageFactor;
+          const entry = results.get(tag.bot) ?? {
+            damage: 0,
+            headshot: false,
+            point: end,
+          };
+          entry.damage += damage;
+          entry.headshot = entry.headshot || part === 'head';
+          entry.point = end;
+          results.set(tag.bot, entry);
+          if (!pierceAll) return;
         }
-        const base = damageAtDistance(weapon.def.damage, distance, weapon.def.falloff);
-        const damage = base * partMultiplier(part, weapon.def.headshotMultiplier) * damageFactor;
-        const entry = results.get(tag.bot) ?? {
-          damage: 0,
-          headshot: false,
-          point: end,
-        };
-        entry.damage += damage;
-        entry.headshot = entry.headshot || part === 'head';
-        entry.point = end;
-        results.set(tag.bot, entry);
-        return;
+        // SR: このbotの全コライダーを除外して継続=胴→頭の二重ヒット防止+後ろの敵へ連鎖
+        // (敵体の貫通はダメージ減衰なし=コラテラルの爽快感を最大化)
+        pierced.add(tag.bot.bodyCollider.handle);
+        pierced.add(tag.bot.headCollider.handle);
+        for (const c of tag.bot.extraColliders) pierced.add(c.handle);
+        advanceThrough();
+        continue;
       }
 
-      if (tag?.kind !== 'world' || !hit.normal) return;
+      if (tag?.kind !== 'world' || !hit.normal) {
+        // 死体など非worldタグ: 通常武器は停止(従来)、SRは素通し
+        if (!pierceAll) return;
+        pierced.add(hit.collider.handle);
+        advanceThrough();
+        continue;
+      }
       this.effects.impact(end, new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z));
       // 着弾の材質音: 法線が上向きなら床、それ以外は壁(遮蔽物)の材質で鳴らす
       const ip = this.panAndDistance(end);
@@ -5209,28 +5290,37 @@ export class Match {
       // 破壊可能プロップへのダメージ: 武器ダメージの50%を適用
       this.applyPropDamage(hit.collider.handle, weapon.def.damage * 0.5);
 
-      if (leg > 0 || weapon.def.penetrationM <= 0) return;
+      if (!pierceAll && (leg > 0 || weapon.def.penetrationM <= 0)) return;
 
-      // 壁の厚みを反対側から測る。貫通力以下なら減衰した弾が抜ける
-      const maxDepth = weapon.def.penetrationM;
+      // 壁の厚みを反対側から測る。通常武器は貫通力以下なら減衰した弾が抜ける(1枚のみ)。
+      // SRは4.5m(SNIPER_WALL_PROBE_M)まで計測して分厚いスラブも撃ち抜く。back面が
+      // 見つからない厚み(地形/山)は弾が地中に埋まる=そこで停止
+      const maxDepth = pierceAll
+        ? Math.max(weapon.def.penetrationM, SNIPER_WALL_PROBE_M)
+        : weapon.def.penetrationM;
       const probe = end.clone().addScaledVector(dir, maxDepth);
       const back = this.castRayWithNormal(
         probe,
         dir.clone().negate(),
         maxDepth - 0.005,
         this.player.body,
-        notBoundary,
+        passRay,
       );
       if (!back || !back.normal) return;
       const thickness = maxDepth - hitToi(back);
-      const factor = penetrationFactor(thickness, maxDepth);
-      if (factor <= 0) return;
+      if (pierceAll) {
+        // 累積係数に下限0.35: 壁N枚後も致命傷が残る(黒鷲180×0.35=63、HS 119.7=頭OSK維持)
+        damageFactor = sniperWallDamageFactor(damageFactor, thickness, weapon.def.penetrationM);
+      } else {
+        const factor = penetrationFactor(thickness, maxDepth);
+        if (factor <= 0) return;
+        damageFactor *= factor;
+      }
 
       const exit = probe.clone().addScaledVector(dir, -hitToi(back));
       this.effects.impact(exit, new THREE.Vector3(back.normal.x, back.normal.y, back.normal.z));
-      damageFactor *= factor;
-      traveled += hitToi(hit) + thickness;
-      remainingRange = Math.max(0, remainingRange - hitToi(hit) - thickness);
+      traveled += toi + thickness;
+      remainingRange = Math.max(0, remainingRange - toi - thickness);
       from = exit.clone().addScaledVector(dir, 0.01);
       tracerFrom = from.clone();
     }
@@ -6393,16 +6483,7 @@ export class Match {
         if (dot < gDist * coneCos) continue; // コーン外(bestAngleは走査中に狭まるので毎回再評価)
       }
       // 機体種に合った部位候補で、角度の近い順に可視が取れるまで走査=最近接の可視部位
-      const parts =
-        bot.kind === 'drone'
-          ? DRONE_AIM_PARTS
-          : bot.kind === 'tank'
-            ? TANK_AIM_PARTS
-            : bot.kind === 'turret'
-              ? TURRET_AIM_PARTS
-              : bot.kind === 'zombie' && bot.tuning.scale !== 1
-                ? zombieAimPartsForScale(bot.tuning.scale) // 全巨躯: 頭スナップをスケール追従
-                : AIM_PARTS; // humanoid, zombie, master, giant -> AIM_PARTS
+      const parts = this.aimPartsFor(bot);
       const ranked = rankAimPoints(eye, forward, base, parts, maxRange);
       for (const cand of ranked) {
         // rankedはeff(角度-頭バイアス)順なのでangleは単調でない。より近い部位を
@@ -6425,6 +6506,44 @@ export class Match {
       }
     }
     return best;
+  }
+
+  // 機体種ごとの部位候補テーブル(aimAssistTarget と sniperNearestPartAim の単一の真実)
+  private aimPartsFor(bot: Bot): readonly PartOffset[] {
+    return bot.kind === 'drone'
+      ? DRONE_AIM_PARTS
+      : bot.kind === 'tank'
+        ? TANK_AIM_PARTS
+        : bot.kind === 'turret'
+          ? TURRET_AIM_PARTS
+          : bot.kind === 'zombie' && bot.tuning.scale !== 1
+            ? zombieAimPartsForScale(bot.tuning.scale) // 全巨躯: 頭スナップをスケール追従
+            : AIM_PARTS; // humanoid, zombie, master, giant -> AIM_PARTS
+  }
+
+  // R59④: SRの吸着点=クロスヘアと“真の角度”が最小の可視部位(頭が明確に近い時だけ頭)。
+  // rankAimPoints の head バイアス(+0.4°)は微プルのタイブレーク用で、吸着に使うと遠距離
+  // (≈100m超)で頭が常勝=自動HS化するため、ここでは真の角度で選び直す。可視判定は部位ごと
+  // (頭出しだけの敵は頭へ、胴だけ見える敵は胴へ=壁に吸われない)
+  private sniperNearestPartAim(
+    bot: Bot,
+    maxRange: number,
+  ): { dir: THREE.Vector3; angle: number; dist: number; part: AimPart } | null {
+    const eye = this.player.eyePosition;
+    const forward = this.cameraForward();
+    const ranked = rankAimPoints(eye, forward, bot.position, this.aimPartsFor(bot), maxRange);
+    const visible = ranked.filter((cand) => {
+      const pt = this._aimScratch.set(cand.point.x, cand.point.y, cand.point.z);
+      return !this.smokeBlocks(eye, pt) && this.playerCanSee(eye, pt, bot);
+    });
+    const best = nearestPartByTrueAngle(visible);
+    if (!best) return null;
+    return {
+      dir: new THREE.Vector3(best.dir.x, best.dir.y, best.dir.z),
+      angle: best.angle,
+      dist: best.dist,
+      part: best.part,
+    };
   }
 
   // プレイヤー視点からpointが見えるか(botCanSeeのプレイヤー版)。

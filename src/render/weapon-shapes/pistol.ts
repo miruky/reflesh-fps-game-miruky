@@ -163,7 +163,9 @@ function paintCz75(ctx: PainterCtx): void {
     bakeAt(ctx.polyParts, chamferBox(0.008, 0.108, 0.05, 0.004), C.GRIP, sx * 0.028, -0.1, 0.1, 0.3, 0, 0);
   }
   // 前方フレームのトリガーガード下面バー(スチールの角い前端)
-  boxP(ctx.metalParts, C.DARK, 0.012, 0.012, 0.05, 0, -0.072, 0.008, 0, 0, 0, 'flat');
+  // R59 FLOAT: 旧位置(y-0.072/z0.008)は generic トリガーガード(前柱 y-0.057〜/底桟 z0.044〜)の
+  // どちらにも触れず単独で浮いていた → ガード前柱+底桟の両方へ重なる位置/寸法に是正。
+  boxP(ctx.metalParts, C.DARK, 0.012, 0.014, 0.06, 0, -0.061, 0.022, 0, 0, 0, 'flat');
   // 参考: BARREL_Y は溝高さ基準に使わないが、lowbore の段差は上のレールで表現済み。
   void BARREL_Y;
 }
@@ -179,7 +181,9 @@ function paint93r(ctx: PainterCtx): void {
   boxP(ctx.polyParts, C.GROOVE, 0.028, 0.004, 0.062, 0, -0.066, -0.132, 0.78, 0, 0, 'flat'); // 滑り止め溝
   boxP(ctx.polyParts, C.GRIP, 0.03, 0.016, 0.03, 0, -0.101, -0.167, 0.78, 0, 0); // 先端の角ノブ(握り玉)
   // Beretta オープンスライド: 上面から覗く露出バレル(92/93系の識別点)
-  tubeZ(ctx.metalParts, C.BARREL, gauge * 0.5, 0.09, 0, BARREL_Y + 0.026, barCenterZ + 0.01, true);
+  // R59 FLOAT: コンペ上面ポート(z≈-0.226)と generic 前照星ブレードが露出バレル前端(旧 -0.211)の
+  // 前方に浮いていた → バレルを 92/93 系らしくコンペ域まで前方延長し両者を構造接続する。
+  tubeZ(ctx.metalParts, C.BARREL, gauge * 0.5, 0.14, 0, BARREL_Y + 0.026, barCenterZ - 0.015, true);
   // コンペ段差の上面ポート(brake本体前=一体コンペの追加ベント)
   boxP(ctx.metalParts, C.GROOVE, gauge * 1.1, 0.005, 0.01, 0, BARREL_Y + gauge * 0.75, barFrontZ + 0.028, 0, 0, 0, 'flat');
   // 3点バースト・セレクタレバー(左側面後方)

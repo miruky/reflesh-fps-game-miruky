@@ -270,7 +270,10 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  padding: 12px 34px 12px 18px;
+  /* R59①: 旧12pxの縦paddingは非選択(11px)より+2px高く、選択のたびに下のナビ項目が縦ズレ
+     していた。縦は非選択と同値(11px)へ固定(横のプレート伸長は左寄せ縦積みのため他要素を
+     動かさない正典デザイン=維持)。 */
+  padding: 11px 34px 11px 18px;
   background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
   color: #1a0b04;
   text-shadow: none;
@@ -900,20 +903,13 @@
   font-size: calc(11px * var(--u2s, 1));
   color: #6e6a62;
 }
+/* R59②: 旧「☰ メニューへ」は面も枠も無い裸テキスト(bgα=0/枠0px/幅105px)で右下の暗闇に
+   沈んでいた。共有導線プレート .u2-menubtn(ui2.css: 不透明面0.9+象牙枠+Escバッジ+
+   em基準の拡大ヒット領域)へ移行し、ここでは帯スケールに連動する font-size のみ持つ
+   (.u2-menubtn の padding/gap は em 基準なので --u2s に自動追随する)。
+   hover/focus の見た目も .u2-menubtn 側で全画面統一。 */
 .u2d-foot-menu {
-  background: none;
-  color: #c4c0b8;
-  font-family: inherit;
   font-size: calc(13px * var(--u2s, 1));
-  cursor: pointer;
-  padding: calc(6px * var(--u2s, 1)) calc(10px * var(--u2s, 1));
-}
-.u2d-foot-menu:hover {
-  color: #ffa061;
-}
-.u2d-foot-menu:focus-visible {
-  outline: 2px solid #ffa061;
-  outline-offset: 2px;
 }
 
 /* ── 省モーション(mockの短絡+情景静止。u2d-reduceはアプリ設定連動でF3が付与) ── */

@@ -230,7 +230,9 @@ export const KIND_TUNING: Record<BotKind, Partial<BotTuning>> = {
   // damage=爪の一撃, reactionS/burstPause は発砲経路に入らないので実質未使用。
   // viewDistM: 近接追尾のため 120 維持(エリア拡大の影響なし)。
   zombie: { viewDistM: 120, reactionS: 0, damage: 22, burstPauseMin: 99, burstPauseMax: 99 },
-  master: { maxHp: 600, moveSpeedMul: 2.5, reactionS: 0.10, spreadDeg: 0.8, damage: 22, viewDistM: 130, spotTimeS: 0.15, aimSlewRadS: 16.0, burstPauseMin: 0.3, burstPauseMax: 0.6, scale: 1.15 },
+  // R59②: 達人HPは一般兵(100)の2倍=200(旧600は硬すぎた)。章ボス個体は spawnBot の
+  // boss床(Math.max(merged.maxHp, tuning.maxHp=900×hpMul))で決まるためこの変更の影響を受けない
+  master: { maxHp: 200, moveSpeedMul: 2.5, reactionS: 0.10, spreadDeg: 0.8, damage: 22, viewDistM: 130, spotTimeS: 0.15, aimSlewRadS: 16.0, burstPauseMin: 0.3, burstPauseMax: 0.6, scale: 1.15 },
   giant:  { maxHp: 1500, moveSpeedMul: 1.6, damage: 45, viewDistM: 100, reactionS: 0.5, spotTimeS: 0.4, burstPauseMin: 99, burstPauseMax: 99 },
 };
 

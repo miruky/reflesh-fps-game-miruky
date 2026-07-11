@@ -56,6 +56,9 @@ export const AR_SHAPES = {
     chargingHandle: 'top',
     railTop: 'full',
     ironSight: 'flip',
+    // R59: painter の角ハンプ天面(実上端 0.081=chamfer bevel 拡張込み)が既定狙点 0.075 の
+    // 射線コリドーを遮蔽 → ハンプの上から覗く高さへ。
+    sightY: 0.09,
   },
 
   // ── kaede-ar / FAMAS-G4(FAMAS F1/G2)── bullpup + 全長貫通の逆U字キャリーハンドル(内蔵サイト)
@@ -73,7 +76,10 @@ export const AR_SHAPES = {
     accentBand: 'receiver',
     bodyScale: 1.0,
     feedZ: 0.16, // グリップ後方の直マグ(bullpup)
-    carryHandle: 'famas', // 逆U字トンネル → sightY 0.116(内蔵サイト)
+    carryHandle: 'famas', // 逆U字トンネル(painter がハンドル外装を描く)
+    // R59: 狙点をハンドル上端(天面バー top=0.144)の上へ持ち上げ「この上から覗く」(ユーザー要望。
+    // 旧 0.116 はトンネル内=サイト見づらすぎ)。耳+ドット/装着光学Yは viewmodel が3点整合で焼く。
+    sightY: 0.152,
     railTop: 'none',
     ironSight: 'flip',
     muzzleExtend: 0.045, // F4: 細長一体ハイダー前端まで muzzleZ を前進(実測≈4.5cm 埋没)
@@ -115,6 +121,9 @@ export const AR_SHAPES = {
     feedZ: -0.03,
     railTop: 'full',
     ironSight: 'flip',
+    // R59: painter の角押出ハンプ(top=0.085)+明色ピーク稜(top=0.100)が既定狙点 0.075/0.08 の
+    // 射線コリドーを 9/9 レイで遮蔽(実測「サイトが終わってる」)→ 稜の上から覗く高さへ。
+    sightY: 0.112,
   },
   // ── tobikuma-ar / HK415(HK416)── 素M4に酷似 + ガスブロック(ピストン)がハンドガード中程で角膨らみ
   //    + M4伸縮スケルトンストック + バードケージ + フラットトップ。
@@ -133,6 +142,8 @@ export const AR_SHAPES = {
     feedZ: -0.03,
     railTop: 'full',
     ironSight: 'flip',
+    // R59: painter の大型ガスブロック稜(top≈0.070)が既定狙点 0.075 のコリドー下端を遮蔽 → +0.005。
+    sightY: 0.08,
   },
   // ── ginyanma-ar / MCX-9(SIG MCX)── バッファーチューブ無しで後端が極端に短い + 側方完全折り畳みストック
   //    + ハンドガードとマズルが連続した円筒 + スリム箱型レシーバ + STANAG垂直。
@@ -171,6 +182,8 @@ export const AR_SHAPES = {
     ejectionPort: false, // 45度アンビポートを painter が描く(縦ポート二重回避)
     railTop: 'full',
     ironSight: 'flip',
+    // R59: painter 外装(top≈0.070)が既定狙点 0.075 のコリドー下端を遮蔽 → +0.005。
+    sightY: 0.08,
   },
   // ── kagerou-br / SG-512(SIG SG550/551)── レシーバ上部一体型の大型キャリーハンドル(内蔵ダイヤル丸窓サイト)
   //    + AK的プレス鋼板レシーバ + 半透明湾曲マグ + 側面折りたたみ三角スケルトン + 段付き大型フラッシュハイダー。
@@ -187,7 +200,9 @@ export const AR_SHAPES = {
     accentBand: 'receiver',
     bodyScale: 1.0,
     feedZ: -0.03,
-    carryHandle: 'ar15', // 大型ハンドル+ダイヤルサイト → sightY 0.116
+    carryHandle: 'ar15', // 大型ハンドル+ダイヤルサイト(painter がハンドル外装を描く)
+    // R59: 狙点をハンドル天面バー(top=0.144)の上へ(FAMAS と同じ「上から覗く」持ち上げ)。
+    sightY: 0.152,
     railTop: 'none',
     ironSight: 'fixed',
   },
@@ -218,8 +233,12 @@ export const AR_SHAPES = {
 // + 三角バットプレート。内蔵サイトのドットは本体パスが 0.116 に描く(carryHandle)ので、
 // painter はトンネル外装のみ(ドットは floor 0.10 と top bar 0.128 の隙間で視認される)。
 const paintFamas: ShapePainter = (ctx: PainterCtx): void => {
-  const { boxP, tubeZ, metalParts, C, r, recHalf, barCenterZ, barFrontZ, barLen, gauge, BARREL_Y } = ctx;
+  const { boxP, bakeAt, chamferBox, tubeZ, metalParts, polyParts, C, r, recHalf, barCenterZ, barFrontZ, barLen, gauge, BARREL_Y } = ctx;
   const recTop = r.h / 2;
+  // R59 FLOAT: 前部アセンブリ(銃身/ハンドガード/ハイダー/バイポッド)がレシーバ前面から
+  // 22.5mm 浮いていた(barLen<0.2 だと generic の銃身後端が受け前面に届かない)。FAMAS の
+  // 「胴と一続きのポリマー・スロート」を受け前面〜ハンドガード後端に渡して構造接続する。
+  bakeAt(polyParts, chamferBox(0.05, 0.07, 0.062, 0.01), C.POLY, 0, 0.006, -(recHalf + 0.012), 0, 0, 0, 'gradY');
   // 逆U字ハンドル: 厚い天面バー + 前/中/後の3脚 + トラフ床(内蔵サイトは 0.116=床0.104と天0.132の間)。
   const barY = 0.134;
   const hFrontZ = barCenterZ + barLen * 0.42; // ハンドル前端(銃身付け根の上)
@@ -232,10 +251,14 @@ const paintFamas: ShapePainter = (ctx: PainterCtx): void => {
   boxP(metalParts, C.DARK, 0.022, 0.008, hLen * 0.96, 0, 0.104, hMidZ, 0, 0, 0, 'flat'); // トラフ床(窓の下=上端0.108)
   // R58 A1: 中央支柱を x=±0.014 のサイドポスト対に分割し、内蔵サイト(0.116)の貫通視界窓(中央 x±0.0095)を
   // 構造的に確保する(ADS で「ドットだけ見えて標的が見えない」を根治。天面バー↔レシーバは左右脚が支える)。
+  // R59 FLOAT: 前脚は受け上ではなく銃身上の空中に立っていた(Image13 の「レール浮き」)。
+  // 前脚をポリマー・スロート天面(y0.036)まで延長して着地させ、全脚を太くして接続感を出す。
+  const frontLegTop = barY;
+  const frontLegBot = 0.036; // スロート上面(0.043)へ 7mm 食い込む
   for (const sx of [-1, 1] as const) {
-    boxP(metalParts, C.DARK, 0.009, legH, 0.026, sx * 0.014, legY, hFrontZ + 0.012); // 前脚(前照星フード)左右
-    boxP(metalParts, C.DARK, 0.008, legH, 0.016, sx * 0.013, legY, hMidZ); // 中脚 左右
-    boxP(metalParts, C.DARK, 0.010, legH, 0.032, sx * 0.015, legY, hBackZ - 0.02); // 後脚(アパーチャ座)左右
+    boxP(metalParts, C.DARK, 0.013, frontLegTop - frontLegBot, 0.034, sx * 0.014, (frontLegTop + frontLegBot) / 2, hFrontZ + 0.012); // 前脚(前照星フード)左右=スロートへ着地
+    boxP(metalParts, C.DARK, 0.011, legH, 0.02, sx * 0.013, legY, hMidZ); // 中脚 左右(受け上・太め)
+    boxP(metalParts, C.DARK, 0.013, legH, 0.036, sx * 0.015, legY, hBackZ - 0.02); // 後脚(アパーチャ座)左右
     tubeZ(metalParts, C.POLISH, 0.008, 0.014, sx * 0.017, 0.113, hBackZ + 0.004, false, 'flat'); // 後照星ドラム(ドット両脇=射線外)
   }
   // ハンドガード上に折り畳みバイポッド(常設): ヒンジ + 前方へ寝た2脚。
@@ -307,11 +330,15 @@ const paintScarH: ShapePainter = (ctx: PainterCtx): void => {
     }
   }
   // 折りたたみヒンジ + 伸縮スケルトンストック(ポリマー角/調整コム/バットパッド)。
+  // R59 FLOAT: 伸縮チューブ(旧 len0.1 @stockZ+0.04)がヒンジ後端(z0.21)から 16mm 浮いていた。
+  // チューブを前方へ延長しヒンジ〜ストック本体を貫通させて接続(SCAR の伸縮ロッド)。
   boxP(metalParts, C.DARK, 0.03, 0.05, 0.028, 0, 0.004, recHalf + 0.012); // ヒンジ
-  tubeZ(metalParts, C.POLISH, 0.012, 0.1, 0, 0.006, stockZ + 0.04, false); // 伸縮チューブ
+  tubeZ(metalParts, C.POLISH, 0.012, 0.17, 0, 0.006, stockZ + 0.015, false); // 伸縮チューブ(ヒンジへ食い込む)
   bakeAt(polyParts, chamferBox(0.046, 0.078, 0.09, 0.006), C.POLY, 0, 0.006, stockZ + 0.09); // ストック本体
   boxP(polyParts, C.GROOVE, 0.048, 0.014, 0.07, 0, 0.05, stockZ + 0.085, 0, 0, 0, 'flat'); // 調整コム
   boxP(metalParts, C.DARK, 0.05, 0.088, 0.012, 0, 0.004, stockZ + 0.14, 0, 0, 0, 'flat'); // バットパッド
+  // R59 FLOAT: generic スリングループ(-(r.w/2), -0.02, stockZ-0.02)が受け後端から浮く → 吊り座で接続。
+  boxP(metalParts, C.DARK, 0.008, 0.012, 0.06, -(r.w / 2) - 0.001, -0.02, recHalf + 0.028, 0, 0, 0, 'flat');
 };
 
 // SCAR-L: モノリシック一体アッパー+ハンドガード + 上下2トーン色分割 + 折りたたみ伸縮 + 小型/細銃身。
@@ -329,10 +356,13 @@ const paintScarL: ShapePainter = (ctx: PainterCtx): void => {
   // 小型FAパドル(SCAR-L も右側面に持つ)。
   bakeAt(metalParts, chamferBox(0.04, 0.03, 0.022, 0.003), C.DARK, r.w / 2 + 0.01, 0.006, recD * 0.22, 0, 0.32, 0);
   // 折りたたみ伸縮スケルトンストック(SCAR-H より小型)。
+  // R59 FLOAT: 伸縮チューブ(旧 len0.09 @stockZ+0.035)がヒンジから 17mm 浮いていた → 前方へ延長して接続。
   boxP(metalParts, C.DARK, 0.028, 0.046, 0.026, 0, 0.004, recHalf + 0.01);
-  tubeZ(metalParts, C.POLISH, 0.011, 0.09, 0, 0.006, stockZ + 0.035, false);
+  tubeZ(metalParts, C.POLISH, 0.011, 0.16, 0, 0.006, stockZ + 0.005, false);
   bakeAt(polyParts, chamferBox(0.042, 0.07, 0.08, 0.006), C.POLY, 0, 0.006, stockZ + 0.08);
   boxP(metalParts, C.DARK, 0.045, 0.08, 0.012, 0, 0.004, stockZ + 0.124, 0, 0, 0, 'flat');
+  // R59 FLOAT: generic スリングループの吊り座(受け後端左→ループへ渡す)。
+  boxP(metalParts, C.DARK, 0.008, 0.012, 0.05, -(r.w / 2) - 0.001, -0.02, recHalf + 0.012, 0, 0, 0, 'flat');
 };
 
 // HK416: 素M4 + ハンドガード中程の角ばったガスブロック(ピストン)膨らみ + M4伸縮スケルトン + バードケージ。
@@ -347,10 +377,14 @@ const paintHk416: ShapePainter = (ctx: PainterCtx): void => {
   boxP(metalParts, C.GROOVE, gauge + 0.02, 0.006, 0.01, 0, gbY + 0.019, gbZ - 0.024, 0, 0, 0, 'flat'); // ガス調整ノブ座
   bakeAt(metalParts, chamferBox(gauge + 0.012, 0.026, 0.02, 0.003), C.DARK, 0, gbY - 0.008, gbZ - 0.046, -0.5, 0, 0); // 前方の傾斜ステップ(角ばり)
   // M4 バッファーチューブ + 伸縮スケルトンストック(castle nut + 傾斜バット)。
-  tubeZ(metalParts, C.DARK, 0.017, 0.15, 0, 0.008, stockZ + 0.05, true); // バッファーチューブ
-  tubeZ(metalParts, C.RIM, 0.021, 0.01, 0, 0.008, recHalf + 0.014, false, 'flat'); // castle nut
+  // R59 FLOAT: 旧チューブ(len0.15 @stockZ+0.05)は前端がレシーバ後端から 25mm 浮き、castle nut も
+  // 単独で浮いていた → チューブを受け内(recHalf-0.02)から貫通させ、nut はチューブ上に重ねる。
+  tubeZ(metalParts, C.DARK, 0.017, 0.2, 0, 0.008, recHalf + 0.08, true); // バッファーチューブ(受けへ食い込む)
+  tubeZ(metalParts, C.RIM, 0.021, 0.012, 0, 0.008, recHalf + 0.006, false, 'flat'); // castle nut(チューブ根元)
   bakeAt(polyParts, chamferBox(0.046, 0.078, 0.1, 0.006), C.POLY, 0, 0.0, stockZ + 0.07);
   boxP(polyParts, C.GROOVE, 0.048, 0.06, 0.014, 0, -0.006, stockZ + 0.118, 0, 0, 0, 'flat'); // バットパッド
+  // R59 FLOAT: generic スリングループの吊り座(受け後端左→ループへ渡す)。
+  boxP(metalParts, C.DARK, 0.008, 0.012, 0.06, -0.037, -0.02, recHalf + 0.025, 0, 0, 0, 'flat');
   // バードケージフラッシュハイダー(スリット付き短ケージ)。
   tubeZ(metalParts, C.DARK, gauge * 0.62, 0.03, 0, BARREL_Y, barFrontZ - 0.016, true);
   for (let i = 0; i < 4; i += 1) {
@@ -409,12 +443,14 @@ const paintArx: ShapePainter = (ctx: PainterCtx): void => {
   for (let i = 0; i < 4; i += 1) {
     boxP(polyParts, C.GROOVE, 0.046, 0.006, 0.006, 0, 0.03, stockZ + 0.045 + i * 0.02, 0, 0, 0, 'flat'); // 段ノッチ
   }
+  // R59 FLOAT: generic スリングループ(受け後端左)が単独で浮いていた → 吊り座で接続。
+  boxP(metalParts, C.DARK, 0.008, 0.012, 0.05, -(r.w / 2) - 0.001, -0.02, recHalf + 0.012, 0, 0, 0, 'flat');
 };
 
 // SG550: 大型キャリーハンドル(内蔵ダイヤル丸窓サイト)+ AK的プレス鋼板レシーバ + 側面折りたたみ三角スケルトン
 // + 段付き大型フラッシュハイダー。内蔵サイトドットは本体パスが 0.116 に描く(carryHandle)。
 const paintSg550: ShapePainter = (ctx: PainterCtx): void => {
-  const { boxP, bakeAt, tubeZ, chamferBox, metalParts, C, r, recD, recHalf, barFrontZ, gauge, BARREL_Y } = ctx;
+  const { boxP, bakeAt, tubeZ, chamferBox, metalParts, C, r, recD, recHalf, barCenterZ, barFrontZ, barLen, gauge, BARREL_Y } = ctx;
   // R58 A1: 大型キャリーハンドルを「天面バー(内蔵サイト窓の上=底 y0.126>0.124)+左右サイドレール(中央に
   // 貫通視界窓 x±0.013)」へ再構成。旧・中実ブロック(y0.072-0.124)は狙点0.116の射線を塞いでいた。
   boxP(metalParts, C.DARK, 0.03, 0.018, 0.17, 0, 0.135, 0.01, 0, 0, 0, 'gradY'); // 天面バー(底0.126)
@@ -431,11 +467,20 @@ const paintSg550: ShapePainter = (ctx: PainterCtx): void => {
     boxP(metalParts, C.RIM, 0.005, 0.005, 0.005, r.w / 2 + 0.001, -0.006, -recD * 0.2 + i * 0.06, 0, 0, 0, 'flat'); // リベット
   }
   // 側面折りたたみ三角スケルトンストック(展開=開いた台形/三角枠)。上枠を長く・下枠を短くしてテーパ。
+  // R59 FLOAT: 下枠(旧 len0.1 @s0+0.058)は前端が受け後端から 8mm・後端がバットプレートから 28mm
+  // 浮いた孤立バーだった → 受け後端〜バットプレートまで貫通する長さへ延長して両端を接続。
   const s0 = recHalf;
   boxP(metalParts, C.DARK, 0.016, 0.012, 0.05, 0, 0.004, s0 + 0.02); // ヒンジ基部
   boxP(metalParts, C.DARK, 0.018, 0.01, 0.14, 0, 0.04, s0 + 0.078); // 上枠(水平・長)
-  boxP(metalParts, C.DARK, 0.018, 0.01, 0.1, 0, -0.03, s0 + 0.058); // 下枠(水平・短)
+  boxP(metalParts, C.DARK, 0.018, 0.01, 0.155, 0, -0.03, s0 + 0.072); // 下枠(受け⇄バット貫通)
   boxP(metalParts, C.DARK, 0.022, 0.078, 0.012, 0, 0.006, s0 + 0.142); // バットプレート(縦)
+  // R59 FLOAT: vented ハンドガード(generic)の側面レール(±(gauge+0.02))がシュラウド(±0.031)から
+  // 14mm 浮いていた → 3対の standoff ウェブでシュラウド側面へ接続(放熱スタンドオフの意匠)。
+  for (const sx of [-1, 1] as const) {
+    for (let i = 0; i < 3; i += 1) {
+      boxP(metalParts, C.DARK, 0.024, 0.008, 0.016, sx * (gauge + 0.01), BARREL_Y + 0.012, barCenterZ + (i - 1) * barLen * 0.25, 0, 0, 0, 'flat');
+    }
+  }
   // 段付き大型フラッシュハイダー(2径ステップ)。
   tubeZ(metalParts, C.DARK, gauge * 0.8, 0.026, 0, BARREL_Y, barFrontZ - 0.012, true);
   tubeZ(metalParts, C.BARREL, gauge * 0.62, 0.03, 0, BARREL_Y, barFrontZ - 0.04, true);
@@ -465,6 +510,9 @@ const paintTavor: ShapePainter = (ctx: PainterCtx): void => {
   boxP(metalParts, C.POLISH, 0.012, 0.012, 0.028, r.w / 2 + 0.008, BARREL_Y + 0.012, barCenterZ + barLen * 0.34);
   // スリムなポリマー前部ハンドガード。
   bakeAt(polyParts, chamferBox(gauge + 0.016, gauge + 0.016, barLen * 0.6, 0.005), C.GRIP, 0, BARREL_Y, barCenterZ + barLen * 0.05);
+  // R59 FLOAT: 前部アセンブリ(銃身/ハンドガード/ハイダー/フォアグリップ)がレシーバ前面から
+  // 24.5mm 浮いていた → Tavor の一体ポリマーらしく、胴前面〜ハンドガード後端を繋ぐスロートを渡す。
+  bakeAt(polyParts, chamferBox(0.05, 0.06, 0.075, 0.01), C.GRIP, 0, 0.004, -(recHalf + 0.022), 0, 0, 0, 'gradY');
   // 前方バーティカル握りの土台(TAR らしい前部の下方張り出し)。
   boxP(polyParts, C.POLY, 0.03, 0.03, 0.05, 0, -0.03, barCenterZ + barLen * 0.2, 0, 0, 0);
 };

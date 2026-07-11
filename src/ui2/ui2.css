@@ -82,6 +82,58 @@
   border-radius: 0; /* style.cssの:focus-visible border-radius:2px(角丸)を角ばりへ戻す */
 }
 
+/* ═══ R59②: 共有導線 — 「メニューへ/戻る」フッタボタン+Escキーバッジ ═══
+   deploy/armory/campaign の右下へ同じ見た目・同じ隅で置く(配置と語彙の一貫性)。
+   メニュー画面はcanvas非表示下のためbox-shadow等は可だが、filter/backdrop-filterは不使用。
+   面は0.9で不透明契約(0.82+)を満たし、発光は枠色のホバー変化のみ(過剰に眩しくしない)。
+   寸法は em 基準: 置かれた帯の font-size(deployは calc(13px * var(--u2s)))に連動して
+   フルードスケールへ自動追随する。強調しても box サイズは不変(枠は常時1px)。 */
+.u2-menubtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.52em 1.05em;
+  background: rgba(13, 12, 15, 0.9);
+  border: 1px solid rgba(232, 227, 216, 0.38);
+  color: #e8e3d8;
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    color 120ms ease,
+    background-color 120ms ease;
+}
+.u2-menubtn:hover {
+  border-color: rgba(255, 160, 97, 0.9);
+  background: rgba(31, 20, 12, 0.94);
+  color: #ffd9bc;
+}
+/* 単一クラス(0,2,0)は上の #menu .u2-stage button:focus-visible(1,2,1) に負けるため、
+   #menu .u2-stage を前置した(1,3,0)で確実に上回す(各画面CSSの前例と同根)。 */
+#menu .u2-stage .u2-menubtn:focus-visible,
+#menu .u2-stage .u2-menubtn:focus {
+  outline: 2px solid #ffa061;
+  outline-offset: 2px;
+}
+/* Escキーバッジ(既存の円形A/Bキーバッジと並ぶ矩形キー表記。Escは物理キーなので角丸矩形) */
+.u2-key-esc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.1em 0.42em;
+  border: 1px solid rgba(255, 107, 43, 0.7);
+  border-radius: 3px;
+  background: rgba(255, 107, 43, 0.12);
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 0.82em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #ffb98a;
+}
+
 /* ═══ モック共通keyframes(mock helmetから逐語。単一定義でscreen間の重複を防ぐ) ═══ */
 @keyframes enzaTwinkle {
   0%,

@@ -20,17 +20,24 @@ function makeWorld() {
 }
 
 describe('達人 (master) ボット', () => {
-  it('KIND_TUNING.master が定義されている', () => {
+  it('KIND_TUNING.master が定義されている(R59②: HPは一般兵100の2倍=200)', () => {
     expect(KIND_TUNING.master).toBeDefined();
-    expect(KIND_TUNING.master!.maxHp).toBe(600);
+    expect(KIND_TUNING.master!.maxHp).toBe(200);
     expect(KIND_TUNING.master!.moveSpeedMul).toBe(2.5);
+  });
+
+  it('R59②: 達人HPは一般兵のちょうど2倍(全難度でbase=100)', () => {
+    expect(DIFFICULTY.easy.maxHp).toBe(100);
+    expect(DIFFICULTY.normal.maxHp).toBe(100);
+    expect(DIFFICULTY.hard.maxHp).toBe(100);
+    expect(KIND_TUNING.master!.maxHp).toBe(DIFFICULTY.normal.maxHp * 2);
   });
 
   it('master ボットが生成でき正しいHPを持つ', () => {
     const world = makeWorld();
     const tuning = { ...tuningFor('normal', 'normal'), ...KIND_TUNING.master };
     const bot = new Bot(world, '達人', new THREE.Vector3(0, 0, 0), 0x101010, tuning, 1, 'normal', 'master');
-    expect(bot.maxHp).toBe(600);
+    expect(bot.maxHp).toBe(200);
     world.removeRigidBody(bot.body);
   });
 });
@@ -82,10 +89,10 @@ describe('超鬼畜 (hell) チューニング倍率', () => {
     expect(base.maxHp).toBe(hpBefore);
   });
 
-  it('KIND_TUNING合成後の達人へ適用すると 600→1800 になる', () => {
+  it('KIND_TUNING合成後の達人へ適用すると 200→600 になる(R59②: 基礎200へ変更)', () => {
     const merged = { ...tuningFor('normal', 'normal'), ...KIND_TUNING.master };
     const hell = applyHellTuning(merged);
-    expect(hell.maxHp).toBe(1800);
+    expect(hell.maxHp).toBe(600);
     expect(hell.moveSpeedMul).toBeCloseTo(2.5); // V36: 達人の基礎2.5は落とさない(鈍足化回帰の防止)
   });
 

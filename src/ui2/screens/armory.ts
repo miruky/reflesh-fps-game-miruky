@@ -373,7 +373,7 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
         </div>
         <div class="u2a-band">
           <span class="u2a-band-status" data-id="band"></span>
-          <div class="u2a-band-hints"><span>▲▼ 選択</span><span class="u2a-hint-cat">LB / RB カテゴリ</span><span><b>Ⓑ</b> 戻る</span></div>
+          <div class="u2a-band-hints"><span>▲▼ 選択</span><span class="u2a-hint-cat">LB / RB カテゴリ</span><span><b>Ⓑ</b> 戻る</span><button type="button" class="u2-menubtn" data-id="back-to-hub"><span class="u2-key-esc">Esc</span>メニューへ</button></div>
         </div>
       </div>
     </div>`;
@@ -968,9 +968,11 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
     b.addEventListener('click', () => setView(b.dataset.viewBtn as ArmoryView));
   });
 
+  // R59②: 戻る導線は左上のコンパス+下帯右端の「Esc メニューへ」(共有.u2-menubtn)の2箇所。
+  // querySelectorAllで両方へ配線する(menu2のbackAction/クリックSE分類はdata-id契約のまま)。
   root
-    .querySelector<HTMLButtonElement>('[data-id="back-to-hub"]')
-    ?.addEventListener('click', () => host.back());
+    .querySelectorAll<HTMLButtonElement>('[data-id="back-to-hub"]')
+    .forEach((b) => b.addEventListener('click', () => host.back()));
 
   // 初期描画+3Dプレビュー(canvasは[data-id="weapon-canvas"]、hostが生成/破棄を管理)
   // A2: 保存済みアタッチメントが不適合/ロック済みのまま試合開始できないよう初回にもゲートする

@@ -4,9 +4,11 @@ import {
   medalChips,
   nextRankInfo,
   progressRows,
+  resultStageHtml,
   resultStoryMarkers,
   scoreLine,
   statCards,
+  storyLabelDrop,
   xpFootnotes,
 } from './result';
 import { MEDAL_TOTAL } from '../../game/medals';
@@ -256,6 +258,79 @@ describe('xpFootnotes', () => {
     expect(notes.some((n) => n.label === '武器解放: シラサギAR')).toBe(true);
     expect(notes.some((n) => n.label === '自己ベスト: 最多キル 32')).toBe(true);
     expect(notes.some((n) => n.label.startsWith('SR 1000 +50 → 1050'))).toBe(true);
+  });
+});
+
+// ── R59 重なり根治の契約: 0×0アンカー群(u2r-g*)直下の絶対配置子は明示width/nowrap必須。
+// containing block幅0のshrink-to-fitでmin-content幅へ潰れ、CJK折返しで「勝利」が縦積みになり
+// マッチストーリー帯・スコアへ食い込んでいた(全アスペクト共通の実測バグ)。
+describe('resultStageHtml (R59 アンカー内レイアウト契約)', () => {
+  const NOW = new Date(2026, 6, 11);
+  const html = (): string => resultStageHtml(mkResult(), mkProgress(), emptyProfile(), NOW);
+
+  it('題字レーンは明示幅1310px+nowrap(min-content潰れ→縦積み再発の禁止)', () => {
+    expect(html()).toContain(
+      'left:56px;top:104px;width:1310px;white-space:nowrap;display:flex;align-items:flex-end;gap:44px;',
+    );
+    expect(html()).toContain('勝利');
+  });
+  it('左上AARヘッダはnowrap(4行折返しの禁止)', () => {
+    expect(html()).toContain(
+      'left:56px;top:34px;display:flex;align-items:center;gap:14px;white-space:nowrap;',
+    );
+  });
+  it('下部メダル帯はメダルありの時のみ出て、明示幅1310px(max-width不可=幅が確保されない)', () => {
+    expect(html()).not.toContain('u2r-medalstrip'); // 既定mkResultはメダル0
+    const withMedals = resultStageHtml(
+      mkResult({ summary: mkSummary({ medalCounts: { 'kokurai-kill': 2, 'unknown-a': 1 } }) }),
+      mkProgress(),
+      emptyProfile(),
+      NOW,
+    );
+    expect(withMedals).toContain('u2r-medalstrip');
+    expect(withMedals).toContain(
+      'left:56px;bottom:56px;display:flex;flex-direction:column;gap:12px;width:1310px;',
+    );
+    expect(withMedals).not.toContain('max-width:1310px');
+  });
+  it('縦レーンの回帰ピン: 題字104/ストーリー342/statカード492/スコアボード668', () => {
+    const h = resultStageHtml(
+      mkResult({ summary: mkSummary({ medalCounts: { 'm-a': 1 } }) }), // markers>2でストーリー帯が出る
+      mkProgress(),
+      emptyProfile(),
+      NOW,
+    );
+    for (const lane of ['top:104px', 'top:342px', 'top:492px', 'top:668px'])
+      expect(h).toContain(lane);
+  });
+  it('日時は引数から決定論で刻まれる', () => {
+    expect(html()).toContain('2026.07.11');
+  });
+  it('マーカー7個以下はラベル段下げなし、8個以上で交互2段(隣接ラベル衝突の回避)', () => {
+    const few = html(); // DROP+VICTORY=2個
+    expect(few).not.toContain('margin-top:17px;');
+    const counts: Record<string, number> = {};
+    for (let i = 0; i < 7; i += 1) counts[`medal-${i}`] = 1; // 6表示+超過1+DROP+VICTORY=9マーカー
+    const dense = resultStageHtml(
+      mkResult({ summary: mkSummary({ medalCounts: counts }) }),
+      mkProgress(),
+      emptyProfile(),
+      NOW,
+    );
+    expect(dense).toContain('margin-top:17px;');
+  });
+});
+
+describe('storyLabelDrop', () => {
+  it('合計7以下は常にfalse(16:9従来デザイン完全一致)', () => {
+    for (let total = 0; total <= 7; total += 1)
+      for (let i = 0; i < total; i += 1) expect(storyLabelDrop(i, total)).toBe(false);
+  });
+  it('合計8以上は奇数indexのみtrue(交互2段)', () => {
+    expect(storyLabelDrop(0, 8)).toBe(false);
+    expect(storyLabelDrop(1, 8)).toBe(true);
+    expect(storyLabelDrop(2, 8)).toBe(false);
+    expect(storyLabelDrop(11, 12)).toBe(true);
   });
 });
 

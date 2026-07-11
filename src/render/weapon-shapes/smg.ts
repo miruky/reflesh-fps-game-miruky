@@ -143,13 +143,19 @@ export const SMG_SHAPES = {
 
 // ── 共有 painter ヘルパ(全て非サイト外装。metal/poly バケツへ merge=+0DC・camo追従は正しい) ──
 
-// ワイヤー折りたたみストック: 細枠2本 + 天面コネクタ + 縦バット板(PM12/Uzi)。
+// ワイヤー折りたたみストック: マウントプレート + 細枠2本 + 天面コネクタ + 縦バット板(PM12/Uzi)。
 // 本体 stock:'wire' 枝は no-op なのでここが唯一の描画。metalParts へ merge。
+// R59 FLOAT: 旧・枠前端(recHalf+0.01)はレシーバ後端(箱=recHalf / PM12鋼管=recD*0.45)に届かず
+// ストック一式が浮いていた → 後端ヒンジプレートをレシーバへ重畳させ、枠をプレートまで前方延長。
 function paintWireStock(ctx: PainterCtx, len: number): void {
   const { boxP, metalParts, C, recHalf } = ctx;
   const z0 = recHalf + 0.01;
+  // 後端ヒンジプレート(レシーバ後端へ 12mm 重畳=鋼管レシーバ(後端 recD*0.45)にも届く)
+  boxP(metalParts, C.DARK, 0.064, 0.05, 0.018, 0, -0.006, recHalf - 0.015, 0, 0, 0, 'gradY');
   for (const sx of [-1, 1] as const) {
-    boxP(metalParts, C.DARK, 0.006, 0.006, len, sx * 0.028, -0.006, z0 + len / 2, 0, 0, 0, 'flat');
+    const zFront = recHalf - 0.022; // プレート内へ食い込む
+    const zBack = z0 + len;
+    boxP(metalParts, C.DARK, 0.006, 0.006, zBack - zFront, sx * 0.028, -0.006, (zFront + zBack) / 2, 0, 0, 0, 'flat');
   }
   // 天面コネクタ(左右枠を後端で繋ぐ)+ 縦バット板
   boxP(metalParts, C.DARK, 0.062, 0.006, 0.008, 0, -0.006, z0 + len, 0, 0, 0, 'flat');
@@ -160,7 +166,10 @@ function paintWireStock(ctx: PainterCtx, len: number): void {
 export const SMG_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
   // MP5SD: 寸胴一体サプレッサ。銃身〜マズルまで一定太さの太い有孔円筒(決定的特徴)。
   'smg-mp5sd': (ctx) => {
-    const { tubeZ, boxP, metalParts, polishParts, C, BARREL_Y, barR, barFrontZ, recHalf } = ctx;
+    const { tubeZ, boxP, bakeAt, chamferBox, metalParts, polishParts, C, BARREL_Y, barR, barFrontZ, recHalf } = ctx;
+    // R59 FLOAT: 固定ストック(generic @stockZ+0.04)が受け後端から 25mm 浮いていた。
+    // MP5 のバックキャップ(リテーニングピン受け)を渡して受け⇄ストックを接続する。
+    bakeAt(metalParts, chamferBox(0.05, 0.068, 0.055, 0.006), C.DARK, 0, -0.012, recHalf + 0.014, 0, 0, 0, 'gradY');
     const suppR = barR + 0.026; // 太い寸胴(barR 0.015→0.041)
     const front = barFrontZ - 0.05; // マズルを僅かに越えて前進
     const back = -recHalf + 0.02; // レシーバ前面から前方一体
@@ -197,6 +206,9 @@ export const SMG_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
     boxP(polishParts, C.POLISH_HI, 0.016, 0.016, 0.016, 0, r.h / 2 + 0.02, -0.05, 0, 0, 0, 'flat');
     // グリップ=マガジンウェル(角型太グリップの肥厚シェル。マグ feedZ=0.10 がここへ収まる)
     bakeAt(polyParts, chamferBox(0.062, 0.1, 0.072, 0.006), C.GRIP, 0, -0.06, 0.1, 0, 0, 0, 'gradY');
+    // R59 FLOAT: 短露出銃身(barLen0.09)は generic 配置だと後端が受け前面から 55mm 浮く。
+    // Uzi 特有の「バレルナット・トラニオン」を受け前面から銃身後端まで渡して接続する。
+    tubeZ(metalParts, C.BASE, 0.02, 0.08, 0, BARREL_Y, -(recD * 0.5) - 0.032, true, 'machined');
     // 短露出銃身の銃口ナット
     tubeZ(metalParts, C.DARK, barR + 0.006, 0.02, 0, BARREL_Y, barFrontZ + 0.008, true, 'gradY');
     // ワイヤー折りたたみストック(後方展開)
@@ -209,6 +221,9 @@ export const SMG_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
     const { tubeZ, boxP, bakeAt, chamferBox, metalParts, polyParts, C, r, recD, gauge, BARREL_Y, barCenterZ, barLen, recHalf } = ctx;
     // 細い鋼管レシーバ(円筒アッパー)。バレル射線に同軸。前面 z≈-recHalf*0.9(≈-0.117)。
     tubeZ(metalParts, C.BASE, r.h * 0.44, recD * 0.9, 0, BARREL_Y + 0.008, 0, true, 'machined');
+    // R59 FLOAT: グリップ/トリガーガード/マグ(generic)の下部クラスタが鋼管の下 20mm に浮いていた。
+    // PM12 の実機どおり「箱型ロアレシーバ(トリガーグループ筐体)」を渡して上下を構造接続する。
+    boxP(metalParts, C.BASE, 0.05, 0.05, 0.19, 0, -0.028, 0.02, 0, 0, 0, 'machined');
     // R58 E2: 連結バレルスリーブ(太く明るい削り出し鋼)。レシーバ前面〜ハンドガード後端の
     // 細暗バレル区間を太い明るい筒で覆い、side profile で連結を消さない(浮遊ブロック根治の芯)。
     const recFront = -recHalf * 0.9;
@@ -269,6 +284,9 @@ export const SMG_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
   // レール角箱ハンドガード / full天面レール / skeletonストック / グリップ内マグは本体が描く。
   pdw: (ctx) => {
     const { tubeZ, boxP, bakeAt, chamferBox, metalParts, polyParts, C, r, BARREL_Y, barR, barCenterZ, barFrontZ, recHalf } = ctx;
+    // R59 FLOAT: 前部アセンブリ(レールハンドガード/銃身/フォアグリップ)が受け前面から 26mm
+    // 浮いていた → レール続きの角ブリッジを受け前面〜ハンドガード後端に渡して接続(MP7 の一体レール)。
+    bakeAt(metalParts, chamferBox(barR * 2 + 0.024, barR * 2 + 0.024, 0.06, 0.004), C.DARK, 0, BARREL_Y, -(recHalf + 0.018), 0, 0, 0, 'gradY');
     // 折りたたみ垂直フォアグリップ(レール前端下・僅かに前傾=折りたたみ機構)
     bakeAt(polyParts, chamferBox(0.028, 0.055, 0.028, 0.005), C.POLY, 0, BARREL_Y - 0.042, barCenterZ - 0.028, 0.32, 0, 0, 'gradY');
     // 上面の非往復コッキングノブ(ミニARらしさ)

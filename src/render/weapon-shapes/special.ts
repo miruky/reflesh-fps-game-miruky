@@ -130,4 +130,16 @@ export const SPECIAL_SHAPES = {
 // Phase C: 各 ModelKey の「非サイト外装」painter をここへ登録する。
 // painter は ctx(bake/boxP/tubeZ/coneZ/bakeAt/chamferBox/palette/寸法/buckets)だけで固有外装を描ける。
 // サイト系ジオメトリ(ドット/レンズ/耳)は buildGunBody 本体が描く(painter からは触らない)。
-export const SPECIAL_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {};
+export const SPECIAL_PAINTERS: Partial<Record<ModelKey, ShapePainter>> = {
+  // ── 業火RL(launcher): R59 FLOAT 接続 painter ──
+  // (1) 前部assy(シュラウド/砲身/ブレーキ=18パーツ)が発射筒レシーバ前面から 28mm 浮いていた →
+  //     カップリングリング(発射筒の継手)を受け前面〜シュラウド後端に渡して接続。
+  // (2) generic スケルトンストックのバー群+スリングループが受け後端から 50mm 浮いていた →
+  //     幅広の肩当てフレームを受け後端に渡し、バー群/ループをまとめて接続。
+  // どちらも y は受け高(±0.06)の帯内=ゴーストリング狙点(0.088)の射線は塞がない。
+  launcher: (ctx) => {
+    const { tubeZ, boxP, C, metalParts, recHalf, BARREL_Y } = ctx;
+    tubeZ(metalParts, C.DARK, 0.056, 0.09, 0, BARREL_Y, -(recHalf + 0.028), true, 'machined');
+    boxP(metalParts, C.DARK, 0.112, 0.1, 0.085, 0, -0.012, recHalf + 0.032, 0, 0, 0, 'gradY');
+  },
+};

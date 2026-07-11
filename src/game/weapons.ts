@@ -1733,7 +1733,10 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 1.6,
     bloomRecoveryDegPerS: 1.0,
     movementSpreadDeg: 2.0,
-    falloff: { start: 22, end: 50, minFactor: 0.65 },
+    // R59①: ミニガンの制圧射程。LMG上位級(kumagera/tsuchigumo 26/58/0.7, raitei 22/50/0.65)を
+    // 明確に上回る 38/90。床0.5でも 28×30発/s=420DPS が射程360mまで残る=「遠くまで弾幕が届く」。
+    // スピンアップ0.43sの撃ち始め遅延ぶんを射程・持続火力で圧倒する設計(OSKなし: 28×1.4=39.2)
+    falloff: { start: 38, end: 90, minFactor: 0.5 },
     mode: 'auto',
     burstCount: 1,
     adsFovScale: 1.0, // Fix-3: 0.7→1.0(ADS廃止=FOV変化なし)

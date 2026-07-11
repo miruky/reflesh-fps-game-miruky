@@ -377,32 +377,33 @@ function statCardHtml(c: StatCard): string {
   return `<div style="${plate}"><span style="${MONO}font-size:10px;letter-spacing:0.2em;color:${labelColor};">${esc(c.label)}</span>${value}${sub}</div>`;
 }
 
-function markerHtml(m: StoryMarker, leftPct: number): string {
+// R59: マーカーが密(8個以上)な時はラベルを交互に2段へ振り分ける。
+// 帯幅1310px・スパン5〜95%では、8マーカー時の隣接間隔≈168pxに対しラベル最大幅
+// (16文字≈176px)が上回り隣同士が重なるため。7個以下は従来と完全同一(視覚一致)。
+export function storyLabelDrop(index: number, total: number): boolean {
+  return total >= 8 && index % 2 === 1;
+}
+
+function markerHtml(m: StoryMarker, leftPct: number, labelDrop: boolean): string {
   const t = TONE_NODE[m.tone];
   const big = m.tone === 'violet' || m.kind === 'end';
   const size = big ? 15 : 11;
   const nodeStyle = `width:${size}px;height:${size}px;background:${t.bg};border:${big ? 2 : 1.5}px solid ${t.border};transform:rotate(45deg);${t.glow ? `box-shadow:0 0 ${big ? 18 : 12}px ${t.glow};` : ''}${m.tone === 'violet' ? 'animation:u2rPulse 2.4s ease-in-out infinite;' : ''}`;
   const label = m.label.length > 16 ? `${m.label.slice(0, 15)}…` : m.label;
-  const labelStyle = big
-    ? `font-weight:700;font-size:12.5px;color:${t.text};`
-    : `font-size:11px;color:${t.text};`;
+  // 段下げ+17px: 下段ラベル上端は小ノードで26+11+8+17=62px、帯高86px内に収まる
+  const labelStyle = `${big ? 'font-weight:700;font-size:12.5px;' : 'font-size:11px;'}color:${t.text};${labelDrop ? 'margin-top:17px;' : ''}`;
   return `<div style="position:absolute;left:${leftPct.toFixed(1)}%;top:${big ? 18 : 26}px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:${big ? 7 : 8}px;white-space:nowrap;"><span style="${nodeStyle}"></span><span style="${labelStyle}">${esc(label)}</span></div>`;
 }
 
-export const mountResult: ScreenMount = (host, root, opts) => {
-  const result = opts?.result;
-  const progress = opts?.progress;
-  if (!result || !progress) {
-    // 契約上showResultからのみ開かれる。ペイロード欠落時は空表示(クラッシュさせない)
-    root.replaceChildren();
-    return { dispose: (): void => {} };
-  }
-  const reduce = host.reducedMotion();
-  const ac = new AbortController();
-  const sig = { signal: ac.signal };
-  root.classList.add('u2-result');
-  root.classList.toggle('u2r-reduce', reduce);
-
+// R59: ステージHTML全体を純関数へ分離(vitestはnode環境=jsdom不使用の文字列テスト規約
+// のため、レーン座標・幅・nowrap等の「重なり契約」を文字列でピン留め可能にする)。
+// 生成内容は従来のmountResultインライン構築と同一(R59の重なり根治のみ差分)。
+export function resultStageHtml(
+  result: MatchResult,
+  progress: MatchProgress,
+  profile: Profile,
+  now: Date = new Date(),
+): string {
   const sl = scoreLine(result);
   const cards = statCards(result, progress);
   const markers = resultStoryMarkers(result, progress);
@@ -411,9 +412,8 @@ export const mountResult: ScreenMount = (host, root, opts) => {
   const rank = rankNameFor(level.level);
   const nri = nextRankInfo(level.level);
   const gained = level.level - progress.levelBefore.level;
-  const rows = progressRows(host.profile, progress);
+  const rows = progressRows(profile, progress);
   const foot = xpFootnotes(progress);
-  const now = new Date();
   const dateStr = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, '0')}.${String(now.getDate()).padStart(2, '0')}`;
   const totalMedals = Object.values(result.summary.medalCounts ?? {}).reduce((a, b) => a + b, 0);
   const xpRatio = level.toNext > 0 ? Math.min(100, (level.intoLevel / level.toNext) * 100) : 100;
@@ -455,7 +455,13 @@ export const mountResult: ScreenMount = (host, root, opts) => {
     : `<div style="position:absolute;right:-90px;top:-120px;font-weight:700;font-size:840px;line-height:1;color:rgba(150,170,200,0.045);pointer-events:none;">敗</div>`;
 
   const storyItems = markers
-    .map((m, i) => markerHtml(m, markers.length <= 1 ? 50 : 5 + (i * 90) / (markers.length - 1)))
+    .map((m, i) =>
+      markerHtml(
+        m,
+        markers.length <= 1 ? 50 : 5 + (i * 90) / (markers.length - 1),
+        storyLabelDrop(i, markers.length),
+      ),
+    )
     .join('');
   const storyBlock =
     markers.length <= 2
@@ -498,11 +504,14 @@ export const mountResult: ScreenMount = (host, root, opts) => {
     })
     .join('');
 
+  // R59: max-width→width明示。0×0アンカー群(u2r-gbl)直下の絶対配置子はshrink-to-fitの
+  // 利用可能幅が0になりmin-content幅へ潰れるため、max-widthでは幅が確保されず
+  // ラベル折返し+チップ列の横スクロール契約(.u2r-medals)も機能しなかった。
   const medalStrip =
     chips.length === 0
       ? ''
-      : `<div class="u2r-medalstrip" style="position:absolute;left:56px;bottom:56px;display:flex;flex-direction:column;gap:12px;max-width:1310px;">
-      <span style="${MONO}font-size:10.5px;letter-spacing:0.26em;color:#77705F;">獲得メダル${JP_SP}${totalMedals}個 · 図鑑 ${Object.keys(host.profile.medalCounts ?? {}).length} / ${MEDAL_TOTAL}種</span>
+      : `<div class="u2r-medalstrip" style="position:absolute;left:56px;bottom:56px;display:flex;flex-direction:column;gap:12px;width:1310px;">
+      <span style="${MONO}font-size:10.5px;letter-spacing:0.26em;color:#77705F;white-space:nowrap;">獲得メダル${JP_SP}${totalMedals}個 · 図鑑 ${Object.keys(profile.medalCounts ?? {}).length} / ${MEDAL_TOTAL}種</span>
       <div class="u2r-medals" style="display:flex;gap:12px;">
         ${chips
           .map(
@@ -538,9 +547,6 @@ export const mountResult: ScreenMount = (host, root, opts) => {
     })
     .join('');
 
-  const stage = document.createElement('div');
-  stage.className = 'u2-result-stage';
-  stage.dataset.id = 'scr-result'; // F10スモークの画面到達検証用(scr-*規約)
   // R56 W3: フルードステージ化(menu2.tsのFLUID_SCREENSに'result'を登録済み=常時フルード)。
   // .u2-result-stage は position:absolute;inset:0(実viewport全面)になったため、内部要素は
   // 角アンカーの0-sizeラッパー群(u2r-g*, hub/campaign/deploy等で実証済みのパターンと同型)に
@@ -548,7 +554,12 @@ export const mountResult: ScreenMount = (host, root, opts) => {
   // resultは他画面と共有されないため(campaign.tsのmountCampaignと同様に)ガードクラスを
   // 介さずインラインで直接scaleする(常時フルードなので安全 = --u2s未設定時のfallback=1で
   // 恒等変換)。両端アンカーが要る要素(区切り線)のみ、群の外・stage直下でcalc()変換する。
-  stage.innerHTML = `
+  //
+  // R59 重なり根治: 0×0アンカー群直下の絶対配置子は、containing block幅0のため
+  // shrink-to-fitの利用可能幅が0となりmin-content幅へ潰れる(CJKは文字間で折返し可能
+  // なので「勝利」が縦積み2行になりマッチストーリー帯へ食い込んでいた。全アスペクト共通)。
+  // よってアンカー群直下の子は必ず「明示width」か「white-space:nowrap」を持つこと(契約)。
+  return `
     ${bgWash}
     <div style="position:absolute;inset:0;background:repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 4px);pointer-events:none;"></div>
     <div style="position:absolute;inset:0;background:radial-gradient(130% 100% at 50% 45%, rgba(0,0,0,0) 60%, rgba(2,2,7,0.5) 100%);pointer-events:none;"></div>
@@ -570,12 +581,12 @@ export const mountResult: ScreenMount = (host, root, opts) => {
     <div style="position:absolute;left:calc(56px * var(--u2s, 1));right:calc(56px * var(--u2s, 1));top:calc(76px * var(--u2s, 1));height:1px;background:linear-gradient(90deg, rgba(255,107,43,0.5), rgba(232,227,216,0.13) 30%, rgba(232,227,216,0.13) 100%);"></div>
 
     <div class="u2r-gtl" style="position:absolute;left:0;top:0;transform-origin:top left;transform:scale(var(--u2s, 1));">
-      <div style="position:absolute;left:56px;top:34px;display:flex;align-items:center;gap:14px;">
+      <div style="position:absolute;left:56px;top:34px;display:flex;align-items:center;gap:14px;white-space:nowrap;">
         <div style="width:34px;height:2px;background:#FF6B2B;box-shadow:0 0 12px rgba(255,107,43,0.8);"></div>
         <span style="${MONO}font-size:12px;letter-spacing:0.3em;color:#A79F90;">戦闘詳報${JP_SP}AFTER ACTION REPORT</span>
       </div>
 
-      <div style="position:absolute;left:56px;top:104px;display:flex;align-items:flex-end;gap:44px;">${hero}</div>
+      <div style="position:absolute;left:56px;top:104px;width:1310px;white-space:nowrap;display:flex;align-items:flex-end;gap:44px;">${hero}</div>
       ${storyBlock}
 
       <div style="position:absolute;left:56px;top:492px;width:1310px;display:grid;grid-template-columns:repeat(${cards.length},1fr);gap:10px;">
@@ -663,6 +674,26 @@ export const mountResult: ScreenMount = (host, root, opts) => {
       </div>
     </div>
   `;
+}
+
+export const mountResult: ScreenMount = (host, root, opts) => {
+  const result = opts?.result;
+  const progress = opts?.progress;
+  if (!result || !progress) {
+    // 契約上showResultからのみ開かれる。ペイロード欠落時は空表示(クラッシュさせない)
+    root.replaceChildren();
+    return { dispose: (): void => {} };
+  }
+  const reduce = host.reducedMotion();
+  const ac = new AbortController();
+  const sig = { signal: ac.signal };
+  root.classList.add('u2-result');
+  root.classList.toggle('u2r-reduce', reduce);
+
+  const stage = document.createElement('div');
+  stage.className = 'u2-result-stage';
+  stage.dataset.id = 'scr-result'; // F10スモークの画面到達検証用(scr-*規約)
+  stage.innerHTML = resultStageHtml(result, progress, host.profile);
   root.replaceChildren(stage);
   // R56 W3: 旧来のローカルfit()(root.clientWidthを測ってstage --u2sを自前計算)は撤去。
   // --u2s は menu2.ts の applyScale() が画面を問わず常時 root(=.u2-stage)へ更新するため、
