@@ -104,12 +104,17 @@ describe('カモ段階表', () => {
   // R55 W-C3根治(LOW[27]): diamondのsparkle/envMapIntensityに機械検査が無かった。
   // 白飛び再発禁止(bloom閾値0.9)の実務上限として sparkle<=0.6 / envMapIntensity<=1.0 を
   // 全カモ(CAMO_VISUALS走査=CAMO_IDS+pap1-3+tokoyami+報酬カモを含む全定義)で機械検査する。
-  it('sparkle/envMapIntensity は指定時のみ、白飛び回避の上限内(sparkle<=0.6, envMapIntensity<=1.0)', () => {
+  // R56④: 「更にギラギラ」要望でdiamond.sparkleを0.55→0.62へ引き上げた(viewmodel.ts側は
+  // glitAmt/iridAmt係数を絞り直し、密度は上げつつ1点あたりの加算量は減らしたため合計
+  // エネルギーはむしろ抑制側)。実務上限を0.6→0.7へ緩和(依然として0.62に余裕を持たせた
+  // 保守的な値)。実WebGL(SwiftShader・worst-caseな明るいステージ相当の光源+IBLで検証)で
+  // 飽和ピクセル(R/G/B いずれか255)比率=0を確認した上での緩和(検証スクリプトは確認後削除)。
+  it('sparkle/envMapIntensity は指定時のみ、白飛び回避の上限内(sparkle<=0.7, envMapIntensity<=1.0)', () => {
     for (const id of Object.keys(CAMO_VISUALS) as CamoId[]) {
       const v = CAMO_VISUALS[id];
       if (v.sparkle !== undefined) {
         expect(v.sparkle, id).toBeGreaterThanOrEqual(0);
-        expect(v.sparkle, id).toBeLessThanOrEqual(0.6);
+        expect(v.sparkle, id).toBeLessThanOrEqual(0.7);
       }
       if (v.envMapIntensity !== undefined) {
         expect(v.envMapIntensity, id).toBeGreaterThanOrEqual(0);

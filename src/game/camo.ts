@@ -495,11 +495,16 @@ export const CAMO_VISUALS: Record<CamoId, CamoVisual> = {
   // 抑制(roughness/metalnessは維持しファセット煌めき自体は残す)。sparkleも0.8→0.55へ
   // 絞り、totalEmissiveRadianceへの加算(フレネル虹色+グリッター最悪値)が base emissive
   // と合算しても0.9閾値へ余裕を持って収まるようにする(ギラつき感は残しつつ白飛びしない)。
+  // R56④: 更に一段ギラつかせる。envMapIntensity/metalness/emissiveIntensityは白飛び根治済の
+  // 値を維持(indirectSpecularの底上げはしない=再発の主因だったため不可侵)。roughnessだけ
+  // 0.05→0.04へ僅かに絞り鏡面のシャープさを上げる(実WebGLで飽和0を確認済)。ギラつき増量の
+  // 本体は viewmodel.ts の camoSparkleEmissiveGLSL の再設計(グリッター高密度・低振幅化+
+  // 虹色フレネルの帯を増やし彩度up)側。sparkleスカラーも0.55→0.62へ僅増(実WebGLで検証)。
   diamond: {
     id: 'diamond', colorA: 0xd6f0ff, colorB: 0x4a90d9, colorC: 0xffffff,
-    pattern: 'facet', scale: 16, metalness: 0.95, roughness: 0.05,
+    pattern: 'facet', scale: 16, metalness: 0.95, roughness: 0.04,
     emissive: 0xbfe4ff, emissiveIntensity: 0.3,
-    envMapIntensity: 0.7, sparkle: 0.55,
+    envMapIntensity: 0.7, sparkle: 0.62,
   },
   // ダークマター = 暗紫の脈動ノイズ(uTimeアニメ)
   'dark-matter': {

@@ -30,6 +30,11 @@ const LOADOUT_KEY = 'hibana.loadout.v1'; // 旧UIと同一キー=兵装選択の
 // ポーズだけは試合画面の上に薄く載る(他は不透明フルスクリーン)
 const OVERLAY_SCREENS: ReadonlySet<Screen2Id> = new Set<Screen2Id>(['pause']);
 
+// R56 焔座フルードステージ: レスポンシブ引き伸ばし(黒帯なし)へ移行済みの画面のみ。
+// 波ごとにここへ追加していく(今回はhubのみ)。未追加の画面は従来のscale-to-fitのまま
+// 完全維持される(この波での回帰ゼロを担保)。
+const FLUID_SCREENS: ReadonlySet<Screen2Id> = new Set<Screen2Id>(['hub']);
+
 // R55 W-C4[5]: onKeyのEsc除外はテキスト打鍵系のinput型のみを対象にする
 // (checkbox/radio/range/buttonはEsc=戻るを妨げない)。ui2に現存するのはcheckbox/range/buttonのみだが、
 // 将来text系inputが増えても安全なように型ベースで判定する。
@@ -224,6 +229,8 @@ export class Menu2 implements MenuApi {
     this.stage.dataset.screen = id;
     this.stage.setAttribute('data-id', `scr-${id}`);
     this.stage.innerHTML = '';
+    this.stage.classList.toggle('u2-stage--fluid', FLUID_SCREENS.has(id));
+    this.applyScale();
     let handle: Screen2Handle;
     if (id === 'title') {
       handle = mountTitle(this.host, this.stage, () => {
@@ -271,7 +278,16 @@ export class Menu2 implements MenuApi {
 
   private applyScale(): void {
     const s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
-    this.stage.style.transform = `scale(${s})`;
+    // --u2sは画面を問わず常時更新する: フルード画面(u2-stage--fluid)の各グループは
+    // これを個別にtransform:scaleして端アンカー引き伸ばしを行う。
+    this.stage.style.setProperty('--u2s', String(s));
+    if (this.stage.classList.contains('u2-stage--fluid')) {
+      // フルード画面: stage自体のtransformは各グループ側の責務(黒帯なし・端アンカー)
+      this.stage.style.transform = '';
+    } else {
+      // レガシー画面: 従来通りstage全体をscale-to-fit(黒帯あり・完全現状維持)
+      this.stage.style.transform = `scale(${s})`;
+    }
   }
 
   private focusables(): HTMLElement[] {

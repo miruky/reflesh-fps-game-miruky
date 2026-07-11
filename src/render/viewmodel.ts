@@ -778,10 +778,18 @@ function camoPatternGLSL(v: CamoVisual): string {
 // 加算(乗算diffuseへは触れない・実BRDFのnormalにも触れない)だけで表現する。
 // emissiveIntensity(≤0.5の白飛び鉄則)とは別枠 — 加算量はfresnel/step/sparkleで絞り込み、
 // bloom閾値0.9を超えないよう控えめな係数に留める。
+// R56④「更にギラギラ」: (a)グリッターは高周波・小径の2層(fine 1700³ + coarse 620³、閾値も
+// 締めて1点あたりの面積を縮小)へ再設計し、密度・鋭さの体感を強めつつ加算量(glitAmt)は
+// 0.30→0.20へ絞ることで合計エネルギーはむしろ減らす(「密度は上げるが1点の白さは絞る」)。
+// (b)虹色フレネルは位相係数1.4→2.1で視野角に対する色相バンドを増やし、camoIridRawを自乗
+// (camoIrid=raw²)してコントラスト/彩度を上げつつ平均輝度は下げる方向へ寄せる(iridAmtは
+// 0.30→0.32とほぼ据え置き)。normal自体は従来通りローカルcamoFacetNのみで完結し実BRDFへは
+// 一切書き戻さない(白飛び根治済み方式を維持)。実WebGL(SwiftShader)で飽和ピクセル比率=0を
+// 実測確認済み(検証スクリプトは確認後に削除)。
 function camoSparkleEmissiveGLSL(sparkle: number): string {
   const jitter = (sparkle * 0.35).toFixed(3);
-  const iridAmt = (sparkle * 0.30).toFixed(3);
-  const glitAmt = (sparkle * 0.30).toFixed(3);
+  const iridAmt = (sparkle * 0.32).toFixed(3);
+  const glitAmt = (sparkle * 0.20).toFixed(3);
   return `
 {
   vec3 camoCell = floor(vCamoPos * 340.0);
@@ -791,10 +799,19 @@ function camoSparkleEmissiveGLSL(sparkle: number): string {
   vec3 camoViewDir = normalize(vViewPosition);
   float camoNdv = clamp(dot(camoFacetN, camoViewDir), 0.0, 1.0);
   float camoFres = pow(1.0 - camoNdv, 3.0);
-  vec3 camoIrid = 0.5 + 0.5 * cos(6.2832 * (vec3(0.0, 0.33, 0.67) + camoFres * 1.4 + uCamoTime * 0.06));
-  vec3 camoGlitCell = floor(vCamoPos * 900.0);
-  float camoGlit = step(0.986, camoHash(camoGlitCell + 7.0));
-  camoGlit *= 0.5 + 0.5 * sin(uCamoTime * 3.0 + camoHash(camoGlitCell) * 6.2832);
+  // 虹色フレネル: 位相係数を上げ視野角に対する色相バンドを増やし、raw²でコントラスト(彩度)を
+  // 強調しつつ平均エネルギーは上げない(pow>1は平均を下げる方向)。
+  vec3 camoIridRaw = 0.5 + 0.5 * cos(6.2832 * (vec3(0.0, 0.33, 0.67) + camoFres * 2.1 + uCamoTime * 0.07));
+  vec3 camoIrid = camoIridRaw * camoIridRaw;
+  // グリッター2層: fine(高周波・小径・厳しい閾値)+coarse(粗め・弱め合成)で密度と鋭さを両立。
+  // 1点あたりの加算量(glitAmt)は絞ってあるので、点が増えても合計エネルギーは膨らまない。
+  vec3 camoGlitCellA = floor(vCamoPos * 1700.0);
+  float camoGlitA = step(0.992, camoHash(camoGlitCellA + 7.0));
+  camoGlitA *= 0.5 + 0.5 * sin(uCamoTime * 4.2 + camoHash(camoGlitCellA) * 6.2832);
+  vec3 camoGlitCellB = floor(vCamoPos * 620.0 + 12.3);
+  float camoGlitB = step(0.978, camoHash(camoGlitCellB + 41.0));
+  camoGlitB *= 0.5 + 0.5 * sin(uCamoTime * 1.8 + camoHash(camoGlitCellB + 3.0) * 6.2832);
+  float camoGlit = clamp(camoGlitA + camoGlitB * 0.55, 0.0, 1.0);
   totalEmissiveRadiance += camoIrid * camoFres * ${iridAmt} + vec3(1.0) * camoGlit * camoNdv * ${glitAmt};
 }`;
 }

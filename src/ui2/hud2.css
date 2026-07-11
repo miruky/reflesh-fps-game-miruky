@@ -394,6 +394,12 @@
   color: var(--hibana-pale);
   text-shadow: 0 0 10px rgba(255, 107, 43, 0.6);
 }
+/* R56③: ゾンビのみ左上のキルストリークチップを金経済(zpoints)系の配色に寄せて視認性/一貫性を出す
+   (中央大バナーはゾンビでは出さないため、この左上チップが唯一の表示になる) */
+#hud.u2-hud[data-zombie] .u2h-streakchip {
+  color: #f7dc8e;
+  text-shadow: 0 0 10px rgba(247, 220, 142, 0.5);
+}
 /* 温存計器(ボス/検知/S&D/訓練)を左上カラムの流れに正規化 */
 #hud.u2-hud .u2h-topleft .hud-boss,
 #hud.u2-hud .u2h-topleft .w2-detect,

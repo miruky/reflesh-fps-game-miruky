@@ -130,7 +130,9 @@ function starsSvg(): string {
       <circle cx="${x}" cy="${y}" r="${2.2 * k}" fill="${c}"/></g>`;
     })
     .join('');
-  return `<svg width="1920" height="1080" viewBox="0 0 1920 1080" style="position:absolute;inset:0;" aria-hidden="true">
+  // R56: width/height=100%+preserveAspectRatio(slice)でviewport全面をカバー(黒帯なし)。
+  // xMaxYMax=右下基準クロップ(宇宙は無方向性の星野のため、どの辺を削ってもデザイン破綻なし)。
+  return `<svg width="100%" height="100%" viewBox="0 0 1920 1080" preserveAspectRatio="xMaxYMax slice" style="position:absolute;inset:0;" aria-hidden="true">
     <defs>
       <pattern id="u2h-st" width="390" height="390" patternUnits="userSpaceOnUse">
         <circle cx="50" cy="75" r="1.4" fill="#EDF2FA" opacity="0.85"/>
@@ -340,6 +342,7 @@ export const mountHub: ScreenMount = (host, root) => {
   <div style="position:absolute;inset:0;background:radial-gradient(60% 50% at 82% 18%, rgba(83,68,140,0.20) 0%, rgba(83,68,140,0) 70%);"></div>
   <div style="position:absolute;inset:0;background:radial-gradient(46% 40% at 12% 78%, rgba(140,70,52,0.10) 0%, rgba(140,70,52,0) 70%);"></div>
   ${starsSvg()}
+  <div style="position:absolute;right:0;bottom:0;width:1920px;height:1080px;transform-origin:bottom right;transform:scale(var(--u2s, 1));pointer-events:none;">
   <svg width="560" height="560" viewBox="0 0 560 560" style="position:absolute;left:920px;top:30px;animation:enzaOrbit 180s linear infinite;" aria-hidden="true">
     <circle cx="280" cy="280" r="262" fill="none" stroke="rgba(255,150,80,0.05)" stroke-width="1"/>
     <circle cx="280" cy="280" r="262" fill="none" stroke="rgba(255,150,80,0.07)" stroke-width="10" stroke-dasharray="2 42"/>
@@ -359,12 +362,13 @@ export const mountHub: ScreenMount = (host, root) => {
   </div>
   <div style="position:absolute;left:1476px;top:328px;width:150px;height:1px;background:linear-gradient(90deg, rgba(255,185,138,0.7), rgba(255,185,138,0));"></div>
   <div style="position:absolute;left:1492px;top:306px;${MONO}font-size:11px;letter-spacing:0.18em;color:#C9A288;white-space:nowrap;">軌道拠点「焔座」<br><span style="color:#77705F;">高度 408km · 同期中</span></div>
+  </div>
   <div style="position:absolute;inset:0;background:radial-gradient(120% 100% at 50% 46%, rgba(0,0,0,0) 58%, rgba(2,2,7,0.42) 88%, rgba(2,2,7,0.72) 100%);pointer-events:none;"></div>
   <div style="position:absolute;inset:0;background:repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 4px);pointer-events:none;"></div>
-  <div style="position:absolute;left:56px;top:95px;width:1808px;height:1px;background:linear-gradient(90deg, rgba(255,107,43,0.55) 0%, rgba(232,227,216,0.16) 22%, rgba(232,227,216,0.16) 78%, rgba(124,84,220,0.4) 100%);"></div>
+  <div style="position:absolute;left:calc(56px * var(--u2s, 1));right:calc(56px * var(--u2s, 1));top:calc(95px * var(--u2s, 1));height:1px;background:linear-gradient(90deg, rgba(255,107,43,0.55) 0%, rgba(232,227,216,0.16) 22%, rgba(232,227,216,0.16) 78%, rgba(124,84,220,0.4) 100%);"></div>
 
-  <div style="position:absolute;left:56px;top:0;right:56px;height:95px;display:flex;align-items:center;justify-content:space-between;white-space:nowrap;">
-    <div style="display:flex;align-items:center;gap:18px;">
+  <div style="position:absolute;left:0;top:0;transform-origin:top left;transform:scale(var(--u2s, 1));">
+    <div style="position:absolute;left:56px;top:0;height:95px;display:flex;align-items:center;gap:18px;white-space:nowrap;">
       <svg width="50" height="50" viewBox="0 0 56 56" aria-hidden="true">
         <circle cx="28" cy="28" r="25" fill="none" stroke="#FF6B2B" stroke-width="1.6"/>
         <circle cx="28" cy="28" r="25" fill="none" stroke="rgba(255,107,43,0.25)" stroke-width="5" stroke-dasharray="2 10"/>
@@ -379,36 +383,7 @@ export const mountHub: ScreenMount = (host, root) => {
         <span style="${MONO}font-size:10px;letter-spacing:0.22em;color:#77705F;">ENZA INTERFACE 2.0 · BUILD ${BUILD_LABEL} · 60FPS</span>
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:26px;">
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;">
-        <span style="${MONO}font-size:12px;color:#A79F90;">ローカル実行 · <span style="color:#9FE39F;">安定 60Hz</span></span>
-        <span data-id="hub-clock" style="${MONO}font-size:11px;color:#5E594F;"></span>
-      </div>
-      <div style="position:relative;display:flex;align-items:center;gap:16px;background:linear-gradient(180deg, rgba(22,20,18,0.94), rgba(11,10,9,0.96));border:1px solid rgba(232,227,216,0.18);box-shadow:inset 0 1px 0 rgba(255,255,255,0.07), 0 8px 28px rgba(0,0,0,0.5);padding:10px 20px 10px 16px;">
-        <svg width="44" height="44" viewBox="0 0 52 52" aria-hidden="true">
-          <circle cx="26" cy="26" r="24" fill="none" stroke="#FF6B2B" stroke-width="1.3"/>
-          <rect x="15" y="15" width="22" height="22" fill="rgba(255,107,43,0.14)" stroke="#E8E3D8" stroke-width="1" transform="rotate(45 26 26)"/>
-          <text x="26" y="31" text-anchor="middle" font-size="14" font-weight="800" fill="#FFD9BC">${stamp}</text>
-        </svg>
-        <div style="display:flex;flex-direction:column;gap:5px;">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span style="font-size:16px;font-weight:800;color:#F5F0E6;">${rank}</span>
-            ${title ? `<span style="font-weight:800;font-size:12px;color:#FFD9BC;background:linear-gradient(90deg, rgba(255,107,43,0.22), rgba(255,107,43,0.06));border:1px solid rgba(255,107,43,0.55);padding:2px 10px;letter-spacing:0.05em;">${title}</span>` : ''}
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span style="${MONO}font-size:14px;color:#E8E3D8;">Lv <span style="color:#FFB98A;">${fmtInt(lv.level)}</span></span>
-            <div style="position:relative;width:150px;height:5px;background:rgba(232,227,216,0.12);">
-              <div style="width:${xpPct}%;height:5px;background:linear-gradient(90deg,#B23E14,#FF6B2B 70%,#FFA061);box-shadow:0 0 10px rgba(255,107,43,0.6);"></div>
-              <div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg, transparent 0 14px, rgba(4,4,8,0.9) 14px 15.5px);"></div>
-            </div>
-            <span style="${MONO}font-size:10px;color:#77705F;">${xpPct}%</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <nav style="position:absolute;left:56px;top:158px;width:660px;display:flex;flex-direction:column;white-space:nowrap;">
+    <nav style="position:absolute;left:56px;top:158px;width:660px;display:flex;flex-direction:column;white-space:nowrap;">
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;">
       <div style="width:34px;height:2px;background:#FF6B2B;box-shadow:0 0 12px rgba(255,107,43,0.8);"></div>
       <span style="${MONO}font-size:11.5px;letter-spacing:0.3em;color:#A79F90;">作戦選択\u3000OPERATIONS</span>
@@ -477,8 +452,40 @@ export const mountHub: ScreenMount = (host, root) => {
       </span>
       <span style="${COND}font-weight:700;font-size:14px;color:#5E594F;letter-spacing:0.1em;">06</span>
     </button>
-  </nav>
+    </nav>
+  </div>
 
+  <div style="position:absolute;right:0;top:0;transform-origin:top right;transform:scale(var(--u2s, 1));">
+    <div style="position:absolute;right:56px;top:0;height:95px;display:flex;align-items:center;gap:26px;white-space:nowrap;">
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;">
+        <span style="${MONO}font-size:12px;color:#A79F90;">ローカル実行 · <span style="color:#9FE39F;">安定 60Hz</span></span>
+        <span data-id="hub-clock" style="${MONO}font-size:11px;color:#5E594F;"></span>
+      </div>
+      <div style="position:relative;display:flex;align-items:center;gap:16px;background:linear-gradient(180deg, rgba(22,20,18,0.94), rgba(11,10,9,0.96));border:1px solid rgba(232,227,216,0.18);box-shadow:inset 0 1px 0 rgba(255,255,255,0.07), 0 8px 28px rgba(0,0,0,0.5);padding:10px 20px 10px 16px;">
+        <svg width="44" height="44" viewBox="0 0 52 52" aria-hidden="true">
+          <circle cx="26" cy="26" r="24" fill="none" stroke="#FF6B2B" stroke-width="1.3"/>
+          <rect x="15" y="15" width="22" height="22" fill="rgba(255,107,43,0.14)" stroke="#E8E3D8" stroke-width="1" transform="rotate(45 26 26)"/>
+          <text x="26" y="31" text-anchor="middle" font-size="14" font-weight="800" fill="#FFD9BC">${stamp}</text>
+        </svg>
+        <div style="display:flex;flex-direction:column;gap:5px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:16px;font-weight:800;color:#F5F0E6;">${rank}</span>
+            ${title ? `<span style="font-weight:800;font-size:12px;color:#FFD9BC;background:linear-gradient(90deg, rgba(255,107,43,0.22), rgba(255,107,43,0.06));border:1px solid rgba(255,107,43,0.55);padding:2px 10px;letter-spacing:0.05em;">${title}</span>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="${MONO}font-size:14px;color:#E8E3D8;">Lv <span style="color:#FFB98A;">${fmtInt(lv.level)}</span></span>
+            <div style="position:relative;width:150px;height:5px;background:rgba(232,227,216,0.12);">
+              <div style="width:${xpPct}%;height:5px;background:linear-gradient(90deg,#B23E14,#FF6B2B 70%,#FFA061);box-shadow:0 0 10px rgba(255,107,43,0.6);"></div>
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg, transparent 0 14px, rgba(4,4,8,0.9) 14px 15.5px);"></div>
+            </div>
+            <span style="${MONO}font-size:10px;color:#77705F;">${xpPct}%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="position:absolute;right:0;bottom:0;transform-origin:bottom right;transform:scale(var(--u2s, 1));">
   <div style="position:absolute;right:56px;bottom:120px;width:430px;display:flex;flex-direction:column;gap:12px;white-space:nowrap;">
     ${
       nextMission
@@ -513,8 +520,9 @@ export const mountHub: ScreenMount = (host, root) => {
         : ''
     }
   </div>
+  </div>
 
-  <div style="position:absolute;left:0;bottom:0;width:1920px;height:64px;background:linear-gradient(0deg, rgba(3,3,7,0.96) 0%, rgba(3,3,7,0.78) 70%, rgba(3,3,7,0) 100%);border-top:1px solid rgba(232,227,216,0.12);display:flex;align-items:center;justify-content:space-between;padding:0 56px;box-sizing:border-box;">
+  <div style="position:absolute;left:0;right:0;bottom:0;height:64px;background:linear-gradient(0deg, rgba(3,3,7,0.96) 0%, rgba(3,3,7,0.78) 70%, rgba(3,3,7,0) 100%);border-top:1px solid rgba(232,227,216,0.12);display:flex;align-items:center;justify-content:space-between;padding:0 calc(56px * var(--u2s, 1));box-sizing:border-box;">
     <div style="display:flex;align-items:center;gap:18px;overflow:hidden;width:900px;">
       <span style="flex:none;${MONO}font-size:10.5px;letter-spacing:0.22em;color:#FF8B4D;border:1px solid rgba(255,107,43,0.5);padding:3px 10px;">報\u3000INTEL</span>
       <div style="overflow:hidden;flex:1;">

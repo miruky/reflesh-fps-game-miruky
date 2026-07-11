@@ -1191,16 +1191,24 @@ export class Hud2 {
     this.text('deaths', String(snap.deaths));
     this.text('modename', snap.modeName);
 
-    const streak = this.el['streak'];
-    if (streak) {
-      streak.hidden = snap.streak < 2;
-      streak.textContent = `連続キル ${snap.streak}`;
-    }
-
     // R16: ゾンビモードはタイマー/チームスコアを隠し、ラウンド/キル/ポイントを表示する
     const zombie = this.el['zombie'];
     const inZombie = snap.zombieRound !== undefined;
     if (zombie) zombie.hidden = !inZombie;
+
+    // R56③: ゾンビのみキルストリークを左上戦績行に「キルストリーク ×N」のコンパクト表示にする
+    // (中央大演出=updateBannerはゾンビ時のみ抑止)。通常モードは従来の「連続キル N」を維持する。
+    const streak = this.el['streak'];
+    if (streak) {
+      if (inZombie) {
+        streak.hidden = snap.streak <= 0;
+        streak.textContent = `キルストリーク ×${snap.streak}`;
+      } else {
+        streak.hidden = snap.streak < 2;
+        streak.textContent = `連続キル ${snap.streak}`;
+      }
+    }
+
     // 焔座クロームのモード出し分け(CSSが参照: modeplate/streaks/金経済プレート)
     if (inZombie) this.root.dataset.zombie = '';
     else delete this.root.dataset.zombie;
@@ -2425,10 +2433,12 @@ export class Hud2 {
   }
 
   // 連続キルの節目で中央上にバナーを出す
+  // R56③: ゾンビモードは左上のコンパクトチップ(streak)に一本化し、この大演出は出さない。
   private updateBanner(snap: MatchSnapshot): void {
     const banner = this.el['banner'];
     if (!banner) return;
-    if (snap.streak > this.lastStreak && snap.streak >= 3) {
+    const inZombie = snap.zombieRound !== undefined;
+    if (!inZombie && snap.streak > this.lastStreak && snap.streak >= 3) {
       const labels: Record<number, string> = {
         3: 'TRIPLE KILL',
         4: 'MULTI KILL',

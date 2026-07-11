@@ -228,8 +228,8 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
   root.innerHTML = `
     ${deployBgHtml()}
     <div class="u2d-head">
-      <span class="u2d-kicker">マルチプレイヤー\u3000/\u3000対戦${MODE_IDS.length}モード</span>
-      <span class="u2d-title">公開マッチ</span>
+      <span class="u2d-kicker">マルチプレイヤー\u3000/\u3000${MODE_IDS.length}モード</span>
+      <span class="u2d-title">対戦モード</span>
       <div class="u2d-rule"></div>
     </div>
     <nav class="u2d-nav" data-id="deploy-nav" aria-label="出撃設定セクション"></nav>

@@ -24,6 +24,19 @@
   font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
   letter-spacing: 0.04em;
 }
+/* R56 焔座フルードステージ(オプトイン・画面単位): コーディネータが対象画面(FLUID_SCREENS)を
+   開く際にのみ .u2-stage--fluid を付与する。非対象画面は上の .u2-stage(レガシー
+   scale-to-fit・黒帯あり)のまま完全維持され、この波の対象外画面には一切影響しない。
+   フルード時は letterbox=viewport全面を占有し、画面内の各グループが var(--u2s)
+   (menu2.ts側で常時更新)で個別に transform:scale する(歪みゼロ・端アンカー)。 */
+.u2-stage.u2-stage--fluid {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  transform: none;
+  transform-origin: top left;
+}
 /* ポーズ等の「試合の上に薄く載る」画面はコーディネータがこのクラスを付ける */
 .u2-letterbox--overlay {
   background: transparent;
