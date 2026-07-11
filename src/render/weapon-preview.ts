@@ -2,7 +2,31 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { easeOutCubic } from '../core/easing';
 import type { WeaponDef } from '../game/weapons';
+import { applyAttachments } from '../game/attachments';
 import { buildGunBody } from './viewmodel';
+
+// R57⑦: ARMORY 3Dプレビューにアタッチメント(サイト/マズル/グリップ/マガジン)を見た目反映する
+// 単一経路。新UI(menu2)の previewWeaponId は WEAPON_DEFS[id](=アタッチ未適用のベースdef、
+// attachmentIds:undefined)を setWeapon へ渡すため、そのままでは buildGunBody が装着物を描けない
+// (ユーザー報告「サイトを選んでも武器に変化なし」の原因)。ここで永続ロードアウト(localStorage:
+// メニューと同一キーの単一ソース)から現在の装備アタッチメントを解決し、プライマリ武器の
+// プレビューにだけ適用する。既に合成済みのdef(旧menu.ts / 試合経路 = attachmentIds が配列)は
+// そのまま尊重して二重適用しない。localStorage 不在(テスト/SSR)でも安全に [] を返す。
+const LOADOUT_STORAGE_KEY = 'hibana.loadout.v1'; // menu2/menu と同一キー(兵装選択の単一ソース)
+export function loadoutAttachmentsFor(weaponId: string): string[] {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem(LOADOUT_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { primaryId?: unknown; attachments?: unknown };
+    if (parsed.primaryId !== weaponId) return []; // 副武器/他武器のプレビューには適用しない
+    return Array.isArray(parsed.attachments)
+      ? parsed.attachments.filter((x): x is string => typeof x === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 // ── R53 MK.III: インスペクトループ ──────────────────────────────────
 // buildGunBody の可動ノード(vm:*、rest=identity契約)をプレビュー内でゆっくり駆動し、
@@ -238,7 +262,14 @@ export class WeaponPreview {
   setWeapon(def: WeaponDef): void {
     if (this.disposed) return;
     this.clearCurrent();
-    const { gun } = buildGunBody(def);
+    // R57⑦: アタッチ未適用のベースdef(attachmentIds===undefined)は、永続ロードアウトの
+    // 現在装備アタッチメントを解決してプレビューに反映する。合成済みdefはそのまま使う。
+    let composed = def;
+    if (def.attachmentIds === undefined) {
+      const ids = loadoutAttachmentsFor(def.id);
+      if (ids.length > 0) composed = applyAttachments(def, ids);
+    }
+    const { gun } = buildGunBody(composed);
     // マテリアルをこのプレビュー専用に複製して所有(モジュール共有singletonと分離)。
     // 複製にだけショールームIBLを効かせる(envMapIntensity=0.8・ゲーム/shared は非改変)。
     const clonePreview = (m: THREE.Material): THREE.Material => {

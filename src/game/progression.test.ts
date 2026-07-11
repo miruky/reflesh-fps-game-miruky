@@ -102,6 +102,18 @@ describe('アンロック', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it('R57-④フォローアップ: 武器解放のnameはWEAPON_DEFSの現行名(新名)へ動的追従し旧名ハードコードが再発しない', () => {
+    const weaponUnlocks = UNLOCKS.filter((u) => u.kind === 'weapon');
+    for (const u of weaponUnlocks) {
+      expect(u.name, u.id).toBe(WEAPON_DEFS[u.id]!.name);
+    }
+    // 具体例: R57で消えた旧名(日本語コードネーム)ではなく新名(実在ちょいずらし名)が出ている
+    expect(weaponUnlocks.find((u) => u.id === 'kaede-ar')!.name).toBe('FAMAS-G4');
+    expect(weaponUnlocks.find((u) => u.id === 'kaede-ar')!.name).not.toBe('カエデAR');
+    expect(weaponUnlocks.find((u) => u.id === 'shirayuki-sniper')!.name).toBe('TRG-44');
+    expect(weaponUnlocks.find((u) => u.id === 'shirayuki-sniper')!.name).not.toBe('シラユキ');
+  });
+
   it('全アタッチメントアンロックのIDがアタッチメント定義表に存在する', () => {
     const attachmentUnlocks = UNLOCKS.filter((u) => u.kind === 'attachment');
     // 既存8(reflex/vertical/extended/suppressor/angled/compensator/telescopic/quick)+ 追加光学8 = 16
@@ -114,7 +126,7 @@ describe('アンロック', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('レベル24までに最強ボルト(シラユキ)が解放される', () => {
+  it('レベル24までに最強ボルト(TRG-44、旧シラユキ)が解放される', () => {
     const shirayuki = UNLOCKS.find((u) => u.id === 'shirayuki-sniper');
     expect(shirayuki).toBeDefined();
     expect(shirayuki!.level).toBeLessThanOrEqual(24);
@@ -683,7 +695,7 @@ describe('カモチャレンジ積算(applyMatch)', () => {
     );
     expect(progress.newCamos).toHaveLength(1);
     expect(progress.newCamos[0]?.camoId).toBe('dirt');
-    expect(progress.newCamos[0]?.label).toContain('カエデAR');
+    expect(progress.newCamos[0]?.label).toContain('FAMAS-G4');
     expect(progress.xpBreakdown.some((e) => e.label.startsWith('カモ解除:'))).toBe(true);
   });
 

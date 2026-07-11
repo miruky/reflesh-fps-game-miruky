@@ -257,6 +257,11 @@ export interface MatchSnapshot {
   minimapEnemies: ReadonlyArray<{ relX: number; relZ: number; opacity: number }>;
   minimapAllies: ReadonlyArray<{ relX: number; relZ: number }>;
   minimapStageSize: number;
+  // R57 ⑥修正3: プレイヤーのworld座標(X/Z)。ミニマップの障害物ボックス(ワールド絶対座標で
+  // 保持)を敵/味方ドット(プレイヤー相対 relX/relZ)と同じ座標系へ変換するための下地
+  // (hud2.ts drawMinimapが (box.x - playerX) 等で相対化する)
+  playerX: number;
+  playerZ: number;
   // ── ③ 発砲ブリップ(BO2本物仕様: 敵発砲位置1秒表示) ──
   fireBlips: ReadonlyArray<{ relX: number; relZ: number; age01: number }>;
   // ── ハードポイント ──

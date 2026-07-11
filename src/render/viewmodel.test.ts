@@ -362,6 +362,174 @@ describe('resolveSightY', () => {
   });
 });
 
+// ── R57⑧ サイトドット統一 + 二重ドット根絶 ────────────────────────────────
+// 光学装着時は「光学のドット」だけを出し、アイアンのビード/前照星ドットは出さない
+// (中央付近で二重にならない)。光学未装着時のみアイアンの浮遊マイクロドットを出す。
+describe('R57⑧ サイトドット統一/二重ドット根絶', () => {
+  const ar = WEAPON_DEFS['kaede-ar'];
+  if (!ar) throw new Error('kaede-ar missing');
+
+  // 「照準ドット」= 加算材の PlaneGeometry(reflexDotWindow/holo) or r≤0.0022 の SphereGeometry
+  // (アイアン浮遊マイクロドット)。耳の琥珀点(r0.0024>0.0022)は照準ドットではないので除外。
+  function countAimDots(gun: THREE.Object3D): { planes: THREE.Mesh[]; microSpheres: THREE.Mesh[] } {
+    const planes: THREE.Mesh[] = [];
+    const microSpheres: THREE.Mesh[] = [];
+    gun.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      if (o.geometry instanceof THREE.PlaneGeometry) planes.push(o);
+      else if (
+        o.geometry instanceof THREE.SphereGeometry &&
+        o.geometry.parameters.radius <= 0.0022
+      ) {
+        microSpheres.push(o);
+      }
+    });
+    return { planes, microSpheres };
+  }
+
+  it('光学未装着(iron)のARは「アイアンの浮遊マイクロドット1個」だけを持ち、光学ドット(plane)は無い', () => {
+    const { gun } = buildGunBody(ar); // 素の kaede-ar(attachmentIds なし=iron)
+    const { planes, microSpheres } = countAimDots(gun);
+    expect(microSpheres.length).toBe(1); // アイアン前照星ドット1個
+    expect(planes.length).toBe(0); // 光学の窓/ドット plane は無い
+  });
+
+  it('reflex 装着時は「光学ドット(plane)1個」だけで、アイアンのマイクロドット(sphere)は消える(二重根絶)', () => {
+    const { gun } = buildGunBody({ ...ar, attachmentIds: ['reflex'] });
+    const { planes, microSpheres } = countAimDots(gun);
+    // reflexDotWindow は plane ドット1個(レンズはCircleGeometryなのでplaneではない)
+    expect(planes.length).toBe(1);
+    // アイアンのマイクロドットは光学装着で抑止される
+    expect(microSpheres.length).toBe(0);
+    // 唯一の plane ドットは ADS収束Y と一致(サイト契約)
+    expect(planes[0]!.position.y).toBeCloseTo(resolveSightY({ ...ar, attachmentIds: ['reflex'] }), 6);
+  });
+
+  it('全1x光学(reflex/holo/delta/pico/canted/hybrid)でアイアンのマイクロドットが二重に出ない', () => {
+    for (const id of ['reflex', 'holographic', 'delta', 'pico', 'canted', 'hybrid'] as const) {
+      const { gun } = buildGunBody({ ...ar, attachmentIds: [id] });
+      const { microSpheres } = countAimDots(gun);
+      expect(microSpheres.length, id).toBe(0); // アイアンの浮遊マイクロドットは出さない
+    }
+  });
+
+  it('倍率スコープ光学(acog/variable/thermal/telescopic)でもアイアンのドットは二重に出ない', () => {
+    for (const id of ['acog', 'variable', 'thermal', 'telescopic'] as const) {
+      const { gun } = buildGunBody({ ...ar, attachmentIds: [id] });
+      const { microSpheres } = countAimDots(gun);
+      expect(microSpheres.length, id).toBe(0);
+    }
+  });
+
+  it('全1x光学のドット(plane)はアイアン相当の極小サイズ(≤0.005・視界を塞がない)へ統一', () => {
+    for (const id of ['reflex', 'holographic', 'delta', 'pico', 'canted', 'hybrid'] as const) {
+      const { gun } = buildGunBody({ ...ar, attachmentIds: [id] });
+      let dotSize = Number.NaN;
+      gun.traverse((o) => {
+        if (!Number.isNaN(dotSize)) return;
+        if (o instanceof THREE.Mesh && o.geometry instanceof THREE.PlaneGeometry) {
+          // reflexDotWindow/holo のドットは正方 plane。holo のスクリーン(横長 0.05×0.04)や
+          // reflexのレンズ(Circle)ではなく、幅==高さ かつ極小(≤0.005)のものがドット。
+          const w = o.geometry.parameters.width;
+          const h = o.geometry.parameters.height;
+          if (Math.abs(w - h) < 1e-6 && w <= 0.005) dotSize = w;
+        }
+      });
+      expect(Number.isNaN(dotSize), id).toBe(false);
+      expect(dotSize, id).toBeLessThanOrEqual(0.005);
+      // 旧実装(0.008〜0.012)より確実に小さいこと
+      expect(dotSize, id).toBeLessThan(0.008);
+    }
+  });
+
+  it('非回帰: iron post/bead/launcher(光学無し)は従来通りマイクロドットを保持し resolveSightY と一致', () => {
+    const base = Object.values(WEAPON_DEFS)[0]!;
+    const cases: WeaponDef[] = [
+      { ...base, shape: 'rifle', attachmentIds: [] },
+      { ...base, shape: 'shotgun-pump', class: 'shotgun', attachmentIds: [] },
+      { ...base, shape: 'launcher', attachmentIds: [] },
+    ];
+    for (const def of cases) {
+      const { gun } = buildGunBody(def);
+      const { microSpheres } = countAimDots(gun);
+      expect(microSpheres.length, def.shape).toBe(1);
+      expect(microSpheres[0]!.position.y, def.shape).toBeCloseTo(resolveSightY(def), 6);
+    }
+  });
+});
+
+// ── R57⑦ アタッチメントのジオメトリ反映 ──────────────────────────────────
+describe('R57⑦ アタッチメント視覚反映(buildGunBody)', () => {
+  const ar = WEAPON_DEFS['kaede-ar'];
+  if (!ar) throw new Error('kaede-ar missing');
+
+  function meshTally(g: THREE.Object3D): number {
+    let n = 0;
+    g.traverse((o) => {
+      if (o instanceof THREE.Mesh) n += 1;
+    });
+    return n;
+  }
+
+  it('コンペンセイターは銃口デバイスを追加し、マズル原点を前進させる(サプレッサ非装着時)', () => {
+    const plain = buildGunBody(ar);
+    const comp = buildGunBody({ ...ar, attachmentIds: ['compensator'] });
+    // マズル原点(トレーサー原点)が前進(z がより負)
+    expect(comp.muzzle.position.z).toBeLessThan(plain.muzzle.position.z);
+  });
+
+  it('サプレッサとコンペは排他(両指定時はサプレッサ優先=筒が前進、コンペのZ計算に潰されない)', () => {
+    const both = buildGunBody({ ...ar, attachmentIds: ['suppressor', 'compensator'] });
+    const supp = buildGunBody({ ...ar, attachmentIds: ['suppressor'] });
+    // 両立してもサプレッサ単体と同じマズル原点(コンペの前進計算に上書きされない)
+    expect(both.muzzle.position.z).toBeCloseTo(supp.muzzle.position.z, 6);
+  });
+
+  it('拡張マガジンと標準弾倉でメッシュ構成が変化する(延長弾倉の描画)', () => {
+    // 拡張マガジンはセグメント長が伸びるため vm:magazine の bbox 高さが増える
+    const bboxMagHeight = (def: WeaponDef): number => {
+      const { gun } = buildGunBody(def);
+      const mag = gun.getObjectByName('vm:magazine');
+      if (!mag) return 0;
+      const box = new THREE.Box3().setFromObject(mag);
+      return box.getSize(new THREE.Vector3()).y;
+    };
+    const ext = bboxMagHeight({ ...ar, attachmentIds: ['extended'] });
+    const std = bboxMagHeight({ ...ar, attachmentIds: [] });
+    const quick = bboxMagHeight({ ...ar, attachmentIds: ['quick'] });
+    expect(ext).toBeGreaterThan(std); // 拡張=延長
+    expect(quick).toBeLessThan(std); // クイック=短小
+  });
+
+  it('フォアグリップ(vertical/angled)装着でジオメトリ(頂点)が増える', () => {
+    // フォアグリップは polyParts にマージされる(=メッシュ数は不変)ため、総頂点数で検証する。
+    const vertTally = (def: WeaponDef): number => {
+      let n = 0;
+      buildGunBody(def).gun.traverse((o) => {
+        if (o instanceof THREE.Mesh) n += o.geometry.getAttribute('position')?.count ?? 0;
+      });
+      return n;
+    };
+    const plain = vertTally(ar);
+    expect(vertTally({ ...ar, attachmentIds: ['vertical'] })).toBeGreaterThan(plain);
+    expect(vertTally({ ...ar, attachmentIds: ['angled'] })).toBeGreaterThan(plain);
+  });
+
+  it('全4スロット同時装着でも例外なく組め、腕は混ざらない', () => {
+    const def: WeaponDef = { ...ar, attachmentIds: ['reflex', 'compensator', 'vertical', 'extended'] };
+    const { gun, muzzle } = buildGunBody(def);
+    expect(meshTally(gun)).toBeGreaterThan(0);
+    expect(muzzle.position.z).toBeLessThan(0);
+    expect(hasArmMaterials(gun)).toBe(false);
+    // 光学ドット(plane)は1個だけ(reflex)= 二重にならない
+    let planes = 0;
+    gun.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.geometry instanceof THREE.PlaneGeometry) planes += 1;
+    });
+    expect(planes).toBe(1);
+  });
+});
+
 // ── R34 setExoticCharge API テスト ────────────────────────────────────────
 describe('setExoticCharge', () => {
   const EXOTIC_IDS = [

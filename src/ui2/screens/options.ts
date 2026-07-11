@@ -614,8 +614,10 @@ function mountOptionsImpl(
   const accent = el('div', 'u2o-accent');
   // R56 W2: フルード端アンカー(0-sizeラッパー)。groupTL=見出し/タブ/一覧(左上原点)、
   // groupTR=説明パネル(右上原点)。フルード祖先(.u2-stage--fluid)配下でのみ
-  // options.css側が個別にtransform:scale(var(--u2s,1))する(pause内オーバーレイ=legacy祖先
-  // では外側.u2-stageが既に1回scale-to-fit済みのため無変換のまま=二重スケール回避)。
+  // options.css側が個別にtransform:scale(var(--u2s,1))する。R57①でポーズもFLUID_SCREENS入り
+  // したため、pause内オーバーレイ(.u2p-options-layer配下にこのstageを再マウント)でも
+  // 外側.u2-stageが常にfluid(無変換・inset:0)になり、この祖先セレクタへ子孫として自然に
+  // マッチする(groupだけが単一scale=二重スケールなし。実機playwright計測で確認済み)。
   const groupTL = el('div', 'u2o-group-tl');
   const groupTR = el('div', 'u2o-group-tr');
 

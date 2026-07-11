@@ -209,7 +209,7 @@ function startMatch(selection: MenuSelection): void {
   activeMissionId = null;
   // gen-* のプロシージャルIDも解決できるようフォールバックさせる
   const stage = stageDefFromId(selection.stageId) ?? stageById(selection.stageId);
-  // R54-F5 輪廻(ローグラン): ミサゴ拳銃のみ・R1固定・救済系オプション無効(純度優先v1)。
+  // R54-F5 輪廻(ローグラン): 95R拳銃(旧ミサゴ、id:misago-pistol)のみ・R1固定・救済系オプション無効(純度優先v1)。
   // 排他はUI(menu)でも無効化するが、転記段階でも構造的に落とす(二重の安全)
   const rogue = selection.mode === 'zombie' && selection.rogueRun === true;
   launch({
@@ -331,7 +331,7 @@ const menuCallbacks: MenuCallbacks = {
   },
 };
 const menu: MenuApi = USE_UI2
-  ? new Menu2(menuRoot, settings, profile, menuCallbacks, input)
+  ? new Menu2(menuRoot, settings, profile, menuCallbacks, input, sounds)
   : new Menu(menuRoot, settings, profile, menuCallbacks, input);
 
 // 初回はメニュー表示なので宇宙背景を起動する(ui2ではspaceBg=nullのため自然に不使用)

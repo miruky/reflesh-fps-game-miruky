@@ -71,9 +71,13 @@ const MANTLE_DURATION = 0.34;
 // Rapier KCC 退化ケース対策(dimforge/rapier#485、OPEN): 水平成分が厳密に 0 の純垂直
 // computeColliderMovement は、床と隙間 0 の「面一」接触では接地解決が退化し、キャラが床へ
 // 沈み込む。スポーン地点は全て床天面(y=0)と面一に配置されるため「開始直後に静止したままだと
-// 床抜けする」の根本原因。静止フレームのみ±この値の交互ジッタをクエリの x に注入して回避する
-// (符号を毎フレーム反転させるので正味ドリフトは実測 60 秒で 0.1mm 未満。実移動入力がある
-// フレームは一切触らない)。
+// 床抜けする」の根本原因。静止フレームのみ±この値の交互ジッタをクエリの x に注入して回避する。
+// これはあくまで computeColliderMovement への「クエリ入力」であり、実移動には反映しない
+// (R57: snapToGround は +ジッタ/-ジッタへ非対称応答するため、交互符号でも computedMovement の
+// x/z は正味で相殺されず、そのまま適用すると静止しているはずのプレイヤーが緩やかに水平ドリフト
+// する実害があった=旧コメントの「符号反転で相殺、60秒でサブmm」は誤り。修正後は idle フレームの
+// moved.x/z を実移動適用の直前で必ず 0 に破棄し、床抜け防止に必要な moved.y のみ通す。よって
+// 正味ドリフトは実測0mm。実移動入力があるフレームは一切触らない)。
 export const KCC_IDLE_JITTER_M = 1e-4;
 
 // match / HUD から参照する移動速度の代表値
@@ -474,6 +478,16 @@ export class Player {
       if (fallSpeed > 6) this.landImpact = fallSpeed;
       sounds.footstep(Math.min(1, fallSpeed / 8), true); // 着地(歩行のヒール・トゥとは別物)
       this.airJumpsLeft = AIR_JUMPS;
+    }
+
+    // idle フレームはクエリに注入した水平ジッタ由来の moved.x/z を実移動へ反映しない。
+    // ジッタはあくまで rapier#485 回避のためのクエリ入力(退化防止)であり、
+    // snapToGround が +ジッタ/-ジッタへ非対称応答するため交互符号でも相殺されず、
+    // 適用し続けると静止しているはずのプレイヤーが緩やかに水平ドリフトする(R57で確証)。
+    // 床抜け防止に必要な垂直成分(moved.y)のみは通す。
+    if (idle) {
+      moved.x = 0;
+      moved.z = 0;
     }
 
     const t = this.body.translation();

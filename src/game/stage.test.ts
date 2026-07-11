@@ -424,3 +424,151 @@ describe('PropPlacement契約(rotRad/scaleJitter, M2c引き継ぎ)', () => {
     }
   });
 });
+
+// ── R57-⑥ 確証バグ修正: プロップ視覚回転(rotRad)が軸整列コライダーからはみ出す量の非回帰 ──
+//
+// V-C確証: LONG_PROP_KINDS が PROP_FOOTPRINTS(クリアランス用の粗い近似値)のアスペクト比から
+// 導出されていたため、実コライダーとの乖離・絶対長無視・境界値(アスペクト丁度2.0)取りこぼしの
+// 3つの穴で concretebarrier/derelictcar/barricadecar/tankhull(いずれも最頻の遮蔽物)が
+// ±0.45rad(約26°)のまま残存し、視覚が軸整列コライダーから最大~1.4mはみ出していた
+// (ファントム遮蔽=弾すり抜け/見えない壁)。
+//
+// 以下は stage.ts の非公開実装(PROP_JITTER_AMP等)に依存せず、公開API(buildProp/generateStage)
+// のみを使ったブラックボックス回帰: 「回転済み視覚コーナー」が「軸整列コライダーAABB」から
+// 許容(0.25m)を超えてはみ出さないことを、実際に生成された全ステージの全プロップ配置で検証する。
+describe('プロップ視覚ジッタのコライダーはみ出し非回帰(R57-⑥)', () => {
+  const OVERHANG_ALLOWANCE_M = 0.25;
+  const PALETTE = STAGES[0]!.palette;
+
+  /** kindのrot=0コライダー箱群の局所頂点(原点基準)と軸整列AABB。 */
+  function localColliderCorners(kind: PropKind): {
+    corners: Array<[number, number]>;
+    xMin: number; xMax: number; zMin: number; zMax: number;
+  } {
+    const boxes = buildProp(kind, 0, 0, 0, () => 0, PALETTE);
+    let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity;
+    const corners: Array<[number, number]> = [];
+    for (const box of boxes) {
+      const x0 = box.x - box.w / 2, x1 = box.x + box.w / 2;
+      const z0 = box.z - box.d / 2, z1 = box.z + box.d / 2;
+      xMin = Math.min(xMin, x0); xMax = Math.max(xMax, x1);
+      zMin = Math.min(zMin, z0); zMax = Math.max(zMax, z1);
+      corners.push([x0, z0], [x0, z1], [x1, z0], [x1, z1]);
+    }
+    return { corners, xMin, xMax, zMin, zMax };
+  }
+
+  /** 角度thetaで回転したコーナー群が、元の軸整列AABB(局所rot=0基準)から飛び出す最大量(m)。
+   * ジッタ振幅そのものを検証する用途(実配置のquantSteps分離は行わない、単純な理論値)。 */
+  function overhangAt(
+    data: { corners: Array<[number, number]>; xMin: number; xMax: number; zMin: number; zMax: number },
+    theta: number,
+  ): number {
+    const c = Math.cos(theta);
+    const s = Math.sin(theta);
+    let maxOver = -Infinity;
+    for (const [x, z] of data.corners) {
+      const rx = x * c - z * s;
+      const rz = x * s + z * c;
+      maxOver = Math.max(maxOver, rx - data.xMax, data.xMin - rx, rz - data.zMax, data.zMin - rz);
+    }
+    return maxOver;
+  }
+
+  /** 90°刻みquantStepsだけ回転させたコーナー群のAABB(=実コライダーのAABBと一致)。 */
+  function quantRotatedAabb(
+    data: { corners: Array<[number, number]> },
+    quantSteps: number,
+  ): { xMin: number; xMax: number; zMin: number; zMax: number } {
+    const k = ((quantSteps % 4) + 4) % 4;
+    let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity;
+    for (const [x, z] of data.corners) {
+      const [rx, rz] = k === 0 ? [x, z] : k === 1 ? [-z, x] : k === 2 ? [-x, -z] : [z, -x];
+      xMin = Math.min(xMin, rx); xMax = Math.max(xMax, rx);
+      zMin = Math.min(zMin, rz); zMax = Math.max(zMax, rz);
+    }
+    return { xMin, xMax, zMin, zMax };
+  }
+
+  /** 実配置のrotRad(=quantSteps*90°+ジッタ)における視覚コーナーが、
+   * 実コライダーAABB(quantSteps分だけ回転済み)から飛び出す量(m)。これが実ゲームの
+   * 「視覚がコライダーからはみ出す量」そのもの。 */
+  function placementOverhang(
+    data: { corners: Array<[number, number]> },
+    rotRad: number,
+  ): number {
+    const quantSteps = Math.round(rotRad / (Math.PI / 2));
+    const aabb = quantRotatedAabb(data, quantSteps);
+    const c = Math.cos(rotRad);
+    const s = Math.sin(rotRad);
+    let maxOver = -Infinity;
+    for (const [x, z] of data.corners) {
+      const rx = x * c - z * s;
+      const rz = x * s + z * c;
+      maxOver = Math.max(maxOver, rx - aabb.xMax, aabb.xMin - rx, rz - aabb.zMax, aabb.zMin - rz);
+    }
+    return maxOver;
+  }
+
+  it('全ステージの全propPlacementsで、視覚回転(rotRad)は実コライダーAABB(quantSteps込み)から許容0.25m超はみ出さない', () => {
+    const EPS = 1e-6;
+    let worstOverall = -Infinity;
+    for (const def of STAGES) {
+      const layout = generateStage(def);
+      for (const p of layout.propPlacements) {
+        const data = localColliderCorners(p.kind);
+        const overhang = placementOverhang(data, p.rotRad);
+        worstOverall = Math.max(worstOverall, overhang);
+        expect(
+          overhang,
+          `${def.id}: ${p.kind}@(${p.cx},${p.cz}) rotRad=${p.rotRad.toFixed(4)} overhang=${overhang.toFixed(4)}m`,
+        ).toBeLessThanOrEqual(OVERHANG_ALLOWANCE_M + EPS);
+      }
+    }
+    // 実際にどこかで許容ぎりぎりまで使われていること(閾値が機能している証跡。過度に緩い実装の検出用)
+    expect(worstOverall).toBeGreaterThan(0);
+  });
+
+  it('確証バグの4種(concretebarrier/derelictcar/barricadecar/tankhull)は、旧デフォルト±0.45radまで振ると許容を大きく超えるが、実際の配置(現行振幅)では許容内に収まる', () => {
+    const buggyKinds: PropKind[] = ['concretebarrier', 'derelictcar', 'barricadecar', 'tankhull'];
+    for (const kind of buggyKinds) {
+      const data = localColliderCorners(kind);
+      const oldOverhangMm = Math.max(overhangAt(data, 0.45), overhangAt(data, -0.45)) * 1000;
+      // 修正前(旧ROT_JITTER=0.45固定)は許容を大きく超えていたことを記録(回帰検出の基準線)
+      expect(oldOverhangMm, `${kind}: pre-fix overhang at 0.45rad`).toBeGreaterThan(OVERHANG_ALLOWANCE_M * 1000);
+
+      // 実ステージ配置(自然発生する量子化角+実ジッタ)で許容内に収まることを確認
+      let maxObserved = -Infinity;
+      for (const def of STAGES) {
+        const layout = generateStage(def);
+        for (const p of layout.propPlacements) {
+          if (p.kind !== kind) continue;
+          maxObserved = Math.max(maxObserved, placementOverhang(data, p.rotRad));
+        }
+      }
+      if (maxObserved === -Infinity) continue; // このkindが1回も配置されないステージ構成ならスキップ
+      expect(maxObserved * 1000, `${kind}: post-fix observed overhang`).toBeLessThanOrEqual(OVERHANG_ALLOWANCE_M * 1000 + 1e-3);
+    }
+  });
+
+  it('小型プロップ(antenna/stonelantern/streetlight等)は過度に硬直しない: 実配置のrotRadが量子化角から±0.2rad以上ばらつく', () => {
+    const smallKinds: PropKind[] = ['antenna', 'stonelantern', 'vendingmachine', 'supplycrate'];
+    for (const kind of smallKinds) {
+      let maxDelta = 0;
+      for (const def of STAGES) {
+        const layout = generateStage(def);
+        for (const p of layout.propPlacements) {
+          if (p.kind !== kind) continue;
+          const quant = Math.round(p.rotRad / (Math.PI / 2));
+          let delta = p.rotRad - quant * (Math.PI / 2);
+          // 正規化: 最短角差
+          while (delta > Math.PI) delta -= Math.PI * 2;
+          while (delta < -Math.PI) delta += Math.PI * 2;
+          maxDelta = Math.max(maxDelta, Math.abs(delta));
+        }
+      }
+      if (maxDelta === 0) continue; // 未配置ならスキップ(存在しないステージ構成向けの安全弁)
+      expect(maxDelta, `${kind}: jitter amplitude should stay large (not over-stiffened)`).toBeGreaterThan(0.2);
+    }
+  });
+});

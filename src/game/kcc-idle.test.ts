@@ -73,4 +73,28 @@ describe('KCC 静止退化(rapier#485)の回帰防止', () => {
     // 交互符号で相殺されるため、水平位置は 1 ジッタ幅のオーダーに留まる
     expect(Math.hypot(t.x, t.z)).toBeLessThan(KCC_IDLE_JITTER_M * 20);
   });
+
+  // R57 確証バグ回帰: idle 時にKCCクエリへ注入する水平ジッタ(KCC_IDLE_JITTER_M)は、
+  // 退化回避のための「クエリ入力」に過ぎない。しかし snapToGround は +ジッタ/-ジッタへ
+  // 非対称に応答するため、交互符号でも computedMovement().x/z は正味で相殺されず、
+  // それをそのまま実移動へ適用していた旧コードでは「移動入力ゼロ・接地・生存」で
+  // 静止し続けるプレイヤーが一定方向へ緩やかに水平ドリフトしていた(実測: 本テスト条件で
+  // 1フレーム目で早々に ~1.05mm へ収束し、以後 60 秒間その値のまま横滑りし続ける=
+  // 旧コメント「符号反転で相殺・サブmm」は誤りだった)。
+  // 修正: player.ts の移動適用直前で idle フレームの moved.x/z を 0 へ破棄し、
+  // 床抜け防止に必要な moved.y のみ実移動へ反映する。本テストは新コードで水平ドリフトが
+  // 実質ゼロ(閾値 1mm 未満)であることを保証する回帰である
+  // (旧コードに戻すと ~1.05mm > 1mm で確実に落ちることを確認済み)。
+  it('idle継続10秒(600フレーム)で水平ドリフトが1mm未満(旧コードは閾値超過で落ちる)', () => {
+    const world = makeWorldWithFloor();
+    const player = new Player(world, new THREE.Vector3(0, 0, 0));
+    const dt = 1 / 60;
+    for (let i = 0; i < 600; i += 1) {
+      player.update(dt, IDLE_INPUT, 0, soundsStub);
+      world.step();
+    }
+    const t = player.body.translation();
+    const driftM = Math.hypot(t.x, t.z);
+    expect(driftM).toBeLessThan(1e-3); // 1mm
+  });
 });

@@ -330,19 +330,22 @@ export interface UnlockDef {
   level: number;
 }
 
+// R57-④フォローアップ: 武器の name は weapons.ts (WEAPON_DEFS) のリネームへ自動追従させるため
+// 静的な日本語コードネームではなく weaponNameOf(id) で動的参照する(将来の改名でも解放通知が食い違わない)。
+// アタッチメントは改名対象外のため、従来どおり静的な name 文字列を保持する。
 export const UNLOCKS: UnlockDef[] = [
   // 既存クラス各1本(L1-6)を温存
-  { kind: 'weapon', id: 'kaede-ar', name: 'カエデAR', level: 1 },
-  { kind: 'weapon', id: 'tsubaki-smg', name: 'ツバキSMG', level: 2 },
+  { kind: 'weapon', id: 'kaede-ar', name: weaponNameOf('kaede-ar'), level: 1 },
+  { kind: 'weapon', id: 'tsubaki-smg', name: weaponNameOf('tsubaki-smg'), level: 2 },
   { kind: 'attachment', id: 'reflex', name: 'リフレックスサイト', level: 2 },
-  { kind: 'weapon', id: 'hiiragi-sg', name: 'ヒイラギSG', level: 3 },
+  { kind: 'weapon', id: 'hiiragi-sg', name: weaponNameOf('hiiragi-sg'), level: 3 },
   { kind: 'attachment', id: 'vertical', name: 'バーティカルグリップ', level: 3 },
-  { kind: 'weapon', id: 'yamasemi-dmr', name: 'DSR', level: 4 },
-  { kind: 'weapon', id: 'kawasemi-pistol', name: 'カワセミ', level: 4 },
+  { kind: 'weapon', id: 'yamasemi-dmr', name: weaponNameOf('yamasemi-dmr'), level: 4 },
+  { kind: 'weapon', id: 'kawasemi-pistol', name: weaponNameOf('kawasemi-pistol'), level: 4 },
   { kind: 'attachment', id: 'extended', name: '拡張マガジン', level: 4 },
-  { kind: 'weapon', id: 'miyama-br', name: 'ミヤマBR', level: 5 },
+  { kind: 'weapon', id: 'miyama-br', name: weaponNameOf('miyama-br'), level: 5 },
   { kind: 'attachment', id: 'suppressor', name: 'サプレッサー', level: 5 },
-  { kind: 'weapon', id: 'kumagera-lmg', name: 'クマゲラLMG', level: 6 },
+  { kind: 'weapon', id: 'kumagera-lmg', name: weaponNameOf('kumagera-lmg'), level: 6 },
   { kind: 'attachment', id: 'angled', name: 'アングルドグリップ', level: 6 },
   // ── ③追加光学8種を段階配置(pico/holo 早期→delta/canted 中盤→acog/variable/hybrid/thermal 後半) ──
   { kind: 'attachment', id: 'pico', name: 'ピコドット', level: 3 },
@@ -354,29 +357,29 @@ export const UNLOCKS: UnlockDef[] = [
   { kind: 'attachment', id: 'hybrid', name: 'ハイブリッドサイト', level: 18 },
   { kind: 'attachment', id: 'thermal', name: 'リコンスコープ', level: 22 },
   // 追加18プライマリを L7-L24 へ1本/レベルで配置
-  { kind: 'weapon', id: 'kasasagi-ar', name: 'カササギAR', level: 7 },
+  { kind: 'weapon', id: 'kasasagi-ar', name: weaponNameOf('kasasagi-ar'), level: 7 },
   { kind: 'attachment', id: 'compensator', name: 'コンペンセイター', level: 7 },
-  { kind: 'weapon', id: 'ginyanma-ar', name: 'ギンヤンマAR', level: 8 },
+  { kind: 'weapon', id: 'ginyanma-ar', name: weaponNameOf('ginyanma-ar'), level: 8 },
   { kind: 'attachment', id: 'telescopic', name: 'テレスコピックサイト', level: 8 },
-  { kind: 'weapon', id: 'hayabusa-smg', name: 'ハヤブサSMG', level: 9 },
+  { kind: 'weapon', id: 'hayabusa-smg', name: weaponNameOf('hayabusa-smg'), level: 9 },
   { kind: 'attachment', id: 'quick', name: 'クイックマガジン', level: 9 },
-  { kind: 'weapon', id: 'akatsuki-ar', name: 'アカツキAR', level: 10 },
-  { kind: 'weapon', id: 'taka-revolver', name: 'タカ', level: 10 },
-  { kind: 'weapon', id: 'sasameki-smg', name: 'ササメキSMG', level: 11 },
-  { kind: 'weapon', id: 'kagerou-br', name: 'カゲロウBR', level: 12 },
-  { kind: 'weapon', id: 'shinonome-ar', name: 'シノノメAR', level: 13 },
-  { kind: 'weapon', id: 'mozu-smg', name: 'モズSMG', level: 14 },
-  { kind: 'weapon', id: 'kogarashi', name: 'コガラシ', level: 14 },
-  { kind: 'weapon', id: 'enaga-pdw', name: 'エナガPDW', level: 15 },
-  { kind: 'weapon', id: 'tobikuma-ar', name: 'トビクモAR', level: 16 },
-  { kind: 'weapon', id: 'shirasagi-mk', name: 'シラサギMK', level: 17 },
-  { kind: 'weapon', id: 'fukurou-sg', name: 'フクロウSG', level: 18 },
-  { kind: 'weapon', id: 'tsuchigumo-lmg', name: 'ツチグモLMG', level: 19 },
-  { kind: 'weapon', id: 'hibari-mk', name: 'ヒバリMK', level: 20 },
-  { kind: 'weapon', id: 'raijin-sg', name: 'ライジンSG', level: 21 },
-  { kind: 'weapon', id: 'raitei-lmg', name: 'ライテイLMG', level: 22 },
-  { kind: 'weapon', id: 'raicho-sniper', name: 'ライチョウ', level: 23 },
-  { kind: 'weapon', id: 'shirayuki-sniper', name: 'シラユキ', level: 24 },
+  { kind: 'weapon', id: 'akatsuki-ar', name: weaponNameOf('akatsuki-ar'), level: 10 },
+  { kind: 'weapon', id: 'taka-revolver', name: weaponNameOf('taka-revolver'), level: 10 },
+  { kind: 'weapon', id: 'sasameki-smg', name: weaponNameOf('sasameki-smg'), level: 11 },
+  { kind: 'weapon', id: 'kagerou-br', name: weaponNameOf('kagerou-br'), level: 12 },
+  { kind: 'weapon', id: 'shinonome-ar', name: weaponNameOf('shinonome-ar'), level: 13 },
+  { kind: 'weapon', id: 'mozu-smg', name: weaponNameOf('mozu-smg'), level: 14 },
+  { kind: 'weapon', id: 'kogarashi', name: weaponNameOf('kogarashi'), level: 14 },
+  { kind: 'weapon', id: 'enaga-pdw', name: weaponNameOf('enaga-pdw'), level: 15 },
+  { kind: 'weapon', id: 'tobikuma-ar', name: weaponNameOf('tobikuma-ar'), level: 16 },
+  { kind: 'weapon', id: 'shirasagi-mk', name: weaponNameOf('shirasagi-mk'), level: 17 },
+  { kind: 'weapon', id: 'fukurou-sg', name: weaponNameOf('fukurou-sg'), level: 18 },
+  { kind: 'weapon', id: 'tsuchigumo-lmg', name: weaponNameOf('tsuchigumo-lmg'), level: 19 },
+  { kind: 'weapon', id: 'hibari-mk', name: weaponNameOf('hibari-mk'), level: 20 },
+  { kind: 'weapon', id: 'raijin-sg', name: weaponNameOf('raijin-sg'), level: 21 },
+  { kind: 'weapon', id: 'raitei-lmg', name: weaponNameOf('raitei-lmg'), level: 22 },
+  { kind: 'weapon', id: 'raicho-sniper', name: weaponNameOf('raicho-sniper'), level: 23 },
+  { kind: 'weapon', id: 'shirayuki-sniper', name: weaponNameOf('shirayuki-sniper'), level: 24 },
 ];
 
 export function unlockLevelOf(kind: 'weapon' | 'attachment', id: string): number {
@@ -660,8 +663,10 @@ function applyCamoStats(profile: Profile, summary: MatchSummary): CamoUnlock[] {
     const cls = camoClassOf(id);
     if (!cls) continue; // 副武器/近接などカモ対象外は統計のみ積む
     classesTouched.add(cls);
-    const tierBefore = camoTierFor(before[id]);
-    const tierAfter = camoTierFor(profile.weaponStats[id]);
+    // R57 ⑤: exotic(特殊兵装)は金の緩和閾値(HSのみ緩和)で判定するため weaponId を渡す。
+    // 非exoticは省略時と同結論(500/100)=完全後方互換。金→ダイヤの解放順の逆転を解消。
+    const tierBefore = camoTierFor(before[id], id);
+    const tierAfter = camoTierFor(profile.weaponStats[id], id);
     for (let t = tierBefore; t < tierAfter; t += 1) {
       const tier = CAMO_TIERS[t]!;
       unlocks.push({

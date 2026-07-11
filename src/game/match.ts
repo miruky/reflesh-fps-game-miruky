@@ -150,7 +150,7 @@ import {
   
   
 } from './zombie-economy';
-import { weaponIdByName, equippedCamoFor, CAMO_VISUALS } from './camo';
+import { weaponIdByName, equippedCamoFor, applyCamoStats, CAMO_VISUALS } from './camo';
 import { loadProfile } from '../core/profile';
 import {
   generateStage,
@@ -1166,15 +1166,25 @@ export class Match {
     const primaryId = config.mode === 'gungame' ? (GG_LADDER[0] ?? 'kawasemi-pistol') : config.primaryId;
     const primaryBase = WEAPON_DEFS[primaryId] ?? WEAPON_DEFS['kaede-ar']!;
     const primaryDef = applyAttachments(primaryBase, config.mode === 'gungame' ? [] : config.attachments);
-    // 副武器: 指定があり SECONDARY_IDS に含まれていればそれを、無ければ拳銃スズメ
-    const secDef =
-      (config.secondaryId && SECONDARY_IDS.includes(config.secondaryId)
-        ? WEAPON_DEFS[config.secondaryId]
-        : undefined) ?? WEAPON_DEFS['suzume']!;
+    // 副武器: 指定があり SECONDARY_IDS に含まれていればそれを、無ければ拳銃G16(旧スズメ、id:suzume)
+    const secId =
+      config.secondaryId && SECONDARY_IDS.includes(config.secondaryId) ? config.secondaryId : 'suzume';
+    const secDef = WEAPON_DEFS[secId] ?? WEAPON_DEFS['suzume']!;
     // 副武器defも per-Match のクローンにする(applyAttachments が deep-clone を返す)。
     // ゾンビ経済のパーク(スピードコーラ/ダブルタップ)が def.rpm/reloadMs を直接補正するため、
     // 共有の WEAPON_DEFS を掴んだままだと購入がグローバル定義を汚染し全モードへ波及する
-    this.weapons = [new Weapon(primaryDef), new Weapon(applyAttachments(secDef, []))];
+    // R57 ⑤: ゴールド/ダイヤ/ダークマター迷彩の性能ボーナス(ハンドリング系のみ・火力不変=バランス維持)を
+    // 装備中カモに応じて上乗せ。ガンゲームはラダー強制武器のため除外。applyCamoStatsは元defを
+    // 変更せずコピーを返す(通常/未装備カモは同一参照素通し=ゼロコスト)。
+    const camoProfile = config.mode === 'gungame' ? null : loadProfile();
+    const primaryFinal = camoProfile
+      ? applyCamoStats(primaryDef, equippedCamoFor(primaryId, camoProfile) ?? '')
+      : primaryDef;
+    const secClone = applyAttachments(secDef, []);
+    const secFinal = camoProfile
+      ? applyCamoStats(secClone, equippedCamoFor(secId, camoProfile) ?? '')
+      : secClone;
+    this.weapons = [new Weapon(primaryFinal), new Weapon(secFinal)];
 
     this.grenadeKind = config.grenade;
     this.grenadeCounts = {
@@ -5139,8 +5149,14 @@ export class Match {
     let traveled = 0;
     let damageFactor = 1;
 
+    // 契約(line ~537): boundary(ghost壁)は弾/視線/斬撃が素通りする。predicateでレイから
+    // 完全に除外し、境界の奥にある本当の着弾(またはレンジ切れ)まで貫通させる
+    // (playerCanSee/hasLineOfSightと同じ除外原則。以前はboundaryヒットで弾道を打ち切って
+    // いたため、この関数だけ契約上の「素通り」に反していた=R57 ⑥任意LOW)
+    const notBoundary = (c: RAPIER.Collider): boolean => this.tags.get(c.handle)?.kind !== 'boundary';
+
     for (let leg = 0; leg < 2; leg += 1) {
-      const hit = this.castRayWithNormal(from, dir, remainingRange, this.player.body);
+      const hit = this.castRayWithNormal(from, dir, remainingRange, this.player.body, notBoundary);
       const end = hit
         ? from.clone().addScaledVector(dir, hitToi(hit))
         : from.clone().addScaledVector(dir, remainingRange);
@@ -5149,8 +5165,6 @@ export class Match {
       if (!hit) return;
 
       const tag = this.tags.get(hit.collider.handle);
-      // boundary(ghost壁)は素通り: 着弾エフェクト/衝撃音なしで弾道終端(開放境界演出)
-      if (tag?.kind === 'boundary') return;
       if (tag?.kind === 'trainingTarget' && !tag.target.isDown && trainingResults) {
         const distance = traveled + hitToi(hit);
         const base = damageAtDistance(weapon.def.damage, distance, weapon.def.falloff);
@@ -5205,6 +5219,7 @@ export class Match {
         dir.clone().negate(),
         maxDepth - 0.005,
         this.player.body,
+        notBoundary,
       );
       if (!back || !back.normal) return;
       const thickness = maxDepth - hitToi(back);
@@ -5450,6 +5465,13 @@ export class Match {
       const isGun = srcClass !== null;
       const toBot = this.player.position.clone().sub(bot.position).setY(0);
       const fromBehind = toBot.dot(bot.facing()) < -0.3;
+      // R57 ⑥修正2: 黒雷帝は activateKokuraitei() が darkEmperorTimer=Infinity を
+      // 併せて立てるため、旧来の生フラグ(darkEmperorTimer>0 / raiteiMode / kokuraiteiMode)は
+      // 黒雷帝中に3つとも真になり、メダルctxだけ dark系+kokurai系が二重発火していた
+      // (効果/SFX/HUDは既に activeKit() で排他済み=非対称だった箇所)。
+      // activeKit() の排他優先度(kokuraitei > dark > raitei)へ揃え、
+      // 黒雷帝キルは kokuraiteiActive のみが立つようにする。
+      const kit = this.activeKit();
       const ctx: KillCtx = {
         victimName: bot.name,
         victimId: bot.uid,
@@ -5474,9 +5496,9 @@ export class Match {
         blinkAgeMs: (this.elapsed - this.lastBlinkElapsed) * 1000,
         reloadKillBit: this.reloadKillBit,
         magAmmoBeforeKill: isGun ? this.prevMagAmmo : undefined, // V-FINAL: 近接キルでのlast-bullet誤爆防止
-        darkEmperorActive: this.darkEmperorTimer > 0,
-        raiteiActive: this.raiteiMode,
-        kokuraiteiActive: this.kokuraiteiMode,
+        darkEmperorActive: kit === 'dark',
+        raiteiActive: kit === 'raitei',
+        kokuraiteiActive: kit === 'kokuraitei',
         hellMode: this.config.hellMode ?? false,
         botKind: bot.kind,
         matchKillCount: this.player.kills,
@@ -6412,7 +6434,11 @@ export class Match {
     const dist = to.length();
     if (dist < 0.2) return true;
     const dir = to.multiplyScalar(1 / dist);
-    const hit = this.castRay(eye, dir, dist - 0.2, this.player.body);
+    // 契約(line ~537): boundary(ghost壁)は視線を遮蔽しない。hasLineOfSight(botCanSee)と
+    // 同じ除外原則をplayerCanSeeにも揃える(R57 ⑥任意LOW: 従来はここだけ非対称だった)
+    const hit = this.castRay(eye, dir, dist - 0.2, this.player.body,
+      (c) => this.tags.get(c.handle)?.kind !== 'boundary',
+    );
     if (hit === null) return true;
     const tag = this.tags.get(hit.collider.handle);
     return tag?.kind === 'bot' && tag.bot === bot;
@@ -8974,6 +9000,7 @@ export class Match {
     dir: THREE.Vector3,
     maxToi: number,
     exclude: RAPIER.RigidBody | null,
+    predicate?: (collider: RAPIER.Collider) => boolean,
   ): RayNormalHitLike | null {
     const ray = new RAPIER.Ray(
       { x: origin.x, y: origin.y, z: origin.z },
@@ -8987,6 +9014,7 @@ export class Match {
       undefined,
       undefined,
       exclude ?? undefined,
+      predicate,
     ) as unknown as RayNormalHitLike | null;
   }
 
@@ -9195,6 +9223,11 @@ export class Match {
       minimapEnemies: this.computeMinimapEnemies(),
       minimapAllies: this.computeMinimapAllies(),
       minimapStageSize: this.config.stage.size,
+      // R57 ⑥修正3: ミニマップの障害物ボックスはワールド絶対座標で保持される一方、
+      // 敵/味方ドット(minimapEnemies/minimapAllies)はプレイヤー相対(relX/relZ)。
+      // hud2側の相対化にプレイヤーのworld座標が必要なため snapshot へ追加する
+      playerX: this.player.position.x,
+      playerZ: this.player.position.z,
       // ── ハードポイント ──
       ...this.buildHardpointSnap(),
       // ── キルコンファーム ──
@@ -9435,6 +9468,15 @@ export class Match {
     this.deathVeil = 0;
     this.whiteout = 0;
     this.shingetsuPhase = 'idle';
+    // R57 ⑥修正1: over検出〜mode切替が同一フレーム内で起こるため、この直後
+    // main.ts は match.frame() を二度と呼ばなくなる(frame()内の
+    // `if (this.over) releaseHumanoidCrowdAll()` 安全網が到達不能になる経路)。
+    // 時間切れ/?fkdemo等、feedHumanoidCrowd()到達前にoverが立つ経路では群slotが
+    // 未解放のまま個体rigへ戻らず、キルカム中に群像が終了時位置で凍結表示+
+    // 再現リグ(killer/victim)が不可視になる。ここで確実に全解放する
+    // (score-victory等の経路は既にfeedHumanoidCrowd/frame()側で解放済みのため
+    // 冪等=無害)。
+    this.releaseHumanoidCrowdAll();
     this.killcam.begin();
     return true;
   }

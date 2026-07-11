@@ -32,6 +32,9 @@ import {
   layerGains,
   makeAsymCurveData,
   makeTanhCurveData,
+  MENU_BGM_SPEC,
+  MENU_SFX_SPECS,
+  type MenuSfxId,
   MINIGUN_SPIN_SPEC,
   normalizeTts,
   pickBestVoice,
@@ -1240,5 +1243,178 @@ describe("R54 音響2: アナウンサー'rei'", () => {
   it("RADIO_SQUELCH_SPECS に 'rei' の帯域が定義されている", () => {
     expect(RADIO_SQUELCH_SPECS.rei.carrierHz).toBeGreaterThan(0);
     expect(RADIO_SQUELCH_SPECS.rei.noiseHz).toBeGreaterThan(RADIO_SQUELCH_SPECS.rei.carrierHz);
+  });
+});
+
+// ── R57②: メニュー差別化SE + BO2風メニューBGM ────────────────────────────
+describe('MENU_SFX_SPECS 定数境界テスト(6種の合成パラメータが相異なることを担保)', () => {
+  const IDS: MenuSfxId[] = ['move', 'select', 'back', 'equip', 'tab', 'launch'];
+
+  it('全種でfreqHz/durationS/gainが正の値', () => {
+    for (const id of IDS) {
+      const s = MENU_SFX_SPECS[id];
+      expect(s.freqHz).toBeGreaterThan(0);
+      expect(s.endFreqHz).toBeGreaterThan(0);
+      expect(s.durationS).toBeGreaterThan(0);
+      expect(s.gain).toBeGreaterThan(0);
+      expect(s.gain).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('freqHz は6種すべて相異なる(周波数で聞き分けられる)', () => {
+    const freqs = IDS.map((id) => MENU_SFX_SPECS[id].freqHz);
+    expect(new Set(freqs).size).toBe(IDS.length);
+  });
+
+  it('durationS は6種すべて相異なる(長さで聞き分けられる)', () => {
+    const durs = IDS.map((id) => MENU_SFX_SPECS[id].durationS);
+    expect(new Set(durs).size).toBe(IDS.length);
+  });
+
+  it('gain は6種すべて相異なる(音量感で聞き分けられる)', () => {
+    const gains = IDS.map((id) => MENU_SFX_SPECS[id].gain);
+    expect(new Set(gains).size).toBe(IDS.length);
+  });
+
+  it('type(音色)は6種の組み合わせの中で move/back とは異なる種別を含む(equip/tab/launchが分散)', () => {
+    const types = new Set(IDS.map((id) => MENU_SFX_SPECS[id].type));
+    expect(types.size).toBeGreaterThanOrEqual(3); // sine/triangle/square/sawtoothが混在
+  });
+
+  it('uiLaunch(出撃)は最大のgain・最長のdurationS(最も大きなインパクト)', () => {
+    const launch = MENU_SFX_SPECS.launch;
+    for (const id of IDS) {
+      if (id === 'launch') continue;
+      expect(launch.gain).toBeGreaterThanOrEqual(MENU_SFX_SPECS[id].gain);
+      expect(launch.durationS).toBeGreaterThanOrEqual(MENU_SFX_SPECS[id].durationS);
+    }
+  });
+
+  it('uiMove(ナビ)は最短のdurationS(頻発しても不快でない)', () => {
+    const move = MENU_SFX_SPECS.move;
+    for (const id of IDS) {
+      if (id === 'move') continue;
+      expect(move.durationS).toBeLessThanOrEqual(MENU_SFX_SPECS[id].durationS);
+    }
+  });
+});
+
+describe('MENU_BGM_SPEC 定数境界テスト(BO2風ループBGMの構成)', () => {
+  it('bpm/beatsPerBar は正の値', () => {
+    expect(MENU_BGM_SPEC.bpm).toBeGreaterThan(0);
+    expect(MENU_BGM_SPEC.beatsPerBar).toBeGreaterThan(0);
+  });
+
+  it('bars は2小節以上のヴァンプで、各小節のコードが相異なる(進行がある)', () => {
+    expect(MENU_BGM_SPEC.bars.length).toBeGreaterThanOrEqual(2);
+    const bassHzSet = new Set(MENU_BGM_SPEC.bars.map((b) => b.bassHz));
+    expect(bassHzSet.size).toBe(MENU_BGM_SPEC.bars.length);
+  });
+
+  it('各小節のpadHzは3音以上の和音で、全て正の周波数', () => {
+    for (const bar of MENU_BGM_SPEC.bars) {
+      expect(bar.padHz.length).toBeGreaterThanOrEqual(3);
+      for (const hz of bar.padHz) expect(hz).toBeGreaterThan(0);
+      expect(bar.bassHz).toBeGreaterThan(0);
+      // ベースはパッド最低音より1オクターブ以上低い(低いパルスとして機能する)
+      expect(bar.bassHz).toBeLessThanOrEqual(Math.min(...bar.padHz) / 1.9);
+    }
+  });
+
+  it('全gainパラメータは0–1範囲内', () => {
+    const gains = [
+      MENU_BGM_SPEC.padGain,
+      MENU_BGM_SPEC.bassGain,
+      MENU_BGM_SPEC.bassAccentGain,
+      MENU_BGM_SPEC.arpGain,
+      MENU_BGM_SPEC.hatGain,
+      MENU_BGM_SPEC.kickGain,
+    ];
+    for (const g of gains) {
+      expect(g).toBeGreaterThan(0);
+      expect(g).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('bassAccentGain > bassGain(1・3拍のアクセントが効く)', () => {
+    expect(MENU_BGM_SPEC.bassAccentGain).toBeGreaterThan(MENU_BGM_SPEC.bassGain);
+  });
+
+  it('fadeInS/fadeOutS は正の値(ぶつ切り防止)', () => {
+    expect(MENU_BGM_SPEC.fadeInS).toBeGreaterThan(0);
+    expect(MENU_BGM_SPEC.fadeOutS).toBeGreaterThan(0);
+  });
+});
+
+describe('R57② SoundKit メニューSE/BGM API 無例外テスト(AudioContext不要)', () => {
+  it('uiMove: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().uiMove()).not.toThrow();
+  });
+  it('uiSelect: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().uiSelect()).not.toThrow();
+  });
+  it('uiBack: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().uiBack()).not.toThrow();
+  });
+  it('uiEquip: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().uiEquip()).not.toThrow();
+  });
+  it('uiTab: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().uiTab()).not.toThrow();
+  });
+  it('uiLaunch: AudioContext無しで例外を投げない', () => {
+    expect(() => new SoundKit().uiLaunch()).not.toThrow();
+  });
+  it('6種すべてを連続で呼んでも例外なし(メニュー内の高頻度操作を模した経路)', () => {
+    const kit = new SoundKit();
+    expect(() => {
+      kit.uiMove();
+      kit.uiMove();
+      kit.uiSelect();
+      kit.uiTab();
+      kit.uiEquip();
+      kit.uiBack();
+      kit.uiLaunch();
+    }).not.toThrow();
+  });
+
+  it('menuBgmStart: AudioContext無しで例外を投げず、再生状態も持たない(no-op)', () => {
+    expect(() => new SoundKit().menuBgmStart()).not.toThrow();
+  });
+  it('menuBgmStop: 未startでも例外を投げない(冪等)', () => {
+    expect(() => new SoundKit().menuBgmStop()).not.toThrow();
+  });
+  it('menuBgmStart → menuBgmStop の往復、二重呼び出しも例外なし', () => {
+    const kit = new SoundKit();
+    expect(() => {
+      kit.menuBgmStart();
+      kit.menuBgmStart(); // 二重start(冪等ガード)
+      kit.menuBgmStop();
+      kit.menuBgmStop(); // 二重stop(冪等ガード)
+    }).not.toThrow();
+  });
+  it('setMusicEnabled(false) 中は menuBgmStart を呼んでも例外なし(musicEnabled尊重)', () => {
+    const kit = new SoundKit();
+    kit.setMusicEnabled(false);
+    expect(() => kit.menuBgmStart()).not.toThrow();
+    expect(() => kit.menuBgmStop()).not.toThrow();
+  });
+  it('setVolumes(第4引数music込み)を反映した状態でメニューSE/BGMを呼んでも例外なし', () => {
+    const kit = new SoundKit();
+    expect(() => {
+      kit.setVolumes(0.8, 0.7, 0.5, 0.3, 0.6);
+      kit.uiSelect();
+      kit.menuBgmStart();
+      kit.setVolumes(0.8, 0.7, 0.5, 0.9, 0.6); // 再生中相当の音量変更でも例外なし
+      kit.menuBgmStop();
+    }).not.toThrow();
+  });
+  it('quiesce: メニューBGM再生中でも例外なく畳める(dispose経路の網羅)', () => {
+    const kit = new SoundKit();
+    kit.menuBgmStart();
+    kit.uiLaunch();
+    expect(() => kit.quiesce()).not.toThrow();
+    // 二重quiesceも安全(冪等)
+    expect(() => kit.quiesce()).not.toThrow();
   });
 });

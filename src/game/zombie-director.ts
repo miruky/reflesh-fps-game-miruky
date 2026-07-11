@@ -658,7 +658,15 @@ export class ZombieDirector {
     // R51バグ根治: spawnBot 内で hellMode 補正済みの damage を、この直後の代入が生値 dmg で
     // 無条件上書きしていた(hellMode でもボスの攻撃力×2.5が一切効かない状態だった)
     bot.tuning.damage = this.h.config.hellMode ? Math.round(dmg * 2.5) : dmg;
-    bot.zombieRunMul = speedMul;
+    // R57 ⑥修正2: speedMul は上の tuning.moveSpeedMul(= ZOMBIE_MOVE_MUL * speedMul)経由で
+    // 既にbot.moveSpeedへ焼き込まれ済み(bot.ts constructor: moveSpeed = MOVE_SPEED *
+    // tuning.moveSpeedMul)。updateZombieの実効速度は spd = moveSpeed * zombieRunMul のため、
+    // ここで更に bot.zombieRunMul = speedMul も設定すると speedMul が二重適用(speedMul²)
+    // されてしまっていた(通常/eliteはmoveSpeedMulとzombieRunMulを別用途で使うが、旧実装は
+    // ボスだけ同じ倍率を両方に入れていた)。applyBossPhase(bot.ts)がmoveSpeedMul一本で
+    // speedMulを適用する正しいパターンに倣い、zombieRunMulは既定値1のままにして
+    // speedMulの適用を1回分に統一する(zombieRunMulはボスに走行個体の概念がなく未使用のため
+    // 明示的な代入自体が不要=フィールド初期値1が正しい状態)。
     this.zombieBossBot = bot;
     // R54 音響2: 出現ボイス(距離カリング/スロットルはSoundKit側で内蔵)
     const sp = this.zombiePanAndDist(spawn);

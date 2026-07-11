@@ -677,9 +677,23 @@
   border: 2px solid #ffa061;
   box-shadow: 0 0 14px rgba(255, 160, 97, 0.4);
 }
+/* R57③: 解放済み/未解放を一目で区別できるようにする。カモ本来の色は残しつつ
+   grayscale+減光で「淡色」化し、南京錠アイコン(.u2a-lock)を重ねて解放状況を明示する。
+   filter:grayscaleはcanvas上のパネルではなくこのスウォッチ要素自身に限定使用(可)。 */
 .u2a-swatch.locked {
-  opacity: 0.6;
   cursor: default;
+  filter: grayscale(88%) brightness(0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.u2a-lock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 4px;
+  border-radius: 3px;
+  background: rgba(6, 7, 9, 0.72);
 }
 .u2a-swatch--none {
   background: linear-gradient(135deg, #2c3340, #181b22);

@@ -14,6 +14,7 @@ import type { CampaignProgress, MatchProgress, Profile } from '../game/progressi
 import { STAGES } from '../game/stages';
 import { WEAPON_DEFS } from '../game/weapons';
 import { WeaponPreview } from '../render/weapon-preview';
+import type { SoundKit } from '../core/audio';
 import type { MenuCallbacks, MenuSelection } from '../ui/menu';
 import type { SpaceBg } from '../ui/menu-bg';
 import { mountArmory } from './screens/armory';
@@ -30,6 +31,16 @@ const LOADOUT_KEY = 'hibana.loadout.v1'; // 旧UIと同一キー=兵装選択の
 // ポーズだけは試合画面の上に薄く載る(他は不透明フルスクリーン)
 const OVERLAY_SCREENS: ReadonlySet<Screen2Id> = new Set<Screen2Id>(['pause']);
 
+// R57 ②: クリックSEの分類。data-idが「戻る」系のものは uiBack を鳴らす。
+const BACK_SFX_IDS: ReadonlySet<string> = new Set([
+  'back-to-hub',
+  'brief-back',
+  'to-campaign',
+  'resume',
+  'menu',
+  'quit',
+]);
+
 // R56 焔座フルードステージ: レスポンシブ引き伸ばし(黒帯なし)へ移行済みの画面のみ。
 // 波ごとにここへ追加していく。未追加の画面は従来のscale-to-fitのまま完全維持される。
 // W1=hub。W2=title/options/armory/campaign/deploy をアンカーグループ方式へ変換し追加。
@@ -45,6 +56,9 @@ const FLUID_SCREENS: ReadonlySet<Screen2Id> = new Set<Screen2Id>([
   'briefing',
   'mission-result',
   'result',
+  // R57: ポーズ(試合上のoverlay)もフルード化。mountPause側で端アンカー対応。
+  // overlay(letterbox透明)+fluid(stage inset:0)の併用でviewport全面へ引き伸ばす。
+  'pause',
 ]);
 
 // R55 W-C4[5]: onKeyのEsc除外はテキスト打鍵系のinput型のみを対象にする
@@ -107,12 +121,67 @@ export class Menu2 implements MenuApi {
     this.backAction();
   };
 
+  // R57 ②: メニューSE。pointer由来のfocusin(=クリック)や画面遷移直後の自動フォーカスでは
+  // uiMove を鳴らさず、キー/パッドの純ナビ移動時のみ鳴らすためのガード用タイムスタンプ。
+  private lastPointerDownT = -1e9;
+  private moveSuppressUntil = 0;
+  private menuAudioKicked = false;
+  private nowMs(): number {
+    return typeof performance !== 'undefined' ? performance.now() : 0;
+  }
+  // 初回のユーザー操作でAudioContextを起こし、メニューBGMを開始する(ブラウザ自動再生制限対応)
+  private readonly onStagePointerDown = (): void => {
+    this.lastPointerDownT = this.nowMs();
+    if (!this.menuAudioKicked && this.sounds) {
+      this.menuAudioKicked = true;
+      this.sounds.ensure();
+      if (this.active && !OVERLAY_SCREENS.has(this.active.id)) this.sounds.menuBgmStart();
+    }
+  };
+  // クリック=確定/装備/戻る/タブ/出撃を data-id/クラスで差別化して鳴らす
+  private readonly onStageClick = (ev: MouseEvent): void => {
+    if (!this.sounds) return;
+    const t = ev.target;
+    if (!(t instanceof HTMLElement)) return;
+    const btn = t.closest<HTMLElement>(
+      'button,[role="button"],select,[data-section],[data-weapon],[data-stage],[data-camo],[data-attachment]',
+    );
+    if (!btn || (btn instanceof HTMLButtonElement && btn.disabled)) return;
+    const id = btn.dataset.id ?? '';
+    const cls = typeof btn.className === 'string' ? btn.className : '';
+    if (BACK_SFX_IDS.has(id)) this.sounds.uiBack();
+    else if (id === 'start') this.sounds.uiLaunch();
+    else if (
+      btn.dataset.weapon !== undefined ||
+      btn.dataset.camo !== undefined ||
+      btn.dataset.attachment !== undefined ||
+      /u2a-(swatch|weap|attach|slot|optic)/.test(cls)
+    )
+      this.sounds.uiEquip();
+    else if (
+      btn.dataset.section !== undefined ||
+      id.startsWith('hub-nav') ||
+      /(nav-item|u2a-tab|u2a-class|u2-title__nav-item)/.test(cls)
+    )
+      this.sounds.uiTab();
+    else this.sounds.uiSelect();
+  };
+  // キー/パッドのナビ移動のみ uiMove(自動フォーカス/クリック由来のfocusinは抑止)
+  private readonly onStageFocusIn = (ev: FocusEvent): void => {
+    if (!this.sounds) return;
+    const now = this.nowMs();
+    if (now < this.moveSuppressUntil) return; // 画面遷移直後の自動フォーカス
+    if (now - this.lastPointerDownT < 500) return; // クリック由来のフォーカス
+    if (ev.target instanceof HTMLElement && this.stage.contains(ev.target)) this.sounds.uiMove();
+  };
+
   constructor(
     private readonly root: HTMLElement,
     private readonly settings: Settings,
     private readonly profile: Profile,
     private readonly callbacks: MenuCallbacks,
     private readonly input: Input,
+    private readonly sounds?: SoundKit,
   ) {
     this.root.innerHTML = '';
     this.letterbox = document.createElement('div');
@@ -123,6 +192,10 @@ export class Menu2 implements MenuApi {
     this.root.appendChild(this.letterbox);
     window.addEventListener('resize', this.onResize);
     window.addEventListener('keydown', this.onKey);
+    // R57 ②: メニューSE/BGMの委譲配線(全画面共通・1箇所)。
+    this.stage.addEventListener('pointerdown', this.onStagePointerDown, true);
+    this.stage.addEventListener('click', this.onStageClick, true);
+    this.stage.addEventListener('focusin', this.onStageFocusIn);
     this.applyScale();
     this.loadLoadout();
 
@@ -176,6 +249,7 @@ export class Menu2 implements MenuApi {
   hide(): void {
     this.disposeActive();
     this.teardownPreview();
+    this.sounds?.menuBgmStop(); // R57 ②: 試合開始でメニューBGMを止める
     this.root.hidden = true;
   }
 
@@ -254,6 +328,11 @@ export class Menu2 implements MenuApi {
       handle = mount(this.host, this.stage, opts);
     }
     this.active = { id, handle };
+    // R57 ②: 画面遷移直後の自動フォーカスでは uiMove を鳴らさない(250ms抑止)。
+    this.moveSuppressUntil = this.nowMs() + 250;
+    // メニューBGM: 非overlay画面(タイトル/hub/各メニュー)では鳴らし続ける(idempotent)。
+    // pause(overlay)は試合中に薄く載るので開始しない(試合オーディオ側に任せる)。
+    if (this.menuAudioKicked && !OVERLAY_SCREENS.has(id)) this.sounds?.menuBgmStart();
     requestAnimationFrame(() => {
       if (this.active?.id !== id) return;
       // W-C[11][15]: 画面が既にフォーカスを自分の意図した要素へ置いていたら尊重する

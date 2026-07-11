@@ -10155,9 +10155,11 @@ body.killcam-active .hud-death {
 
 /* ── ガンゲーム HUD ─────────────────────────────────────────────────────── */
 /* ui-scale補正: absolute で #hud zoom に乗る */
+/* R57修正4: キルフィード(.u2h-feed, right:44px/top:40px/最大6行)と右上で水平重複していたため、
+   フィードの最大積み上げ(想定約230px)より下へ再配置して恒常的な重なりを解消 */
 .hud-gg {
   position: absolute;
-  top: calc(72px / var(--ui-scale, 1));
+  top: calc(250px / var(--ui-scale, 1));
   right: 16px;
   min-width: 140px;
   background: rgba(0, 0, 0, 0.65);
@@ -11085,7 +11087,8 @@ body.killcam-active .hud-death {
   transform: translateX(-50%) scale(1.04);
   transition: opacity 0.4s ease, transform 0.4s ease;
 }
-/* reduceMotion時はJS側がw2-showを付与しないため直接スケール1で確定表示させる保険 */
+/* R57修正3: reduceMotion時もJS側がw2-showを付与する(opacity:1へ)。ここではアニメーション
+   (スラムイン/フェードアウト)だけを止め、スケール1・不透明で即時表示させる */
 @media (prefers-reduced-motion: reduce) {
   .w2-special-banner { transition: none; }
 }

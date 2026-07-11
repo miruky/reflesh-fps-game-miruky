@@ -602,10 +602,10 @@ describe('composeZombieWeaponDef', () => {
   });
 
   it('PAP tierに応じた名称接尾辞が付与される', () => {
-    expect(composeZombieWeaponDef(base, { papTier: 0, ...zeroOpts }).name).toBe('カエデAR');
-    expect(composeZombieWeaponDef(base, { papTier: 1, ...zeroOpts }).name).toBe('カエデAR・改');
-    expect(composeZombieWeaponDef(base, { papTier: 2, ...zeroOpts }).name).toBe('カエデAR・改二');
-    expect(composeZombieWeaponDef(base, { papTier: 3, ...zeroOpts }).name).toBe('カエデAR・改三');
+    expect(composeZombieWeaponDef(base, { papTier: 0, ...zeroOpts }).name).toBe('FAMAS-G4');
+    expect(composeZombieWeaponDef(base, { papTier: 1, ...zeroOpts }).name).toBe('FAMAS-G4・改');
+    expect(composeZombieWeaponDef(base, { papTier: 2, ...zeroOpts }).name).toBe('FAMAS-G4・改二');
+    expect(composeZombieWeaponDef(base, { papTier: 3, ...zeroOpts }).name).toBe('FAMAS-G4・改三');
   });
 
   it('PAP tier1以上でマガジン容量が1.5倍(tier2/3も同率)', () => {
@@ -685,7 +685,7 @@ describe('composeZombieWeaponDef', () => {
     expect(a).toEqual(b);
     expect(base.damage).toBe(40); // base自体は変更されていない
     expect(base.magazineSize).toBe(30);
-    expect(base.name).toBe('カエデAR');
+    expect(base.name).toBe('FAMAS-G4');
   });
 
   it('fistsはガードされ、opts に関わらず base をそのまま返す(参照同一)', () => {

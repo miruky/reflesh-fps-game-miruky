@@ -20,8 +20,10 @@ import {
   KUNAI_CAMO_IDS,
   REWARD_CAMO_IDS,
   TOKOYAMI_CAMO,
+  applyCamoStats,
   camoName,
   camoProgress,
+  equippedCamoFor,
   isCamoId,
   isCamoUnlocked,
   isKunaiCamoUnlocked,
@@ -460,6 +462,11 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
   };
   document.addEventListener('keydown', onDocKeydown, true);
 
+  // 施錠アイコン(南京錠)。焔座様式=細ストローク・塗りなし。武器行/カモタイル共通で使い、
+  // 「解放済み/未解放」が色だけでなく形でも一目で分かるようにする(R57③)。
+  const lockIconSvg = (w: number, h: number, stroke = '#6E747C'): string =>
+    `<svg width="${w}" height="${h}" viewBox="0 0 16 18" aria-hidden="true"><rect x="1" y="8" width="14" height="9" fill="none" stroke="${stroke}" stroke-width="1.4"></rect><path d="M4 8 V5.5 A4 4 0 0 1 12 5.5 V8" fill="none" stroke="${stroke}" stroke-width="1.4"></path></svg>`;
+
   // ── カモ実績ヘルパ(実データ) ────────────────────────────────────────
   const camoUnlockedCount = (weaponId: string): number =>
     weaponId === 'fists'
@@ -566,9 +573,7 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
         : `${kills.toLocaleString('ja-JP')}キル`
       : `Lv${unlockLevelOf('weapon', id)}で解放 — あと${Math.max(0, unlockLevelOf('weapon', id) - lv)}`;
     const mark = unlocked ? markFor(id) : null;
-    const lock = unlocked
-      ? ''
-      : '<svg width="15" height="17" viewBox="0 0 16 18" aria-hidden="true"><rect x="1" y="8" width="14" height="9" fill="none" stroke="#6E747C" stroke-width="1.4"></rect><path d="M4 8 V5.5 A4 4 0 0 1 12 5.5 V8" fill="none" stroke="#6E747C" stroke-width="1.4"></path></svg>';
+    const lock = unlocked ? '' : lockIconSvg(15, 17);
     row.innerHTML =
       `<span class="u2a-sil">${weaponSilSVG(shape)}</span>` +
       `<span class="u2a-wtext"><span class="u2a-wname">${def.name}</span><span class="u2a-wsub">${sub}</span></span>` +
@@ -656,7 +661,10 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
   // ── 中央詳細 ────────────────────────────────────────────────────────
   const renderStats = (def: WeaponDef, base: WeaponDef): void => {
     const stats = q('stats');
-    const bars = computeWeaponBars(def);
+    // R57 ⑤: 装備中のゴールド/ダイヤ/ダークマター迷彩の性能ボーナス(ハンドリング系)を
+    // スタッツバーへ反映(adsTime↓→機動▲, recoil↓→制御▲)。通常/未装備カモは素通しで差分なし。
+    const camoId = equippedCamoFor(def.id, profile) ?? '';
+    const bars = computeWeaponBars(applyCamoStats(def, camoId));
     const baseBars = computeWeaponBars(base);
     let html = '';
     for (const [key, label] of BAR_AXES) {
@@ -709,6 +717,9 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
     const unlocked = kunai
       ? isKunaiCamoUnlocked(camoId, profile.weaponStats['fists'])
       : isCamoUnlocked(camoId, def.id, profile.weaponStats, profile.unlockedRewardCamos);
+    // R57③: 解放済み/未解放の区別を一目で分かるようにする。'locked'はグレースケール+減光
+    // (armory.cssの.u2a-swatch.locked)で、未解放には南京錠アイコンを重ねる。既存の
+    // disabled(=クリック不可/AT向けaria-disabled相当)はそのまま維持。
     btn.className = `u2a-swatch${unlocked && equipped === camoId ? ' on' : ''}${unlocked ? '' : ' locked'}`;
     btn.style.background = `linear-gradient(135deg, ${tracerHex(v.colorA)} 0%, ${tracerHex(v.colorB)} 55%, ${tracerHex(v.colorC)} 100%)`;
     if (unlocked) {
@@ -719,7 +730,8 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
         ? kunaiCamoProgress(camoId, profile.weaponStats['fists'])
         : camoProgress(camoId, def.id, profile.weaponStats);
       btn.disabled = true;
-      btn.title = `${camoName(camoId)} — ${p.label}(${p.current}/${p.target})`;
+      btn.innerHTML = `<span class="u2a-lock">${lockIconSvg(12, 14, '#d8dce2')}</span>`;
+      btn.title = `${camoName(camoId)}(未解放) — ${p.label}(${p.current}/${p.target})`;
     }
     return btn;
   };

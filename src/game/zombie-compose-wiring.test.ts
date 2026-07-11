@@ -171,7 +171,7 @@ describe('R53-W2 Pack-a-Punch: match.tsのtier進行/コスト手順の再現', 
     expect(composed.rpm).toBe(Math.round(700 * 1.33));
     // reload = round(1700*0.85)
     expect(composed.reloadTacticalMs).toBe(Math.round(1700 * 0.85));
-    expect(composed.name).toBe('カエデAR・改二');
+    expect(composed.name).toBe('FAMAS-G4・改二');
   });
 });
 

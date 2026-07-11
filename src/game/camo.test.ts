@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyCamoStats,
   CAMO_CLASSES,
   CAMO_IDS,
   CAMO_TIERS,
@@ -15,7 +16,11 @@ import {
   darkMatterFor,
   diamondFor,
   equippedCamoFor,
+  EXOTIC_GOLD_HS,
+  EXOTIC_GOLD_KILLS,
+  goldConditionFor,
   goldFor,
+  goldForWeapon,
   isCamoId,
   isCamoUnlocked,
   isKnownCamoId,
@@ -36,6 +41,10 @@ import {
   type WeaponCamoStats,
 } from './camo';
 import { WEAPON_DEFS } from './weapons';
+
+// exoticクラスの代表武器(HSが非現実的な弓/ビーム。gold緩和=HS100→50の検証に使う)
+const EXOTIC_ID = 'gekkou-bow';
+const EXOTIC_ID2 = 'shinkirou-sniper';
 
 // 全カモ対象武器をゴールド化した統計を作るヘルパ
 function allGoldStats(exclude: readonly string[] = []): Record<string, WeaponCamoStats> {
@@ -101,6 +110,17 @@ describe('カモ段階表', () => {
     expect(CAMO_VISUALS['dark-matter'].pattern).toBe('pulse');
   });
 
+  // R57-⑤: ダイヤは反復タイル(facet=floor格子)を廃し「継ぎ目のない一面クリスタル」pattern
+  // 'crystal' へ再設計した。facet は jingai 専用に残る(ダイヤは crystal を使う)ことを固定する。
+  it('diamond は crystal パターン(タイル格子の facet を使わない)/ facet は jingai が使う', () => {
+    expect(CAMO_VISUALS.diamond.pattern).toBe('crystal');
+    expect(CAMO_VISUALS.jingai.pattern).toBe('facet');
+    // 鏡面ギラつきレバーは白飛び根治済みの安全値を維持(不可侵)
+    expect(CAMO_VISUALS.diamond.metalness).toBe(0.95);
+    expect(CAMO_VISUALS.diamond.envMapIntensity).toBe(0.7);
+    expect(CAMO_VISUALS.diamond.emissiveIntensity).toBeLessThanOrEqual(0.3);
+  });
+
   // R55 W-C3根治(LOW[27]): diamondのsparkle/envMapIntensityに機械検査が無かった。
   // 白飛び再発禁止(bloom閾値0.9)の実務上限として sparkle<=0.6 / envMapIntensity<=1.0 を
   // 全カモ(CAMO_VISUALS走査=CAMO_IDS+pap1-3+tokoyami+報酬カモを含む全定義)で機械検査する。
@@ -150,11 +170,11 @@ describe('対象武器とクラス', () => {
   });
 
   it('weaponIdByName は表示名から逆引きし、近接/投擲名は null', () => {
-    expect(weaponIdByName('カエデAR')).toBe('kaede-ar');
+    expect(weaponIdByName('FAMAS-G4')).toBe('kaede-ar');
     expect(weaponIdByName('DSR')).toBe('yamasemi-dmr');
     expect(weaponIdByName('近接')).toBeNull();
     expect(weaponIdByName('フラグ')).toBeNull();
-    expect(weaponNameOf('kaede-ar')).toBe('カエデAR');
+    expect(weaponNameOf('kaede-ar')).toBe('FAMAS-G4');
     expect(weaponNameOf('unknown-id')).toBe('unknown-id');
   });
 });
@@ -506,5 +526,208 @@ describe('報酬カモ(jingai/shinrai)', () => {
         unlockedRewardCamos: new Set<CamoId>(['shinrai']),
       }),
     ).toBe('shinrai');
+  });
+});
+
+// ── R57-⑤ C: exotic金の解除閾値・3経路の単一真実源(逆転解消) ──────────────
+describe('exotic金の解除条件統一(goldForWeapon / camoProgress / camoTierForが一致)', () => {
+  it('exoticクラスと判定が前提どおり(gekkou-bow/shinkirou-sniperはexotic)', () => {
+    expect(WEAPON_DEFS[EXOTIC_ID]?.class).toBe('exotic');
+    expect(WEAPON_DEFS[EXOTIC_ID2]?.class).toBe('exotic');
+    expect(camoClassOf('kaede-ar')).toBe('ar');
+  });
+
+  it('緩和ポリシーはHSのみ(500kills / HS100→50)。定数と goldConditionFor が単一真実源', () => {
+    expect(EXOTIC_GOLD_KILLS).toBe(500); // キルは標準goldと同じ500(ラダー単調性を維持)
+    expect(EXOTIC_GOLD_HS).toBe(50); // HSのみ緩和
+    expect(goldConditionFor(EXOTIC_ID)).toEqual({ kills: 500, headshots: 50 });
+    expect(goldConditionFor(EXOTIC_ID2)).toEqual({ kills: 500, headshots: 50 });
+    // 非exoticは標準(500/100)のまま
+    expect(goldConditionFor('kaede-ar')).toEqual({ kills: 500, headshots: 100 });
+  });
+
+  // 3経路(装備ゲート=goldForWeapon / 進捗表示=camoProgress / 解除通知=camoTierFor(weaponId付))が
+  // 常に同じ結論を出すことを、しきい値境界で機械照合する
+  const goldByProgress = (id: string, s: WeaponCamoStats): boolean => {
+    const p = camoProgress('gold', id, { [id]: s });
+    return p.current >= p.target;
+  };
+  const goldByTier = (id: string, s: WeaponCamoStats): boolean =>
+    camoTierFor(s, id) >= CAMO_TIERS.length;
+
+  it('exotic金: 3経路が境界(500/50)で完全一致する', () => {
+    for (const s of [
+      { kills: 499, headshots: 50 },
+      { kills: 500, headshots: 49 },
+      { kills: 500, headshots: 50 }, // ← ここで解除
+      { kills: 700, headshots: 80 },
+      { kills: 250, headshots: 50 }, // 旧250緩和の名残では解除されないこと
+      { kills: 400, headshots: 50 }, // 旧400ループバグでは解除されていた点=今は未解除
+    ] as WeaponCamoStats[]) {
+      const gate = goldForWeapon(EXOTIC_ID, s);
+      expect(goldByProgress(EXOTIC_ID, s), `progress@${s.kills}/${s.headshots}`).toBe(gate);
+      expect(goldByTier(EXOTIC_ID, s), `tier@${s.kills}/${s.headshots}`).toBe(gate);
+    }
+    // 具体値: 500/50 で解除、500/49 と 400/50 と 250/50 は未解除
+    expect(goldForWeapon(EXOTIC_ID, { kills: 500, headshots: 50 })).toBe(true);
+    expect(goldForWeapon(EXOTIC_ID, { kills: 500, headshots: 49 })).toBe(false);
+    expect(goldForWeapon(EXOTIC_ID, { kills: 400, headshots: 50 })).toBe(false);
+    expect(goldForWeapon(EXOTIC_ID, { kills: 250, headshots: 50 })).toBe(false);
+  });
+
+  it('camoProgress(exotic gold): キル満了後のHS目標は50(旧250表示ではない)', () => {
+    // キル未満はキル進捗(target=500)
+    const pk = camoProgress('gold', EXOTIC_ID, { [EXOTIC_ID]: { kills: 300, headshots: 0 } });
+    expect(pk.target).toBe(500);
+    expect(pk.current).toBe(300);
+    // キル満了後はHS進捗(target=50)
+    const ph = camoProgress('gold', EXOTIC_ID, { [EXOTIC_ID]: { kills: 999, headshots: 20 } });
+    expect(ph.target).toBe(50);
+    expect(ph.current).toBe(20);
+    expect(ph.label).toContain('HS');
+  });
+
+  it('camoTierFor: weaponId省略は従来どおり標準500/100(後方互換・非exotic影響なし)', () => {
+    // exotic を 500/50 にしても、weaponId省略(標準)では gold未達(8段)
+    expect(camoTierFor({ kills: 500, headshots: 50 })).toBe(8);
+    expect(camoTierFor({ kills: 500, headshots: 100 })).toBe(9);
+    // weaponId=exotic を渡すと 500/50 で9段
+    expect(camoTierFor({ kills: 500, headshots: 50 }, EXOTIC_ID)).toBe(9);
+    // 非exotic weaponId は標準500/100
+    expect(camoTierFor({ kills: 500, headshots: 50 }, 'kaede-ar')).toBe(8);
+    expect(camoTierFor({ kills: 500, headshots: 100 }, 'kaede-ar')).toBe(9);
+  });
+
+  it('非exotic武器の金判定は不変(500/100)。3経路も一致', () => {
+    const s99 = { kills: 500, headshots: 99 };
+    const s100 = { kills: 500, headshots: 100 };
+    expect(goldForWeapon('kaede-ar', s99)).toBe(false);
+    expect(goldByTier('kaede-ar', s99)).toBe(false);
+    expect(goldByProgress('kaede-ar', s99)).toBe(false);
+    expect(goldForWeapon('kaede-ar', s100)).toBe(true);
+    expect(goldByTier('kaede-ar', s100)).toBe(true);
+    expect(goldByProgress('kaede-ar', s100)).toBe(true);
+  });
+
+  it('解放順の逆転なし: exoticはダイヤより先or同時に金が解ける(金≤ダイヤ)', () => {
+    const exoticIds = camoWeaponsOfClass('exotic');
+    expect(exoticIds.length).toBeGreaterThan(1);
+    // 全exoticを金ちょうど(500/50)にするとダイヤ成立、かつ各武器の金も成立(=同時)
+    const allExoticGold: Record<string, WeaponCamoStats> = {};
+    for (const id of exoticIds) allExoticGold[id] = { kills: 500, headshots: 50 };
+    expect(diamondFor('exotic', allExoticGold)).toBe(true);
+    for (const id of exoticIds) expect(goldForWeapon(id, allExoticGold[id]), id).toBe(true);
+    // 1本だけ金未達(HS49)にするとダイヤは崩れるが、金到達済みの他武器の金は保持される
+    // (=金がダイヤより先に立つ=逆転しない)
+    const oneShort = { ...allExoticGold };
+    const first = exoticIds[0]!;
+    oneShort[first] = { kills: 500, headshots: 49 };
+    expect(diamondFor('exotic', oneShort)).toBe(false);
+    expect(goldForWeapon(first, oneShort[first])).toBe(false);
+    const other = exoticIds[1]!;
+    expect(goldForWeapon(other, oneShort[other])).toBe(true); // 金は先に解けている
+    // isCamoUnlocked(装備ゲート)も同じ結論(単一真実源)
+    expect(isCamoUnlocked('gold', other, oneShort)).toBe(true);
+    expect(isCamoUnlocked('diamond', other, oneShort)).toBe(false);
+    expect(isCamoUnlocked('gold', first, oneShort)).toBe(false);
+  });
+});
+
+// ── R57-⑤ B: カモ性能ボーナス(applyCamoStats) ─────────────────────────────
+describe('applyCamoStats(カモ性能ボーナス)', () => {
+  const base = WEAPON_DEFS['kaede-ar']!;
+
+  it('通常カモ/未装備/未知IDは素通し(同一参照・非破壊)', () => {
+    expect(applyCamoStats(base, 'red')).toBe(base);
+    expect(applyCamoStats(base, 'neon')).toBe(base);
+    expect(applyCamoStats(base, 'dirt')).toBe(base);
+    expect(applyCamoStats(base, '')).toBe(base);
+    expect(applyCamoStats(base, 'rainbow')).toBe(base);
+    // 報酬/PaPカモは性能ボーナス対象外(素通し)
+    expect(applyCamoStats(base, 'jingai')).toBe(base);
+    expect(applyCamoStats(base, 'pap3')).toBe(base);
+    expect(applyCamoStats(base, 'tokoyami')).toBe(base);
+  });
+
+  it('gold: リロード/ADS/持ち替えが8%高速化。火力・射程・弾数・移動精度・反動は不変', () => {
+    const g = applyCamoStats(base, 'gold');
+    expect(g).not.toBe(base);
+    expect(g.reloadTacticalMs).toBeCloseTo(base.reloadTacticalMs * 0.92, 6);
+    expect(g.reloadEmptyMs).toBeCloseTo(base.reloadEmptyMs * 0.92, 6);
+    expect(g.adsTimeMs).toBeCloseTo(base.adsTimeMs * 0.92, 6);
+    expect(g.switchMs).toBeCloseTo(base.switchMs * 0.92, 6);
+    // ハンドリング以外(バランス直結)は一切変えない
+    expect(g.damage).toBe(base.damage);
+    expect(g.rpm).toBe(base.rpm);
+    expect(g.range).toBe(base.range);
+    expect(g.magazineSize).toBe(base.magazineSize);
+    expect(g.falloff).toEqual(base.falloff);
+    // goldは移動精度/反動には手を付けない
+    expect(g.movementSpreadDeg).toBe(base.movementSpreadDeg);
+    expect(g.recoilRecoveryPerS).toBe(base.recoilRecoveryPerS);
+    expect(g.recoilPattern[0]!.pitch).toBe(base.recoilPattern[0]!.pitch);
+  });
+
+  it('diamond: gold相当 + 移動精度/反動-10% + 反動収束+10%', () => {
+    const d = applyCamoStats(base, 'diamond');
+    expect(d.reloadTacticalMs).toBeCloseTo(base.reloadTacticalMs * 0.92, 6);
+    expect(d.adsTimeMs).toBeCloseTo(base.adsTimeMs * 0.92, 6);
+    expect(d.switchMs).toBeCloseTo(base.switchMs * 0.92, 6);
+    expect(d.movementSpreadDeg).toBeCloseTo(base.movementSpreadDeg * 0.9, 6);
+    expect(d.recoilRecoveryPerS).toBeCloseTo(base.recoilRecoveryPerS * 1.1, 6);
+    // recoilPattern は要素ごとに0.9スケール(配列は別参照=元defを汚さない)
+    expect(d.recoilPattern).not.toBe(base.recoilPattern);
+    for (let i = 0; i < base.recoilPattern.length; i += 1) {
+      expect(d.recoilPattern[i]!.pitch).toBeCloseTo(base.recoilPattern[i]!.pitch * 0.9, 9);
+      expect(d.recoilPattern[i]!.yaw).toBeCloseTo(base.recoilPattern[i]!.yaw * 0.9, 9);
+    }
+    // 火力系は不変
+    expect(d.damage).toBe(base.damage);
+    expect(d.rpm).toBe(base.rpm);
+  });
+
+  it('dark-matter: diamondより更に上(-12% / 移動精度・反動-15% / 収束+15%)', () => {
+    const dm = applyCamoStats(base, 'dark-matter');
+    const d = applyCamoStats(base, 'diamond');
+    expect(dm.reloadTacticalMs).toBeCloseTo(base.reloadTacticalMs * 0.88, 6);
+    expect(dm.adsTimeMs).toBeCloseTo(base.adsTimeMs * 0.88, 6);
+    expect(dm.movementSpreadDeg).toBeCloseTo(base.movementSpreadDeg * 0.85, 6);
+    expect(dm.recoilRecoveryPerS).toBeCloseTo(base.recoilRecoveryPerS * 1.15, 6);
+    // 段階性: dark-matter は diamond より速い/精密(数値が更に良い)
+    expect(dm.adsTimeMs).toBeLessThan(d.adsTimeMs);
+    expect(dm.reloadTacticalMs).toBeLessThan(d.reloadTacticalMs);
+    expect(dm.movementSpreadDeg).toBeLessThan(d.movementSpreadDeg);
+    expect(dm.recoilPattern[0]!.pitch).toBeLessThan(d.recoilPattern[0]!.pitch);
+  });
+
+  it('元defを一切変更しない(純関数・全カモで検証)', () => {
+    const snap = {
+      reloadTacticalMs: base.reloadTacticalMs,
+      reloadEmptyMs: base.reloadEmptyMs,
+      adsTimeMs: base.adsTimeMs,
+      switchMs: base.switchMs,
+      movementSpreadDeg: base.movementSpreadDeg,
+      recoilRecoveryPerS: base.recoilRecoveryPerS,
+      recoilPattern0Pitch: base.recoilPattern[0]!.pitch,
+      recoilPattern0Yaw: base.recoilPattern[0]!.yaw,
+    };
+    for (const camo of ['gold', 'diamond', 'dark-matter', 'red', ''] as const) {
+      applyCamoStats(base, camo);
+    }
+    expect(base.reloadTacticalMs).toBe(snap.reloadTacticalMs);
+    expect(base.reloadEmptyMs).toBe(snap.reloadEmptyMs);
+    expect(base.adsTimeMs).toBe(snap.adsTimeMs);
+    expect(base.switchMs).toBe(snap.switchMs);
+    expect(base.movementSpreadDeg).toBe(snap.movementSpreadDeg);
+    expect(base.recoilRecoveryPerS).toBe(snap.recoilRecoveryPerS);
+    expect(base.recoilPattern[0]!.pitch).toBe(snap.recoilPattern0Pitch);
+    expect(base.recoilPattern[0]!.yaw).toBe(snap.recoilPattern0Yaw);
+  });
+
+  it('exotic武器にも適用できる(idではなくcamoIdで分岐)', () => {
+    const ex = WEAPON_DEFS[EXOTIC_ID]!;
+    const g = applyCamoStats(ex, 'gold');
+    expect(g.adsTimeMs).toBeCloseTo(ex.adsTimeMs * 0.92, 6);
+    expect(g.damage).toBe(ex.damage);
   });
 });

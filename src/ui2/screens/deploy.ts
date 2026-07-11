@@ -557,7 +557,7 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     rogueText.className = 'u2d-toggle-text';
     rogueText.innerHTML =
       '<span class="u2d-toggle-name">輪廻(ローグラン)</span>' +
-      '<span class="u2d-toggle-desc">ミサゴ拳銃のみ・R1固定で始まる周回。供物の台座で力を拾う</span>';
+      '<span class="u2d-toggle-desc">95R拳銃のみ・R1固定で始まる周回。供物の台座で力を拾う</span>';
     rogueRow.append(rogue, rogueText);
     body.appendChild(rogueRow);
 

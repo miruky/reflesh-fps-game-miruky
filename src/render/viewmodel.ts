@@ -40,6 +40,12 @@ const BARREL_Y = 0.012;
 // ドリフトを構造的に防ぐ(どちらか片方だけ変更すると照準がズレるため)。
 const IRON_POST_Y = 0.075;
 const BEAD_FLOAT = 0.008;
+// R57⑧: 全光学サイト(reflex/holo/rmr/pico/canted/delta/hybrid)のレティクルドットを、
+// アイアンの浮遊マイクロドット(SphereGeometry r0.0021 ≒ 視覚直径0.0042)と同格の極小プレーン
+// ドットへ統一する共有定数。旧値は housing ごとに 0.008〜0.012 とバラつき、かつアイアンより
+// 大きく視界を塞いでいた(ユーザー: 「アイアンの小ドットが最強・全サイトそれに揃えて」)。
+// 加算(reflexDot)材だが小径・低エネルギーなので bloom閾値0.9 を超えない(むしろ縮小で減少)。
+const OPTIC_DOT_SIZE = 0.0046;
 
 // 頂点カラーの陰影モード。flat=均一、gradY=下暗上明の擬似AO、
 // machined=削り出し鋼(急勾配+稜線ベベル)、edgeHi=研磨リム(上端を二次で光らせる)。
@@ -727,7 +733,8 @@ function camoPatternGLSL(v: CamoVisual): string {
         camoCol = mix(camoCol, ${C}, smoothstep(0.66, 0.80, n2));
         camoEmissiveMul = band;`;
     case 'facet':
-      // 結晶(ダイヤ): セル状ファセット+氷白の稜線。面ごとに明度が割れる
+      // 結晶(jingai のひび割れ): セル状ファセット+氷白の稜線。面ごとに明度が割れる。
+      // ※ダイヤは反復タイルに見えるため 'crystal' へ移行済み。facet は jingai 専用に残す。
       return `
         vec3 cell = floor(vCamoPos * ${S});
         float f = camoHash(cell);
@@ -736,6 +743,32 @@ function camoPatternGLSL(v: CamoVisual): string {
                    * smoothstep(0.0, 0.12, min(min(1.0 - fr.x, 1.0 - fr.y), 1.0 - fr.z));
         vec3 camoCol = mix(${C}, mix(${A}, ${B}, f), edge);
         camoEmissiveMul = 1.0 - 0.5 * edge;`;
+    case 'crystal':
+      // R57-⑤ ダイヤ「継ぎ目のない一枚ダイヤ」: floor格子/hard edge を使わず、低周波ノイズで
+      // 座標を歪めた(ドメインワープ)うえで3オクターブの値ノイズを重ね、氷青(A)→白(C)の濃淡を
+      // 非反復に敷く。ワープで格子の反復周期を視認不能に崩すのがタイル除去の要。稜線(ノイズの
+      // 尾根)だけを白く締めて内部反射のきらめきを出す。camoEmissiveMul は ≤1.0(base emissive を
+      // 底上げしない=白飛び根治済みエネルギー包絡を維持)。金属F0=albedo なので base は氷青平均に
+      // 寄せ(純白は稜線のみ)、鏡面反射が過度に白飛びしないよう抑える。
+      return `
+        vec3 cwp = vCamoPos * ${S};
+        vec3 cwarp = vec3(
+          camoNoise(cwp * 0.5 + 4.1),
+          camoNoise(cwp * 0.5 + 19.7),
+          camoNoise(cwp * 0.5 + 33.3)) - 0.5;
+        vec3 cwp2 = cwp + cwarp * 3.0;
+        float co1 = camoNoise(cwp2);
+        float co2 = camoNoise(cwp2 * 2.13 + 11.3);
+        float co3 = camoNoise(cwp2 * 4.29 + 27.9);
+        float crys = co1 * 0.55 + co2 * 0.30 + co3 * 0.15;
+        // 基調は氷青(A)に濃青(B)の内部濃淡でコントラスト(=深み)を持たせる。純白(C)は
+        // ノイズの尾根だけを細く締める「fire(閃光線)」に限定し、面全体を白く飛ばさない。
+        // 平均を氷青へ寄せることで金属F0の鏡面反射に余白(白飛び回避)を残しつつ、白い稜線と
+        // 高密度スパークルが青いクリスタルに対して強くギラつくコントラストを作る。
+        vec3 camoCol = mix(${A}, ${B}, smoothstep(0.42, 0.86, co2) * 0.6);
+        float cridge = 1.0 - smoothstep(0.0, 0.045, abs(crys - 0.5));
+        camoCol = mix(camoCol, ${C}, cridge * 0.9);
+        camoEmissiveMul = 0.72 + 0.28 * cridge;`;
     case 'pulse':
       // 脈動(溶岩/ダークマター): 流動するノイズ脈+時間で明滅する発光(uCamoTime)
       return `
@@ -786,15 +819,26 @@ function camoPatternGLSL(v: CamoVisual): string {
 // 0.30→0.32とほぼ据え置き)。normal自体は従来通りローカルcamoFacetNのみで完結し実BRDFへは
 // 一切書き戻さない(白飛び根治済み方式を維持)。実WebGL(SwiftShader)で飽和ピクセル比率=0を
 // 実測確認済み(検証スクリプトは確認後に削除)。
+// R57-⑤「一面ダイヤ・最強ギラギラ」: (a)グリッターを3層化(ultra-fine 2600³ + fine 1700³ +
+// coarse 620³)+閾値を緩めて密度を最大化。合成 camoGlit を clamp(0,1) するので per-pixel の
+// 加算天井(glitAmt)は不変=白飛びは増えず「光る点の数」だけ増える。(b)ジッタセル参照を低周波
+// ノイズでドメインワープし 340³グリッド由来の格子見えを崩す。iridAmt/glitAmt係数は R56 の
+// 実測安全値を据え置き(振幅は上げず密度だけ上げる)。base の反復タイルは pattern を 'crystal'
+// (格子非使用のドメインワープ・ノイズ表面)へ移したことで根絶。実WebGL再検証で飽和0を確認。
 function camoSparkleEmissiveGLSL(sparkle: number): string {
   const jitter = (sparkle * 0.35).toFixed(3);
   const iridAmt = (sparkle * 0.32).toFixed(3);
   const glitAmt = (sparkle * 0.20).toFixed(3);
   return `
 {
-  vec3 camoCell = floor(vCamoPos * 340.0);
+  // 煌めき用ローカル法線(camoFacetN)。実BRDFのnormalは不変。ジッタセル参照を低周波ノイズで
+  // ドメインワープして「340³グリッド由来の反復」を崩す(タイル/格子の再発防止=R57-⑤)。
+  vec3 camoFnp = vCamoPos * 340.0;
+  camoFnp += (vec3(camoNoise(vCamoPos * 70.0 + 2.1),
+                   camoNoise(vCamoPos * 70.0 + 9.3),
+                   camoNoise(vCamoPos * 70.0 + 21.7)) - 0.5) * 60.0;
+  vec3 camoCell = floor(camoFnp);
   vec3 camoJit = vec3(camoHash(camoCell), camoHash(camoCell + 91.7), camoHash(camoCell + 183.1)) - 0.5;
-  // 実BRDFのnormalは不変。煌めき計算専用のローカル法線(camoFacetN)としてのみ使う。
   vec3 camoFacetN = normalize(normal + camoJit * ${jitter});
   vec3 camoViewDir = normalize(vViewPosition);
   float camoNdv = clamp(dot(camoFacetN, camoViewDir), 0.0, 1.0);
@@ -803,15 +847,20 @@ function camoSparkleEmissiveGLSL(sparkle: number): string {
   // 強調しつつ平均エネルギーは上げない(pow>1は平均を下げる方向)。
   vec3 camoIridRaw = 0.5 + 0.5 * cos(6.2832 * (vec3(0.0, 0.33, 0.67) + camoFres * 2.1 + uCamoTime * 0.07));
   vec3 camoIrid = camoIridRaw * camoIridRaw;
-  // グリッター2層: fine(高周波・小径・厳しい閾値)+coarse(粗め・弱め合成)で密度と鋭さを両立。
-  // 1点あたりの加算量(glitAmt)は絞ってあるので、点が増えても合計エネルギーは膨らまない。
+  // グリッター3層(ultra-fine 2600³ / fine 1700³ / coarse 620³): 密度を最大化して「無数の
+  // 細かい光がギラつく」体感を出す。合成後に clamp(…,0,1) で1ピクセルの上限を固定するため、
+  // 層を増やし閾値を緩めても per-pixel の加算天井(glitAmt)は不変=白飛びは増えない(増えるのは
+  // 光る点の数だけ)。各層は個別の明滅速度でチラつく。
+  vec3 camoGlitCellF = floor(vCamoPos * 2600.0 + 5.7);
+  float camoGlitF = step(0.990, camoHash(camoGlitCellF + 61.0));
+  camoGlitF *= 0.5 + 0.5 * sin(uCamoTime * 6.1 + camoHash(camoGlitCellF) * 6.2832);
   vec3 camoGlitCellA = floor(vCamoPos * 1700.0);
-  float camoGlitA = step(0.992, camoHash(camoGlitCellA + 7.0));
+  float camoGlitA = step(0.986, camoHash(camoGlitCellA + 7.0));
   camoGlitA *= 0.5 + 0.5 * sin(uCamoTime * 4.2 + camoHash(camoGlitCellA) * 6.2832);
   vec3 camoGlitCellB = floor(vCamoPos * 620.0 + 12.3);
-  float camoGlitB = step(0.978, camoHash(camoGlitCellB + 41.0));
+  float camoGlitB = step(0.972, camoHash(camoGlitCellB + 41.0));
   camoGlitB *= 0.5 + 0.5 * sin(uCamoTime * 1.8 + camoHash(camoGlitCellB + 3.0) * 6.2832);
-  float camoGlit = clamp(camoGlitA + camoGlitB * 0.55, 0.0, 1.0);
+  float camoGlit = clamp(camoGlitF + camoGlitA * 0.8 + camoGlitB * 0.5, 0.0, 1.0);
   totalEmissiveRadiance += camoIrid * camoFres * ${iridAmt} + vec3(1.0) * camoGlit * camoNdv * ${glitAmt};
 }`;
 }
@@ -1828,7 +1877,12 @@ export function buildGunBody(
   const barR = Math.max(0.006, gauge * 0.5);
   const attachments = def.attachmentIds ?? [];
   const extendedMag = attachments.includes('extended');
+  // R57⑦: クイックマガジンは短縮弾倉として描き分ける(拡張=延長 / クイック=短小)。
+  const quickMag = attachments.includes('quick');
   const suppressor = attachments.includes('suppressor');
+  // R57⑦: コンペンセイター(muzzleスロット)を銃口の有孔ブレーキとして描く。サプレッサ
+  // (長い滑らかな筒)とは一目で区別できる短い上面ポート付きデバイス。両立時はサプレッサ優先。
+  const compensator = attachments.includes('compensator') && !suppressor;
 
   const { metalVC, polishVC, polyVC, glassThin, glassScope, reflexDot } = getShared();
   const accent = getAccent(def.tracerColor);
@@ -2131,7 +2185,14 @@ export function buildGunBody(
   // 太い琥珀ビードは視界を塞ぐ主因だったため撤去し、支柱なしで浮かぶマイクロドットへ置換。
   // R50: ベゼルリングはユーザー要望で全撤去(円形不要)。フレームは「耳」2本が担う —
   // 参考画像に寄せて長く・細く(h0.065/w0.005、ロール0.34→0.18でほぼ垂直)、先端+基部に琥珀点。
-  if (!sil.scope) {
+  // R57⑧ 二重ドット根絶: 着脱光学(reflex/holo/… = OPTIC_SPECS)またはレガシー telescopic を
+  // 装着している時はアイアンのビード/前照星ドット・耳を一切描かず、光学のドット「だけ」を出す
+  // (アイアンと光学のドットが中央付近で重なる二重表示を構造的に排除する)。光学未装着時のみ
+  // アイアンのドットを出す。resolveSightY も同条件で光学側sightYを返すため、ADS収束Yは常に
+  // 「実際に描画されている唯一のサイト」と一致する(サイト契約: buildGunBody↔resolveSightY双方向)。
+  const ironSuppressedByOptic =
+    OPTIC_SPECS[resolveOpticId(def)] !== undefined || attachments.includes('telescopic');
+  if (!sil.scope && !ironSuppressedByOptic) {
     const amberMat = getAccent(0xffab1e); // 琥珀ファイバ(耳のアクセント。shared+disposeSharedで解放)
     const microMat = getAccent(0xff3b1a); // BO3風・浮遊マイクロドット(赤橙、照準点=着弾点)
     const amberDot = (x: number, y: number, z: number, r: number): void => {
@@ -2215,9 +2276,10 @@ export function buildGunBody(
   switch (sil.feed) {
     case 'mag-curved': {
       const mv = newMovable('vm:magazine');
-      const h = extendedMag ? 0.18 : 0.13;
+      // R57⑦: 拡張=延長 / クイック=短小 / 無=標準 の3段で弾倉長を描き分ける。
+      const h = extendedMag ? 0.18 : quickMag ? 0.10 : 0.13;
       const segs = 3;
-      const baseY = extendedMag ? -0.135 : -0.11;
+      const baseY = extendedMag ? -0.135 : quickMag ? -0.095 : -0.11;
       const z0 = sil.feedZ ?? -0.04;
       for (let i = 0; i < segs; i += 1) {
         const t = i / (segs - 1);
@@ -2239,8 +2301,9 @@ export function buildGunBody(
     }
     case 'mag-straight': {
       const mv = newMovable('vm:magazine');
-      const h = extendedMag ? 0.2 : 0.15;
-      const y = extendedMag ? -0.145 : -0.12;
+      // R57⑦: 拡張=延長 / クイック=短小 / 無=標準。
+      const h = extendedMag ? 0.2 : quickMag ? 0.11 : 0.15;
+      const y = extendedMag ? -0.145 : quickMag ? -0.10 : -0.12;
       const z0 = sil.feedZ ?? -0.02;
       bakeAt(mv.poly, chamferBox(0.04, h, 0.058, 0.004), C_POLY, 0, y, z0);
       boxP(mv.metal, C_RIM, 0.042, 0.01, 0.056, 0, y + h * 0.42, z0, 0, 0, 0, 'flat');
@@ -2484,6 +2547,21 @@ export function buildGunBody(
   if (det.slide && sil.muzzle === 'none' && !suppressor) {
     boxP(metalParts, C_DARK, gauge * 1.4, gauge * 1.2, 0.02, 0, BARREL_Y, barFrontZ - 0.01);
   }
+  // R57⑦: コンペンセイター(muzzleアタッチメント)= 銃口先の有孔ブレーキ。サプレッサの長い滑らか
+  // な筒とは別形状(短い箱本体+上面3ポート+左右ベント+研磨クラウン)で「付けた」ことが一目で判る。
+  // metalParts/polishParts へ merge するため +0DC。muzzle 原点も僅かに前進させる。
+  if (compensator) {
+    const compZ = barFrontZ - 0.03 * bs;
+    bakeAt(metalParts, chamferBox(gauge * 2.1, gauge * 1.9, 0.06 * bs, 0.004), C_DARK, 0, BARREL_Y, compZ);
+    for (let i = 0; i < 3; i += 1) {
+      boxP(metalParts, C_GROOVE, gauge * 1.5, 0.005, 0.008, 0, BARREL_Y + gauge * 0.95, compZ - 0.018 + i * 0.018, 0, 0, 0, 'flat');
+    }
+    for (const sx of [-1, 1] as const) {
+      boxP(metalParts, C_GROOVE, 0.005, gauge * 1.1, 0.03, sx * gauge * 1.05, BARREL_Y, compZ, 0, 0, 0, 'flat');
+    }
+    tubeZ(polishParts, C_POLISH_HI, barR * 1.05, 0.012, 0, BARREL_Y, compZ - 0.032 * bs, false, 'edgeHi');
+    muzzleZ = Math.min(muzzleZ, compZ - 0.04 * bs);
+  }
 
   // ── 着脱式光学(OPTIC_SPECS.housing 別)── ③スコープ種類を倍増
   // 共有ヘルパ: openEnded 筒 + 中空アニュラス + glassScope レンズの倍率スコープ管を焼く。
@@ -2537,7 +2615,7 @@ export function buildGunBody(
           for (const sx of [-1, 1] as const) {
             boxP(metalParts, C_DARK, 0.006, 0.05, 0.05, sx * 0.023, sy - 0.002, 0.05, 0, 0, 0, 'flat');
           }
-          reflexDotWindow(sy, 0.018, 0.009, 0.05); // Fix-2: dotS 0.006→0.009
+          reflexDotWindow(sy, 0.018, OPTIC_DOT_SIZE, 0.05); // R57⑧: アイアン風の極小ドットへ統一
           break;
         }
         case 'holo': {
@@ -2548,9 +2626,9 @@ export function buildGunBody(
           const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.05, 0.04), glassThin);
           screen.position.set(0, sy, 0.05);
           screen.renderOrder = 2;
-          // R15: 他光学のドットに合わせて小型化(旧0.02は突出して大きかった)
-          // Fix-2: holo ドット 0.008→0.012 (×1.5 統一拡大)
-          const dot = new THREE.Mesh(new THREE.PlaneGeometry(0.012, 0.012), reflexDot);
+          // R57⑧: 他光学ドットと共にアイアン風の極小ドット(OPTIC_DOT_SIZE)へ統一。
+          // 旧0.012は突出して大きく視界を塞いだ(ユーザー: アイアンの小ドットに揃える)。
+          const dot = new THREE.Mesh(new THREE.PlaneGeometry(OPTIC_DOT_SIZE, OPTIC_DOT_SIZE), reflexDot);
           dot.position.set(0, sy, 0.045);
           dot.renderOrder = 3;
           gun.add(screen, dot);
@@ -2564,7 +2642,7 @@ export function buildGunBody(
             boxP(metalParts, C_DARK, 0.005, 0.03 * f, 0.03, sx * 0.014, sy, 0.05, 0, 0, 0, 'flat');
           }
           boxP(metalParts, C_DARK, 0.032, 0.005, 0.01, 0, sy + 0.016 * f, 0.045, 0, 0, 0, 'flat');
-          reflexDotWindow(sy, 0.011, 0.008, 0.05); // Fix-2: dotS 0.005→0.008
+          reflexDotWindow(sy, 0.011, OPTIC_DOT_SIZE, 0.05); // R57⑧: アイアン風の極小ドットへ統一
           break;
         }
         case 'delta': {
@@ -2573,14 +2651,14 @@ export function buildGunBody(
           boxP(metalParts, C_RIM, 0.038, 0.006, 0.05, 0, sy + 0.016, 0.05, 0, 0, 0, 'flat');
           // R13: レンズ/ドットは筐体の射手側面(z≈0.075)より手前へ。ソリッド箱に潜ると
           // 不透明筐体が先に深度を書き、depthTestでドット断片が破棄されて見えなくなる
-          reflexDotWindow(sy, 0.014, 0.009, 0.09); // Fix-2: dotS 0.006→0.009
+          reflexDotWindow(sy, 0.014, OPTIC_DOT_SIZE, 0.09); // R57⑧: アイアン風の極小ドットへ統一
           break;
         }
         case 'canted': {
           // カンテッド(副照準): 左へ僅かにロールした小型ハウジング。ADS整合のため dot は sy 中心。
           bakeAt(metalParts, chamferBox(0.03, 0.03, 0.04, 0.003), C_DARK, 0, sy - 0.006, 0.055, 0, 0, 0.5);
           // R13: dz を筐体の射手側面(z≈0.075)より手前へ出しドット埋没(深度オクルージョン)を回避
-          reflexDotWindow(sy, 0.01, 0.008, 0.088); // Fix-2: dotS 0.005→0.008
+          reflexDotWindow(sy, 0.01, OPTIC_DOT_SIZE, 0.088); // R57⑧: アイアン風の極小ドットへ統一
           break;
         }
         case 'acog': {
@@ -2615,7 +2693,7 @@ export function buildGunBody(
           for (const sx of [-1, 1] as const) {
             boxP(metalParts, C_DARK, 0.005, 0.045, 0.04, sx * 0.021, sy, -0.02, 0, 0, 0, 'flat');
           }
-          reflexDotWindow(sy, 0.016, 0.009, -0.02); // Fix-2: dotS 0.006→0.009
+          reflexDotWindow(sy, 0.016, OPTIC_DOT_SIZE, -0.02); // R57⑧: アイアン風の極小ドットへ統一
           mountedScopeTube(sy, 0.02, 0.07, 0.06);
           break;
         }

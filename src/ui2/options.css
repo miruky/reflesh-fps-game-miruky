@@ -6,9 +6,13 @@
   ピクセル完全一致)。--u2s は menu2.ts が画面を問わず常時更新する共有カスタムプロパティで、
   旧来のローカル --u2o-s(ResizeObserverで自前計算)は廃止し統一した(常にmin(vw/1920,vh/1080)
   で同じ値のため、options単独で再計算する意味が無かった)。
-  ただしポーズ内オーバーレイ(mountPause→openOptions)は外側 .u2-stage が非フルード(legacy)の
-  まま1回だけscale-to-fitされるため、そちらは無変換(scale適用なし)を維持する
-  (.u2-stage:not(.u2-stage--fluid) 側のセレクタで明示的に元の見た目を保つ)。
+  R57①: ポーズ(.u2-pause)も FLUID_SCREENS 入り済み(menu2.ts)。ポーズ内オーバーレイ
+  (mountPause→openOptions=.u2p-options-layer 配下に .u2o-stage を再マウント)は、外側の
+  .u2-stage が今や fluid(position:absolute; inset:0; transform:none)なので、.u2o-group-tl/-tr
+  は通常のoptions画面と同じ `.u2-stage--fluid .u2o-group-tl` セレクタ(子孫セレクタなので
+  .u2p-options-layer を挟んでいても祖先の .u2-stage--fluid にマッチする)で単一scaleされる。
+  外側stage自体はscaleせず(transform:noneのまま)groupだけがscaleするため二重scaleにはならない
+  (実機playwright計測で stage/layer=transform:none, group=matrix(s,0,0,s,0,0) を確認済み)。
   鉄則: filter/backdrop-filter 不使用(ポーズはcanvas直上)。面は不透明0.82+。
   旧クラス(.mfd-/.ig-/.setting-*)への依存ゼロ。
 */
@@ -48,8 +52,9 @@
     transparent 4px
   );
 }
-/* 上部グロー = 左右両端に跨る帯(2. 帯パターン)。既定はモック実値(legacy/pause安全側)、
-   フルード祖先配下でのみ var(--u2s) で高さを比例スケールする。 */
+/* 上部グロー = 左右両端に跨る帯(2. 帯パターン)。既定はモック実値(legacy=非fluid画面の安全側)、
+   フルード祖先配下(通常のoptions画面/R57①以降はポーズ内オーバーレイも含む)でのみ
+   var(--u2s) で高さを比例スケールする。 */
 .u2o-topglow {
   position: absolute;
   left: 0;
@@ -66,8 +71,10 @@
 /* R56 W2: フルード端アンカー(0-sizeラッパー・角アンカー、1. パターン)。
    子要素(u2o-head/u2o-tabs/u2o-list/u2o-detail等)はposition:absoluteのモック座標系
    (left/top/right値)をそのまま維持し、group自体は0×0のため子の座標原点になる。
-   既定(無条件)は無変換 = pause内オーバーレイ(legacy祖先)で正しい旧来の見た目を保つ。
-   フルード祖先(.u2-stage--fluid)配下でのみ個別scaleし、黒帯なしの端アンカー引き伸ばしにする。 */
+   既定(無条件)は無変換 = フルード未対象の legacy 画面で正しい旧来の見た目を保つ。
+   フルード祖先(.u2-stage--fluid)配下でのみ個別scaleし、黒帯なしの端アンカー引き伸ばしにする
+   (R57①: ポーズもFLUID_SCREENS入りしたため、mountPause→openOptions のポーズ内オーバーレイも
+   この祖先セレクタに自然にマッチし、外側stageの二重scaleなしで単一scaleされる)。 */
 .u2o-group-tl {
   position: absolute;
   left: 0;
@@ -541,13 +548,19 @@
 /* ══ ポーズ(canvas直上: filter禁止・面0.82+) ══ */
 .u2-pause {
   /* W-C6[0]: .u2-options と同じ理由で position:absolute/inset を外す(共有 .u2-stage の
-     中央寄せに任せる)。ポーズはcanvas直上の常設UIなので毎試合この中央ズレが出ていた。 */
+     中央寄せに任せる)。ポーズはcanvas直上の常設UIなので毎試合この中央ズレが出ていた。
+     R57①: .u2-pause は .u2-stage--fluid とも常に併走する(menu2.tsのFLUID_SCREENSへ追加済)。
+     フルード時は .u2-stage 自体が position:absolute; inset:0(viewport全面)になるため、
+     この要素はここでposition/insetを持たなくても親のinset:0をそのまま実サイズとして継承する。
+     配下(.u2p-veil/.u2p-wrap等)は元からinset:0/clamp/vw基準のレイアウトで組まれていたため、
+     end-anchorグループ変換(u2o-group-tl方式)は不要 — フルード化しただけで全面へ自動追随する。 */
   font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
   letter-spacing: 0.04em;
   color: #e8eaec;
   user-select: none;
 }
-/* 暗転ビネット(グラデのみ。パネルではないので透過可) */
+/* 暗転ビネット(グラデのみ。パネルではないので透過可)。inset:0なので祖先(フルード時は
+   viewport全面)の実サイズへ常時追随=全面暗転(実機playwright計測で5アスペクト確認済み)。 */
 .u2p-veil {
   position: absolute;
   inset: 0;

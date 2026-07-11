@@ -866,21 +866,95 @@ const SCENE_TEMPLATES: Record<MiniSceneId, readonly SceneMember[]> = {
 /** テストや将来の拡張向けにミニシーンID一覧を列挙(prop-visuals.tsのPROP_VISUAL_KINDSと同じ流儀)。 */
 export const MINI_SCENE_IDS: readonly MiniSceneId[] = Object.keys(SCENE_TEMPLATES) as MiniSceneId[];
 
-/** 視覚ジッタの標準値(R53-S2): ヨーは量子化回転±ROT_JITTER、スケールは±SCALE_JITTERの一様分布。 */
-const ROT_JITTER = 0.45; // rad(約26°)。量子化回転(0/90/180/270°)を軸に振れる範囲
-// ★V-C修正: 細長プロップ(長辺/短辺>2)は±26°だと視覚端が軸整列コライダーから最大~1.3m
-// はみ出す(弾すり抜け/見えない壁の体感リスク)。回転ジッタを±0.1rad(約6°)へ縮小する。
-// 0.1 < π/4 なので量子化回転の復元(round&3)は引き続き一意
-const ROT_JITTER_LONG = 0.1;
-// ★W4A監査対応: 明示リストは portalkrane(2.75)/towercrane(2.6)/signboard(3.0)/torii(3.0) の
-// 漏れを生んだため、PROP_FOOTPRINTS のアスペクト比(長辺/短辺>2)から構造的に導出する。
-// 細長プロップは視覚回転が軸整列コライダーからはみ出しやすい(最大2.04m実測)ため±0.1radに抑える
-const LONG_PROP_KINDS: ReadonlySet<string> = new Set(
-  (Object.keys(PROP_FOOTPRINTS) as PropKind[]).filter((k) => {
-    const [w, d] = PROP_FOOTPRINTS[k];
-    return Math.max(w, d) / Math.min(w, d) > 2;
-  }),
-);
+/** 視覚ジッタの標準値(R53-S2): ヨーは量子化回転±ROT_JITTER(kindごとに縮小されうる)、
+ * スケールは±SCALE_JITTERの一様分布。 */
+const ROT_JITTER = 0.45; // rad(約26°)。量子化回転(0/90/180/270°)を軸に振れる範囲の"上限"
+// ★R57-⑥ 根治(V-C再確証対応): ジッタ振幅の決定を PROP_FOOTPRINTS のアスペクト比(近似値・
+// クリアランス計算専用の粗い数字)から、各kindの実 buildProp() コライダー箱群(union AABB)へ
+// 差し替える。旧アスペクト比方式には3つの穴があった:
+//   (a) footprint比 ≠ 実コライダー比(例: concretebarrier footprint[1.5,3]=2.00だが実コライダーは
+//       0.6×2.4=4.00、tankhullは footprint[5,7]=1.4だが判定式は絶対長を見ないため素通り)
+//   (b) 絶対はみ出し量(m)を無視(barricadecarは2箱オフセット構成でアスペクト1.25でも約0.89mの
+//       はみ出しが出る = アスペクト比だけでは検出できない)
+//   (c) アスペクト丁度2.0を strict > 2 が取りこぼす(derelictcarの実コライダーは2×4=2.00丁度)
+// 結果、concretebarrier/derelictcar/barricadecar/tankhull(いずれも最頻の遮蔽物)で視覚が
+// 軸整列コライダーからはみ出し、ファントム遮蔽(弾すり抜け)/見えない壁が残存していた。
+//
+// 判定式(コーナー回転の厳密版): 局所原点(0,0)基準のコライダー箱群の全頂点を角度θだけ回転させ、
+// 元の軸整列AABBからのはみ出し量 max(0, はみ出しx, はみ出しz) を求める。この式で
+// 「はみ出しが許容 OVERHANG_ALLOWANCE_M(既定0.25m)以内に収まる最大角」を kind ごとに
+// 二分探索し、ROT_JITTER(0.45)を上限としてジッタ振幅を個別化する。コライダー自体は不変
+// (90°量子化・軸整列のまま) — 視覚回転角(このジッタ振幅)のみを縮小してはみ出しを解消する。
+// 小型プロップ(0.45radでもはみ出しが0.25m未満)は実質無変更で「回転OK」のまま残る。
+const OVERHANG_ALLOWANCE_M = 0.25;
+
+/** buildProp() は色情報(obstacle/accent/emissiveAccent)しか読まないため、ジッタ振幅の
+ * 事前計算(モジュール読込時に1回だけ)専用のダミーパレットで安全に呼び出せる。 */
+const JITTER_CALC_PALETTE: StagePalette = {
+  sky: '#000000', fog: '#000000', floor: '#000000', wall: '#000000',
+  obstacle: '#000000', accent: '#000000', lightColor: '#000000',
+  lightIntensity: 1, ambientIntensity: 1, fogDensity: 0, emissiveAccent: false,
+};
+
+/** kind単体をrot=0(量子化なし)でbuildProp()した際の、局所原点(0,0)基準コライダー箱群の
+ * 全頂点(コーナー)と軸整列AABB。90°量子化は軸整列を保つ相似変換なので、この rot=0 の形状が
+ * どの quantSteps でも(辺の入れ替えを除き)そのまま通用する。 */
+function propColliderCorners(kind: PropKind): {
+  corners: Array<[number, number]>;
+  xMin: number; xMax: number; zMin: number; zMax: number;
+} {
+  const boxes = buildProp(kind, 0, 0, 0, () => 0, JITTER_CALC_PALETTE);
+  let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity;
+  const corners: Array<[number, number]> = [];
+  for (const box of boxes) {
+    const x0 = box.x - box.w / 2, x1 = box.x + box.w / 2;
+    const z0 = box.z - box.d / 2, z1 = box.z + box.d / 2;
+    xMin = Math.min(xMin, x0); xMax = Math.max(xMax, x1);
+    zMin = Math.min(zMin, z0); zMax = Math.max(zMax, z1);
+    corners.push([x0, z0], [x0, z1], [x1, z0], [x1, z1]);
+  }
+  return { corners, xMin, xMax, zMin, zMax };
+}
+
+/** 原点周りに角度θ回転させたコライダー箱群コーナーが、元の軸整列AABBからはみ出す最大量(m)。
+ * ジッタは±amp対称なので呼び出し側で+θ/-θ双方の最大を取ること。 */
+function worstOverhang(
+  data: { corners: Array<[number, number]>; xMin: number; xMax: number; zMin: number; zMax: number },
+  theta: number,
+): number {
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  let maxOver = 0;
+  for (const [x, z] of data.corners) {
+    const rx = x * c - z * s;
+    const rz = x * s + z * c;
+    maxOver = Math.max(maxOver, rx - data.xMax, data.xMin - rx, rz - data.zMax, data.zMin - rz);
+  }
+  return maxOver;
+}
+
+/** kindごとに「はみ出しがOVERHANG_ALLOWANCE_M以内に収まる最大角」を二分探索で求め、
+ * ROT_JITTERを上限としてジッタ振幅を確定する(R57-⑥ 根治)。純関数・モジュール読込時に1回だけ
+ * 実行(36kind×40回の二分探索は起動コストとして無視できる)。 */
+function computePropJitterAmps(): Readonly<Record<PropKind, number>> {
+  const entries = (Object.keys(PROP_FOOTPRINTS) as PropKind[]).map((kind) => {
+    const data = propColliderCorners(kind);
+    const worstBothSigns = (theta: number) => Math.max(worstOverhang(data, theta), worstOverhang(data, -theta));
+    if (worstBothSigns(ROT_JITTER) <= OVERHANG_ALLOWANCE_M) {
+      return [kind, ROT_JITTER] as const;
+    }
+    let lo = 0;
+    let hi = ROT_JITTER;
+    for (let i = 0; i < 40; i += 1) {
+      const mid = (lo + hi) / 2;
+      if (worstBothSigns(mid) > OVERHANG_ALLOWANCE_M) hi = mid; else lo = mid;
+    }
+    return [kind, lo] as const;
+  });
+  return Object.fromEntries(entries) as Record<PropKind, number>;
+}
+
+const PROP_JITTER_AMP: Readonly<Record<PropKind, number>> = computePropJitterAmps();
 const SCALE_JITTER = 0.12; // ±12%
 
 /** 任意の角度を [0, 2π) へ正規化する。 */
@@ -890,12 +964,12 @@ function normalizeAngle(rad: number): number {
 }
 
 /**
- * 量子化回転(0-3, 90°刻み)を基準に ±ROT_JITTER の視覚専用ヨーを引く。
+ * 量子化回転(0-3, 90°刻み)を基準に ±PROP_JITTER_AMP[kind] の視覚専用ヨーを引く。
  * コライダーは常にこの quantSteps のまま軸整列(rotRadは一切参照されない)。
  */
-function jitterRotRad(quantSteps: number, visRand: Rand, kind?: string): number {
+function jitterRotRad(quantSteps: number, visRand: Rand, kind: PropKind): number {
   // visRand は kind に依らず必ず1回消費(決定論ストリームの安定性維持)
-  const amp = kind !== undefined && LONG_PROP_KINDS.has(kind) ? ROT_JITTER_LONG : ROT_JITTER;
+  const amp = PROP_JITTER_AMP[kind];
   return normalizeAngle(quantSteps * (Math.PI / 2) + (visRand() * 2 - 1) * amp);
 }
 

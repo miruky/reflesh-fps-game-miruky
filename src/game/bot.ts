@@ -122,6 +122,12 @@ const ZOMBIE_HARD_STUCK_CHECK_S = 1.0;   // 位置ドリフトのサンプリン
 const ZOMBIE_HARD_STUCK_MOVE_M = 0.4;    // このサンプル間隔での移動距離がこれ未満なら「停滞」1票
 const ZOMBIE_HARD_STUCK_RELOCATE_S = 5;  // 停滞の累積がこの秒数に達したら救済テレポート対象(視界外優先)
 const ZOMBIE_HARD_STUCK_FORCE_S = 9;     // 視界外を待っても救済できない場合の強制テレポート閾値
+// R57 ⑥修正1: 密着判定(下のreset gate)の垂直版。target=ctx.targetEye(プレイヤー"目"のY、
+// 立位でfeet+約1.62m) / pos=ゾンビ体幹中心のY(feetからCENTER_TO_FEET≒0.8m上)なので、同一地面高
+// (段差0)でも両者の差は eyeHeight-centerToFeet ≒ 0.8m前後になる。桟橋等プレイヤーが
+// 2.4m超登れない高所にいるケース(差≒3m超)は明確にこれを超えるため、日常の高低差(足場の
+// 段差程度)は免除を維持しつつ、真下で届かない偽近接だけをふるい分けられる値として1.6mを採る。
+const ZOMBIE_MELEE_VERT_RANGE_M = 1.6;
 // R55 W-C6: 登坂『成功終了』(climbMinS経過&&grounded&&!blocked。updateZombie内)の直後クールダウン。
 // 旧実装はこの終了パスにだけクールダウンを設定しておらず(!underCap/timeout側の2経路のみ設定)、
 // 越えられない縁でgrounded&&!blockedが一瞬だけ成立→即成功終了→次フレーム即再点火、という
@@ -2560,7 +2566,23 @@ export class Bot {
     // 根治: climbing中でも計測は止めない)。climbing中は「XZが進んでいなくても高度
     // (climbBaseYを起点に実際に登れているか)が進んでいれば停滞ではない」とみなし、
     // 良性の登坂(本当に高さを稼げている最中)を停滞と誤検知しないようにする。
-    if (!target || (distToPlayer <= meleeRange && !this.prevZombieBlocked)) {
+    //
+    // R57 ⑥修正1: distToPlayer は水平距離のみ(to.y=0で算出、上記コメント参照)のため、
+    // プレイヤーが登れない高所(桟橋等、>2.4m上)にいると、真下のゾンビは水平では
+    // meleeRange以内かつKCC非ブロック(真下は開けている→wish≈0でblocked=false)となり、
+    // 上の「近接交戦中とみなして免除」に恒久的に該当し続ける(hardStuckSが毎フレーム0に
+    // リセットされ続け、最終安全弁が永久に発火しない=そのゾンビが最後の1体だとラウンドが
+    // 進まなくなる致命バグだった)。zombieMelee(zombie-director.ts)も垂直ガードで実際には
+    // 攻撃が届かないため、この個体は「本当に密着」ではなく「垂直に届かない偽近接」。
+    // 免除は水平近接に加えて垂直差もZOMBIE_MELEE_VERT_RANGE_M以内(=実際に攻撃が届き得る
+    // 高さ関係)の場合のみに限定し、垂直に届かない個体はサンプリングを止めない
+    // (hardStuckSが積算され、5s/9sでdirectorが再配置してラウンドを進行させる)。
+    if (
+      !target ||
+      (distToPlayer <= meleeRange &&
+        !this.prevZombieBlocked &&
+        Math.abs(target.y - pos.y) <= ZOMBIE_MELEE_VERT_RANGE_M)
+    ) {
       this.hardStuckCheckS = ZOMBIE_HARD_STUCK_CHECK_S;
       this.hardStuckAnchorX = pos.x;
       this.hardStuckAnchorZ = pos.z;

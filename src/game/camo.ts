@@ -2,7 +2,7 @@
 // 保存形式は core/profile.ts、積算は progression.ts、描画は render/viewmodel.ts が担う。
 // このモジュールは weapons.ts 以外に依存しない(決定論・副作用なし)。
 
-import { PRIMARY_IDS, WEAPON_DEFS, type WeaponClass } from './weapons';
+import { PRIMARY_IDS, WEAPON_DEFS, type WeaponClass, type WeaponDef } from './weapons';
 
 // ── カモID ────────────────────────────────────────────────────────────────
 // 9段の武器別カモ(キル階段) + ダイヤ(クラス制覇) + ダークマター(全クラス制覇)
@@ -185,12 +185,20 @@ function statsOf(
 }
 
 // 解除済みの段階数(0..9)。段階表は先頭からキル閾値が単調増加で、ゴールドのみHS条件が
-// 加わるため「先頭からの連続達成数 = 達成総数」が常に成り立つ
-export function camoTierFor(stats: WeaponCamoStats | undefined): number {
+// 加わるため「先頭からの連続達成数 = 達成総数」が常に成り立つ。
+// R57-⑤: 任意の weaponId を渡すと、最終段(gold)の閾値を武器クラス依存の緩和条件
+// (goldConditionFor)で判定する。exoticクラスは HS100→50 に緩和される(キルは500のまま
+// =9段ラダーの単調性を保つ)。weaponId 未指定は従来通り CAMO_TIERS の標準閾値(500/100)で
+// 判定する(既存呼び出しは完全後方互換)。これにより「ゴールド解除通知(progression)/装備
+// ゲート(goldForWeapon)/進捗表示(camoProgress)」の3経路が同じ結論を出す(単一真実源)。
+export function camoTierFor(stats: WeaponCamoStats | undefined, weaponId?: string): number {
   const s = stats ?? EMPTY_STATS;
+  const gc = weaponId ? goldConditionFor(weaponId) : null;
   let n = 0;
   for (const tier of CAMO_TIERS) {
-    if (s.kills >= tier.kills && s.headshots >= tier.headshots) n += 1;
+    const needKills = tier.id === 'gold' && gc ? gc.kills : tier.kills;
+    const needHs = tier.id === 'gold' && gc ? gc.headshots : tier.headshots;
+    if (s.kills >= needKills && s.headshots >= needHs) n += 1;
     else break;
   }
   return n;
@@ -201,13 +209,20 @@ export function goldFor(stats: WeaponCamoStats | undefined): boolean {
   return camoTierFor(stats) >= CAMO_TIERS.length;
 }
 
-// exoticクラスのゴールド条件緩和定数(7本あるため 500kills+HS100 → 250kills+HS50)
-export const EXOTIC_GOLD_KILLS = 250;
+// exoticクラスのゴールド条件緩和定数。
+// R57-⑤: 緩和ポリシーを「HSのみ緩和(500kills / HS100→50)」に統一した。旧実装は
+// 250kills/50HS を意図していたが 250 は中間段(lava300/neon400)より小さく、9段ラダーの
+// 単調性(gold=最難関の最終段)が破綻し camoTierFor で表現できず、goldForWeapon の前段
+// ループが標準neon(400)を先に要求して緩和(250)へ到達不能になる死にコードだった。exotic7本は
+// ビーム/ミニガン/扇/弓などHSが非現実的な武器が多いため「HSだけ100→50に緩和・キルは500維持」
+// が最も自然(ラダー単調性を保ちつつ、金→ダイヤの解放順が逆転しない)。EXOTIC_GOLD_KILLS は
+// 標準goldと同じ500で、この定数は「緩和は kills では行わない」ことを明示する単一真実源。
+export const EXOTIC_GOLD_KILLS = 500;
 export const EXOTIC_GOLD_HS = 50;
 
 /**
  * 武器クラスを考慮したゴールド解除条件を返す。
- * exotic クラスは 250kills+HS50、それ以外は標準(500kills+HS100)。
+ * exotic クラスは 500kills+HS50(HSのみ緩和)、それ以外は標準(500kills+HS100)。
  * launcher は緩和しない(exotic 内でも shooter 系とは別枠)。
  */
 export function goldConditionFor(weaponId: string): { kills: number; headshots: number } {
@@ -221,17 +236,21 @@ export function goldConditionFor(weaponId: string): { kills: number; headshots: 
 
 /**
  * 武器クラスを考慮したゴールド到達判定。
- * exotic クラスは緩和条件(250kills+HS50)で判定する。
+ * exotic クラスは緩和条件(500kills+HS50)で判定する。
+ * R57-⑤: 前段8段の閾値は goldConditionFor(緩和後の gold 閾値)を上限にキャップして確認する。
+ * こうすることで「緩和した gold 閾値が中間段の閾値を下回る」ポリシーに変えても、前段ループが
+ * gold 到達を構造的にブロックしない(旧バグ=exotic緩和がneon400に阻まれ到達不能、の再発防止)。
  */
 export function goldForWeapon(weaponId: string, stats: WeaponCamoStats | undefined): boolean {
   const s = stats ?? EMPTY_STATS;
-  // gold 手前の 8 段階は標準条件で確認(exotic も同じ閾値)
+  const gc = goldConditionFor(weaponId);
+  // gold 手前の 8 段階を確認。ただし各段の要求は gold(緩和後)閾値を超えない範囲に制限する。
   for (let i = 0; i < CAMO_TIERS.length - 1; i++) {
     const tier = CAMO_TIERS[i]!;
-    if (s.kills < tier.kills || s.headshots < tier.headshots) return false;
+    if (s.kills < Math.min(tier.kills, gc.kills)) return false;
+    if (s.headshots < Math.min(tier.headshots, gc.headshots)) return false;
   }
   // 最終段(gold)は武器クラス依存条件
-  const gc = goldConditionFor(weaponId);
   return s.kills >= gc.kills && s.headshots >= gc.headshots;
 }
 
@@ -408,12 +427,77 @@ export function equippedCamoFor(
   return isCamoUnlocked(sel, weaponId, profile.weaponStats, profile.unlockedRewardCamos) ? sel : null;
 }
 
+// ── R57-⑤ カモ性能ボーナス(ゴールド/ダイヤ/ダークマター) ─────────────────
+// ゴールド/ダイヤ/ダークマターの高位カモは「見た目報酬」だけでなく武器性能を控えめに
+// 向上させる。バランスを壊さないためダメージ/RPM/射程/弾数は一切変更せず、ハンドリング系
+// (リロード/ADS/持ち替え速度・移動時精度・反動)だけを段階的に強化する。純関数で、元の
+// WeaponDef は決して変更しない(通常カモ/未知IDは同一参照をそのまま返す=ゼロコスト)。
+//
+// 適用ポイント(配線はオーケストレータが match.ts / weapon-preview.ts 側で実施):
+//   const camoId = equippedCamoFor(weaponId, profile);   // 解決済みの装備カモ
+//   const effectiveDef = camoId ? applyCamoStats(baseDef, camoId) : baseDef;
+// applyAttachments の「後段」に挟むこと(アタッチメント適用済み def をさらにコピーして
+// ボーナスを乗せる)。ARMORY のスタッツバー(computeWeaponBars)へ applyCamoStats(def,camo) を
+// 渡せば既存の ▲/▼ 差分表示(armory.ts renderStats)にそのままボーナスが反映される。
+
+interface CamoStatBonus {
+  // <1 で高速化(リロード/ADS/持ち替えの所要ms・移動拡散・反動キック)
+  reload: number;
+  ads: number;
+  swap: number;
+  moveSpread?: number; // 移動時拡散(度)。<1 で移動中の精度が上がる
+  recoil?: number; // recoilPattern の pitch/yaw を一律スケール。<1 で反動減
+  recoilRecovery?: number; // recoilRecoveryPerS を乗算。>1 で収束が速い
+}
+
+// 段階ごとの控えめなハンドリング補正。gold=リロード/ADS/持ち替え -8%、diamond=それに加え
+// 移動精度/反動 -10% + 収束+10%、dark-matter=さらに上(-12% / -15% / +15%)。
+const CAMO_STAT_BONUS: Partial<Record<CamoId, CamoStatBonus>> = {
+  gold: { reload: 0.92, ads: 0.92, swap: 0.92 },
+  diamond: {
+    reload: 0.92, ads: 0.92, swap: 0.92,
+    moveSpread: 0.9, recoil: 0.9, recoilRecovery: 1.1,
+  },
+  'dark-matter': {
+    reload: 0.88, ads: 0.88, swap: 0.88,
+    moveSpread: 0.85, recoil: 0.85, recoilRecovery: 1.15,
+  },
+};
+
+/**
+ * カモの性能ボーナスを WeaponDef へ適用したコピーを返す(純関数・元defは非破壊)。
+ * gold/diamond/dark-matter 以外(通常カモ・未知ID)は素通しで同一参照を返す。
+ * ダメージ/RPM/射程/弾数など火力・射程に関わる数値は一切変更しない(バランス維持)。
+ */
+export function applyCamoStats(def: WeaponDef, camoId: string): WeaponDef {
+  const b = CAMO_STAT_BONUS[camoId as CamoId];
+  if (!b) return def; // 通常カモ/未装備/未知は素通し(コピーもしない)
+  const next: WeaponDef = {
+    ...def,
+    reloadTacticalMs: def.reloadTacticalMs * b.reload,
+    reloadEmptyMs: def.reloadEmptyMs * b.reload,
+    adsTimeMs: def.adsTimeMs * b.ads,
+    switchMs: def.switchMs * b.swap,
+  };
+  if (b.moveSpread !== undefined) next.movementSpreadDeg = def.movementSpreadDeg * b.moveSpread;
+  if (b.recoil !== undefined) {
+    const m = b.recoil;
+    // recoilPattern は配列参照なので、変更時は要素ごと clone して元defを汚さない
+    next.recoilPattern = def.recoilPattern.map((step) => ({ pitch: step.pitch * m, yaw: step.yaw * m }));
+  }
+  if (b.recoilRecovery !== undefined) next.recoilRecoveryPerS = def.recoilRecoveryPerS * b.recoilRecovery;
+  return next;
+}
+
 // ── カモ見た目の定義(アセットレス: 色とパターン種のみのデータ) ────────────
 // viewmodel.ts が onBeforeCompile の軽量ノイズGLSLへ焼き込み、menu.ts がチップの
 // スウォッチ(CSSグラデ)に使う。emissiveIntensity は Bloom 白飛び回避のため 0.5 以下
 // (CAMO_IDS対象=通常ラダー+報酬カモ)。pap1-3(CAMO_IDS非対象)は 0.55 以下が上限。
 // circuit = R53-W2 追加(PaP鍛神): 静的な二重ノイズ発光脈(viewmodel.camoPatternGLSL実装)。
-export type CamoPattern = 'blotch' | 'stripe' | 'facet' | 'pulse' | 'solid' | 'circuit';
+// R57-⑤: 'crystal' 追加 = ダイヤ専用の「継ぎ目のない一面クリスタル」。'facet'(セル格子)は
+// 反復タイルに見えたため diamond から切り離し、ドメインワープ+多オクターブノイズの非反復
+// 表面へ置換する(viewmodel.camoPatternGLSL の 'crystal' 実装)。'facet' は jingai 専用に残る。
+export type CamoPattern = 'blotch' | 'stripe' | 'facet' | 'pulse' | 'solid' | 'circuit' | 'crystal';
 
 export interface CamoVisual {
   id: CamoId;
@@ -485,24 +569,23 @@ export const CAMO_VISUALS: Record<CamoId, CamoVisual> = {
     pattern: 'solid', scale: 10, metalness: 1.0, roughness: 0.24,
     emissive: 0x8a5f14, emissiveIntensity: 0.22,
   },
-  // ダイヤ = 氷青の結晶ノイズ + ほぼ鏡面(高metalness/低roughness) + 強反射(envMapIntensity)
-  // + 面ごとの微細ファセット煌めき+虹色フレネル(sparkle。R55: 参照画像のような
-  // 「クロム/ダイヤ板が激しく反射する」超ギラギラ質感へ強化。gold=金属金/dark-matter=
-  // 宇宙脈動とは質感で差別化: diamond だけが鏡のような強反射+煌めきを持つ)
-  // R55-WC根治(MEDIUM⑥): envMapIntensity 1.8 は「近接Bloomハロ回避(閾値0.9)」鉄則を
-  // 大きく超え白飛び再発リスクだった(近接カメラ+ほぼ鏡面metalness0.95/roughness0.05の
-  // 組合せで、明るい環境光を鏡反射すると indirectSpecular が単独で閾値へ迫る)。0.7へ
-  // 抑制(roughness/metalnessは維持しファセット煌めき自体は残す)。sparkleも0.8→0.55へ
-  // 絞り、totalEmissiveRadianceへの加算(フレネル虹色+グリッター最悪値)が base emissive
-  // と合算しても0.9閾値へ余裕を持って収まるようにする(ギラつき感は残しつつ白飛びしない)。
-  // R56④: 更に一段ギラつかせる。envMapIntensity/metalness/emissiveIntensityは白飛び根治済の
-  // 値を維持(indirectSpecularの底上げはしない=再発の主因だったため不可侵)。roughnessだけ
-  // 0.05→0.04へ僅かに絞り鏡面のシャープさを上げる(実WebGLで飽和0を確認済)。ギラつき増量の
-  // 本体は viewmodel.ts の camoSparkleEmissiveGLSL の再設計(グリッター高密度・低振幅化+
-  // 虹色フレネルの帯を増やし彩度up)側。sparkleスカラーも0.55→0.62へ僅増(実WebGLで検証)。
+  // ダイヤ = 継ぎ目のない一面クリスタル + ほぼ鏡面(高metalness/低roughness) + 強反射
+  // (envMapIntensity)+ 高密度グリッター/虹色フレネル(sparkle)。
+  // R57-⑤ 再設計(ユーザー Image #11「タイルの感じをなくして、一面ダイヤで最強にギラギラ」):
+  // pattern を 'facet'(scale16 の floor格子=反復タイルの主因)から 'crystal' へ変更。crystal は
+  // floor格子/hard edge を一切使わず、ドメインワープ+多オクターブ値ノイズだけで氷青→白の
+  // 濃淡を非反復に敷く(viewmodel.camoPatternGLSL)。「タイル貼り」感を根絶し一枚の磨いた
+  // ダイヤ表面にする。scale はノイズの基準周波数として据え置き。
+  // 白飛び鉄則は R55-WC/R56 で根治済みの material レバーを不可侵で維持:
+  // envMapIntensity 0.7 / metalness 0.95 / roughness 0.04 / emissiveIntensity 0.3。indirectSpecular
+  // の底上げ(近接Bloom白飛びの主因)はしない。ギラつきの本体は viewmodel の
+  // camoSparkleEmissiveGLSL(グリッター3層・高密度/低振幅 + 虹色フレネル)= totalEmissiveRadiance
+  // への小径・低エネルギー加算で「量で魅せる」。sparkle は 0.62 据え置き(実WebGL SwiftShader・
+  // bloom0.9+Neutral で飽和ピクセル比率=0 を実測確認済み)。crystal の base色は平均を氷青寄りに
+  // 保ち(純白は稜線のみ)、金属F0=albedo の鏡面反射が過度に白くならないよう抑える。
   diamond: {
     id: 'diamond', colorA: 0xd6f0ff, colorB: 0x4a90d9, colorC: 0xffffff,
-    pattern: 'facet', scale: 16, metalness: 0.95, roughness: 0.04,
+    pattern: 'crystal', scale: 13, metalness: 0.95, roughness: 0.04,
     emissive: 0xbfe4ff, emissiveIntensity: 0.3,
     envMapIntensity: 0.7, sparkle: 0.62,
   },

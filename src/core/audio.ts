@@ -1059,6 +1059,40 @@ export const RAITEI_AURA_SPEC = {
   lfoHz: 0.28,
 } as const;
 
+// ── R57②: メニューSE(uiMove/Select/Back/Equip/Tab/Launch)の合成スペック ──
+// 周波数/長さ/音色/gainを6種で明確に分けて聞き分けられるようにする(純データ=テスト可能)。
+export const MENU_SFX_SPECS = {
+  move:   { freqHz: 1500, endFreqHz: 1250,   durationS: 0.028, type: 'sine',     gain: 0.11 },
+  select: { freqHz: 880,  endFreqHz: 1318.5, durationS: 0.16,  type: 'triangle', gain: 0.22 },
+  back:   { freqHz: 700,  endFreqHz: 380,    durationS: 0.09,  type: 'sine',     gain: 0.18 },
+  equip:  { freqHz: 190,  endFreqHz: 85,     durationS: 0.13,  type: 'square',   gain: 0.30 },
+  tab:    { freqHz: 950,  endFreqHz: 1200,   durationS: 0.03,  type: 'square',   gain: 0.14 },
+  launch: { freqHz: 150,  endFreqHz: 900,    durationS: 0.48,  type: 'sawtooth', gain: 0.34 },
+} as const;
+export type MenuSfxId = keyof typeof MENU_SFX_SPECS;
+
+// ── R57②: BO2選択画面風メニューBGMのスペック ────────────────────────────
+// 試合用の動的BGM(Dm–B♭–F–C進行, tickBgm)とは完全に別系統。i–bVIの2小節ヴァンプで
+// 温かいシンセpad+低いパルス+疎なアルペジオ+控えめなビートを回す(healing系の眠さを避ける)。
+export const MENU_BGM_SPEC = {
+  bpm: 96,
+  beatsPerBar: 4,
+  bars: [
+    { padHz: [130.81, 155.56, 196.00, 233.08], bassHz: 65.41 }, // Cm9
+    { padHz: [103.83, 130.81, 196.00, 233.08], bassHz: 51.91 }, // A♭maj9
+  ],
+  padGain: 0.045,
+  padAttackS: 0.35,
+  padDetuneCents: 6,
+  bassGain: 0.16,
+  bassAccentGain: 0.24,
+  arpGain: 0.07,
+  hatGain: 0.05,
+  kickGain: 0.12,
+  fadeInS: 1.2,
+  fadeOutS: 0.7,
+} as const;
+
 // ═══════════════════════════════════════════════════════════════════
 // R53-W2 コンテンツ拡張(ゾンビ拡充/ストーリー帝王編/S&D)の音API群。
 // 純関数・定数は副作用ゼロでテスト可能に切り出す(既存 prosodyFor 等の流儀を踏襲)。
@@ -1240,6 +1274,15 @@ export class SoundKit {
   // sounds.setEmperorBgm('kokuraitei'|'dark'|'raitei'|null) を呼ぶ。null=通常復帰。
   private emperorBgmState: 'dark' | 'raitei' | 'kokuraitei' | null = null;
   private emperorPrevProfileKey: BgmProfileKey | null = null; // kokuraitei転調前のステージキー
+
+  // R57②: メニューSE/BO2風メニューBGM。試合の動的BGM(bgmBus/tickBgm)とは完全独立の専用系統。
+  // menuBgmVoiceBus(musicVolume追従・setVolumesで更新) → menuBgmFade(start/stop専用フェード) → master
+  private menuBgmVoiceBus: GainNode | null = null;
+  private menuBgmFade: GainNode | null = null;
+  private menuBgmActive = false;
+  private menuBgmTimer = 0; // _scheduleMenuBgmBar の setTimeout ハンドル(次小節をチェーン)
+  private menuBgmBarIndex = 0;
+  private menuBgmNextBarTime = 0; // ctx時刻の絶対アキュムレータ(setTimeoutのjitter/ドリフト対策)
 
   ensure(): void {
     if (this.ctx) {
@@ -1516,6 +1559,9 @@ export class SoundKit {
     setNow(this.ambBus, 0.5 * sfx);
     // BGM: 停止中(メニュー等)はミュート値を上書きしない(tickBgm再開時にbgmGainNow()適用)
     if (!this.bgmStopped) setNow(this.bgmBus, this.bgmGainNow());
+    // R57②: メニューBGMは常時追従(start/stopのon-off自体はmenuBgmFadeが別途持つため
+    // ここで値を書き換えても再生中のフェード自動化を壊さない)
+    setNow(this.menuBgmVoiceBus, this.bgmGainNow());
   }
 
   // BGMバスの実効ゲイン。musicVolume既定0.8で従来の1.4(V16: SFXの-8〜-10dB下)と厳密一致
@@ -2173,7 +2219,10 @@ export class SoundKit {
   // ── 動的BGM ──
   setMusicEnabled(enabled: boolean): void {
     this.musicEnabled = enabled;
-    if (!enabled) this.stopBgm();
+    if (!enabled) {
+      this.stopBgm();
+      this.menuBgmStop(); // R57②: メニューBGMもOFF時は確実に鳴らさない
+    }
   }
 
   // ステージ/ムード別のBGMプロファイルへ切替(試合開始時に main から配線)。
@@ -4437,6 +4486,185 @@ export class SoundKit {
     });
   }
 
+  // ── R57②: メニュー差別化SE群(MENU_SFX_SPECS準拠・全てuiBus経由=volUi尊重) ──────
+  // ナビ移動。高めの微小tick(短く控えめ、頻発しても不快でない)
+  uiMove(): void {
+    const s = MENU_SFX_SPECS.move;
+    this.tone({
+      freq: s.freqHz,
+      endFreq: s.endFreqHz,
+      durationS: s.durationS,
+      type: s.type,
+      gain: s.gain,
+      attackS: 0.001,
+      bus: this.uiBus ?? undefined,
+    });
+    this.noiseBurst({
+      durationS: 0.006,
+      filterHz: 6200,
+      filterType: 'bandpass',
+      q: 10,
+      gain: 0.05,
+      attackS: 0.0005,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // 画面遷移/オプション確定。明るく上昇する2音のconfirm
+  uiSelect(): void {
+    const s = MENU_SFX_SPECS.select;
+    this.tone({
+      freq: s.freqHz,
+      durationS: s.durationS,
+      type: s.type,
+      gain: s.gain,
+      attackS: 0.003,
+      bus: this.uiBus ?? undefined,
+    });
+    this.tone({
+      freq: s.endFreqHz,
+      durationS: s.durationS * 0.9,
+      type: s.type,
+      gain: s.gain * 0.85,
+      delayS: 0.06,
+      attackS: 0.002,
+      bus: this.uiBus ?? undefined,
+    });
+    this.noiseBurst({
+      durationS: 0.02,
+      filterHz: 8000,
+      filterType: 'highpass',
+      gain: 0.06,
+      delayS: 0.06,
+      attackS: 0.001,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // 戻る/キャンセル。下降する短音
+  uiBack(): void {
+    const s = MENU_SFX_SPECS.back;
+    this.tone({
+      freq: s.freqHz,
+      endFreq: s.endFreqHz,
+      durationS: s.durationS,
+      type: s.type,
+      gain: s.gain,
+      attackS: 0.001,
+      bus: this.uiBus ?? undefined,
+    });
+    this.noiseBurst({
+      durationS: 0.015,
+      filterHz: 1400,
+      filterType: 'lowpass',
+      gain: 0.05,
+      attackS: 0.001,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // 武器/カモ/アタッチメント装備。機械的なclack(低域の重み+高域2段の硬いカチッ)
+  uiEquip(): void {
+    const s = MENU_SFX_SPECS.equip;
+    this.tone({
+      freq: s.freqHz,
+      endFreq: s.endFreqHz,
+      durationS: s.durationS,
+      type: s.type,
+      gain: s.gain,
+      drive: 6,
+      curve: 'asym',
+      bus: this.uiBus ?? undefined,
+    });
+    this.noiseBurst({
+      durationS: 0.01,
+      filterHz: 2600,
+      filterType: 'bandpass',
+      q: 6,
+      gain: 0.16,
+      attackS: 0.001,
+      bus: this.uiBus ?? undefined,
+    });
+    this.noiseBurst({
+      durationS: 0.008,
+      filterHz: 1800,
+      filterType: 'bandpass',
+      q: 5,
+      gain: 0.12,
+      delayS: 0.05,
+      attackS: 0.001,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // タブ/カテゴリ切替。軽いdouble-blip(デジタルなsquare)
+  uiTab(): void {
+    const s = MENU_SFX_SPECS.tab;
+    this.tone({
+      freq: s.freqHz,
+      durationS: s.durationS,
+      type: s.type,
+      gain: s.gain,
+      attackS: 0.001,
+      bus: this.uiBus ?? undefined,
+    });
+    this.tone({
+      freq: s.endFreqHz,
+      durationS: s.durationS,
+      type: s.type,
+      gain: s.gain * 0.8,
+      delayS: 0.05,
+      attackS: 0.001,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
+  // 出撃/デプロイ。大きめの上昇インパクト(スイープ+サブの芯+風切り+高域スパークル)
+  uiLaunch(): void {
+    const s = MENU_SFX_SPECS.launch;
+    this.tone({
+      freq: s.freqHz,
+      endFreq: s.endFreqHz,
+      durationS: s.durationS,
+      type: s.type,
+      gain: s.gain,
+      drive: 3,
+      curve: 'asym',
+      attackS: 0.01,
+      bus: this.uiBus ?? undefined,
+    });
+    this.tone({
+      freq: 70,
+      endFreq: 40,
+      durationS: 0.22,
+      type: 'sine',
+      gain: 0.32,
+      drive: 4,
+      curve: 'asym',
+      delayS: s.durationS * 0.75,
+      bus: this.uiBus ?? undefined,
+    });
+    this.noiseBurst({
+      durationS: s.durationS * 0.7,
+      filterHz: 300,
+      filterEndHz: 5200,
+      filterType: 'bandpass',
+      q: 1.2,
+      gain: 0.14,
+      attackS: 0.02,
+      bus: this.uiBus ?? undefined,
+    });
+    this.noiseBurst({
+      durationS: 0.05,
+      filterHz: 8000,
+      filterType: 'highpass',
+      gain: 0.18,
+      delayS: s.durationS * 0.7,
+      attackS: 0.001,
+      bus: this.uiBus ?? undefined,
+    });
+  }
+
   // 拠点を制圧した時の上昇音
   capture(): void {
     this.tone({ freq: 520, durationS: 0.1, type: 'sine', gain: 0.2, bus: this.uiBus ?? undefined });
@@ -4467,6 +4695,159 @@ export class SoundKit {
       delayS: 0.09,
       bus: this.uiBus ?? undefined,
     });
+  }
+
+  // ── R57②: BO2選択画面風メニューBGM(MENU_BGM_SPEC準拠) ──────────────────
+  // 試合の動的BGM(bgmBus/tickBgm, combat-heat連動)とは完全独立。専用バスを遅延生成し、
+  // musicVolume(bgmGainNow()で反映)とmusicEnabledを尊重する。ctx未生成/OFF時は安全にno-op。
+  private ensureMenuBgmBus(): GainNode {
+    if (this.menuBgmVoiceBus) return this.menuBgmVoiceBus;
+    const ctx = this.ctx!;
+    const bus = ctx.createGain();
+    bus.gain.value = this.bgmGainNow();
+    const fade = ctx.createGain();
+    fade.gain.value = 0.0001;
+    bus.connect(fade);
+    fade.connect(this.master!);
+    this.menuBgmVoiceBus = bus;
+    this.menuBgmFade = fade;
+    return bus;
+  }
+
+  menuBgmStart(): void {
+    if (!this.ctx || !this.musicEnabled) return; // ensure()前/OFF中は鳴らさない(no-op)
+    if (this.menuBgmActive) return; // 冪等(二重startで拍が重複しない)
+    this.menuBgmActive = true;
+    this.ensureMenuBgmBus();
+    const now = this.ctx.currentTime;
+    this.menuBgmBarIndex = 0;
+    this.menuBgmNextBarTime = now + 0.05;
+    if (this.menuBgmFade) {
+      const g = this.menuBgmFade.gain;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(Math.max(0.0001, g.value), now);
+      g.linearRampToValueAtTime(1, now + MENU_BGM_SPEC.fadeInS);
+    }
+    this._scheduleMenuBgmBar();
+  }
+
+  menuBgmStop(): void {
+    if (!this.menuBgmActive) return; // 冪等(未再生時の呼び出しでも安全)
+    this.menuBgmActive = false;
+    if (this.menuBgmTimer) {
+      clearTimeout(this.menuBgmTimer);
+      this.menuBgmTimer = 0;
+    }
+    if (this.ctx && this.menuBgmFade) {
+      const now = this.ctx.currentTime;
+      const g = this.menuBgmFade.gain;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(Math.max(0.0001, g.value), now);
+      g.linearRampToValueAtTime(0.0001, now + MENU_BGM_SPEC.fadeOutS);
+    }
+  }
+
+  // 1小節分のpad/低いパルス/疎なアルペジオ/控えめなビートを合成してから次小節をチェーンする。
+  // menuBgmNextBarTime(ctx時刻の絶対アキュムレータ)基準で発音するため、setTimeoutの
+  // コールバック自体が多少遅れてもdelayS経由でサンプル精度の位置に鳴る(ドリフト非累積)。
+  private _scheduleMenuBgmBar(): void {
+    if (!this.ctx || !this.menuBgmActive) return;
+    const bus = this.menuBgmVoiceBus;
+    if (!bus) return;
+    const spec = MENU_BGM_SPEC;
+    const beatS = 60 / spec.bpm;
+    const eighthS = beatS / 2;
+    const sixteenthS = beatS / 4;
+    const barS = beatS * spec.beatsPerBar;
+    const bar = spec.bars[this.menuBgmBarIndex % spec.bars.length]!;
+    const lead = Math.max(0, this.menuBgmNextBarTime - this.ctx.currentTime);
+
+    // パッド: 小節頭に和音を伸ばす(暖かい詰め物。1音ずつ微デチューン+パン分散でコーラス感)
+    bar.padHz.forEach((freq, i) => {
+      const spread = (i - (bar.padHz.length - 1) / 2) * 0.22;
+      this.tone({
+        freq,
+        durationS: barS * 1.15,
+        type: 'triangle',
+        gain: spec.padGain,
+        attackS: spec.padAttackS,
+        detuneCents: i % 2 === 0 ? spec.padDetuneCents : -spec.padDetuneCents,
+        pan: spread,
+        delayS: lead,
+        bus,
+      });
+    });
+
+    // 低いパルス: 8分音符でうねる低域(1・3拍でアクセント)
+    for (let i = 0; i < spec.beatsPerBar * 2; i += 1) {
+      const accent = i % 4 === 0;
+      this.tone({
+        freq: bar.bassHz,
+        endFreq: bar.bassHz * 0.94,
+        durationS: eighthS * 0.55,
+        type: 'sine',
+        gain: accent ? spec.bassAccentGain : spec.bassGain,
+        drive: 3,
+        curve: 'asym',
+        delayS: lead + i * eighthS,
+        bus,
+      });
+    }
+
+    // アルペジオ: 16分格子を間引いたステップで和音を1オクターブ上に刺す(冷静な浮遊感)
+    const arpSteps = [2, 6, 9, 13];
+    arpSteps.forEach((step, idx) => {
+      const freq = bar.padHz[idx % bar.padHz.length]! * 2;
+      this.tone({
+        freq,
+        durationS: sixteenthS * 0.85,
+        type: 'sine',
+        gain: spec.arpGain,
+        attackS: 0.004,
+        pan: idx % 2 === 0 ? 0.35 : -0.35,
+        delayS: lead + step * sixteenthS,
+        bus,
+      });
+    });
+
+    // 控えめなビート感: 1拍目の柔らかいキック + 各拍裏のクローズハット
+    this.tone({
+      freq: 58,
+      endFreq: 34,
+      durationS: 0.18,
+      type: 'sine',
+      gain: spec.kickGain,
+      drive: 3,
+      curve: 'asym',
+      delayS: lead,
+      bus,
+    });
+    this.noiseBurst({
+      durationS: 0.03,
+      filterHz: 160,
+      filterType: 'lowpass',
+      gain: spec.kickGain * 0.4,
+      attackS: 0.001,
+      delayS: lead,
+      bus,
+    });
+    for (let i = 1; i < spec.beatsPerBar * 2; i += 2) {
+      this.noiseBurst({
+        durationS: 0.02,
+        filterHz: 7500,
+        filterType: 'highpass',
+        gain: spec.hatGain,
+        attackS: 0.0005,
+        delayS: lead + i * eighthS,
+        bus,
+      });
+    }
+
+    this.menuBgmBarIndex += 1;
+    this.menuBgmNextBarTime += barS;
+    if (typeof window === 'undefined') return; // 次小節のチェーンのみ省略(今小節の発音は完了済み)
+    const fireInMs = Math.max(0, (this.menuBgmNextBarTime - this.ctx.currentTime - 0.15) * 1000);
+    this.menuBgmTimer = window.setTimeout(() => this._scheduleMenuBgmBar(), fireInMs);
   }
 
   // ── アンビエンス(プロシージャル環境音)のファサード ──────────────────
@@ -4647,6 +5028,7 @@ export class SoundKit {
   // quit/試合遷移の後始末を単一路に集約。メニュー往復でオーディオ状態を完全初期化する
   quiesce(): void {
     this.stopBgm();
+    this.menuBgmStop(); // R57②: メニューBGMも試合開始/dispose時に確実に畳む
     this.stopAmbience();
     // R54 音響2: スライドループ/大群ベッド/排他ステム/屋内残響を必ず初期状態へ畳む
     this.slideStop();

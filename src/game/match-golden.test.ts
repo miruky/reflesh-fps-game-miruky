@@ -203,6 +203,8 @@ const SNAPSHOT_KEYS: Record<keyof MatchSnapshot, true> = {
   minimapEnemies: true,
   minimapAllies: true,
   minimapStageSize: true,
+  playerX: true,
+  playerZ: true,
   fireBlips: true,
   hardpointZoneAngle: true,
   hardpointZoneRelX: true,
@@ -225,7 +227,8 @@ const SNAPSHOT_KEYS: Record<keyof MatchSnapshot, true> = {
 
 describe('MatchSnapshot構造ゴールデン', () => {
   it('フィールド数が固定値と一致する(143フィールド、main=9ccd851時点)', () => {
-    expect(Object.keys(SNAPSHOT_KEYS).length).toBe(145); // R54-F5: +rogue / R54-F7: +fkWeaponName
+    // R54-F5: +rogue / R54-F7: +fkWeaponName / R57 ⑥修正3: +playerX,playerZ(ミニマップ相対化の下地)
+    expect(Object.keys(SNAPSHOT_KEYS).length).toBe(147);
   });
 });
 

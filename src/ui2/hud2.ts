@@ -1059,6 +1059,10 @@ export class Hud2 {
     this.root.hidden = true;
     // 帝王転調テーマの解除(三重保証その2)
     delete document.documentElement.dataset.emperor;
+    // R57修正2: 書込み抑止キャッシュも同時に無効化しないと、帝王状態不変のまま
+    // show()へ戻った際にupdateMk3()の empKey===mk3EmperorApplied 判定でスキップされ、
+    // data-emperor が永久に復元されない(枠線だけ帝王色でHUD全体は無転調のまま)
+    this.mk3EmperorApplied = '';
   }
 
   reset(): void {
@@ -1669,12 +1673,16 @@ export class Hud2 {
     ctx.rotate(-yaw);
 
     // 障害物ボックス
+    // R57修正1: ボックスはワールド絶対座標のため、敵/味方ドットと同じくプレイヤー相対化してから描く
+    // (相対化しないとプレイヤーがワールド原点から離れるほど平行移動でズレる)
     ctx.strokeStyle = 'rgba(232,227,216,0.14)';
     ctx.lineWidth = 0.7;
     for (const b of this.minimapBoxes) {
       // V31: 破壊済みプロップはミニマップからも消す
       if (b.handle !== undefined && snap.destroyedPropHandles?.has(b.handle)) continue;
-      ctx.strokeRect(b.x * scale - b.w * scale / 2, b.z * scale - b.d * scale / 2, b.w * scale, b.d * scale);
+      const relBX = (b.x - snap.playerX) * scale;
+      const relBZ = (b.z - snap.playerZ) * scale;
+      ctx.strokeRect(relBX - b.w * scale / 2, relBZ - b.d * scale / 2, b.w * scale, b.d * scale);
     }
 
     // 味方ドット(装甲青=sofu)
@@ -2908,10 +2916,13 @@ export class Hud2 {
         const reduceMotion = snap.reduceMotion;
         banner.classList.remove('w2-show', 'w2-out');
         banner.hidden = false;
+        // R57修正3: reduce-motion時もw2-show(=唯一opacity:1を付与するクラス)を付ける。
+        // @media(prefers-reduced-motion)側はtransition:noneのみでopacity保険が無いため、
+        // このクラスを付けないと基底 .w2-special-banner{opacity:0} のまま全期間不可視になる
         if (!reduceMotion) {
           void banner.offsetWidth; // reflow でスラムインを再起動
-          banner.classList.add('w2-show');
         }
+        banner.classList.add('w2-show');
         window.setTimeout(() => {
           if (reduceMotion) {
             banner.hidden = true;
