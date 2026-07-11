@@ -291,10 +291,22 @@ function scheduleNext(): void {
  * 同じ stageId が複数回 request された場合は生成1回でまとめて解決する。
  */
 export function requestStageThumb(def: StageDef, cb: ReadyCallback): void {
-  // キャッシュヒット: 同期コールバック
+  // キャッシュヒット: マイクロタスクで遅延コールバック。
+  //
+  // R56根治(実機フラットグラデ症状): 呼び出し元(deploy.ts renderStagePanel /
+  // menu.ts renderStages)は <img> を DOM へ挿入する前に requestStageThumb を呼ぶ
+  // (card 生成 → requestStageThumb → grid.appendChild(card) → body.appendChild(grid) の順)。
+  // ここで cb を同期実行すると、deploy.ts 側の `if (img.isConnected) img.src = url` ガードが
+  // その瞬間 img.isConnected===false のため src 代入を握り潰す。コールバックは既に消費され
+  // 二度と発火しないので、キャッシュ命中(=セッション内で一度でも生成済み)の再訪時に
+  // サムネが永久に貼られず、プレースホルダの空→床グラデーションだけが残る。
+  // マイクロタスクへ回せば呼び出し元の同期マウント(card→grid→body 挿入)完了後に発火し、
+  // img は接続済みになる。dispose 済みなら isConnected===false で従来どおり無害化される。
   const cached = thumbCache.get(def.id);
   if (cached !== undefined) {
-    cb(cached);
+    queueMicrotask(() => {
+      cb(cached);
+    });
     return;
   }
 

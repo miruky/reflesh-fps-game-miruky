@@ -40,6 +40,11 @@ const FLUID_SCREENS: ReadonlySet<Screen2Id> = new Set<Screen2Id>([
   'armory',
   'campaign',
   'deploy',
+  // R56 W3: リザルト/戦役リザルト/ブリーフィングをフルードステージ化
+  // (result.ts/campaign.ts mountMissionResult/mountBriefing 側で端アンカー対応済み)。
+  'briefing',
+  'mission-result',
+  'result',
 ]);
 
 // R55 W-C4[5]: onKeyのEsc除外はテキスト打鍵系のinput型のみを対象にする

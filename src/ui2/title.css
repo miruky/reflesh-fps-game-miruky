@@ -35,6 +35,23 @@
   display: block;
 }
 
+/* R56追加修正: 短剣(刀身)専用の前面レイヤ。.u2-title__scene(xMidYMid slice=
+   cover-fill)は非16:9で上下/左右をクロップするが、短剣はviewBox下方(y≈1046)に
+   あるため横長・縦短で刀身が欠けていた。titleSceneSvg()がこのレイヤだけ
+   preserveAspectRatio="xMidYMid meet"(=contain-fit)で返す(短剣+暖光+地割れ一式)。
+   meetは常に全内容を画面内に収める(はみ出す側は透明地=黒帯にはならず、背後の
+   .u2-title__sceneがそのまま透けて見える)ため、刀身は全アスペクトで完全表示される。
+   16:9ではmeet=sliceのスケール/センタリングが一致するため見た目は変更前と同一。
+   装飾のため(atmoと同様)クリックを奪わないよう pointer-events:none。 */
+.u2-title__kunai {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
 /* ── 情景と一体で動く装飾層(霧+火の粉)。--u2-coverで情景SVGと同倍率スケール。 ── */
 .u2-title__atmo {
   position: absolute;

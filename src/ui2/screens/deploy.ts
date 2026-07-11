@@ -263,6 +263,10 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
         <span class="u2d-band-label">次のステージ</span>
         <span class="u2d-band-value" data-id="band-value"></span>
       </div>
+      <button type="button" class="u2d-band-armory" data-id="to-armory" aria-label="武器庫へ(装備を変更)">
+        <span class="u2d-band-armory-label">装備変更</span>
+        <span class="u2d-band-armory-main">武器庫 ▸</span>
+      </button>
       <button type="button" class="u2d-launch" data-id="start" aria-label="出撃(長押し)">
         <span class="u2d-launch-label">準備完了</span>
         <span class="u2d-launch-main">出撃</span>
@@ -757,6 +761,10 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     sig,
   );
 
+  // R56追加: 出撃前に装備(武器)を見直せる導線。既存の装備選択(loadout)は
+  // host.saveLoadout()で共有・永続化されているため、単に武器庫へ遷移するだけでよい
+  // (武器庫での変更もsel/host.loadoutを直接編集する同じ状態を指すため相互に同期済み)。
+  q('to-armory').addEventListener('click', () => host.open('armory'), sig);
   q('back-to-hub').addEventListener('click', () => host.back(), sig);
 
   renderNav();

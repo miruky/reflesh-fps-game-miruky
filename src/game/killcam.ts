@@ -387,7 +387,12 @@ export class KillcamController {
     // oldest > killT-CK_WIN_PRE のとき先頭フレームが存在しないため、
     // fkFindFrames が iA<0 を返して再生が即終了するバグ(kill瞬間カット)の根治。
     this.fkCursor     = Math.max(oldest, killT - CK_WIN_PRE);
-    this.fkPrevCursor = -Infinity;
+    // R56 W3 #4: fkPrevCursor を -Infinity のままにすると、begin() 直後の初回 advance() で
+    // fkReplayShots(this.fkPrevCursor, cursor) が「バッファ中の全ショット(再生窓開始=fkCursor
+    // より前の古いトレーサーも含む)」を対象にしてしまい、初フレームで一斉再発火するバグがあった。
+    // fkCursor(再生窓の開始カーソル、直前行で確定済み)を初期値にすることで、初回 replay 範囲は
+    // 常に [fkCursor, cursor] に限定される(窓外の古いショットは対象外)。
+    this.fkPrevCursor = this.fkCursor;
     this.fkFlash      = 0;
     // ── シネマティックキルカム初期化 ──
     this._ckDollyDist = 0;

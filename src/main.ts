@@ -553,6 +553,10 @@ const loop = new GameLoop(
       }
       // R19: ファイナルキルカム再生フェーズ
       if (mode === 'finalkillcam') {
+        // R56 W3 #2: over後は match.update() が呼ばれなくなり trailing 記録(post-kill
+        // FK_WIN_POST秒ぶんのバッファ延長)が死コード化していた根治。finalkillcam中は
+        // 毎フレームここから記録専用ティックを駆動する(物理/AI/スコアには触れない)。
+        match.tickKillcamTrailing(dt);
         // スキップ: スペース / ゲームパッドの任意ボタン(クリックはロック解除中のため非対応)
         const skipPressed =
           input.wasPressed('jump') ||

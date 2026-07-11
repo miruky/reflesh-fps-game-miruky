@@ -430,11 +430,19 @@ export class Player {
       dt,
     );
 
-    // ── 移動適用(サブステップ分割でトンネリング防止) ──
+    // ── 移動適用(単一 computeColliderMovement 呼び出し) ──
     // SLIDE_BOOST 92m/s → 1フレームで最大 92/60 ≈ 1.53m 移動。
-    // 水平変位が 0.5m を超える場合は 2-4 分割で連続 computeColliderMovement を呼び出し、
-    // 薄い壁への貫通リスクを低減する。
-    // 垂直は MAX_FALL_SPEED=24(0.4m/frame) で保証済みのため分割不要。
+    // R56 W3: かつては水平変位が 0.5m を超える場合に希望移動量を 2-4 分割し、連続で
+    // computeColliderMovement を呼んでいたが、各サブステップは「同一のフレーム開始コライダー
+    // 位置」から (全量/N) を毎回クエリしていた(body の実移動はループ完了後の
+    // setNextKinematicTranslation まで起きないため)。壁が (全量/N) より遠いが全量より近い
+    // 位置にあると、どのサブステップも単独では壁に当たらず素通り分をそのまま返し、合算すると
+    // 全量分の変位が確定して壁を貫通してしまっていた(実測: SLIDE_BOOST下で gap 0.45〜1.35m の
+    // 薄壁を確定的に貫通)。
+    // Rapier KCC の computeColliderMovement は内部でシェイプキャストによる連続衝突判定を行う
+    // ため、単一クエリで希望移動量の全量を渡しても正しく壁の手前で停止する(実Rapierで
+    // gap 0.45/0.75/1.05/1.35m 全て検証済み)。よって分割を廃止し単一呼び出しに一本化する。
+    // 垂直は MAX_FALL_SPEED=24(0.4m/frame) で保証済みのため元々分割不要だった。
     const hx = this.vel.x * dt;
     const hz = this.vel.z * dt;
     const vy = this.velY * dt;
@@ -443,27 +451,9 @@ export class Player {
     const idle = hx === 0 && hz === 0;
     if (idle) this.kccJitterSign = -this.kccJitterSign;
     const qx = idle ? this.kccJitterSign * KCC_IDLE_JITTER_M : hx;
-    const hDist = Math.hypot(hx, hz);
-    const substeps = hDist > 0.5 ? Math.min(4, Math.ceil(hDist / 0.5)) : 1;
-    const moved = new THREE.Vector3();
-    for (let si = 0; si < substeps; si++) {
-      this.controller.computeColliderMovement(this.collider, {
-        x: qx / substeps,
-        y: si === 0 ? vy : 0, // 垂直は最初のサブステップのみ(接地判定・天井検知のため)
-        z: hz / substeps,
-      });
-      const m = this.controller.computedMovement();
-      moved.x += m.x;
-      if (si === 0) moved.y = m.y;
-      moved.z += m.z;
-      // 水平移動が大きく妨げられた場合は後続ステップを打ち切る(壁への二重貫通回避)
-      if (
-        si < substeps - 1 &&
-        Math.hypot(m.x, m.z) < Math.hypot(hx / substeps, hz / substeps) * 0.5
-      ) {
-        break;
-      }
-    }
+    this.controller.computeColliderMovement(this.collider, { x: qx, y: vy, z: hz });
+    const m = this.controller.computedMovement();
+    const moved = new THREE.Vector3(m.x, m.y, m.z);
     const wasGrounded = this.grounded;
     const fallSpeed = -this.velY;
     this.grounded = this.controller.computedGrounded();

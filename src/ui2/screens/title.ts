@@ -12,6 +12,18 @@
 // 詳細はtitle.css)。情景SVG背景は独自にcover-fit(--u2-cover、title.css内でCSSのみ
 // で算出)し、霧/火の粉もそれと同じ倍率で追随させてクナイ根元とのズレを防ぐ。
 // モックの座標(left/top/paddingのpx値)そのものは1px足りとも書き換えていない。
+//
+// R56追加修正: 情景SVGのcover-fill(xMidYMid slice)は、16:9以外のアスペクト比
+// (特に横長・縦短)で上下(または左右)をクロップする。情景の背景装飾(光柱/目盛環/
+// 火の粉/雨条)はそれで意図通りだが、短剣(輪鍔+柄+刀身)はviewBox下方(y=1046付近)
+// に位置するため、横長比で刀身がクロップされ「刀身が埋まって見えない」不具合になっていた。
+// 対策: 短剣とその接地エフェクト(暖光+地割れ、刃先に密結合)だけをtitleSceneSvg()内で
+// 別のSVG(同一viewBox、preserveAspectRatio=xMidYMid meet=contain-fit)として分離し、
+// 情景SVGの手前に重ねる(.u2-title__kunai、詳細はtitleSceneSvg()内コメントとtitle.css)。
+// meetは常に全内容を画面内に収めるため刀身は全アスペクトで完全表示され、はみ出す側は
+// 透明地(黒帯にならず背後のcover-fill情景がそのまま透ける)。16:9ではmeetとsliceの
+// スケール/センタリングが一致するため見た目は変更前と同一。短剣の描画ロジック
+// (パス/色/rotate角/highlight)はバイト等価のまま、積む配列(p→k)だけ変えている。
 import '../title.css';
 import { BUILD_LABEL } from '../../version';
 
@@ -69,6 +81,11 @@ function lcg(seed: number): () => number {
 export function titleSceneSvg(): string {
   const rnd = lcg(53);
   const p: string[] = [];
+  // R56追加修正: 短剣(輪鍔+柄+刀身)とその暖光/地割れは、情景本体(cover-fillのslice)
+  // ではなく別配列kへ積み、専用の前面レイヤ(meet=contain-fit=クロップ無し)として
+  // 描画する。理由は下のkunaiSvg生成部を参照。パス/色/rotate角/highlightは
+  // 1文字も変えていない(バイト等価) — 積む先の配列が変わるだけ。
+  const k: string[] = [];
   // 光柱7本(上端から末広がり、中心960から僅かに発散)
   const tops = [30, 290, 555, 830, 1100, 1370, 1640];
   for (let i = 0; i < tops.length; i++) {
@@ -108,26 +125,26 @@ export function titleSceneSvg(): string {
     );
   }
   // 輪鍔短剣(刃先1193,1046を軸に8°傾け) — PNGのクナイ構図を再現
-  p.push('<g transform="rotate(8 1193 1046)">');
-  p.push('<circle cx="1193" cy="642" r="40" fill="none" stroke="#C9CFD6" stroke-width="9"/>');
-  p.push(
+  k.push('<g transform="rotate(8 1193 1046)">');
+  k.push('<circle cx="1193" cy="642" r="40" fill="none" stroke="#C9CFD6" stroke-width="9"/>');
+  k.push(
     '<path d="M 1158 620 A 40 40 0 0 1 1215 606" fill="none" stroke="#6E747C" stroke-width="9" stroke-linecap="round" opacity="0.85"/>',
   );
-  p.push('<rect x="1186" y="680" width="14" height="16" fill="#2A2E34"/>');
-  p.push('<rect x="1177" y="694" width="32" height="142" rx="4" fill="#23272D"/>');
+  k.push('<rect x="1186" y="680" width="14" height="16" fill="#2A2E34"/>');
+  k.push('<rect x="1177" y="694" width="32" height="142" rx="4" fill="#23272D"/>');
   for (let i = 0; i < 5; i++) {
     const y = 706 + i * 26;
-    p.push(
+    k.push(
       `<line x1="1177" y1="${y + 12}" x2="1209" y2="${y}" stroke="#3A414A" stroke-width="5"/>`,
     );
   }
-  p.push('<rect x="1163" y="834" width="60" height="18" rx="2" fill="#14171B" stroke="#3A414A" stroke-width="1.5"/>');
-  p.push('<polygon points="1180,852 1206,852 1196,1046" fill="#2E343B"/>');
-  p.push('<polygon points="1193,852 1206,852 1196,1046" fill="#454D56"/>');
-  p.push('<line x1="1193" y1="856" x2="1195" y2="1036" stroke="#5A626C" stroke-width="1.6" opacity="0.8"/>');
-  p.push('</g>');
-  // 突き立ち点の暖光+地割れ(橙)
-  p.push('<ellipse cx="1196" cy="1040" rx="150" ry="46" fill="url(#u2ttlGlow)"/>');
+  k.push('<rect x="1163" y="834" width="60" height="18" rx="2" fill="#14171B" stroke="#3A414A" stroke-width="1.5"/>');
+  k.push('<polygon points="1180,852 1206,852 1196,1046" fill="#2E343B"/>');
+  k.push('<polygon points="1193,852 1206,852 1196,1046" fill="#454D56"/>');
+  k.push('<line x1="1193" y1="856" x2="1195" y2="1036" stroke="#5A626C" stroke-width="1.6" opacity="0.8"/>');
+  k.push('</g>');
+  // 突き立ち点の暖光+地割れ(橙) — 短剣の刃先に密結合(接地エフェクト)のため同じ前面レイヤへ
+  k.push('<ellipse cx="1196" cy="1040" rx="150" ry="46" fill="url(#u2ttlGlow)"/>');
   const cracks = [
     'M1196 1042 L1118 1052 L1058 1044 L1002 1058 L948 1050',
     'M1196 1042 L1268 1054 L1330 1046 L1392 1058',
@@ -137,10 +154,10 @@ export function titleSceneSvg(): string {
     'M1196 1042 L1247 1032 L1300 1026',
   ];
   for (const d of cracks) {
-    p.push(`<path d="${d}" fill="none" stroke="#FF6B2B" stroke-width="5" opacity="0.18" stroke-linecap="round"/>`);
-    p.push(`<path d="${d}" fill="none" stroke="#E08A4A" stroke-width="2" opacity="0.85" stroke-linecap="round"/>`);
+    k.push(`<path d="${d}" fill="none" stroke="#FF6B2B" stroke-width="5" opacity="0.18" stroke-linecap="round"/>`);
+    k.push(`<path d="${d}" fill="none" stroke="#E08A4A" stroke-width="2" opacity="0.85" stroke-linecap="round"/>`);
   }
-  // 火の粉スペック(短剣周辺に暖色26+全域に鋼色12)
+  // 火の粉スペック(短剣周辺に暖色26+全域に鋼色12) — 情景側のアンビエントなので現状どおりslice側
   for (let i = 0; i < 26; i++) {
     const x = 1040 + rnd() * 330;
     const y = 520 + rnd() * 470;
@@ -166,14 +183,14 @@ export function titleSceneSvg(): string {
       `<line x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${(x + len * 0.2).toFixed(1)}" y2="${(y + len).toFixed(1)}" stroke="#AEB6C2" stroke-width="1" opacity="0.05"/>`,
     );
   }
-  return (
+  // 情景本体(rays/目盛環/火の粉/雨条+背景グラデ/ハッチ/ビネット) — 従来どおり
+  // xMidYMid slice(cover-fill)。非16:9では上下または左右がクロップされるが、
+  // それは背景装飾なので意図どおり(黒帯回避が優先)。
+  const scene =
     '<svg class="u2-title__scene" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" aria-hidden="true">' +
     '<defs>' +
     '<radialGradient id="u2ttlBg" cx="58%" cy="40%" r="75%">' +
     '<stop offset="0%" stop-color="#1B1E22"/><stop offset="55%" stop-color="#141619"/><stop offset="100%" stop-color="#0B0D10"/>' +
-    '</radialGradient>' +
-    '<radialGradient id="u2ttlGlow" cx="50%" cy="50%" r="50%">' +
-    '<stop offset="0%" stop-color="rgba(255,140,60,0.26)"/><stop offset="60%" stop-color="rgba(255,120,50,0.1)"/><stop offset="100%" stop-color="rgba(255,120,50,0)"/>' +
     '</radialGradient>' +
     '<radialGradient id="u2ttlVig" cx="50%" cy="46%" r="72%">' +
     '<stop offset="0%" stop-color="rgba(0,0,0,0)"/><stop offset="74%" stop-color="rgba(0,0,0,0.1)"/><stop offset="100%" stop-color="rgba(0,0,0,0.52)"/>' +
@@ -186,8 +203,24 @@ export function titleSceneSvg(): string {
     p.join('') +
     '<rect width="1920" height="1080" fill="url(#u2ttlHatch)"/>' +
     '<rect width="1920" height="1080" fill="url(#u2ttlVig)"/>' +
-    '</svg>'
-  );
+    '</svg>';
+  // R56追加修正: 短剣(刀身)専用の前面レイヤ。同一viewBox 0 0 1920 1080だが
+  // preserveAspectRatio="xMidYMid meet"(=contain-fit)にすることで、どのアスペクト比
+  // (横長/縦長問わず)でも短剣の刀身が画面外へクロップされることは無くなる
+  // (meetは常に全内容を画面内へ収める。はみ出す側は透明地になるだけで、その透明地から
+  // 背後のscene(cover-fill)がそのまま透けて見えるため黒帯にはならない)。
+  // 16:9(viewBoxと同じアスペクト比)では meet と slice のスケール/センタリングが完全一致
+  // するため、この分離は見た目に一切影響しない(旧デザインのまま)。
+  const kunaiSvg =
+    '<svg class="u2-title__kunai" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid meet" aria-hidden="true">' +
+    '<defs>' +
+    '<radialGradient id="u2ttlGlow" cx="50%" cy="50%" r="50%">' +
+    '<stop offset="0%" stop-color="rgba(255,140,60,0.26)"/><stop offset="60%" stop-color="rgba(255,120,50,0.1)"/><stop offset="100%" stop-color="rgba(255,120,50,0)"/>' +
+    '</radialGradient>' +
+    '</defs>' +
+    k.join('') +
+    '</svg>';
+  return scene + kunaiSvg;
 }
 
 // ── マウント ────────────────────────────────────────────────────────────────
@@ -205,8 +238,9 @@ export function mountTitle(host: TitleHost, root: HTMLElement, onStart: () => vo
   ).join('');
 
   el.innerHTML =
-    // 情景SVG背景(全画面cover-fill、titleSceneSvg自身がviewBox 0 0 1920 1080 +
-    // preserveAspectRatio=xMidYMid sliceを持つ。title.css側でwidth/height:100%にして起動する)。
+    // 情景SVG背景(全画面cover-fill)+短剣前面レイヤ(全画面meet=クロップ無し)の2枚を
+    // titleSceneSvg()が連結して返す(詳細は同関数のコメント)。title.css側で両方とも
+    // width/height:100%にして起動する。
     titleSceneSvg() +
     // 流れる霧+クナイ根元の上昇火の粉(モック実値/実座標)。情景SVGと同じcover倍率
     // (--u2-cover)で追随する1920×1080アンカー層にまとめて座標は書き換えない。

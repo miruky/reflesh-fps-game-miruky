@@ -1171,3 +1171,103 @@ describe("R54-F8': setKuroganeStyle(クロガネ套装=黒鋼+赤亀裂)", () =>
     vm.dispose();
   });
 });
+
+// ── R56 W3: 純雷帝(_darkMode=false)でも刀身の雷が明滅する(死コード根治) ──────────
+// 真因: 電弧フリッカー2ブロックが `!_darkMode` 早期returnの後ろにあり、_darkMode===false
+// の純雷帝では早期returnで止まって一切実行されなかった(刀身の雷が静止して見えるバグ)。
+// 早期returnより前へ移動し、`_lightningArcMeshes` 側の矛盾する `!_darkMode` 条件も削除した。
+describe('R56 W3: 電弧フリッカーの早期return根治', () => {
+  const IDLE = {
+    adsProgress: 0,
+    mouseDX: 0,
+    mouseDY: 0,
+    moveFactor: 0,
+    grounded: true,
+    reloadRatio: null,
+    raiseRatio: 0,
+    motionScale: 1,
+    alive: true,
+    scopeReveal01: 0,
+    sprinting: false,
+  };
+
+  function makeKunaiVm(): ViewModel {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const def = WEAPON_DEFS['fists'];
+    if (!def) throw new Error('fists missing');
+    vm.setWeapon(def);
+    return vm;
+  }
+
+  function arcLineOpacities(vm: ViewModel): number[] {
+    const blade = vm.root.getObjectByName('vm:lightningBlade');
+    const ops: number[] = [];
+    blade?.traverse((node) => {
+      if (node instanceof THREE.Mesh && (node.material as THREE.Material).userData.isArcLine) {
+        ops.push((node.material as THREE.MeshBasicMaterial).opacity);
+      }
+    });
+    return ops;
+  }
+
+  // private フィールドへの白箱アクセス(_lightningArcMeshes の visible/opacity トグル検証用)。
+  function arcMeshVisibility(vm: ViewModel): boolean[] {
+    const internal = vm as unknown as { _lightningArcMeshes: THREE.Mesh[] };
+    return internal._lightningArcMeshes.map((m) => m.visible);
+  }
+
+  it('純雷帝(lightningMode=true, darkMode=false)でリボン(isArcLine)の opacity が毎フレーム変動する', () => {
+    const vm = makeKunaiVm();
+    vm.setKunaiLightningMode(true); // active=true, kokuraitei=false → _darkMode は未設定のまま false
+    const seen = new Set<number>();
+    for (let i = 0; i < 90; i += 1) {
+      vm.update(1 / 60, IDLE);
+      for (const op of arcLineOpacities(vm)) seen.add(op);
+    }
+    // 明滅していれば 0.05-0.09s ごとに新しい乱数opacityが採用され、1.5秒で複数値が観測されるはず。
+    // 明滅が死コードのままなら初期値(makeArcLine構築時の固定opacity)のまま1値しか観測されない。
+    expect(seen.size).toBeGreaterThan(1);
+    vm.dispose();
+  });
+
+  it('純雷帝で _lightningArcMeshes(刀身沿いの電気アーク5本)の visible が毎フレーム変動する', () => {
+    const vm = makeKunaiVm();
+    vm.setKunaiLightningMode(true);
+    const sawTrue = new Set<boolean>();
+    for (let i = 0; i < 90; i += 1) {
+      vm.update(1 / 60, IDLE);
+      for (const v of arcMeshVisibility(vm)) sawTrue.add(v);
+    }
+    // 旧実装は `_lightningMode && !_darkMode` で常にfalse(_darkMode=falseの時しか通れないのに
+    // !_darkModeを要求する矛盾)=死コード。根治後は visible が true/false 両方観測されるはず。
+    expect(sawTrue.has(true)).toBe(true);
+    expect(sawTrue.has(false)).toBe(true);
+    vm.dispose();
+  });
+
+  it('黒雷帝(kokuraitei: dark+lightning併存)でもリボン明滅は従来通り動く(非回帰)', () => {
+    const vm = makeKunaiVm();
+    vm.setKunaiDarkMode(true);
+    vm.setKunaiLightningMode(true, true);
+    const seen = new Set<number>();
+    for (let i = 0; i < 90; i += 1) {
+      vm.update(1 / 60, IDLE);
+      for (const op of arcLineOpacities(vm)) seen.add(op);
+    }
+    expect(seen.size).toBeGreaterThan(1);
+    vm.dispose();
+  });
+
+  it('黒雷帝でダークオーラのパーティクル更新(TrackA/B移動+三角opacity)は不変', () => {
+    const vm = makeKunaiVm();
+    vm.setKunaiDarkMode(true);
+    vm.setKunaiLightningMode(true, true);
+    // fists装備中は _updateDarkAura が黒炎/紫電を毎フレームスポーンする(3860行以降の経路)。
+    // 例外なく多数フレーム回せることを確認(スポーン/フェード処理が早期returnで潰れていないこと)。
+    expect(() => {
+      for (let i = 0; i < 60; i += 1) vm.update(1 / 60, IDLE);
+    }).not.toThrow();
+    vm.dispose();
+  });
+});

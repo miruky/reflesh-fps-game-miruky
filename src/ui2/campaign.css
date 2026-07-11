@@ -7,6 +7,17 @@
 /* ═══ 共通地(mock06基調) ═══ */
 .u2-campaign {
   background: linear-gradient(160deg, #0b0a10 0%, #070609 46%, #030308 100%);
+  /* R56 W3[根治]: .u2c-fog(left:-6%;width:112%)がフルード化後は実viewport全面(.u2-campaign
+     自身=.u2-stage--fluidでinset:0)基準で112%分オーバーフローし、直近のoverflow:hidden祖先
+     である.u2-letterbox(display:flex;justify-content:center)のscrollable overflow region
+     を拡張してしまう。この状態でPlaywrightのscrollIntoViewIfNeeded(実クリック操作の
+     actionabilityチェック)や一部のフォーカス経路が働くと、Chromiumがそのoverflow領域を
+     「安全に中央寄せ」しようとして.u2-letterboxのscrollLeftを書き換え、画面全体が
+     横にずれたまま固定される(black-bar化はしないがcanvas全体がクリップ/シフトする実害)。
+     .u2-campaign自身にoverflow:hiddenを持たせ、.u2c-fogのオーバーフローをこの階層で
+     閉じ込めることで.u2-letterboxへ到達させない(旧来もletterboxが同じ境界で視覚的に
+     クリップしていたため見た目は不変=campaignの1px描画は変わらない)。 */
+  overflow: hidden;
 }
 .u2c-scanline {
   position: absolute;
@@ -609,15 +620,10 @@
 }
 
 /* ═══ 戦役リザルト(mock06言語) ═══ */
-.u2c-band {
-  position: absolute;
-  left: 56px;
-  top: 34px;
-  right: 56px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
+/* R56 W3: 旧.u2c-band(flex行で左右を1つの箱に収めていた)はフルード化で左右アンカー群へ
+   分割したため撤去。.u2c-band-left/.u2c-band-meta単体は残し、位置はフルードセクション
+   (このファイル下部)の .u2c-group-tl > .u2c-band-left / .u2c-group-tr > .u2c-band-meta
+   が絶対配置で担う。 */
 .u2c-band-left {
   display: flex;
   align-items: center;
@@ -905,21 +911,83 @@
   transition-duration: 0.15s !important;
 }
 
-/* ═══ R56 W2 フルードステージ(戦役=mountCampaignのみ対象) ═══
-   menu2.tsのFLUID_SCREENSに'campaign'のみが登録されており、mountBriefing/
-   mountMissionResultの画面が開いている間はstageに.u2-stage--fluidが絶対に付かない
-   (open()がFLUID_SCREENS.has(id)で毎回付け外しする画面単位の判定のため)。よって
-   .u2c-hintbar(3画面共有のhintbarHtml()が生成する下帯)はここで .u2-stage--fluid を
-   祖先に前置してスコープすることで、campaign表示中だけ両端アンカー化し、briefing/
-   mission-resultは元のwidth:1920px固定(レガシーscale-to-fit前提)のまま一切変えない。
-   left/top/bottomは既にbase側で0のため上書き不要。widthをautoにしてright:0を足すこと
-   で左右アンカー化し(黒帯なしでモック外の余白まで帯を伸ばす)、内側の水平余白のみ
-   calc(60px * var(--u2s,1))で再計算する(垂直寸法/文字サイズはhubの下帯と同型で
-   スケール対象外=据え置き)。 */
+/* ═══ R56 W2/W3 フルードステージ ═══
+   W2時点ではmenu2.tsのFLUID_SCREENSに'campaign'のみが登録されており、mountBriefing/
+   mountMissionResultは非フルードのままだった。W3で'briefing'/'mission-result'も
+   登録した(常時フルード=非フルード経路はもう到達しない)。
+   .u2c-hintbar(3画面共有のhintbarHtml()が生成する下帯)は3画面とも常時フルードになった
+   今も、他画面(pause等)への波及を避けるため .u2-stage--fluid を祖先に前置してスコープ
+   したまま維持する。left/top/bottomは既にbase側で0のため上書き不要。widthをautoにして
+   right:0を足すことで左右アンカー化し(黒帯なしでモック外の余白まで帯を伸ばす)、内側の
+   水平余白のみ calc(60px * var(--u2s,1))で再計算する(垂直寸法/文字サイズはhubの下帯と
+   同型でスケール対象外=据え置き)。 */
 .u2-stage--fluid .u2c-hintbar {
   right: 0;
   width: auto;
   padding: 0 calc(60px * var(--u2s, 1));
+}
+
+/* ── R56 W3: briefing/mission-result共有の端アンカーラッパー(0-sizeで子のモック座標を
+   保存。mountCampaign(W2)の自前インラインscale群とは別に、mountBriefing/
+   mountMissionResultはこの共有クラスを使う。hub/deploy/options等と同型のパターンで、
+   .u2-stage--fluid祖先配下でのみtransform:scaleする(常時フルードだが念のためガード)。 ── */
+.u2c-group-tl,
+.u2c-group-tr,
+.u2c-group-br {
+  position: absolute;
+}
+.u2c-group-tl {
+  left: 0;
+  top: 0;
+}
+.u2c-group-tr {
+  right: 0;
+  top: 0;
+}
+.u2c-group-br {
+  right: 0;
+  bottom: 0;
+}
+.u2-stage--fluid .u2c-group-tl {
+  transform-origin: top left;
+  transform: scale(var(--u2s, 1));
+}
+.u2-stage--fluid .u2c-group-tr {
+  transform-origin: top right;
+  transform: scale(var(--u2s, 1));
+}
+.u2-stage--fluid .u2c-group-br {
+  transform-origin: bottom right;
+  transform: scale(var(--u2s, 1));
+}
+/* mission-resultの旧u2c-band(flex行)分割: 左キッカー/右メタは各群の0-sizeボックス内で
+   自前配置する(旧flex子から絶対配置ボックスへ)。 */
+.u2-stage--fluid .u2c-group-tl > .u2c-band-left {
+  position: absolute;
+  left: 56px;
+  top: 34px;
+}
+.u2-stage--fluid .u2c-group-tr > .u2c-band-meta {
+  position: absolute;
+  right: 56px;
+  top: 34px;
+}
+/* 両端アンカーが要る要素(区切り線)は角群に入れられないため、stage直下のまま
+   calc(px * var(--u2s,1))で個別変換する(resultの区切り線と同型)。 */
+.u2-stage--fluid .u2c-band-rule {
+  left: calc(56px * var(--u2s, 1));
+  right: calc(56px * var(--u2s, 1));
+  top: calc(76px * var(--u2s, 1));
+}
+/* 全高スクロール域(top+bottom)はフルード時、0-sizeラッパー内でbottomが機能しないため
+   max-heightへ変換する(bottom値を撤去し、1080-top-bottomの残り高を焼き込む)。 */
+.u2-stage--fluid .u2c-brief-body {
+  bottom: auto;
+  max-height: 610px; /* 1080 - top:300 - bottom:170 */
+}
+.u2-stage--fluid .u2c-mr-rail {
+  bottom: auto;
+  max-height: 834px; /* 1080 - top:150 - bottom:96 */
 }
 
 /* ═══ keyframes(u2c名前空間 — 他画面と衝突しない) ═══ */

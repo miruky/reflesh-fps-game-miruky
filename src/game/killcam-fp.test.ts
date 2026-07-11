@@ -389,3 +389,72 @@ describe('KillcamController: 一人称キルカムのADS率をresetViewmodelAdsP
     expect(resetCalls[0]).toBe(0);
   });
 });
+
+// ─── R56 W3 #4: begin() 直後の初回 advance() が再生窓開始(fkCursor)より前の
+// ショットまで一斉再発火してしまうバグの回帰テスト ───────────────────────────
+describe('KillcamController: begin()直後の初回advance()は再生窓開始より前のショットを再発火しない(#4)', () => {
+  it('fkPrevCursorがfkCursor(再生窓開始)で初期化され、窓外の古いショットは初回advanceで発火しない', () => {
+    const { deps, camera, player } = makeMockDeps();
+    const tracerColors: number[] = [];
+    const depsWithTracer: KillcamDeps = {
+      ...deps,
+      tracer: (_from, _to, color) => { tracerColors.push(color); },
+    };
+    const controller = new KillcamController(depsWithTracer);
+
+    // killT=10, CK_WIN_PRE=2.5 なので再生窓は fkCursor=7.5 から始まる(oldest=0 のため)。
+    for (let e = 0; e <= 10; e += 0.25) {
+      player.eyePosition.set(0, 1.6, 0); player.yaw = 0; player.pitch = 0; camera.fov = 50;
+      controller.recordFrame(e);
+    }
+    // 再生窓(7.5以降)より大幅に前、バッファ先頭近くの古いショット。
+    // 修正前(fkPrevCursor=-Infinity初期化)は初回advanceで一斉再発火していた。
+    controller.recordShot(new THREE.Vector3(), new THREE.Vector3(1, 0, 0), 0xff0000, 1.0);
+    // 再生窓の直後(将来 cursor が到達したときに初めて発火すべき)ショット。
+    controller.recordShot(new THREE.Vector3(), new THREE.Vector3(1, 0, 0), 0x00ff00, 9.9);
+
+    const killT = 10;
+    controller.noteKill(false, -1, -1, killT, 'Gun', 5); // 三人称(killer=bot)経路
+    expect(controller.canStart(killT)).toBe(true);
+
+    controller.begin();
+    // begin() 直後、fkPrevCursor は再生窓開始カーソル(fkCursor)に一致していること
+    // (=-Infinity のままではないこと)を外側から検証する材料として、初回 advance の
+    // 発火範囲で間接的に確認する。
+    controller.advance(1 / 60);
+
+    // 窓外の古いショット(t=1.0)は初回advanceで再発火してはいけない
+    expect(tracerColors).not.toContain(0xff0000);
+    // 窓開始直後まだ到達していない未来のショット(t=9.9)もまだ発火しない
+    expect(tracerColors).not.toContain(0x00ff00);
+  });
+
+  it('再生窓開始(fkCursor)直後にあるショットはcursorが到達した時点で正しく発火する(回帰確認)', () => {
+    const { deps, camera, player } = makeMockDeps();
+    const tracerColors: number[] = [];
+    const depsWithTracer: KillcamDeps = {
+      ...deps,
+      tracer: (_from, _to, color) => { tracerColors.push(color); },
+    };
+    const controller = new KillcamController(depsWithTracer);
+
+    for (let e = 0; e <= 10; e += 0.25) {
+      player.eyePosition.set(0, 1.6, 0); player.yaw = 0; player.pitch = 0; camera.fov = 50;
+      controller.recordFrame(e);
+    }
+    // fkCursor(=7.5)のわずか後。数フレームのadvanceでcursorが到達し、発火するはず。
+    controller.recordShot(new THREE.Vector3(), new THREE.Vector3(1, 0, 0), 0x1234ff, 7.52);
+
+    const killT = 10;
+    controller.noteKill(false, -1, -1, killT, 'Gun', 5);
+    expect(controller.canStart(killT)).toBe(true);
+    controller.begin();
+
+    let fired = false;
+    for (let i = 0; i < 60 && !fired; i++) {
+      controller.advance(1 / 60);
+      if (tracerColors.includes(0x1234ff)) fired = true;
+    }
+    expect(fired).toBe(true);
+  });
+});

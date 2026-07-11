@@ -407,3 +407,63 @@ describe('fkIsStale(FK鮮度ガード)', () => {
     expect(fkIsStale(55, 50, BUFFER_S)).toBe(true);
   });
 });
+
+// ─── R56 W3 #2: Match.tickKillcamTrailing の契約(over後、毎フレーム呼びで記録が継続する) ───
+// 根本原因: update() 内の over 分岐(上の「FK trailing window」テスト群が検証する条件式)は、
+// over 確定の次 rAF で main.ts が mode を 'finalkillcam' へ切り替えて以後 update() を
+// 呼ばなくなるため、定常フレームレートでは実行到達しない=事実上の死コードだった
+// (実機計測: match.elapsed が over 後に一切前進しないことを確認済み)。
+// 修正: 同一ロジックを Match.tickKillcamTrailing(dt) として public 化し、main.ts の
+// finalkillcam 分岐(advanceFinalKillcam 呼び出しの直前)から毎フレーム呼ぶよう変更した
+// (match.ts の advanceFinalKillcam 直前・main.ts の `mode === 'finalkillcam'` 分岐)。
+// Match は THREE Renderer/Rapier 等の重い依存を要し、この vitest 環境(environment: 'node',
+// 既存テスト群も同じ制約で Match を直接インスタンス化していない)では単体構築できないため、
+// tickKillcamTrailing と同一ロジックをミラーして「毎フレーム呼ばれ続けたときに正しく
+// 動作し、killElapsed+FK_WIN_POST で確実に頭打ちになる」契約をピン留めする。
+describe('tickKillcamTrailing 契約(over後、毎フレーム呼びで記録が継続する)', () => {
+  // Match.tickKillcamTrailing とロジック同一(match.ts の advanceFinalKillcam 直前を参照)
+  function mirrorTick(
+    state: { elapsed: number; tickCount: number; recordedFrames: number },
+    dt: number,
+    killElapsed: number,
+    isZombie: boolean,
+  ): void {
+    if (!isZombie && killElapsed !== -Infinity && state.elapsed <= killElapsed + FK_WIN_POST) {
+      state.elapsed += dt;
+      state.tickCount = (state.tickCount + 1) % 3; // FK_TICK_INT=3 → 20Hz
+      if (state.tickCount === 0) state.recordedFrames++;
+    }
+  }
+
+  it('over直後から毎フレーム(dt=1/60)呼び続けると、elapsedはkillElapsed+FK_WIN_POSTまで前進して頭打ちになる', () => {
+    const killElapsed = 5.0;
+    const state = { elapsed: killElapsed, tickCount: 0, recordedFrames: 0 };
+    const dt = 1 / 60;
+    for (let i = 0; i < 200; i++) mirrorTick(state, dt, killElapsed, false);
+    expect(state.elapsed).toBeGreaterThanOrEqual(killElapsed + FK_WIN_POST);
+    expect(state.elapsed).toBeLessThan(killElapsed + FK_WIN_POST + dt);
+  });
+
+  it('20Hzで記録され、post-kill窓ぶん(≈24フレーム)が録画バッファへ積まれる(修正前は0だった)', () => {
+    const killElapsed = 0;
+    const state = { elapsed: killElapsed, tickCount: 0, recordedFrames: 0 };
+    const dt = 1 / 60;
+    for (let i = 0; i < 200; i++) mirrorTick(state, dt, killElapsed, false);
+    expect(state.recordedFrames).toBeGreaterThanOrEqual(24);
+  });
+
+  it('ゾンビモードでは一切前進しない(no-op)', () => {
+    const killElapsed = 5.0;
+    const state = { elapsed: killElapsed, tickCount: 0, recordedFrames: 0 };
+    for (let i = 0; i < 10; i++) mirrorTick(state, 1 / 60, killElapsed, true);
+    expect(state.elapsed).toBe(killElapsed);
+    expect(state.recordedFrames).toBe(0);
+  });
+
+  it('killElapsed===-Infinity(キル未発生)では一切前進しない(no-op)', () => {
+    const state = { elapsed: 100, tickCount: 0, recordedFrames: 0 };
+    for (let i = 0; i < 10; i++) mirrorTick(state, 1 / 60, -Infinity, false);
+    expect(state.elapsed).toBe(100);
+    expect(state.recordedFrames).toBe(0);
+  });
+});

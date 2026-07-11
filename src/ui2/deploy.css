@@ -757,6 +757,42 @@
   font-size: 17px;
   color: #f0eee9;
 }
+/* R56追加: 出撃帯から武器庫へ(装備を変更)。band-info/launchと同じプレート言語で
+   馴染ませつつ、出撃(主CTA=橙塗り)とは区別する中間トーンの二次ボタンとする。 */
+.u2d-band-armory {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(6, 5, 8, 0.9);
+  border: 1px solid rgba(232, 227, 216, 0.18);
+  padding: 12px 22px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.u2d-band-armory-label {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  color: #8f8b84;
+}
+.u2d-band-armory-main {
+  font-weight: 800;
+  font-size: 17px;
+  color: #f0eee9;
+  transition: color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.u2d-band-armory:hover {
+  border-color: rgba(255, 160, 97, 0.55);
+}
+.u2d-band-armory:hover .u2d-band-armory-main {
+  color: #ffa061;
+}
+.u2d-band-armory:focus-visible {
+  outline: 2px solid #ffa061;
+  outline-offset: 3px;
+}
+
 .u2d-launch {
   position: relative;
   overflow: hidden;

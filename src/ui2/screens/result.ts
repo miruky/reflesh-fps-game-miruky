@@ -443,12 +443,16 @@ export const mountResult: ScreenMount = (host, root, opts) => {
         <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:16px;">${scorePair}</div>
       </div>`;
 
-  const bgLayers = result.won
-    ? `<div style="position:absolute;inset:0;background:radial-gradient(64% 52% at 22% 26%, rgba(255,107,43,0.13) 0%, rgba(255,107,43,0) 70%);"></div>
-       <div style="position:absolute;left:-260px;top:-140px;width:1500px;height:1500px;background:linear-gradient(90deg, rgba(255,107,43,0) 0%, rgba(255,107,43,0.07) 48%, rgba(255,107,43,0) 100%);transform:rotate(-24deg);"></div>
+  // R56 W3: フルードステージ化に伴い、フルbleed背景(inset:0=無変換で常時全面充填)と
+  // 固定px座標の透かし装飾(1920幅基準でスケールが必要)を分離する。bgWashはstage直下に
+  // 無変換のまま、bgDecoはscale(var(--u2s))群(.u2r-gdeco)へ収容する。
+  const bgWash = result.won
+    ? '<div style="position:absolute;inset:0;background:radial-gradient(64% 52% at 22% 26%, rgba(255,107,43,0.13) 0%, rgba(255,107,43,0) 70%);"></div>'
+    : '<div style="position:absolute;inset:0;background:radial-gradient(64% 52% at 22% 26%, rgba(110,140,180,0.10) 0%, rgba(110,140,180,0) 70%);"></div>';
+  const bgDeco = result.won
+    ? `<div style="position:absolute;left:-260px;top:-140px;width:1500px;height:1500px;background:linear-gradient(90deg, rgba(255,107,43,0) 0%, rgba(255,107,43,0.07) 48%, rgba(255,107,43,0) 100%);transform:rotate(-24deg);"></div>
        <div style="position:absolute;right:-90px;top:-120px;font-weight:700;font-size:840px;line-height:1;color:rgba(255,107,43,0.045);pointer-events:none;">勝</div>`
-    : `<div style="position:absolute;inset:0;background:radial-gradient(64% 52% at 22% 26%, rgba(110,140,180,0.10) 0%, rgba(110,140,180,0) 70%);"></div>
-       <div style="position:absolute;right:-90px;top:-120px;font-weight:700;font-size:840px;line-height:1;color:rgba(150,170,200,0.045);pointer-events:none;">敗</div>`;
+    : `<div style="position:absolute;right:-90px;top:-120px;font-weight:700;font-size:840px;line-height:1;color:rgba(150,170,200,0.045);pointer-events:none;">敗</div>`;
 
   const storyItems = markers
     .map((m, i) => markerHtml(m, markers.length <= 1 ? 50 : 5 + (i * 90) / (markers.length - 1)))
@@ -497,7 +501,7 @@ export const mountResult: ScreenMount = (host, root, opts) => {
   const medalStrip =
     chips.length === 0
       ? ''
-      : `<div style="position:absolute;left:56px;bottom:56px;display:flex;flex-direction:column;gap:12px;max-width:1310px;">
+      : `<div class="u2r-medalstrip" style="position:absolute;left:56px;bottom:56px;display:flex;flex-direction:column;gap:12px;max-width:1310px;">
       <span style="${MONO}font-size:10.5px;letter-spacing:0.26em;color:#77705F;">獲得メダル${JP_SP}${totalMedals}個 · 図鑑 ${Object.keys(host.profile.medalCounts ?? {}).length} / ${MEDAL_TOTAL}種</span>
       <div class="u2r-medals" style="display:flex;gap:12px;">
         ${chips
@@ -537,118 +541,133 @@ export const mountResult: ScreenMount = (host, root, opts) => {
   const stage = document.createElement('div');
   stage.className = 'u2-result-stage';
   stage.dataset.id = 'scr-result'; // F10スモークの画面到達検証用(scr-*規約)
+  // R56 W3: フルードステージ化(menu2.tsのFLUID_SCREENSに'result'を登録済み=常時フルード)。
+  // .u2-result-stage は position:absolute;inset:0(実viewport全面)になったため、内部要素は
+  // 角アンカーの0-sizeラッパー群(u2r-g*, hub/campaign/deploy等で実証済みのパターンと同型)に
+  // 収め、各群を transform:scale(var(--u2s,1)) で個別スケールする(黒帯なし・歪みゼロ)。
+  // resultは他画面と共有されないため(campaign.tsのmountCampaignと同様に)ガードクラスを
+  // 介さずインラインで直接scaleする(常時フルードなので安全 = --u2s未設定時のfallback=1で
+  // 恒等変換)。両端アンカーが要る要素(区切り線)のみ、群の外・stage直下でcalc()変換する。
   stage.innerHTML = `
-    ${bgLayers}
-    <svg width="1920" height="1700" viewBox="0 0 1920 1700" style="position:absolute;left:0;top:0;animation:u2rSpark 16s linear infinite;" aria-hidden="true">
-      <defs><pattern id="u2r-sp" width="340" height="340" patternUnits="userSpaceOnUse">
-        <circle cx="40" cy="70" r="1.6" fill="#FFA061" opacity="0.5"></circle>
-        <circle cx="200" cy="30" r="1.1" fill="#FF6B2B" opacity="0.4"></circle>
-        <circle cx="290" cy="180" r="1.8" fill="#FFC98F" opacity="0.45"></circle>
-        <circle cx="120" cy="250" r="1.2" fill="#FF6B2B" opacity="0.35"></circle>
-        <circle cx="250" cy="310" r="1.4" fill="#FFA061" opacity="0.4"></circle>
-      </pattern></defs>
-      <rect width="1920" height="1700" fill="url(#u2r-sp)"></rect>
-    </svg>
+    ${bgWash}
     <div style="position:absolute;inset:0;background:repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 4px);pointer-events:none;"></div>
     <div style="position:absolute;inset:0;background:radial-gradient(130% 100% at 50% 45%, rgba(0,0,0,0) 60%, rgba(2,2,7,0.5) 100%);pointer-events:none;"></div>
 
-    <div style="position:absolute;left:56px;top:34px;right:56px;display:flex;justify-content:space-between;align-items:center;">
-      <div style="display:flex;align-items:center;gap:14px;">
+    <div class="u2r-gdeco" style="position:absolute;left:0;top:0;width:1920px;height:1700px;transform-origin:top left;transform:scale(var(--u2s, 1));pointer-events:none;">
+      ${bgDeco}
+      <svg width="1920" height="1700" viewBox="0 0 1920 1700" style="position:absolute;left:0;top:0;animation:u2rSpark 16s linear infinite;" aria-hidden="true">
+        <defs><pattern id="u2r-sp" width="340" height="340" patternUnits="userSpaceOnUse">
+          <circle cx="40" cy="70" r="1.6" fill="#FFA061" opacity="0.5"></circle>
+          <circle cx="200" cy="30" r="1.1" fill="#FF6B2B" opacity="0.4"></circle>
+          <circle cx="290" cy="180" r="1.8" fill="#FFC98F" opacity="0.45"></circle>
+          <circle cx="120" cy="250" r="1.2" fill="#FF6B2B" opacity="0.35"></circle>
+          <circle cx="250" cy="310" r="1.4" fill="#FFA061" opacity="0.4"></circle>
+        </pattern></defs>
+        <rect width="1920" height="1700" fill="url(#u2r-sp)"></rect>
+      </svg>
+    </div>
+
+    <div style="position:absolute;left:calc(56px * var(--u2s, 1));right:calc(56px * var(--u2s, 1));top:calc(76px * var(--u2s, 1));height:1px;background:linear-gradient(90deg, rgba(255,107,43,0.5), rgba(232,227,216,0.13) 30%, rgba(232,227,216,0.13) 100%);"></div>
+
+    <div class="u2r-gtl" style="position:absolute;left:0;top:0;transform-origin:top left;transform:scale(var(--u2s, 1));">
+      <div style="position:absolute;left:56px;top:34px;display:flex;align-items:center;gap:14px;">
         <div style="width:34px;height:2px;background:#FF6B2B;box-shadow:0 0 12px rgba(255,107,43,0.8);"></div>
         <span style="${MONO}font-size:12px;letter-spacing:0.3em;color:#A79F90;">戦闘詳報${JP_SP}AFTER ACTION REPORT</span>
       </div>
-      <span style="${MONO}font-size:11px;letter-spacing:0.16em;color:#5E594F;white-space:nowrap;">${esc(result.modeName)} · LV.${level.level.toLocaleString()} ${esc(rank.name)} · ${dateStr}</span>
-    </div>
-    <div style="position:absolute;left:56px;top:76px;width:1808px;height:1px;background:linear-gradient(90deg, rgba(255,107,43,0.5), rgba(232,227,216,0.13) 30%, rgba(232,227,216,0.13) 100%);"></div>
 
-    <div style="position:absolute;left:56px;top:104px;display:flex;align-items:flex-end;gap:44px;">${hero}</div>
-    ${storyBlock}
+      <div style="position:absolute;left:56px;top:104px;display:flex;align-items:flex-end;gap:44px;">${hero}</div>
+      ${storyBlock}
 
-    <div style="position:absolute;left:56px;top:492px;width:1310px;display:grid;grid-template-columns:repeat(${cards.length},1fr);gap:10px;">
-      ${cards.map(statCardHtml).join('')}
-    </div>
-
-    <div style="position:absolute;left:56px;top:668px;width:1310px;display:flex;flex-direction:column;gap:9px;">
-      <span style="${MONO}font-size:10.5px;letter-spacing:0.26em;color:#77705F;">スコアボード</span>
-      <div style="display:grid;grid-template-columns:54px 1fr 110px 110px 110px;align-items:center;padding:0 18px;height:26px;${MONO}font-size:10px;letter-spacing:0.14em;color:#55503F;">
-        <span>順位</span><span>隊員</span><span style="text-align:right;">撃破</span><span style="text-align:right;">戦死</span><span style="text-align:right;">K/D</span>
+      <div style="position:absolute;left:56px;top:492px;width:1310px;display:grid;grid-template-columns:repeat(${cards.length},1fr);gap:10px;">
+        ${cards.map(statCardHtml).join('')}
       </div>
-      <div class="u2r-board-rows" style="display:flex;flex-direction:column;gap:4px;">${boardRows}</div>
+
+      <div style="position:absolute;left:56px;top:668px;width:1310px;display:flex;flex-direction:column;gap:9px;">
+        <span style="${MONO}font-size:10.5px;letter-spacing:0.26em;color:#77705F;">スコアボード</span>
+        <div style="display:grid;grid-template-columns:54px 1fr 110px 110px 110px;align-items:center;padding:0 18px;height:26px;${MONO}font-size:10px;letter-spacing:0.14em;color:#55503F;">
+          <span>順位</span><span>隊員</span><span style="text-align:right;">撃破</span><span style="text-align:right;">戦死</span><span style="text-align:right;">K/D</span>
+        </div>
+        <div class="u2r-board-rows" style="display:flex;flex-direction:column;gap:4px;">${boardRows}</div>
+      </div>
     </div>
 
-    ${medalStrip}
+    <div class="u2r-gbl" style="position:absolute;left:0;bottom:0;transform-origin:bottom left;transform:scale(var(--u2s, 1));">
+      ${medalStrip}
+    </div>
 
-    <div style="position:absolute;right:56px;top:104px;width:452px;display:flex;flex-direction:column;gap:12px;">
-      <div style="position:relative;background:linear-gradient(180deg, rgba(22,19,16,0.95), rgba(12,11,9,0.96));border:1px solid rgba(232,227,216,0.15);box-shadow:inset 0 1px 0 rgba(255,255,255,0.06), 0 12px 34px rgba(0,0,0,0.5);clip-path:polygon(22px 0, 100% 0, 100% 100%, 0 100%, 0 22px);padding:22px 28px;display:flex;flex-direction:column;gap:16px;">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;">
-          <span style="${MONO}font-size:11px;letter-spacing:0.26em;color:#A79F90;">経験${JP_SP}EXPERIENCE</span>
-          <span style="${MONO}font-size:11px;color:#9FE39F;">+<span data-cu="${progress.xpTotal}">0</span> XP</span>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:9px;">
-          <div style="display:flex;align-items:baseline;gap:12px;white-space:nowrap;">
-            <span style="${MONO}font-size:28px;line-height:1;color:#F5F0E6;">Lv ${level.level.toLocaleString()}</span>
-            ${gained > 0 ? `<span style="${MONO}font-size:12.5px;color:#9FE39F;">▲ +${gained.toLocaleString()}</span>` : ''}
-          </div>
-          <div style="position:relative;height:9px;background:rgba(232,227,216,0.1);box-shadow:inset 0 1px 2px rgba(0,0,0,0.7);">
-            <div style="width:${xpRatio.toFixed(1)}%;height:9px;background:linear-gradient(90deg,#B23E14,#FF6B2B 70%,#FFA061);box-shadow:0 0 14px rgba(255,107,43,0.55);transform-origin:left;animation:u2rGrow 1.4s cubic-bezier(0.16,1,0.3,1);"></div>
-            <div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg,transparent 0 38px,rgba(4,4,8,0.95) 38px 40px);"></div>
-          </div>
-          <div class="u2r-xp-rows" style="display:grid;grid-template-columns:1fr auto;row-gap:5px;${MONO}font-size:11px;color:#8F8778;">
-            ${xpRows}${footRows}
-          </div>
-        </div>
-        <div style="border-top:1px solid rgba(232,227,216,0.1);padding-top:16px;display:flex;flex-direction:column;gap:10px;">
+    <div class="u2r-gtr" style="position:absolute;right:0;top:0;transform-origin:top right;transform:scale(var(--u2s, 1));">
+      <span style="position:absolute;right:56px;top:34px;${MONO}font-size:11px;letter-spacing:0.16em;color:#5E594F;white-space:nowrap;">${esc(result.modeName)} · LV.${level.level.toLocaleString()} ${esc(rank.name)} · ${dateStr}</span>
+
+      <div style="position:absolute;right:56px;top:104px;width:452px;display:flex;flex-direction:column;gap:12px;">
+        <div style="position:relative;background:linear-gradient(180deg, rgba(22,19,16,0.95), rgba(12,11,9,0.96));border:1px solid rgba(232,227,216,0.15);box-shadow:inset 0 1px 0 rgba(255,255,255,0.06), 0 12px 34px rgba(0,0,0,0.5);clip-path:polygon(22px 0, 100% 0, 100% 100%, 0 100%, 0 22px);padding:22px 28px;display:flex;flex-direction:column;gap:16px;">
           <div style="display:flex;justify-content:space-between;align-items:baseline;">
-            <span style="font-size:11.5px;color:#8F8778;">超越階級</span>
-            ${level.level >= 100000 ? `<span style="${MONO}font-size:10px;color:#77705F;">十万位階の伝承</span>` : ''}
+            <span style="${MONO}font-size:11px;letter-spacing:0.26em;color:#A79F90;">経験${JP_SP}EXPERIENCE</span>
+            <span style="${MONO}font-size:11px;color:#9FE39F;">+<span data-cu="${progress.xpTotal}">0</span> XP</span>
           </div>
-          <div style="display:flex;align-items:center;gap:16px;">
-            <span style="position:relative;width:56px;height:56px;flex:none;display:flex;align-items:center;justify-content:center;">
-              <span style="position:absolute;inset:0;border:1.5px solid rgba(255,160,97,0.7);transform:rotate(45deg);box-shadow:0 0 18px rgba(255,107,43,0.3);"></span>
-              <span style="position:absolute;inset:7px;border:1px solid rgba(255,180,120,0.3);transform:rotate(45deg);"></span>
-              <span style="font-weight:700;font-size:25px;color:#FFB98A;">${esc([...rank.name][0] ?? '兵')}</span>
-            </span>
-            <span style="display:flex;flex-direction:column;gap:4px;">
-              <span style="font-weight:700;font-size:25px;letter-spacing:0.1em;color:#FFD9BC;text-shadow:0 0 20px rgba(255,107,43,0.35);">${esc(rank.name)}</span>
-              <span style="${MONO}font-size:11px;color:#8F8778;">次階級「${esc(nri.nextName)}」まで <span style="color:#FFB98A;">${nri.remain.toLocaleString()}</span></span>
-            </span>
+          <div style="display:flex;flex-direction:column;gap:9px;">
+            <div style="display:flex;align-items:baseline;gap:12px;white-space:nowrap;">
+              <span style="${MONO}font-size:28px;line-height:1;color:#F5F0E6;">Lv ${level.level.toLocaleString()}</span>
+              ${gained > 0 ? `<span style="${MONO}font-size:12.5px;color:#9FE39F;">▲ +${gained.toLocaleString()}</span>` : ''}
+            </div>
+            <div style="position:relative;height:9px;background:rgba(232,227,216,0.1);box-shadow:inset 0 1px 2px rgba(0,0,0,0.7);">
+              <div style="width:${xpRatio.toFixed(1)}%;height:9px;background:linear-gradient(90deg,#B23E14,#FF6B2B 70%,#FFA061);box-shadow:0 0 14px rgba(255,107,43,0.55);transform-origin:left;animation:u2rGrow 1.4s cubic-bezier(0.16,1,0.3,1);"></div>
+              <div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg,transparent 0 38px,rgba(4,4,8,0.95) 38px 40px);"></div>
+            </div>
+            <div class="u2r-xp-rows" style="display:grid;grid-template-columns:1fr auto;row-gap:5px;${MONO}font-size:11px;color:#8F8778;">
+              ${xpRows}${footRows}
+            </div>
           </div>
-          <div style="position:relative;height:4px;background:rgba(232,227,216,0.1);">
-            <div style="width:${(nri.progress01 * 100).toFixed(1)}%;height:4px;background:linear-gradient(90deg,#B23E14,#FF6B2B);"></div>
+          <div style="border-top:1px solid rgba(232,227,216,0.1);padding-top:16px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;">
+              <span style="font-size:11.5px;color:#8F8778;">超越階級</span>
+              ${level.level >= 100000 ? `<span style="${MONO}font-size:10px;color:#77705F;">十万位階の伝承</span>` : ''}
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;">
+              <span style="position:relative;width:56px;height:56px;flex:none;display:flex;align-items:center;justify-content:center;">
+                <span style="position:absolute;inset:0;border:1.5px solid rgba(255,160,97,0.7);transform:rotate(45deg);box-shadow:0 0 18px rgba(255,107,43,0.3);"></span>
+                <span style="position:absolute;inset:7px;border:1px solid rgba(255,180,120,0.3);transform:rotate(45deg);"></span>
+                <span style="font-weight:700;font-size:25px;color:#FFB98A;">${esc([...rank.name][0] ?? '兵')}</span>
+              </span>
+              <span style="display:flex;flex-direction:column;gap:4px;">
+                <span style="font-weight:700;font-size:25px;letter-spacing:0.1em;color:#FFD9BC;text-shadow:0 0 20px rgba(255,107,43,0.35);">${esc(rank.name)}</span>
+                <span style="${MONO}font-size:11px;color:#8F8778;">次階級「${esc(nri.nextName)}」まで <span style="color:#FFB98A;">${nri.remain.toLocaleString()}</span></span>
+              </span>
+            </div>
+            <div style="position:relative;height:4px;background:rgba(232,227,216,0.1);">
+              <div style="width:${(nri.progress01 * 100).toFixed(1)}%;height:4px;background:linear-gradient(90deg,#B23E14,#FF6B2B);"></div>
+            </div>
           </div>
+          <span style="position:absolute;right:8px;top:8px;width:13px;height:13px;border-right:1.5px solid rgba(255,107,43,0.6);border-top:1.5px solid rgba(255,107,43,0.6);"></span>
         </div>
-        <span style="position:absolute;right:8px;top:8px;width:13px;height:13px;border-right:1.5px solid rgba(255,107,43,0.6);border-top:1.5px solid rgba(255,107,43,0.6);"></span>
-      </div>
 
-      <div style="background:linear-gradient(180deg, rgba(22,19,16,0.94), rgba(12,11,9,0.95));border:1px solid rgba(232,227,216,0.13);box-shadow:inset 0 1px 0 rgba(255,255,255,0.05);clip-path:polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);padding:16px 24px;display:flex;flex-direction:column;gap:11px;">
-        <span style="${MONO}font-size:10.5px;letter-spacing:0.24em;color:#77705F;">この試合の進行</span>
-        ${progressCardRows}
-      </div>
+        <div style="background:linear-gradient(180deg, rgba(22,19,16,0.94), rgba(12,11,9,0.95));border:1px solid rgba(232,227,216,0.13);box-shadow:inset 0 1px 0 rgba(255,255,255,0.05);clip-path:polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);padding:16px 24px;display:flex;flex-direction:column;gap:11px;">
+          <span style="${MONO}font-size:10.5px;letter-spacing:0.24em;color:#77705F;">この試合の進行</span>
+          ${progressCardRows}
+        </div>
 
-      <button type="button" class="u2r-cta" data-id="restart">
-        <span style="position:absolute;inset:0;background:linear-gradient(105deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.18) 45%, rgba(255,255,255,0) 60%);width:40%;animation:u2rScan 3.6s ease-in-out infinite;pointer-events:none;"></span>
-        再出撃<span style="${MONO}font-size:12px;font-weight:700;">Ⓐ</span>
-      </button>
-      <div style="display:flex;gap:10px;">
-        <button type="button" class="u2r-btn u2r-btn--l" data-id="to-armory">武器庫</button>
-        <button type="button" class="u2r-btn u2r-btn--r" data-id="menu">メニューへ</button>
+        <button type="button" class="u2r-cta" data-id="restart">
+          <span style="position:absolute;inset:0;background:linear-gradient(105deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.18) 45%, rgba(255,255,255,0) 60%);width:40%;animation:u2rScan 3.6s ease-in-out infinite;pointer-events:none;"></span>
+          再出撃<span style="${MONO}font-size:12px;font-weight:700;">Ⓐ</span>
+        </button>
+        <div style="display:flex;gap:10px;">
+          <button type="button" class="u2r-btn u2r-btn--l" data-id="to-armory">武器庫</button>
+          <button type="button" class="u2r-btn u2r-btn--r" data-id="menu">メニューへ</button>
+        </div>
       </div>
     </div>
 
-    <div style="position:absolute;right:56px;bottom:56px;display:flex;gap:28px;font-size:12.5px;color:#A79F90;white-space:nowrap;">
-      <span><span style="color:#FFB98A;">Ⓐ</span> 再出撃</span>
-      <span><span style="color:#B9B1A0;">Ⓑ</span> メニュー</span>
+    <div class="u2r-gbr" style="position:absolute;right:0;bottom:0;transform-origin:bottom right;transform:scale(var(--u2s, 1));">
+      <div style="position:absolute;right:56px;bottom:56px;display:flex;gap:28px;font-size:12.5px;color:#A79F90;white-space:nowrap;">
+        <span><span style="color:#FFB98A;">Ⓐ</span> 再出撃</span>
+        <span><span style="color:#B9B1A0;">Ⓑ</span> メニュー</span>
+      </div>
     </div>
   `;
   root.replaceChildren(stage);
-
-  // scale-to-fit(1920×1080コンポジションを画面へ等比フィット。v1教訓: レイアウト崩壊の根絶)
-  const fit = (): void => {
-    const s = Math.min(root.clientWidth / 1920, root.clientHeight / 1080);
-    stage.style.setProperty('--u2s', String(s > 0 ? s : 1));
-  };
-  fit();
-  window.addEventListener('resize', fit, sig);
+  // R56 W3: 旧来のローカルfit()(root.clientWidthを測ってstage --u2sを自前計算)は撤去。
+  // --u2s は menu2.ts の applyScale() が画面を問わず常時 root(=.u2-stage)へ更新するため、
+  // ここでは何もしなくても各群(u2r-g*)が正しくスケールされる(campaign/hub/deploy/options
+  // と同一の共有メカニズム。二重スケール回避のため自前計算は持たない)。
 
   // countUp(実値へ駆け上がり。reduce時は即値)
   for (const el of Array.from(stage.querySelectorAll<HTMLElement>('[data-cu]'))) {

@@ -7,24 +7,25 @@
 */
 
 .u2-result {
-  /* W-C6[0]同根: .u2-result は共有 .u2-stage(position:relative,1920x1080固定)へ付与される
-     クラス。position:fixed/inset で上書きすると親 .u2-letterbox の flex中央寄せから外れ、
-     非16:9ウィンドウで右下へずれてクリップする。.u2-stage の既定配置に任せる(z-indexは
-     relativeの.u2-stage上で有効)。 */
+  /* R56 W3: resultはFLUID_SCREENSへ登録され常時フルード(menu2.tsが.u2-stage--fluidを
+     付与=親.u2-stage自体がposition:absolute;inset:0=実viewport全面になる)。旧来の
+     「.u2-stageは1920x1080固定+コーディネータが1回scale-to-fit」前提だった
+     display:grid;place-items:center(内側.u2-result-stageの中央寄せ)は、フルード化後は
+     .u2-result-stage自身がinset:0で全面を占めるため不要かつ二重中央寄せの原因になる
+     (旧W-C6[0]の教訓=position:fixed/insetで上書きしないは、フルード化された親
+     .u2-stage--fluid自体が既にinset:0のためここでは抵触しない)。 */
   z-index: 30;
   overflow: hidden;
   background: #020207;
-  display: grid;
-  place-items: center;
 }
 .u2-result-stage {
-  position: relative;
-  width: 1920px;
-  height: 1080px;
-  flex: none;
+  /* 旧: width:1920px;height:1080px;transform:scale(var(--u2s))の単一stageスケールを撤去。
+     実viewport全面(親.u2-stage--fluidと同じinset:0)を占め、内部の各要素(u2r-g*群)が
+     個別にtransform:scale(var(--u2s,1))して1920系モック座標を再現する
+     (hub/campaign/deploy/options と同型のフルードパターン)。 */
+  position: absolute;
+  inset: 0;
   overflow: hidden;
-  transform: scale(var(--u2s, 1));
-  transform-origin: center center;
   background: linear-gradient(160deg, #0b0a10 0%, #070609 46%, #030308 100%);
   color: #e8e3d8;
   font-family: 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
@@ -81,8 +82,11 @@
 }
 
 /* ── 実データで行数可変な領域のスクロール化(v1教訓: スクロール不可の根絶) ── */
+/* R56 W3[MEDIUM]: max-height:300pxだと(スコアボード実測top≈727)+300=1027pxがメダル帯
+   (bottom:56→実測top≈931px)と縦96px重なり下位行が隠れる不具合があった。スコアボード
+   区画とメダル帯の間の実利用可能高(≈204px)に収まる値へ縮める(≈14pxの目視余白を残す)。 */
 .u2r-board-rows {
-  max-height: 300px;
+  max-height: 190px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 107, 43, 0.4) rgba(232, 227, 216, 0.06);
@@ -127,7 +131,11 @@
 .u2r-cta:hover {
   background: linear-gradient(180deg, #ff9861, #f26722 55%, #d4501e);
 }
-.u2r-cta:focus-visible {
+/* R56 W3[LOW]: 単体セレクタ.u2r-cta:focus-visible=(0,2,0)はui2.cssの
+   #menu .u2-stage button:focus-visible=(1,2,1)にid桁で負け、意図の象牙#fff4e6が出ず
+   熾火橙固定になっていた(campaign .u2c-cta/.u2c-selectと同型の既知パターン)。#menu .u2-stage
+   を前置して(1,3,1)まで詳細度を上げ、実際に勝たせる。 */
+#menu .u2-stage .u2r-cta:focus-visible {
   outline: 2px solid #fff4e6;
   outline-offset: 3px;
 }
@@ -155,7 +163,7 @@
   border-color: rgba(255, 107, 43, 0.6);
   color: #ffa061;
 }
-.u2r-btn:focus-visible {
+#menu .u2-stage .u2r-btn:focus-visible {
   outline: 2px solid #ffa061;
   outline-offset: 2px;
 }

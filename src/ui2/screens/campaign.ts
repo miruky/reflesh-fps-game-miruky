@@ -311,8 +311,14 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
     : '';
   const reward = missionRewardLabel(mission.rewardId);
 
+  // R56 W3: フルードステージ(menu2.tsのFLUID_SCREENSに'briefing'を登録済み=常時フルード)
+  // 向けのアンカーグループ化。mountCampaign(W2)と同じ0-sizeラッパー方式だが、共有クラス
+  // (.u2c-group-tl/-tr/-br)化してmountMissionResultとも共用する(campaign.css参照)。
+  // .u2c-head+.u2c-brief-body=左上群、.u2c-meta=右上群、.u2c-brief-actions=右下群。
+  // .u2c-hintbar は3画面共有の②バンド(W2で.u2-stage--fluid guardを追加済み・据置)。
   root.innerHTML = `
     ${backdropHtml()}
+    <div class="u2c-group-tl">
     <div class="u2c-head">
       <span class="u2c-kicker">${missionCode(mission)}\u3000/\u3000出撃命令\u3000SORTIE ORDER</span>
       <span class="u2c-title">${esc(mission.title)}</span>
@@ -324,6 +330,8 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
       ${intel}
       ${castHtml}
     </div>
+    </div>
+    <div class="u2c-group-tr">
     <dl class="u2c-meta">
       <div class="u2c-meta-row"><dt>目的</dt><dd>${esc(mission.objective.label)}</dd></div>
       <div class="u2c-meta-row"><dt>武器</dt><dd style="flex:1"><select class="u2c-select" data-id="brief-weapon-select" aria-label="出撃武器の選択"></select></dd></div>
@@ -333,9 +341,12 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
       ${mission.challenge ? `<div class="u2c-meta-row"><dt>挑戦</dt><dd>${esc(mission.challenge.label)}</dd></div>` : ''}
       ${reward ? `<div class="u2c-meta-row"><dt>報酬</dt><dd style="color:#f5d06b">クリアで解放: ${esc(reward)}</dd></div>` : ''}
     </dl>
+    </div>
+    <div class="u2c-group-br">
     <div class="u2c-brief-actions">
       <button type="button" class="u2c-quiet" data-id="brief-back">戦役へ戻る</button>
       <button type="button" class="u2c-cta" data-id="deploy-mission" data-autofocus>出撃する<span class="u2c-spur"></span><span class="u2c-shine"></span></button>
+    </div>
     </div>
     ${hintbarHtml(`規定 ${fmtPar(mission.parTimeS)} · ${mission.objective.label}`, '戦役へ')}
   `;
@@ -526,14 +537,16 @@ export const mountMissionResult: ScreenMount = (host, root, opts) => {
       </div>
     </div>`;
 
+  // R56 W3: フルードステージ(menu2.tsのFLUID_SCREENSに'mission-result'を登録済み=常時
+  // フルード)向けのアンカーグループ化。旧u2c-band(左右flex行)は分割し、左キッカーは
+  // .u2c-mr-leftと同じ左上群、右メタは.u2c-mr-railと同じ右上群へ合流する(mountBriefing
+  // と共用の.u2c-group-tl/-tr/-brクラス。campaign.css参照)。.u2c-band-ruleは両端アンカー
+  // が要るため、群の外(stage直下)のまま.u2-stage--fluid guardでcalc()変換する。
   root.innerHTML = `
     ${backdropHtml()}
-    <div class="u2c-band">
+    <div class="u2c-group-tl">
       <div class="u2c-band-left"><span class="u2c-dash"></span><span class="u2c-band-kicker">戦役詳報\u3000MISSION REPORT</span></div>
-      <span class="u2c-band-meta">${mission ? `${missionCode(mission)} · ${esc(mission.title)} · 規定 ${fmtPar(mission.parTimeS)}` : 'MISSION'}</span>
-    </div>
-    <div class="u2c-band-rule"></div>
-    <div class="u2c-mr-left">
+      <div class="u2c-mr-left">
       <span class="u2c-ritual${won ? '' : ' lost'}">${won ? '作戦完遂' : '作戦失敗'}</span>
       <p class="u2c-mr-mission"><b>${esc(mission?.title ?? 'ミッション')}</b>${esc(mission?.subtitle ?? '')}</p>
       ${won ? starsHtml(stars, true) : ''}
@@ -545,7 +558,12 @@ export const mountMissionResult: ScreenMount = (host, root, opts) => {
         <button type="button" class="u2c-quiet" data-id="to-campaign"${nextId && nextUnlocked ? '' : ' data-autofocus'}>戦役へ戻る</button>
       </div>
     </div>
-    <div class="u2c-mr-rail">${progressCardHtml(host, progress)}</div>
+    </div>
+    <div class="u2c-group-tr">
+      <span class="u2c-band-meta">${mission ? `${missionCode(mission)} · ${esc(mission.title)} · 規定 ${fmtPar(mission.parTimeS)}` : 'MISSION'}</span>
+      <div class="u2c-mr-rail">${progressCardHtml(host, progress)}</div>
+    </div>
+    <div class="u2c-band-rule"></div>
     ${hintbarHtml(won ? `評価 ★${stars}/3` : '再挑戦で雪辱を', '戦役へ')}
   `;
 

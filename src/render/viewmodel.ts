@@ -3844,6 +3844,58 @@ export class ViewModel {
   // TrackB 紫電: Y落下(velY m/s直積分) + 三角opacity(0→0.55→0)
   // darkMode=false: 既存の即フェード契約継承(dt*3倍速、線形減衰)
   private _updateDarkAura(dt: number): void {
+    // 電弧フリッカー: 0.05-0.09s ごとにランダム透明度変動
+    // R56 W3根治: 従来はこの2ブロックが `!_darkMode` 早期returnの後ろにあり、_darkMode===false
+    // (=純雷帝: _lightningMode=true, _kokuraiteiMode=false, _darkMode=false)では早期returnに
+    // 嵌って一切実行されなかった(刀身の雷が明滅せず静止して見えるバグ)。darkMode有無に関係なく
+    // 毎フレーム明滅させるため、早期returnより前に移動する。黒雷帝(_darkMode=true)の既存挙動は
+    // 実行順が変わるだけで内容は不変(このブロックは _darkMode を参照しない)。
+    if (this._lightningMode || this._kokuraiteiMode) {
+      this._arcFlickerTimer -= dt;
+      if (this._arcFlickerTimer <= 0) {
+        this._arcFlickerTimer = 0.05 + Math.random() * 0.04;
+        if (this.gun) {
+          const lb = this.gun.getObjectByName('vm:lightningBlade');
+          if (lb) {
+            lb.traverse((child) => {
+              // R55 W-C6 [10]根治: isArcLine は makeArcLine() が material.userData に立てる
+              // マーキング(Mesh.userData ではない)。従来は Mesh 側を見ていたため常に false で
+              // 発火せず、雷刀ビルボードリボンが明滅しなかった。charge-glow収集側(4248行)や
+              // arcLineHexes テストヘルパと同じ material.userData.isArcLine 規約に統一する
+              if (!(child instanceof THREE.Mesh)) return;
+              const mat = child.material as THREE.MeshBasicMaterial;
+              if (mat.userData['isArcLine'] !== true) return;
+              const base = this._kokuraiteiMode ? 0.35 : 0.38;
+              const flicker = base + Math.random() * 0.25;
+              mat.opacity = Math.min(1, flicker);
+            });
+          }
+        }
+      }
+    }
+    // 雷帝: 電気アークの個別フリッカー(R51: ジオメトリ再構築なし。各アークが独立タイマーで
+    // 8-15Hz感の周期(1/(8+rand*7)秒)ごとに visible/opacity をトグルし、5本が同期点滅する
+    // 「静止した線」に見えないようにする)。
+    // R56 W3根治: `!_darkMode` 条件は、早期return後ろにあった旧位置では _darkMode===true
+    // の時しか到達できず常にfalseとなる死コードだった(全モードで不発火)。ブロックを早期return
+    // より前へ移動した上でこの矛盾する条件を削除し、純雷帝(!darkMode)でも黒雷帝(darkMode)でも
+    // 発火するようにする。
+    if (this._lightningMode && this._lightningArcMeshes.length > 0) {
+      for (let i = 0; i < this._lightningArcMeshes.length; i += 1) {
+        const arc = this._lightningArcMeshes[i];
+        if (!arc) continue;
+        let t = this._lightningArcFlickerT[i] ?? 0;
+        t -= dt;
+        if (t <= 0) {
+          t = 1 / (8 + Math.random() * 7); // 周期: 8-15Hz相当
+          arc.visible = Math.random() < 0.82; // まれに完全消灯(電光の途切れ感)
+          if (arc.material instanceof THREE.MeshBasicMaterial) {
+            arc.material.opacity = 0.35 + Math.random() * 0.65;
+          }
+        }
+        this._lightningArcFlickerT[i] = t;
+      }
+    }
     if (!this._darkMode) {
       // darkMode=false でも生き残りパーティクルをフェードアウト(既存契約継承)
       for (const a of this._darkAuraPool) {
@@ -3894,49 +3946,6 @@ export class ViewModel {
       if (this._darkSparkSpawnTimer <= 0) {
         this._spawnDarkSpark();
         this._darkSparkSpawnTimer = DARK_SPARK_SPAWN_INTERVAL;
-      }
-    }
-    // 電弧フリッカー: 0.05-0.09s ごとにランダム透明度変動
-    if (this._lightningMode || this._kokuraiteiMode) {
-      this._arcFlickerTimer -= dt;
-      if (this._arcFlickerTimer <= 0) {
-        this._arcFlickerTimer = 0.05 + Math.random() * 0.04;
-        if (this.gun) {
-          const lb = this.gun.getObjectByName('vm:lightningBlade');
-          if (lb) {
-            lb.traverse((child) => {
-              // R55 W-C6 [10]根治: isArcLine は makeArcLine() が material.userData に立てる
-              // マーキング(Mesh.userData ではない)。従来は Mesh 側を見ていたため常に false で
-              // 発火せず、雷刀ビルボードリボンが明滅しなかった。charge-glow収集側(4248行)や
-              // arcLineHexes テストヘルパと同じ material.userData.isArcLine 規約に統一する
-              if (!(child instanceof THREE.Mesh)) return;
-              const mat = child.material as THREE.MeshBasicMaterial;
-              if (mat.userData['isArcLine'] !== true) return;
-              const base = this._kokuraiteiMode ? 0.35 : 0.38;
-              const flicker = base + Math.random() * 0.25;
-              mat.opacity = Math.min(1, flicker);
-            });
-          }
-        }
-      }
-    }
-    // 雷帝: 電気アークの個別フリッカー(R51: ジオメトリ再構築なし。各アークが独立タイマーで
-    // 8-15Hz感の周期(1/(8+rand*7)秒)ごとに visible/opacity をトグルし、5本が同期点滅する
-    // 「静止した線」に見えないようにする)。
-    if (this._lightningMode && !this._darkMode && this._lightningArcMeshes.length > 0) {
-      for (let i = 0; i < this._lightningArcMeshes.length; i += 1) {
-        const arc = this._lightningArcMeshes[i];
-        if (!arc) continue;
-        let t = this._lightningArcFlickerT[i] ?? 0;
-        t -= dt;
-        if (t <= 0) {
-          t = 1 / (8 + Math.random() * 7); // 周期: 8-15Hz相当
-          arc.visible = Math.random() < 0.82; // まれに完全消灯(電光の途切れ感)
-          if (arc.material instanceof THREE.MeshBasicMaterial) {
-            arc.material.opacity = 0.35 + Math.random() * 0.65;
-          }
-        }
-        this._lightningArcFlickerT[i] = t;
       }
     }
   }

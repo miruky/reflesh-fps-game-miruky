@@ -2923,9 +2923,12 @@ export class Match {
   // 固定60Hzで呼ばれるゲームロジック本体
   update(dt: number): void {
     if (this.over) {
-      // キルカム trailing window: over後もFK_WIN_POST秒間だけelapsed/killcam.tickRecordを継続。
-      // 物理/AI/スコアは動かさない=記録専用。これでキル後のフレームがバッファに蓄積され、
-      // スロー再生後半(kill〜kill+1.2s)が静止画面になるバグを根治する。
+      // R56 W3 #2: キルカム trailing window(over後もFK_WIN_POST秒間だけelapsed/
+      // killcam.tickRecordを継続)。主経路は tickKillcamTrailing() へ移設済み
+      // (main.ts が mode==='playing'&&over 検出の次フレームで mode を'finalkillcam'へ
+      // 切り替え、以後 update() を呼ばなくなるため、この分岐は定常フレームレートでは
+      // 実質到達しない=旧来は死コードだった)。update() が万一呼ばれるケースに備えた
+      // 保険としてロジックはそのまま残す(tickKillcamTrailing と同一条件)。
       if (
         this.config.mode !== 'zombie' &&
         this.killcam.killElapsed !== -Infinity &&
@@ -9434,6 +9437,37 @@ export class Match {
     this.shingetsuPhase = 'idle';
     this.killcam.begin();
     return true;
+  }
+
+  /**
+   * R56 W3 #2: キルカム trailing window(over直後 FK_WIN_POST 秒だけ記録を継続する)を
+   * finalkillcam 経路から直接駆動する。
+   *
+   * 根本原因: main.ts は `mode==='playing' && match.over` を検出した次の rAF で
+   * mode を 'finalkillcam' へ切り替え、以後は固定 60Hz ティック(update())を一切
+   * 呼ばなくなる(effects/atmosphere の二重更新を防ぐゲート)。GameLoop の
+   * accumulator は 1 フレームぶんしか溜まらない定常状態では over が立ったティックの
+   * 直後に即座に空になるため、update() 冒頭の over 分岐(trailing 記録ロジック)は
+   * 通常フレームレートでは一度も実行されない=事実上の死コードだった(実機計測で
+   * match.elapsed が over 後まったく前進しないことを確認済み)。結果、録画バッファは
+   * キル瞬間でほぼ止まり、スロー再生後半(kill〜kill+CK_WIN_POST)が
+   * fkFindFrames の「最終フレームへクランプ」フォールバックにより静止画になる。
+   *
+   * 本メソッドは main.ts の finalkillcam 分岐(advanceFinalKillcam 呼び出しの直前)から
+   * 毎フレーム呼ばれ、update() 内の同ロジックと同一の条件で記録だけを継続する
+   * (物理/AI/スコアには一切触れない=記録専用。二重 effects.update を避けるため
+   * updateEffects/updateAtmosphere もここでは呼ばない)。update() 内の over 分岐は
+   * 将来 update() が呼ばれるケースに備えた保険としてそのまま残す。
+   */
+  tickKillcamTrailing(dt: number): void {
+    if (
+      this.config.mode !== 'zombie' &&
+      this.killcam.killElapsed !== -Infinity &&
+      this.elapsed <= this.killcam.killElapsed + FK_WIN_POST
+    ) {
+      this.elapsed += dt;
+      this.killcam.tickRecord(this.elapsed);
+    }
   }
 
   /** finalKillcam 中に毎フレーム呼ぶ。完了(窓を抜けた)なら true、継続なら false を返す。 */
