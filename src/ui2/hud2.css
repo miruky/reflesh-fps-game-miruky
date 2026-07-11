@@ -660,10 +660,15 @@
 }
 
 /* ゾンビパーク菱形(mock実測46px。旧.zp-iconを焔座様式へ上書き) */
+/* R58 bug2続き: パークは常時ゾンビ専用表示。ゾンビ戦の左下バイタルは金ポイントプレート
+   (u2h-vitals-zrow)が積まれてスタック上端が bottom:181px まで伸びる。旧 bottom:158px では
+   パーク列(高46px)下端がプレート天面へ23px食い込み「ポイント」表示の可読性を損なっていた。
+   スタック上端(≈181px)を確実にクリアする bottom:196px へ引き上げる(左下レーダーはR58で
+   ゾンビ非表示のため上方に競合要素は無い)。 */
 #hud.u2-hud .u2h-zperks {
   position: absolute;
   left: 44px;
-  bottom: 158px;
+  bottom: 196px;
   display: flex;
   gap: 9px;
   z-index: 12;

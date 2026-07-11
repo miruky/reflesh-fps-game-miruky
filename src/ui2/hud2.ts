@@ -2289,7 +2289,16 @@ export class Hud2 {
     const radar = this.el['radar'];
     const group = this.el['radarblips'];
     if (!radar || !group) return;
-    const on = snap.radarEnabled && snap.alive;
+    // R58: ゾンビモードでは左下の簡易レーダーを畳む。
+    //  ① 実機報告「画面左下の謎の赤い矢印」= 本レーダー(赤環境光+至近ゾンビの赤ブリップ多数+
+    //     自機ポインタ矢印 radar-self)がゾンビ戦では文脈のない赤い矢印に見えていた。
+    //  ② 実機報告「UAVミニマップとzpointsが重なる」= ゾンビ戦は生命プレート上に金ポイント
+    //     プレート(u2h-vitals-zrow)が積まれ左下スタックが高くなり、bottom:140px固定の本レーダー
+    //     下端(≈bottom:140-181px帯)へ食い込んでいた。
+    //  ゾンビ戦は左上ミニマップも既に非表示(inZombie)であり、至近のゾンビ群は常に可視=レーダー情報は
+    //  冗長。ここで畳むことで両バグを根絶する(FFA/TDM等ではレーダーは従来どおり表示=機能維持)。
+    const inZombie = snap.zombieRound !== undefined;
+    const on = snap.radarEnabled && snap.alive && !inZombie;
     radar.hidden = !on;
     if (!on) return;
     const blips = group.children;

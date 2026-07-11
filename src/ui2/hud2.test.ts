@@ -93,6 +93,11 @@ describe('焔座クロームのソース/CSS契約', () => {
   it('死亡幕は明朝儀式「戦死」', () => {
     expect(src.includes('<div class="hud-death-title">戦死</div>')).toBe(true);
   });
+  it('R58: ゾンビ戦は左下の簡易レーダーを畳む(赤い矢印バグ/zpoints重なりバグの根治)', () => {
+    // updateRadar の可視判定にゾンビ除外(!inZombie)が入っていること。
+    // これがないと左下レーダー(赤ブリップ+自機矢印)がゾンビ戦で残り、金ポイントプレートに重なる。
+    expect(src.includes('snap.radarEnabled && snap.alive && !inZombie')).toBe(true);
+  });
   it('全ライタ参照data-idがコンストラクタDOMに存在する(退行網)', () => {
     const ids = [
       // スコア/モード/コンパス
