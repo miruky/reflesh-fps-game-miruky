@@ -8,6 +8,38 @@
   名前空間: .u2d-*。keyframesは u2d- 接頭(グローバル衝突回避)。
 */
 
+/* ── R56 焔座フルードステージ: アンカーラッパー群(0-sizeで子のモック座標を保存) ──
+   コーディネータ(menu2.ts)が deploy を開くとstageに .u2-stage--fluid(inset:0=viewport全面)が
+   付き、--u2s = min(vw/1920, vh/1080) が常時setされる。ここでは各群を該当の角/辺基準に
+   transform:scale(var(--u2s)) で一様スケールし、黒帯なし・歪みゼロで viewport全面へ引き伸ばす。
+   ラッパーは 0-size(width/height指定なし)なので子(position:absolute)がはみ出して描画・操作でき、
+   ラッパー自身はクリックを奪わない。--u2s=1(16:9)では scale(1)=恒等でピクセル完全一致。 */
+.u2d-fluid-tl,
+.u2d-fluid-tr,
+.u2d-fluid-bc {
+  position: absolute;
+  transform: scale(var(--u2s, 1));
+}
+.u2d-fluid-tl {
+  /* 左上寄せ群: 見出し/左ナビ/分隊ノート。左上角(0,0)基準にスケール。 */
+  left: 0;
+  top: 0;
+  transform-origin: top left;
+}
+.u2d-fluid-tr {
+  /* 右上寄せ群: ロビーカード/中央パネル。右上角基準にスケール(右端アンカー)。 */
+  right: 0;
+  top: 0;
+  transform-origin: top right;
+}
+.u2d-fluid-bc {
+  /* 下中央群: 次ステージ帯+出撃CTA。下辺中央基準にスケール(下端アンカー・水平中央)。
+     0-width の点(left:50%)を中心に、子(u2d-band)自身の translateX(-50%) で中央寄せする。 */
+  left: 50%;
+  bottom: 0;
+  transform-origin: bottom center;
+}
+
 /* ── 背景情景: 残照の空+雲+星+都市+幟+塵+接地(mock03のPNG背景の手続き再現) ── */
 .u2d-bg {
   position: absolute;
@@ -373,7 +405,10 @@
   right: 96px;
   top: 252px;
   width: 640px;
-  bottom: 200px;
+  /* R56 フルード: 0-sizeの u2d-fluid-tr ラッパー内では bottom アンカーが解決できないため、
+     16:9設計高(1080-252-200=628px)を明示。旧 bottom:200px と16:9でピクセル一致。パネルは
+     ラッパー内で従来px高を保つので内部の overflow:auto スクロールが生き続ける(scaleは見た目のみ)。 */
+  height: 628px;
   display: flex;
   flex-direction: column;
   /* R55 W-C: 背景の菱紋バナーが行間ギャップから透けるバグの再発防止(実質不透明) */
@@ -781,40 +816,44 @@
   transform: scaleX(1);
 }
 
-/* ── 下帯(mock実測: 高さ56px、A/Bヒント+中央mono+右メニュー) ── */
+/* ── 下帯(mock実測: 高さ56px、A/Bヒント+中央mono+右メニュー) ──
+   R56 フルード: 左右両端に跨る帯。transformとstretch併用不可(scaleは幅も縮めて全面fillを壊す)
+   のため transform不使用で left:0;bottom:0;width:100% にstretchし、高さ/余白/字体/寸法は
+   すべて calc(モックpx * var(--u2s)) で一様スケールする。--u2s=1(16:9)では calc(px*1)=px で
+   旧デザインとピクセル完全一致。 */
 .u2d-foot {
   position: absolute;
   left: 0;
   bottom: 0;
   width: 100%;
-  height: 56px;
+  height: calc(56px * var(--u2s, 1));
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 60px;
+  padding: 0 calc(60px * var(--u2s, 1));
   box-sizing: border-box;
   background: linear-gradient(0deg, rgba(3, 4, 5, 0.9), rgba(3, 4, 5, 0));
   white-space: nowrap;
 }
 .u2d-hints {
   display: flex;
-  gap: 26px;
-  font-size: 13px;
+  gap: calc(26px * var(--u2s, 1));
+  font-size: calc(13px * var(--u2s, 1));
   color: #c4c0b8;
   align-items: center;
 }
 .u2d-key {
   display: inline-flex;
-  width: 21px;
-  height: 21px;
+  width: calc(21px * var(--u2s, 1));
+  height: calc(21px * var(--u2s, 1));
   border-radius: 50%;
-  border: 1.5px solid rgba(232, 227, 216, 0.45);
+  border: calc(1.5px * var(--u2s, 1)) solid rgba(232, 227, 216, 0.45);
   color: #c4c0b8;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: calc(10px * var(--u2s, 1));
   font-weight: 800;
-  margin-right: 4px;
+  margin-right: calc(4px * var(--u2s, 1));
 }
 .u2d-key.accent {
   border-color: #ff6b2b;
@@ -822,16 +861,16 @@
 }
 .u2d-foot-mono {
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 11px;
+  font-size: calc(11px * var(--u2s, 1));
   color: #6e6a62;
 }
 .u2d-foot-menu {
   background: none;
   color: #c4c0b8;
   font-family: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--u2s, 1));
   cursor: pointer;
-  padding: 6px 10px;
+  padding: calc(6px * var(--u2s, 1)) calc(10px * var(--u2s, 1));
 }
 .u2d-foot-menu:hover {
   color: #ffa061;

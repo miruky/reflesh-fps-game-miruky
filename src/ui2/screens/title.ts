@@ -3,10 +3,15 @@
 // モックの情景レイヤは1920×1080のPNGアセットだったため、アセットレス鉄則に従い
 // 同構図(光柱7本/目盛環+内接菱/輪鍔短剣/橙の地割れ/火の粉/雨条/ビネット)を
 // シード固定の決定論的インラインSVGとして再現している。
-// 1920×1080固定コンポジションは、コーディネータ(menu2.ts)の .u2-stage が
-// viewportへ scale-to-fit する(共通基盤=ui2.css)。本画面はその内側でモック座標を
-// 逐語移植するのみで独自の再スケールは持たない
-// (旧実装は常にs=1になる死んだ二重スケール処理を持っていたため撤去した)。
+//
+// R56 W2: 焔座フルードステージ。コーディネータ(menu2.ts)は 'title' を
+// FLUID_SCREENS に登録しており、.u2-stage は viewport全面(黒帯なし)まで
+// 引き伸ばされ、もう scale-to-fit しない(transform:none)。よってこの画面自身が
+// var(--u2s)(=min(vw/1920,vh/1080)、menu2.tsが常時更新)で各グループを
+// 個別に端アンカーtransform:scaleする責務を持つ(hub.tsと同型のアンカーグループ方式、
+// 詳細はtitle.css)。情景SVG背景は独自にcover-fit(--u2-cover、title.css内でCSSのみ
+// で算出)し、霧/火の粉もそれと同じ倍率で追随させてクナイ根元とのズレを防ぐ。
+// モックの座標(left/top/paddingのpx値)そのものは1px足りとも書き換えていない。
 import '../title.css';
 import { BUILD_LABEL } from '../../version';
 
@@ -200,15 +205,18 @@ export function mountTitle(host: TitleHost, root: HTMLElement, onStart: () => vo
   ).join('');
 
   el.innerHTML =
-    `<div class="u2-title__stage">` +
+    // 情景SVG背景(全画面cover-fill、titleSceneSvg自身がviewBox 0 0 1920 1080 +
+    // preserveAspectRatio=xMidYMid sliceを持つ。title.css側でwidth/height:100%にして起動する)。
     titleSceneSvg() +
-    // 流れる霧(モック7-8行の実値)
-    `<div class="u2-title__fog u2-title__fog--a" aria-hidden="true"></div>` +
-    `<div class="u2-title__fog u2-title__fog--b" aria-hidden="true"></div>` +
-    // クナイ根元の上昇火の粉(モック10-12行の実座標)
-    `<div class="u2-title__ember u2-title__ember--1" aria-hidden="true"></div>` +
-    `<div class="u2-title__ember u2-title__ember--2" aria-hidden="true"></div>` +
-    `<div class="u2-title__ember u2-title__ember--3" aria-hidden="true"></div>` +
+    // 流れる霧+クナイ根元の上昇火の粉(モック実値/実座標)。情景SVGと同じcover倍率
+    // (--u2-cover)で追随する1920×1080アンカー層にまとめて座標は書き換えない。
+    `<div class="u2-title__atmo" aria-hidden="true">` +
+    `<div class="u2-title__fog u2-title__fog--a"></div>` +
+    `<div class="u2-title__fog u2-title__fog--b"></div>` +
+    `<div class="u2-title__ember u2-title__ember--1"></div>` +
+    `<div class="u2-title__ember u2-title__ember--2"></div>` +
+    `<div class="u2-title__ember u2-title__ember--3"></div>` +
+    `</div>` +
     `<div class="u2-title__build">${buildL1}<br>${buildL2}</div>` +
     `<div class="u2-title__logo">` +
     `<div class="u2-title__kicker"><i></i><span>ブラウザFPS\u3000—\u3000熾火の系譜</span></div>` +

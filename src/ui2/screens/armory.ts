@@ -323,6 +323,7 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
       <div class="u2a-stage" data-view="primary">
         <div class="u2a-bg"></div>
         <div class="u2a-scan"></div>
+        <div class="u2a-anchor u2a-anchor--left">
         <div class="u2a-header">
           <div class="u2a-head-left">
             <button type="button" class="u2a-back" data-id="back-to-hub" title="メニューへ戻る" aria-label="メニューへ戻る">
@@ -338,13 +339,15 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
             </div>
           </div>
         </div>
-        <div class="u2a-tabs" data-id="tabs" role="tablist" aria-label="武器カテゴリ"></div>
         <div class="u2a-list">
           <div class="u2a-rows" data-id="weapon-list"></div>
           <div class="u2a-exnote" data-id="exnote" hidden>
             <span class="u2a-dia"></span><span></span>
           </div>
         </div>
+        </div>
+        <div class="u2a-tabs" data-id="tabs" role="tablist" aria-label="武器カテゴリ"></div>
+        <div class="u2a-anchor u2a-anchor--right">
         <div class="u2a-detail">
           <div class="u2a-nameplate-row">
             <span class="u2a-nameplate" data-id="wname"></span>
@@ -362,6 +365,7 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
           <div class="u2a-camo" data-id="camo"></div>
           <div class="u2a-slots" data-id="slots"></div>
         </div>
+        </div>
         <div class="u2a-band">
           <span class="u2a-band-status" data-id="band"></span>
           <div class="u2a-band-hints"><span>▲▼ 選択</span><span class="u2a-hint-cat">LB / RB カテゴリ</span><span><b>Ⓑ</b> 戻る</span></div>
@@ -370,28 +374,17 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
     </div>`;
 
   const stage = root.querySelector<HTMLElement>('.u2a-stage');
-  const outer = root.querySelector<HTMLElement>('.u2-armory');
   const q = <T extends HTMLElement = HTMLElement>(id: string): T => {
     const el = root.querySelector<T>(`[data-id="${id}"]`);
     if (!el) throw new Error(`u2-armory: missing [data-id="${id}"]`);
     return el;
   };
 
-  // ── 1920×1080ステージの等比フィット(zoom優先、非対応はtransform) ──────
-  const fit = (): void => {
-    if (!stage || !outer) return;
-    const s = Math.min(outer.clientWidth / 1920, outer.clientHeight / 1080) || 1;
-    if (typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2')) {
-      stage.style.setProperty('zoom', String(s));
-      stage.style.transform = '';
-    } else {
-      stage.style.transform = `scale(${s})`;
-      stage.style.transformOrigin = '50% 50%';
-    }
-  };
-  fit();
-  const ro = new ResizeObserver(fit);
-  if (outer) ro.observe(outer);
+  // R56-W2: 旧来のResizeObserverベースの等比フィット(zoom/transform自前計算)は廃止。
+  // armoryは常時FLUID_SCREENS対象(menu2.ts)としてコーディネータが開くため、.u2a-stageは
+  // 常に.u2-armory=viewport全面を100%で満たし、内部の.u2a-anchor--left/--rightが各々
+  // var(--u2s)(コーディネータが常時更新)でtransform:scaleする。ここで別途スケールを
+  // 掛けると二重スケールになるため、armory側は一切のズーム計算を持たない。
 
   // ── アタッチメントのスロット表現(loadout.attachments⇔slotマップ) ─────
   const slotMap = (): Record<AttachmentSlot, string | null> => {
@@ -971,7 +964,6 @@ export function mountArmory(host: Ui2Host, root: HTMLElement): Screen2Handle {
       closePop();
       document.removeEventListener('pointerdown', onDocDown, true);
       document.removeEventListener('keydown', onDocKeydown, true);
-      ro.disconnect();
       host.teardownWeaponPreview();
       root.replaceChildren();
     },

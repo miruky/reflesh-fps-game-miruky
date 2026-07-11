@@ -905,6 +905,23 @@
   transition-duration: 0.15s !important;
 }
 
+/* ═══ R56 W2 フルードステージ(戦役=mountCampaignのみ対象) ═══
+   menu2.tsのFLUID_SCREENSに'campaign'のみが登録されており、mountBriefing/
+   mountMissionResultの画面が開いている間はstageに.u2-stage--fluidが絶対に付かない
+   (open()がFLUID_SCREENS.has(id)で毎回付け外しする画面単位の判定のため)。よって
+   .u2c-hintbar(3画面共有のhintbarHtml()が生成する下帯)はここで .u2-stage--fluid を
+   祖先に前置してスコープすることで、campaign表示中だけ両端アンカー化し、briefing/
+   mission-resultは元のwidth:1920px固定(レガシーscale-to-fit前提)のまま一切変えない。
+   left/top/bottomは既にbase側で0のため上書き不要。widthをautoにしてright:0を足すこと
+   で左右アンカー化し(黒帯なしでモック外の余白まで帯を伸ばす)、内側の水平余白のみ
+   calc(60px * var(--u2s,1))で再計算する(垂直寸法/文字サイズはhubの下帯と同型で
+   スケール対象外=据え置き)。 */
+.u2-stage--fluid .u2c-hintbar {
+  right: 0;
+  width: auto;
+  padding: 0 calc(60px * var(--u2s, 1));
+}
+
 /* ═══ keyframes(u2c名前空間 — 他画面と衝突しない) ═══ */
 @keyframes u2cScan {
   0% {

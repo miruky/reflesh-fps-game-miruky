@@ -225,8 +225,20 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
 
   root.dataset.id = 'scr-deploy'; // F10スモーク契約
   if (host.reducedMotion()) root.classList.add('u2d-reduce');
+  // R56 焔座フルードステージ: 各トップレベル群を「固定すべき角/辺」でアンカーラッパーに包む。
+  //   - u2d-fluid-tl : 左上寄せ群(見出し/左ナビ/分隊ノート)。子のモック座標は不変のまま
+  //     transform:scale(var(--u2s))で左上角基準に一様スケール(歪みゼロ・黒帯なし)。
+  //   - u2d-fluid-tr : 右上寄せ群(ロビーカード/中央パネル)。右上角基準スケール。パネルは
+  //     16:9設計高(628px)固定=旧bottom:200相当で、スクロール本体はラッパー内で従来px高を保つ
+  //     ため overflow:auto が生き続ける(scaleは見た目のみでスクロール可能高を潰さない)。
+  //   - u2d-fluid-bc : 下中央群(次ステージ帯+出撃CTA)。下辺中央基準スケール。
+  //   - u2d-foot     : 左右両端に跨る帯。transformとstretch併用不可のため transform不使用で
+  //     left:0;right:0にstretchし、内部余白/寸法は calc(モックpx * var(--u2s)) で一様スケール。
+  //   - 背景(u2d-bg)は既に position:absolute;inset:0 でフルードstage全面を占有=無改変で全面fill。
+  // いずれも --u2s=1(16:9)では scale(1)/calc(px*1) に還元され旧デザインとピクセル完全一致。
   root.innerHTML = `
     ${deployBgHtml()}
+    <div class="u2d-fluid u2d-fluid-tl">
     <div class="u2d-head">
       <span class="u2d-kicker">マルチプレイヤー\u3000/\u3000${MODE_IDS.length}モード</span>
       <span class="u2d-title">対戦モード</span>
@@ -234,6 +246,8 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
     </div>
     <nav class="u2d-nav" data-id="deploy-nav" aria-label="出撃設定セクション"></nav>
     <div class="u2d-squadnote" data-id="squad-note"></div>
+    </div>
+    <div class="u2d-fluid u2d-fluid-tr">
     <div class="u2d-lobby" data-id="lobby-card"></div>
     <section class="u2d-panel" aria-live="polite">
       <div class="u2d-panel-head">
@@ -242,6 +256,8 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
       </div>
       <div class="u2d-panel-body" data-id="panel-body"></div>
     </section>
+    </div>
+    <div class="u2d-fluid u2d-fluid-bc">
     <div class="u2d-band">
       <div class="u2d-band-info">
         <span class="u2d-band-label">次のステージ</span>
@@ -251,6 +267,7 @@ export const mountDeploy: ScreenMount = (host: Ui2Host, root: HTMLElement, opts)
         <span class="u2d-launch-label">準備完了</span>
         <span class="u2d-launch-main">出撃</span>
       </button>
+    </div>
     </div>
     <div class="u2d-foot">
       <div class="u2d-hints">

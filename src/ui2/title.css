@@ -1,6 +1,16 @@
 /*
   W-ENZA2 F2: タイトル画面(mock01 1:1移植)。
-  1920×1080固定ステージを --u2s の一様スケールで適合。値はモック実測(インラインstyle)から採取。
+  R56 W2: 焔座フルードステージ(黒帯なし引き伸ばし)。コーディネータの .u2-stage は
+  この画面では viewport全面(transform:none)になるため、以下のアンカーグループ方式
+  (hub.tsと同型)で各要素を自前で var(--u2s)(= min(vw/1920, vh/1080)、menu2.tsが
+  常時更新)により端アンカーtransform:scaleする。モックのpx値(left/top/paddingの
+  実測値)そのものは一切変更していない — 0-sizeの角ラッパーに
+  transform-origin:<角>+transform:scale(var(--u2s))を持たせ、中身はそのラッパーからの
+  相対px(padding-*またはleft/top)で従来どおり配置するだけで、視覚上のみモック全体を
+  ズームしたのと同じ結果になる(角の位置は常に画面端に固定 = 黒帯が生まれない)。
+  情景SVGは背景として画面全面をcover-fill(preserveAspectRatio=xMidYMid slice)し、
+  霧/火の粉は同じ倍率(--u2-cover、CSSのみで算出。JSのvar(--u2s)とは独立)で追随させ、
+  情景と常にピクセル単位で一致させる(クナイ根元からの火の粉がズレない)。
   接頭辞 .u2-title / keyframes u2ttl*(他画面との衝突回避のため名前空間化)。
   メニュー画面のためcanvas非表示前提(ENZA_SPEC_V2ルール5)。
 */
@@ -13,27 +23,28 @@
   font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
   letter-spacing: 0.04em;
   z-index: 40;
+  /* 情景SVG(xMidYMid slice)と同一の cover-fit 倍率。100vw/100vhは.u2-titleが
+     fixed;inset:0で常にviewport全面と一致するため、そのままビューポート基準で良い。 */
+  --u2-cover: max(calc(100vw / 1920), calc(100vh / 1080));
 }
-.u2-title__stage {
+.u2-title__scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── 情景と一体で動く装飾層(霧+火の粉)。--u2-coverで情景SVGと同倍率スケール。 ── */
+.u2-title__atmo {
   position: absolute;
   left: 50%;
   top: 50%;
   width: 1920px;
   height: 1080px;
-  /* R55 W-C6[11]: --u2sはこの画面では誰も設定しない(title.tsコメントのとおり独自の
-     再スケールは持たない)ため常に既定値1で死んでいた。scale()を除去する
-     (外側.u2-stageの一様スケールが実際の適合を担う)。 */
-  transform: translate(-50%, -50%);
-  overflow: hidden;
-  background: #050607;
-}
-.u2-title__scene {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 1920px;
-  height: 1080px;
-  display: block;
+  transform-origin: center center;
+  transform: translate(-50%, -50%) scale(var(--u2-cover, 1));
+  pointer-events: none;
 }
 
 /* ── 流れる霧(モック実値) ── */
@@ -94,11 +105,18 @@
   animation: u2ttlEmberRise 11s linear infinite 4.6s;
 }
 
-/* ── 右上ビルド表記 ── */
+/* ── 右上ビルド表記(0-size角ラッパー方式: right:0/top:0を画面右上角に固定し、
+   モックのright:60px/top:44pxはpadding化して角からのオフセットとして再現する。
+   entrance遷移はopacityのみ(スライドなし=モックのtransform:none相当)なので
+   transform:scale(var(--u2s))はここで固定宣言してよい) ── */
 .u2-title__build {
   position: absolute;
-  right: 60px;
-  top: 44px;
+  right: 0;
+  top: 0;
+  padding-right: 60px;
+  padding-top: 44px;
+  transform-origin: top right;
+  transform: scale(var(--u2s, 1));
   text-align: right;
   font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
   font-size: 11px;
@@ -107,11 +125,16 @@
   line-height: 1.9;
 }
 
-/* ── ロゴ(left:170 top:346) ── */
+/* ── ロゴ(0-size角ラッパー方式: left:0/top:0を画面左上角に固定し、モックの
+   left:170px/top:346pxはpadding化。transform(scale+スライド)は下の入場儀式ブロックで
+   一括宣言する) ── */
 .u2-title__logo {
   position: absolute;
-  left: 170px;
-  top: 346px;
+  left: 0;
+  top: 0;
+  padding-left: 170px;
+  padding-top: 346px;
+  transform-origin: top left;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -173,11 +196,15 @@
   transform: rotate(45deg);
 }
 
-/* ── ナビ(left:170 top:648) ── */
+/* ── ナビ(0-size角ラッパー方式: left:0/top:0を画面左上角に固定し、モックの
+   left:170px/top:648pxはpadding化) ── */
 .u2-title__nav {
   position: absolute;
-  left: 170px;
-  top: 648px;
+  left: 0;
+  top: 0;
+  padding-left: 170px;
+  padding-top: 648px;
+  transform-origin: top left;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -241,17 +268,18 @@
   animation: u2ttlBlink 1.6s ease-in-out infinite;
 }
 
-/* ── 下帯 ── */
+/* ── 下帯(左右両端に跨る帯: transformは使わずleft:0/right:0でストレッチし、
+   内部余白のみモックpx×var(--u2s)でスケールする) ── */
 .u2-title__foot {
   position: absolute;
   left: 0;
+  right: 0;
   bottom: 0;
-  width: 1920px;
   height: 52px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 60px;
+  padding: 0 calc(60px * var(--u2s, 1));
   box-sizing: border-box;
   white-space: nowrap;
   background: linear-gradient(0deg, rgba(3, 4, 5, 0.88), rgba(3, 4, 5, 0));
@@ -346,13 +374,16 @@
   outline: none;
 }
 
-/* ── 入場儀式(600ms) ── */
+/* ── 入場儀式(600ms)。
+   logo/navは端アンカーscale(var(--u2s))を持つため、スライド(translateY)は
+   その角スケール空間の内側でcompose(transform: scale(...) translateY(...))する
+   必要がある(transformは単一プロパティ=後勝ちで丸ごと差し替わるため、
+   scaleを消さずtranslateYだけ変えるにはscaleも都度書く)。foot/buildはモック同様
+   スライドなし(foot=transform不使用/build=scaleを常時固定)なのでopacityのみ遷移する。 ── */
 .u2-title__logo,
-.u2-title__nav,
-.u2-title__foot,
-.u2-title__build {
+.u2-title__nav {
   opacity: 0;
-  transform: translateY(14px);
+  transform: scale(var(--u2s, 1)) translateY(14px);
   transition:
     opacity 600ms cubic-bezier(0.16, 1, 0.3, 1),
     transform 600ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -362,15 +393,18 @@
 }
 .u2-title__foot,
 .u2-title__build {
-  transform: none;
+  opacity: 0;
+  transition: opacity 600ms cubic-bezier(0.16, 1, 0.3, 1);
   transition-delay: 300ms;
 }
 .u2-title--in .u2-title__logo,
-.u2-title--in .u2-title__nav,
+.u2-title--in .u2-title__nav {
+  opacity: 1;
+  transform: scale(var(--u2s, 1));
+}
 .u2-title--in .u2-title__foot,
 .u2-title--in .u2-title__build {
   opacity: 1;
-  transform: translateY(0);
 }
 
 /* ── アニメーション定義(モック実値、名前空間化) ── */

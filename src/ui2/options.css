@@ -1,6 +1,14 @@
 /*
   W-ENZA2 F7: オプション(mock07 1:1)+ポーズ — .u2-options / .u2-pause 名前空間。
-  モック値をそのまま採用(1920x1080ステージを --u2o-s で等比スケール)。
+  R56 W2: options画面はフルード対象(FLUID_SCREENS)。.u2o-stage は viewport全面(inset:0)へ
+  拡張し、モック値(1920x1080座標)はそのまま端アンカーgroup(.u2o-group-tl/-tr)+
+  transform:scale(var(--u2s,1))で個別スケールする(黒帯なし・歪みゼロ・16:9で旧デザインと
+  ピクセル完全一致)。--u2s は menu2.ts が画面を問わず常時更新する共有カスタムプロパティで、
+  旧来のローカル --u2o-s(ResizeObserverで自前計算)は廃止し統一した(常にmin(vw/1920,vh/1080)
+  で同じ値のため、options単独で再計算する意味が無かった)。
+  ただしポーズ内オーバーレイ(mountPause→openOptions)は外側 .u2-stage が非フルード(legacy)の
+  まま1回だけscale-to-fitされるため、そちらは無変換(scale適用なし)を維持する
+  (.u2-stage:not(.u2-stage--fluid) 側のセレクタで明示的に元の見た目を保つ)。
   鉄則: filter/backdrop-filter 不使用(ポーズはcanvas直上)。面は不透明0.82+。
   旧クラス(.mfd-/.ig-/.setting-*)への依存ゼロ。
 */
@@ -18,18 +26,16 @@
   user-select: none;
 }
 
-/* 1920x1080固定ステージ(モックの座標系をそのまま使う)。JSが --u2o-s を更新 */
+/* R56 W2: 旧「1920x1080固定+centered scale」から「viewport全面(inset:0)」へ。
+   背景グラデは方向性のない縦グラデなので、どのアスペクト比でも歪んで見えない
+   (3. 背景は100%要素へ、の適用対象)。モック座標系は各端アンカーgroup側が担う。 */
 .u2o-stage {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 1920px;
-  height: 1080px;
-  transform: translate(-50%, -50%) scale(var(--u2o-s, 1));
+  inset: 0;
   background: linear-gradient(180deg, #101114 0%, #0a0b0e 30%, #07080a 100%);
 }
 
-/* 走査線+上部グロー(モック実値) */
+/* 走査線(モック実値。inset:0なので祖先の実サイズに追随=常時正しい) */
 .u2o-scan {
   position: absolute;
   inset: 0;
@@ -42,14 +48,41 @@
     transparent 4px
   );
 }
+/* 上部グロー = 左右両端に跨る帯(2. 帯パターン)。既定はモック実値(legacy/pause安全側)、
+   フルード祖先配下でのみ var(--u2s) で高さを比例スケールする。 */
 .u2o-topglow {
   position: absolute;
   left: 0;
+  right: 0;
   top: 0;
-  width: 1920px;
   height: 200px;
   pointer-events: none;
   background: linear-gradient(180deg, rgba(24, 26, 30, 0.8), rgba(24, 26, 30, 0));
+}
+.u2-stage--fluid .u2o-topglow {
+  height: calc(200px * var(--u2s, 1));
+}
+
+/* R56 W2: フルード端アンカー(0-sizeラッパー・角アンカー、1. パターン)。
+   子要素(u2o-head/u2o-tabs/u2o-list/u2o-detail等)はposition:absoluteのモック座標系
+   (left/top/right値)をそのまま維持し、group自体は0×0のため子の座標原点になる。
+   既定(無条件)は無変換 = pause内オーバーレイ(legacy祖先)で正しい旧来の見た目を保つ。
+   フルード祖先(.u2-stage--fluid)配下でのみ個別scaleし、黒帯なしの端アンカー引き伸ばしにする。 */
+.u2o-group-tl {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: top left;
+}
+.u2o-group-tr {
+  position: absolute;
+  right: 0;
+  top: 0;
+  transform-origin: top right;
+}
+.u2-stage--fluid .u2o-group-tl,
+.u2-stage--fluid .u2o-group-tr {
+  transform: scale(var(--u2s, 1));
 }
 
 /* ── ヘッダー ── */
@@ -469,12 +502,12 @@
   line-height: 1.9;
 }
 
-/* ── 下帯(モック実値) ── */
+/* ── 下帯(モック実値。左右両端に跨る帯=2. 帯パターン) ── */
 .u2o-foot {
   position: absolute;
   left: 0;
+  right: 0;
   bottom: 0;
-  width: 1920px;
   height: 52px;
   display: flex;
   align-items: center;
@@ -484,6 +517,10 @@
   border-top: 1px solid rgba(232, 234, 236, 0.1);
   background: rgba(5, 6, 8, 0.85);
   white-space: nowrap;
+}
+.u2-stage--fluid .u2o-foot {
+  height: calc(52px * var(--u2s, 1));
+  padding: 0 calc(60px * var(--u2s, 1));
 }
 .u2o-foot-save {
   font-family: ui-monospace, Consolas, monospace;

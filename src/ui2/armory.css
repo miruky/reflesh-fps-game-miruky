@@ -1,7 +1,12 @@
 /*
   W-ENZA2 F4: 武器庫 ARMORY(mock04 逐語移植)
   正典: scratchpad/enza-mock-04.html — 寸法/色/影/字間は全てモック実測値。
-  構成: 1920×1080固定ステージを zoom(fallback: transform scale)で全ビューポートへ等比フィット。
+  R56-W2 焔座フルードステージ: armoryはmenu2.tsのFLUID_SCREENS常時対象のため、.u2a-stageは
+  自前のzoom/transformフィットを持たず.u2-armory(=viewport全面)を100%で満たす。内部の
+  左列(.u2a-header+.u2a-list)/右列(.u2a-detail)は.u2a-anchor--left/--rightで画面の左右端へ
+  独立アンカーし、幅1920×高さ1080のモック座標系のままtransform:scale(var(--u2s))で一様拡縮
+  する(黒帯なし・歪みゼロ・16:9では旧デザインとピクセル完全一致)。タブ帯/下帯は左右両端帯
+  として実際にleft:0/right:0で引き伸ばす(技法の使い分けはmenu2.ts所有者の指示による)。
   背景の<img>のみCSSグラデーションで再現(アセットレス鉄則)。メニュー画面はcanvas非表示下で
   表示されるため box-shadow/グラデ表現はモックのまま使用する(HUD系の鉄則とは別領域)。
 */
@@ -18,15 +23,38 @@
 
 .u2a-stage {
   position: relative;
-  flex: none;
-  width: 1920px;
-  height: 1080px;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   background: #08090c;
   color: #e8eaec;
   font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
   letter-spacing: 0.04em;
   user-select: none;
+}
+
+/* R56-W2: 左列(ヘッダ+武器リスト)/右列(詳細パネル)の独立アンカー群。内部は無改変の
+   1920×1080モック座標のまま、このラッパーだけがコーナーからvar(--u2s)で一様拡縮する。
+   .u2a-header/.u2a-list/.u2a-detail自身のCSSは一切触らない(1px不変)。 */
+.u2a-anchor {
+  position: absolute;
+  top: 0;
+  width: 1920px;
+  height: 1080px;
+  pointer-events: none;
+}
+.u2a-anchor > * {
+  pointer-events: auto;
+}
+.u2a-anchor--left {
+  left: 0;
+  transform-origin: top left;
+  transform: scale(var(--u2s, 1));
+}
+.u2a-anchor--right {
+  right: 0;
+  transform-origin: top right;
+  transform: scale(var(--u2s, 1));
 }
 
 /* 背景(モックの<img>をCSSで再現: 漆黒+斜光柱+下部の熾火残光)+走査線(モック逐語) */
@@ -142,11 +170,15 @@
 }
 
 /* ══ カテゴリタブ(モック: top118 h56) ══ */
+/* R56-W2: ヘッダ/フッタと同じ左右両端帯技法。実際にleft/rightで画面端まで引き伸ばし
+   (背景バーがどのアスペクト比でも途切れない)、余白(56px)とtop位置のみvar(--u2s)で
+   比例スケールする。厚み(height)と内部の文字/余白はhub footerの前例と同じく実px不変
+   (16:9でのピクセル一致とクリップ回避を両立)。 */
 .u2a-tabs {
   position: absolute;
-  left: 56px;
-  top: 118px;
-  right: 56px;
+  left: calc(56px * var(--u2s, 1));
+  top: calc(118px * var(--u2s, 1));
+  right: calc(56px * var(--u2s, 1));
   height: 56px;
   display: flex;
   align-items: stretch;
@@ -823,16 +855,18 @@
 }
 
 /* ══ 下帯(モック: h44) ══ */
+/* R56-W2: hub footerと同じ左右両端帯技法。left/right:0で画面端まで実際に引き伸ばし、
+   内側余白のみvar(--u2s)で比例スケール。厚み(height)は実px不変。 */
 .u2a-band {
   position: absolute;
   left: 0;
+  right: 0;
   bottom: 0;
-  width: 1920px;
   height: 44px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 56px;
+  padding: 0 calc(56px * var(--u2s, 1));
   box-sizing: border-box;
   background: linear-gradient(0deg, rgba(3, 4, 5, 0.9), rgba(3, 4, 5, 0));
   white-space: nowrap;

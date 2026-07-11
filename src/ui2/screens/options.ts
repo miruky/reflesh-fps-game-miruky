@@ -609,7 +609,15 @@ function mountOptionsImpl(
   if (init.section === 'controls') lastTabId = 'controls';
 
   const stage = el('div', 'u2o-stage');
-  stage.append(el('div', 'u2o-scan'), el('div', 'u2o-topglow'), el('div', 'u2o-accent'));
+  const scan = el('div', 'u2o-scan');
+  const topglow = el('div', 'u2o-topglow');
+  const accent = el('div', 'u2o-accent');
+  // R56 W2: フルード端アンカー(0-sizeラッパー)。groupTL=見出し/タブ/一覧(左上原点)、
+  // groupTR=説明パネル(右上原点)。フルード祖先(.u2-stage--fluid)配下でのみ
+  // options.css側が個別にtransform:scale(var(--u2s,1))する(pause内オーバーレイ=legacy祖先
+  // では外側.u2-stageが既に1回scale-to-fit済みのため無変換のまま=二重スケール回避)。
+  const groupTL = el('div', 'u2o-group-tl');
+  const groupTR = el('div', 'u2o-group-tr');
 
   // ヘッダー
   const head = el('div', 'u2o-head');
@@ -651,19 +659,10 @@ function mountOptionsImpl(
     '<span>▲▼ 選択</span><span>◀▶ 変更</span><span><span class="a">Ⓐ</span> 決定</span><span><span class="a">Ⓑ</span> 戻る</span>';
   foot.appendChild(hints);
 
-  stage.append(head, tabs, list, detail, foot);
+  groupTL.append(accent, head, tabs, list);
+  groupTR.append(detail);
+  stage.append(scan, topglow, groupTL, groupTR, foot);
   root.appendChild(stage);
-
-  // 等比スケール(1920x1080ステージをビューポートへフィット)
-  const applyScale = (): void => {
-    const w = root.clientWidth || window.innerWidth;
-    const h = root.clientHeight || window.innerHeight;
-    stage.style.setProperty('--u2o-s', String(Math.min(w / 1920, h / 1080)));
-  };
-  applyScale();
-  const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(applyScale) : null;
-  ro?.observe(root);
-  window.addEventListener('resize', applyScale);
 
   // 変更の適用(旧sliderと同じ: apply→save→onSettingsChanged)
   const commit = (): void => {
@@ -1053,8 +1052,6 @@ function mountOptionsImpl(
   return {
     dispose(): void {
       endCapture();
-      ro?.disconnect();
-      window.removeEventListener('resize', applyScale);
       root.classList.remove('u2-options', 'u2-reduce');
       root.innerHTML = '';
     },

@@ -231,8 +231,17 @@ export const mountCampaign: ScreenMount = (host, root) => {
       </div>
     </div>`;
 
+  // R56 W2: フルードステージ(menu2.tsが'campaign'をFLUID_SCREENSへ登録済み=常時フルード)
+  // 向けのアンカーグループ化。0-sizeラッパー方式(hubで実証済み)で子のモック座標(px)は
+  // 一切変えず、各グループを対応する角へ transform:scale(var(--u2s,1)) で追随させる。
+  // 左群(見出し+章リスト)は .u2c-chapters が top と bottom の両方を持つため、
+  // ラッパーに height:1080px だけ明示して containing block の高さを確定させる
+  // (width は明示しない=0のまま。子は全てleft基点のため無影響。右群と重ならない)。
+  // 右群(次の任務レール)は top+right+width のみで bottom を使わないため、
+  // 高さ明示は不要な純粋0-sizeラッパーで足りる(hubの右上ステータス群と同型)。
   root.innerHTML = `
     ${backdropHtml()}
+    <div style="position:absolute;left:0;top:0;height:1080px;transform-origin:top left;transform:scale(var(--u2s, 1));">
     <div class="u2c-head">
       <span class="u2c-kicker">戦役\u3000/\u3000OPERATION CINDER</span>
       <span class="u2c-title">軌道に灯る火種</span>
@@ -242,7 +251,8 @@ export const mountCampaign: ScreenMount = (host, root) => {
       </div>
     </div>
     <div class="u2c-chapters" data-id="chapter-list">${chaptersHtml}</div>
-    ${railHtml}
+    </div>
+    <div style="position:absolute;right:0;top:0;transform-origin:top right;transform:scale(var(--u2s, 1));">${railHtml}</div>
     ${hintbarHtml(`CINDER 鎮圧作戦 · 制圧率 ${Math.round((cleared / Math.max(1, totalMissions)) * 100)}%`, '戻る')}
   `;
 

@@ -31,9 +31,16 @@ const LOADOUT_KEY = 'hibana.loadout.v1'; // 旧UIと同一キー=兵装選択の
 const OVERLAY_SCREENS: ReadonlySet<Screen2Id> = new Set<Screen2Id>(['pause']);
 
 // R56 焔座フルードステージ: レスポンシブ引き伸ばし(黒帯なし)へ移行済みの画面のみ。
-// 波ごとにここへ追加していく(今回はhubのみ)。未追加の画面は従来のscale-to-fitのまま
-// 完全維持される(この波での回帰ゼロを担保)。
-const FLUID_SCREENS: ReadonlySet<Screen2Id> = new Set<Screen2Id>(['hub']);
+// 波ごとにここへ追加していく。未追加の画面は従来のscale-to-fitのまま完全維持される。
+// W1=hub。W2=title/options/armory/campaign/deploy をアンカーグループ方式へ変換し追加。
+const FLUID_SCREENS: ReadonlySet<Screen2Id> = new Set<Screen2Id>([
+  'hub',
+  'title',
+  'options',
+  'armory',
+  'campaign',
+  'deploy',
+]);
 
 // R55 W-C4[5]: onKeyのEsc除外はテキスト打鍵系のinput型のみを対象にする
 // (checkbox/radio/range/buttonはEsc=戻るを妨げない)。ui2に現存するのはcheckbox/range/buttonのみだが、
