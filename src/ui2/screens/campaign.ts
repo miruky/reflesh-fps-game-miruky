@@ -342,7 +342,7 @@ export const mountBriefing: ScreenMount = (host, root, opts) => {
       <div class="u2c-meta-row"><dt>特殊条件</dt><dd>${esc(mods)}</dd></div>
       <div class="u2c-meta-row"><dt>規定時間</dt><dd class="num">${fmtPar(mission.parTimeS)}</dd></div>
       ${mission.challenge ? `<div class="u2c-meta-row"><dt>挑戦</dt><dd>${esc(mission.challenge.label)}</dd></div>` : ''}
-      ${reward ? `<div class="u2c-meta-row"><dt>報酬</dt><dd style="color:#f5d06b">クリアで解放: ${esc(reward)}</dd></div>` : ''}
+      ${reward ? `<div class="u2c-meta-row"><dt>報酬</dt><dd style="color:var(--u2-gold)">クリアで解放: ${esc(reward)}</dd></div>` : ''}
     </dl>
     </div>
     <div class="u2c-group-br">
@@ -468,7 +468,7 @@ function progressCardHtml(host: Ui2Host, progress: CampaignProgress): string {
   const rating =
     delta === 0
       ? `<p class="u2c-progress-note">${esc(rankNote)}</p>`
-      : `<p class="u2c-progress-note">SR ${progress.ratingBefore} <span style="color:${delta > 0 ? '#9fe39f' : '#d24545'}">${delta > 0 ? '+' : ''}${delta}</span> → ${esc(rankNote)}</p>`;
+      : `<p class="u2c-progress-note">SR ${progress.ratingBefore} <span style="color:${delta > 0 ? 'var(--u2-positive)' : 'var(--u2-negative)'}">${delta > 0 ? '+' : ''}${delta}</span> → ${esc(rankNote)}</p>`;
   const titles = host.profile.titles;
   const title = titles && titles.length > 0 ? titles[titles.length - 1] : null;
   return `

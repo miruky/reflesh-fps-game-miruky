@@ -1,0 +1,294 @@
+/*
+  R59-W2 MOTION-FX(このファイルが全UIマイクロモーションの単一集約点)。
+  ─────────────────────────────────────────────────────────────────────
+  設計契約:
+  - アニメは transform/opacity 系のみ(=リフローゼロ)。width/height/padding/border は
+    一切動かさない(R59-W1「選択時boxサイズ不変」原則と両立)。フォーカスリングの
+    フェードだけ outline-color を補間する(outlineはレイアウト外=ペイントのみ)。
+  - transform の合成は「個別プロパティ(scale/translate)」で行う。既存の transform
+    (フルードグループの scale(var(--u2s)) 等)と行列合成され、絶対に上書きしない
+    (src配下のCSSに個別 scale:/translate: の既存使用ゼロを確認済み)。
+  - 全セレクタを :where()(詳細度0)で書く。各画面CSS(APPLY-A/Bが並行編集中)の
+    いかなる同名プロパティ宣言もこのファイルに勝つ=並行作業と衝突しない。
+  - 複数エフェクトの同時成立(hover中にフォーカス/押下/選択)は、animation ショート
+    ハンドの4スロット var 合成で実現する。スロット位置固定のため、あるスロットの
+    発火が他スロットのアニメを再始動させない。
+  - 派手すぎない: 全モーション 80-200ms のマイクロモーション(BO/MW系の計器感)。
+    発光は熾火トークンの淡い opacity フラッシュのみ(DOMなのでbloom閾値とは無関係、
+    filter/backdrop-filter は不使用=canvas直上のポーズオーバーレイでも安全)。
+  - 省モーション: @media (prefers-reduced-motion) と :root.reduce-motion(設定トグル、
+    main.tsが付与)の両輪で短絡する(hud2.cssと同じ二重短絡方針)。
+  - 色は var(--u2-*) トークンのみ参照(ui2.cssの生hex禁止規約に従う)。
+  クラス契約(menu2.ts側):
+  - .u2-press        … pointerdown委譲で押下要素に一瞬付与(220ms後に自動除去)
+  - .u2-press--anchor … 押下要素が position:static の時だけ併付与(::beforeフラッシュの
+                        座標基準。relative化は無位置指定なのでレイアウト不変)
+*/
+
+/* ═══ keyframes(u2m-接頭辞=既存enza*等と衝突しない) ═══════════════ */
+
+/* ボタン押下: カチッと沈んで戻る(スケールポップ) */
+@keyframes u2m-press-pop {
+  0% {
+    scale: 1;
+  }
+  30% {
+    scale: 0.97;
+  }
+  100% {
+    scale: 1;
+  }
+}
+/* ボタン押下: マズルフラッシュ的な放射グラデの短い明滅(::before) */
+@keyframes u2m-press-flash {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+/* ホバー: 1px浮き(視覚のみ=レイアウト不変) */
+@keyframes u2m-hover-rise {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: 0 -1px;
+  }
+}
+/* フォーカスリングの出現フェード(outline-colorのみ=ペイントのみ) */
+@keyframes u2m-focus-in {
+  from {
+    outline-color: transparent;
+  }
+}
+/* 選択状態の変化: 短い膨張パルス */
+@keyframes u2m-sel-pulse {
+  0% {
+    scale: 1;
+  }
+  40% {
+    scale: 1.015;
+  }
+  100% {
+    scale: 1;
+  }
+}
+/* 画面遷移: マウント時の軽いフェード+2px上昇 */
+@keyframes u2m-screen-in {
+  from {
+    opacity: 0;
+    translate: 0 2px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+/* 武器庫タブ(特別): 下線スキャンライン 左→右(走り切って淡く定着) */
+@keyframes u2m-tab-scan {
+  0% {
+    transform: scaleX(0);
+    opacity: 1;
+  }
+  70% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0.55;
+  }
+}
+/* 武器庫タブ(特別): 熾火グロー明滅+文字の一瞬の輝度パルス(上掛けの淡光) */
+@keyframes u2m-tab-glow {
+  0% {
+    opacity: 0;
+  }
+  22% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ═══ 合成ベース: 対話要素に4スロットのアニメ変数を常設 ═══════════════
+   スロット順は固定: state / press / focus / hover。未発火スロットは none。
+   :where()=詳細度(0,0,0)なので、画面CSSが同要素へ animation を宣言したら
+   そちらが全面的に勝つ(このファイルは静かに退く)。 */
+:where(
+  .u2-stage
+    :is(
+      button,
+      select,
+      input,
+      [role='button'],
+      [tabindex],
+      [data-section],
+      [data-weapon],
+      [data-stage],
+      [data-camo],
+      [data-attachment]
+    ),
+  .u2-stage .u2o-segs > i
+) {
+  animation: var(--u2m-state, none), var(--u2m-press, none), var(--u2m-focus, none), var(--u2m-hover, none);
+}
+
+/* ═══ 1) ボタン押下(全画面共通・menu2.tsの委譲が .u2-press を付与) ═══ */
+:where(.u2-press) {
+  --u2m-press: u2m-press-pop 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+/* static要素にだけJSが添える座標基準(オフセット無指定のrelative=レイアウト不変) */
+:where(.u2-press--anchor) {
+  position: relative;
+}
+/* マズルフラッシュ: 熾火の放射グラデを80ms級で明滅(コンテンツの下に敷く=文字は常に鮮明)。
+   ::after は既存UI(deployナビ選択マーカー/ローンチ進捗環)が使うため ::before を使う
+   (menu系CSSの対話要素に ::before の既存使用ゼロを確認済み)。 */
+:where(.u2-press)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    140% 120% at 50% 45%,
+    color-mix(in srgb, var(--u2-accent-hi) 30%, transparent),
+    color-mix(in srgb, var(--u2-accent) 12%, transparent) 55%,
+    transparent 78%
+  );
+  opacity: 0;
+  animation: u2m-press-flash 160ms ease-out;
+}
+
+/* ═══ 2) 武器庫タブ選択の特別エフェクト(.u2a-tab.on 付与/マウントで自動再生) ═══
+   3点セット: ①下線スキャンライン(左→右 200ms→淡く定着) ②面の熾火グロー明滅
+   ③微スケールパルス(下の選択パルス連合に参加)。exoticタブ(金)も同型で発火する。 */
+:where(.u2a-tab.on)::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 3px;
+  height: 2px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    var(--u2-ivory-hi),
+    color-mix(in srgb, var(--u2-ivory-hi) 35%, transparent)
+  );
+  transform-origin: left center;
+  animation: u2m-tab-scan 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+/* 押下フラッシュ(.u2-press::before)より後に置く: 選択直後のタブでは
+   同詳細度(0,0,0)の後勝ちでこちらのグロー明滅が採用される(二重光を防ぐ)。 */
+:where(.u2a-tab.on)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--u2-ivory-hi) 38%, transparent), transparent 65%);
+  opacity: 0;
+  animation: u2m-tab-glow 200ms ease-out;
+}
+
+/* ═══ 3a) ホバー: 1px浮き(120ms、fill両端=ホバー中は保持・離脱で即復帰) ═══
+   対象は「押せる」ことが確定しているコンポーネントのみを列挙(行内スライダー等は除外)。
+   locked/disabledは浮かせない。 */
+:where(
+    .u2-menubtn,
+    button.u2h-cta,
+    button.u2h-row,
+    button.u2h-card,
+    .u2-title__nav-item,
+    .u2a-tab,
+    .u2a-row,
+    .u2a-swatch,
+    .u2a-slot,
+    .u2a-popbtn,
+    .u2d-nav-item,
+    .u2d-opt,
+    .u2d-stagecard,
+    .u2d-zr-step,
+    .u2d-chip,
+    .u2o-tab,
+    .u2o-rebind-btn,
+    .u2c-cta,
+    .u2c-mission,
+    .u2c-select,
+    .u2r-cta,
+    .u2p-btn
+  ):hover:not(:disabled, .locked, [aria-disabled='true']) {
+  --u2m-hover: u2m-hover-rise 120ms ease-out both;
+}
+
+/* ═══ 3b) フォーカス移動: リングの出現を80msフェード(リング自体はui2.cssの熾火一本) ═══ */
+:where(.u2-stage :is(button, select, input, [role='button'], [tabindex])):focus {
+  --u2m-focus: u2m-focus-in 80ms ease-out;
+}
+
+/* ═══ 3c) 画面遷移: ステージ直下グループのマウントで軽いフェード+2px上昇 ═══
+   menu2.open()は毎回 stage.innerHTML='' → 再マウントするため、直下要素の挿入が
+   そのままアニメ発火になる(data-screen切替=マウントと1:1)。個別translateなので
+   フルードグループの transform:scale(var(--u2s)) とは合成され、詳細度0なので
+   直下要素が自前の animation を持つ画面ではそちらが勝つ。 */
+:where(.u2-stage > *) {
+  animation: u2m-screen-in 200ms ease-out both;
+}
+
+/* ═══ 3d) 選択状態の変化: 短い膨張パルス(deployナビ/optionsタブ/カモスウォッチ等) ═══
+   クラス付与(または選択済み要素の再マウント)で自動再生。boxは不変(scaleは視覚のみ)。 */
+:where(
+  .u2d-nav-item.selected,
+  .u2d-opt.selected,
+  .u2d-stagecard.selected,
+  .u2d-toggle input:checked,
+  .u2o-tab.active,
+  .u2o-segs > i.on,
+  .u2a-tab.on,
+  .u2a-row.on,
+  .u2a-swatch.on,
+  .u2a-popbtn.on,
+  .u2-title__nav-item.sel
+) {
+  --u2m-state: u2m-sel-pulse 180ms ease-out;
+}
+
+/* ═══ 省モーション短絡(両輪) ═══════════════════════════════════════
+   要素本体のアニメは ui2.css の @media 短絡(.u2-stage * { animation-duration:0.01ms })
+   が既に効くが、::before/::after は * に含まれないためここで明示短絡する。
+   :root.reduce-motion(設定トグル)側は変数リセット+疑似要素/マウントの短絡を張る。 */
+@media (prefers-reduced-motion: reduce) {
+  .u2-stage,
+  .u2-stage * {
+    --u2m-state: none;
+    --u2m-press: none;
+    --u2m-focus: none;
+    --u2m-hover: none;
+  }
+  .u2-stage .u2-press::before,
+  .u2-stage .u2a-tab.on::before,
+  .u2-stage .u2a-tab.on::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+:root.reduce-motion .u2-stage,
+:root.reduce-motion .u2-stage * {
+  --u2m-state: none;
+  --u2m-press: none;
+  --u2m-focus: none;
+  --u2m-hover: none;
+}
+:root.reduce-motion .u2-stage > *,
+:root.reduce-motion .u2-stage .u2-press::before,
+:root.reduce-motion .u2-stage .u2a-tab.on::before,
+:root.reduce-motion .u2-stage .u2a-tab.on::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}

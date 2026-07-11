@@ -24,6 +24,9 @@ import { mountHub } from './screens/hub';
 import { mountOptions, mountPause } from './screens/options';
 import { mountResult } from './screens/result';
 import { mountTitle } from './screens/title';
+// R59-W2 MOTION-FX: 全UIマイクロモーションの単一集約点。各画面CSSより後に読み込み、
+// :where()詳細度0で「画面CSSが常に勝つ」カスケード位置を成立させる(必ず最後のCSS importに保つ)。
+import './motion.css';
 import type { MenuApi, Screen2Handle, Screen2Id, ScreenMount, ScreenOpenOpts, Ui2Host } from './types';
 
 const LOADOUT_KEY = 'hibana.loadout.v1'; // 旧UIと同一キー=兵装選択の完全互換
@@ -166,6 +169,35 @@ export class Menu2 implements MenuApi {
       this.sounds.uiTab();
     else this.sounds.uiSelect();
   };
+  // R59-W2 MOTION-FX: 押下マイクロモーション(motion.cssとのクラス契約)。pointerdown委譲で
+  // 押下要素に .u2-press を一瞬付与し、CSS側(スケールポップ+::before放射フラッシュ)が
+  // 自動再生する(220ms後に自動除去=アニメ160msの完走を保証)。座標基準を持たない
+  // static要素にだけ .u2-press--anchor(無指定relative=レイアウト不変)を添える。
+  // SFX(onStagePointerDown/onStageClick)とは独立させ、R57配線を一切変えない。
+  private readonly pressFxTimers = new WeakMap<HTMLElement, number>();
+  private readonly onStagePressFx = (ev: PointerEvent): void => {
+    const t = ev.target;
+    if (!(t instanceof HTMLElement)) return;
+    const btn = t.closest<HTMLElement>(
+      'button,[role="button"],select,[data-section],[data-weapon],[data-stage],[data-camo],[data-attachment]',
+    );
+    if (!btn || (btn instanceof HTMLButtonElement && btn.disabled)) return;
+    const prev = this.pressFxTimers.get(btn);
+    if (prev !== undefined) {
+      window.clearTimeout(prev);
+      btn.classList.remove('u2-press');
+      void btn.offsetWidth; // 連打時: クラス除去を確実に反映させてアニメを再始動する
+    }
+    if (getComputedStyle(btn).position === 'static') btn.classList.add('u2-press--anchor');
+    btn.classList.add('u2-press');
+    this.pressFxTimers.set(
+      btn,
+      window.setTimeout(() => {
+        btn.classList.remove('u2-press', 'u2-press--anchor');
+        this.pressFxTimers.delete(btn);
+      }, 220),
+    );
+  };
   // キー/パッドのナビ移動のみ uiMove(自動フォーカス/クリック由来のfocusinは抑止)
   private readonly onStageFocusIn = (ev: FocusEvent): void => {
     if (!this.sounds) return;
@@ -194,6 +226,7 @@ export class Menu2 implements MenuApi {
     window.addEventListener('keydown', this.onKey);
     // R57 ②: メニューSE/BGMの委譲配線(全画面共通・1箇所)。
     this.stage.addEventListener('pointerdown', this.onStagePointerDown, true);
+    this.stage.addEventListener('pointerdown', this.onStagePressFx, true); // R59-W2 押下モーション
     this.stage.addEventListener('click', this.onStageClick, true);
     this.stage.addEventListener('focusin', this.onStageFocusIn);
     this.applyScale();

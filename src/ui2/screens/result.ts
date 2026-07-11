@@ -10,7 +10,15 @@ import { levelRankUpgrade, rankNameFor } from '../../game/progression';
 import { WEAPON_DEFS } from '../../game/weapons';
 import type { MatchProgress, MatchResult, Profile, ScreenMount } from '../types';
 
-const MONO = 'font-family:ui-monospace,Consolas,monospace;';
+const MONO = 'font-family:var(--u2-font-mono);';
+// R59-W2 FONT-APPLY-B: 実FPS計器タイポの正典(ui2.css :root FONT-TOKENS参照。生hex/生font新設禁止)
+// NUM=スタッツ数字(tabular等幅) / HERO=大型スコア数字(コンデンス75%+W800) / KICKER=英字キッカー(display系)
+const NUM =
+  'font-family:var(--u2-num);font-variant-numeric:tabular-nums lining-nums;letter-spacing:var(--u2-track-tight);';
+const HERO =
+  'font-family:var(--u2-num);font-variant-numeric:tabular-nums lining-nums;font-stretch:75%;font-weight:800;letter-spacing:var(--u2-track-hero);';
+const KICKER =
+  'font-family:var(--u2-font-display);font-stretch:var(--u2-stretch);font-weight:700;';
 const JP_SP = '　';
 
 function esc(s: string): string {
@@ -105,7 +113,7 @@ export function statCards(result: MatchResult, progress: MatchProgress): StatCar
         value: String(result.zombieRound),
         variant: 'ember',
         sub: recordSub,
-        subColor: '#9FE39F',
+        subColor: 'var(--u2-positive)',
       },
     );
     if (result.zombiePoints !== undefined)
@@ -137,7 +145,7 @@ export function statCards(result: MatchResult, progress: MatchProgress): StatCar
         value: kd.toFixed(2),
         variant: 'ember',
         sub: recordSub,
-        subColor: '#9FE39F',
+        subColor: 'var(--u2-positive)',
       },
       {
         label: '命中率',
@@ -159,7 +167,7 @@ export function statCards(result: MatchResult, progress: MatchProgress): StatCar
         names.length > 0
           ? names.slice(0, 2).join('・') + (names.length > 2 ? ' 他' : '')
           : undefined,
-      subColor: '#DFA8FF',
+      subColor: 'var(--u2-emperor)',
     });
   }
   const weaponEntries = Object.entries(result.summary.weaponKills ?? {}).sort(
@@ -184,7 +192,7 @@ export function statCards(result: MatchResult, progress: MatchProgress): StatCar
       value: h.value,
       weaponStyle: true,
       sub: h.label,
-      subColor: '#FFB98A',
+      subColor: 'var(--u2-accent-soft)',
     });
   }
   return cards.slice(0, 7);
@@ -300,13 +308,13 @@ export function progressRows(profile: Profile, progress: MatchProgress): Progres
 export function xpFootnotes(progress: MatchProgress): { label: string; color: string }[] {
   const out: { label: string; color: string }[] = [];
   const up = levelRankUpgrade(progress.levelBefore, progress.levelAfter);
-  if (up) out.push({ label: `${up.name} へ昇位`, color: '#FFD9BC' });
+  if (up) out.push({ label: `${up.name} へ昇位`, color: 'var(--u2-accent-pale)' });
   for (const u of progress.newUnlocks)
     out.push({
       label: `${u.kind === 'weapon' ? '武器' : 'アタッチメント'}解放: ${u.name}`,
-      color: '#9FE39F',
+      color: 'var(--u2-positive)',
     });
-  for (const r of progress.newRecords) out.push({ label: `自己ベスト: ${r}`, color: '#FFB98A' });
+  for (const r of progress.newRecords) out.push({ label: `自己ベスト: ${r}`, color: 'var(--u2-accent-soft)' });
   const delta = progress.ratingAfter - progress.ratingBefore;
   if (delta !== 0) {
     const dir = delta > 0 ? '+' : '';
@@ -316,7 +324,7 @@ export function xpFootnotes(progress: MatchProgress): { label: string; color: st
         : ` / ${progress.rankAfter.name}へ${delta > 0 ? '昇格' : '降格'}`;
     out.push({
       label: `SR ${progress.ratingBefore} ${dir}${delta} → ${progress.ratingAfter}${rankNote}`,
-      color: delta > 0 ? '#9FE39F' : '#C9865C',
+      color: delta > 0 ? 'var(--u2-positive)' : '#C9865C',
     });
   }
   return out;
@@ -334,7 +342,11 @@ const TONE_NODE: Record<StoryTone, { border: string; bg: string; text: string; g
   gold: { border: '#FF6B2B', bg: '#FF6B2B', text: '#FFB98A', glow: 'rgba(255,107,43,0.8)' },
   steel: { border: '#7FA8C9', bg: 'rgba(127,168,201,0.2)', text: '#8F9FB0' },
   cyan: { border: '#8FDBFF', bg: 'rgba(143,219,255,0.22)', text: '#A8CFE8' },
-  ok: { border: '#9FE39F', bg: 'rgba(159,227,159,0.2)', text: '#9FE39F' },
+  ok: {
+    border: 'var(--u2-positive)',
+    bg: 'color-mix(in srgb, var(--u2-positive) 20%, transparent)',
+    text: 'var(--u2-positive)',
+  },
 };
 
 const CARD_PLATE =
@@ -364,17 +376,17 @@ const MEDAL_CHIP_STYLE: Record<MedalVariant, string> = {
 
 function statCardHtml(c: StatCard): string {
   const plate = c.variant === 'ember' ? CARD_PLATE_EMBER : CARD_PLATE;
-  const labelColor = c.variant === 'ember' ? '#C9865C' : '#77705F';
+  const labelColor = c.variant === 'ember' ? '#C9865C' : 'var(--u2-umber-3)';
   const value = c.weaponStyle
-    ? `<span style="font-weight:700;font-size:23px;line-height:1.15;color:#F5F0E6;">${esc(c.value)}</span>`
-    : `<span style="${MONO}font-size:40px;line-height:1;color:${c.variant === 'ember' ? '#FFB98A;text-shadow:0 0 18px rgba(255,107,43,0.4)' : '#F5F0E6'};"${c.countUp !== undefined ? ` data-cu="${c.countUp}"` : ''}>${esc(c.value)}${c.unit ? `<span style="font-size:19px;color:#77705F;">${c.unit}</span>` : ''}</span>`;
+    ? `<span style="${KICKER}font-size:23px;line-height:1.15;letter-spacing:var(--u2-track-tight);color:var(--u2-ivory-hi);">${esc(c.value)}</span>`
+    : `<span style="${HERO}font-size:40px;line-height:1;color:${c.variant === 'ember' ? 'var(--u2-accent-soft);text-shadow:0 0 18px rgba(255,107,43,0.4)' : 'var(--u2-ivory-hi)'};"${c.countUp !== undefined ? ` data-cu="${c.countUp}"` : ''}>${esc(c.value)}${c.unit ? `<span style="font-size:19px;font-weight:400;color:var(--u2-umber-3);">${c.unit}</span>` : ''}</span>`;
   const subIcon = c.weaponStyle
     ? '<span style="width:11px;height:11px;background:linear-gradient(135deg,#F5D06B,#B8862E);transform:rotate(45deg);flex:none;"></span>'
     : '';
   const sub = c.sub
-    ? `<span style="display:flex;align-items:center;gap:7px;">${subIcon}<span style="${MONO}font-size:10px;color:${c.subColor ?? '#8F8778'};">${esc(c.sub)}</span></span>`
+    ? `<span style="display:flex;align-items:center;gap:7px;">${subIcon}<span style="${NUM}font-size:10px;color:${c.subColor ?? 'var(--u2-umber-2)'};">${esc(c.sub)}</span></span>`
     : '';
-  return `<div style="${plate}"><span style="${MONO}font-size:10px;letter-spacing:0.2em;color:${labelColor};">${esc(c.label)}</span>${value}${sub}</div>`;
+  return `<div style="${plate}"><span style="${KICKER}font-size:10px;letter-spacing:0.2em;color:${labelColor};">${esc(c.label)}</span>${value}${sub}</div>`;
 }
 
 // R59: マーカーが密(8個以上)な時はラベルを交互に2段へ振り分ける。
@@ -422,16 +434,16 @@ export function resultStageHtml(
   const scorePair =
     sl.b !== null
       ? `<div style="display:flex;align-items:baseline;gap:14px;">
-          <span style="${MONO}font-size:40px;line-height:1;color:${result.won ? '#FFB98A' : '#8FA8C4'};" data-cu="${sl.a}">0</span>
-          <span style="${MONO}font-size:20px;color:#55503F;">—</span>
-          <span style="${MONO}font-size:40px;line-height:1;color:${result.won ? '#8FA8C4' : '#FFB98A'};" data-cu="${sl.b}">0</span>
+          <span style="${HERO}font-size:40px;line-height:1;color:${result.won ? 'var(--u2-accent-soft)' : '#8FA8C4'};" data-cu="${sl.a}">0</span>
+          <span style="${NUM}font-size:20px;color:#55503F;">—</span>
+          <span style="${HERO}font-size:40px;line-height:1;color:${result.won ? '#8FA8C4' : 'var(--u2-accent-soft)'};" data-cu="${sl.b}">0</span>
         </div>
-        <span style="${MONO}font-size:11.5px;letter-spacing:0.2em;color:#8F8778;">焔隊${JP_SP}対${JP_SP}霜隊 · ${esc(result.modeName)}</span>`
+        <span style="${KICKER}font-size:11.5px;letter-spacing:0.2em;color:var(--u2-umber-2);">焔隊${JP_SP}対${JP_SP}霜隊 · ${esc(result.modeName)}</span>`
       : `<div style="display:flex;align-items:baseline;gap:14px;">
-          <span style="${MONO}font-size:40px;line-height:1;color:#FFB98A;" data-cu="${sl.a}">0</span>
-          <span style="${MONO}font-size:20px;color:#55503F;">撃破</span>
+          <span style="${HERO}font-size:40px;line-height:1;color:var(--u2-accent-soft);" data-cu="${sl.a}">0</span>
+          <span style="font-size:20px;color:#55503F;">撃破</span>
         </div>
-        <span style="${MONO}font-size:11.5px;letter-spacing:0.2em;color:#8F8778;">${esc(result.modeName)}</span>`;
+        <span style="${KICKER}font-size:11.5px;letter-spacing:0.2em;color:var(--u2-umber-2);">${esc(result.modeName)}</span>`;
 
   const hero = result.won
     ? `<div class="u2r-hero-in" style="position:relative;display:flex;align-items:flex-end;gap:30px;">
@@ -468,7 +480,7 @@ export function resultStageHtml(
       ? ''
       : `<div style="position:absolute;left:56px;top:342px;width:1310px;display:flex;flex-direction:column;gap:10px;">
       <div style="display:flex;justify-content:space-between;align-items:baseline;">
-        <span style="${MONO}font-size:10.5px;letter-spacing:0.26em;color:#77705F;">マッチストーリー</span>
+        <span style="${KICKER}font-size:10.5px;letter-spacing:var(--u2-track-kicker);color:var(--u2-umber-3);">マッチストーリー</span>
         <span style="${MONO}font-size:10px;color:#55503F;">${esc(result.modeName)}</span>
       </div>
       <div style="position:relative;height:86px;white-space:nowrap;background:linear-gradient(180deg, rgba(18,16,13,0.92), rgba(11,10,9,0.94));border:1px solid rgba(232,227,216,0.13);box-shadow:inset 0 1px 0 rgba(255,255,255,0.05), 0 10px 30px rgba(0,0,0,0.45);clip-path:polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 0 100%);">
@@ -484,22 +496,22 @@ export function resultStageHtml(
       if (r.isPlayer) {
         return `<div style="position:relative;display:grid;grid-template-columns:54px 1fr 110px 110px 110px;align-items:center;padding:0 18px;height:46px;background:linear-gradient(90deg, rgba(46,28,15,0.95), rgba(26,17,11,0.9));border:1px solid rgba(255,107,43,0.55);box-shadow:inset 0 1px 0 rgba(255,180,120,0.14), 0 0 20px rgba(255,107,43,0.12);clip-path:polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);overflow:hidden;flex:none;">
           <span style="position:absolute;inset:0;background:linear-gradient(105deg, rgba(255,180,120,0) 0%, rgba(255,180,120,0.07) 45%, rgba(255,180,120,0) 60%);width:50%;animation:u2rScan 5s ease-in-out infinite;pointer-events:none;"></span>
-          <span style="${MONO}font-size:14px;color:#FFB98A;">${String(i + 1).padStart(2, '0')}</span>
-          <span style="display:flex;align-items:center;gap:11px;white-space:nowrap;"><span style="width:9px;height:9px;background:#FF6B2B;transform:rotate(45deg);box-shadow:0 0 8px rgba(255,107,43,0.8);flex:none;"></span><span style="font-size:15px;font-weight:700;color:#FFF4E6;">${esc(r.name)}</span><span style="font-weight:700;font-size:11px;color:#FFD9BC;border:1px solid rgba(255,107,43,0.5);padding:1px 9px;">${esc(rank.name)}</span></span>
-          <span style="${MONO}font-size:14px;color:#F2EDE2;text-align:right;">${r.kills}</span>
-          <span style="${MONO}font-size:14px;color:#D8D1C2;text-align:right;">${r.deaths}</span>
-          <span style="${MONO}font-size:14px;color:#FFB98A;text-align:right;">${(r.deaths > 0 ? r.kills / r.deaths : r.kills).toFixed(2)}</span>
+          <span style="${NUM}font-size:14px;color:var(--u2-accent-soft);">${String(i + 1).padStart(2, '0')}</span>
+          <span style="display:flex;align-items:center;gap:11px;white-space:nowrap;"><span style="width:9px;height:9px;background:#FF6B2B;transform:rotate(45deg);box-shadow:0 0 8px rgba(255,107,43,0.8);flex:none;"></span><span style="font-size:15px;font-weight:700;color:#FFF4E6;">${esc(r.name)}</span><span style="font-weight:700;font-size:11px;color:var(--u2-accent-pale);border:1px solid rgba(255,107,43,0.5);padding:1px 9px;">${esc(rank.name)}</span></span>
+          <span style="${NUM}font-size:14px;color:var(--u2-ivory-hi);text-align:right;">${r.kills}</span>
+          <span style="${NUM}font-size:14px;color:#D8D1C2;text-align:right;">${r.deaths}</span>
+          <span style="${NUM}font-size:14px;color:var(--u2-accent-soft);text-align:right;">${(r.deaths > 0 ? r.kills / r.deaths : r.kills).toFixed(2)}</span>
         </div>`;
       }
       const dot = r.isAlly
         ? '<span style="width:7px;height:7px;background:rgba(255,107,43,0.55);transform:rotate(45deg);flex:none;"></span>'
         : '<span style="width:7px;height:7px;background:rgba(127,168,201,0.5);transform:rotate(45deg);flex:none;"></span>';
       return `<div style="display:grid;grid-template-columns:54px 1fr 110px 110px 110px;align-items:center;padding:0 18px;height:38px;background:rgba(13,12,11,0.8);border:1px solid rgba(232,227,216,0.09);flex:none;">
-        <span style="${MONO}font-size:12px;color:#77705F;">${String(i + 1).padStart(2, '0')}</span>
+        <span style="${NUM}font-size:12px;color:var(--u2-umber-3);">${String(i + 1).padStart(2, '0')}</span>
         <span style="display:flex;align-items:center;gap:9px;white-space:nowrap;">${dot}<span style="font-size:13.5px;color:#B9B1A0;">${esc(r.name)}</span></span>
-        <span style="${MONO}font-size:13px;color:#A79F90;text-align:right;">${r.kills}</span>
-        <span style="${MONO}font-size:13px;color:#A79F90;text-align:right;">${r.deaths}</span>
-        <span style="${MONO}font-size:13px;color:#A79F90;text-align:right;">${(r.deaths > 0 ? r.kills / r.deaths : r.kills).toFixed(2)}</span>
+        <span style="${NUM}font-size:13px;color:var(--u2-umber-1);text-align:right;">${r.kills}</span>
+        <span style="${NUM}font-size:13px;color:var(--u2-umber-1);text-align:right;">${r.deaths}</span>
+        <span style="${NUM}font-size:13px;color:var(--u2-umber-1);text-align:right;">${(r.deaths > 0 ? r.kills / r.deaths : r.kills).toFixed(2)}</span>
       </div>`;
     })
     .join('');
@@ -511,18 +523,18 @@ export function resultStageHtml(
     chips.length === 0
       ? ''
       : `<div class="u2r-medalstrip" style="position:absolute;left:56px;bottom:56px;display:flex;flex-direction:column;gap:12px;width:1310px;">
-      <span style="${MONO}font-size:10.5px;letter-spacing:0.26em;color:#77705F;white-space:nowrap;">獲得メダル${JP_SP}${totalMedals}個 · 図鑑 ${Object.keys(profile.medalCounts ?? {}).length} / ${MEDAL_TOTAL}種</span>
+      <span style="${KICKER}font-size:10.5px;letter-spacing:var(--u2-track-kicker);color:var(--u2-umber-3);white-space:nowrap;">獲得メダル${JP_SP}${totalMedals}個 · 図鑑 ${Object.keys(profile.medalCounts ?? {}).length} / ${MEDAL_TOTAL}種</span>
       <div class="u2r-medals" style="display:flex;gap:12px;">
         ${chips
           .map(
             (c) => `<div style="${MEDAL_CHIP_STYLE[c.variant]}">
           ${c.variant === 'violet' ? '<span style="position:absolute;inset:0;background:linear-gradient(105deg, rgba(223,168,255,0) 0%, rgba(223,168,255,0.1) 45%, rgba(223,168,255,0) 60%);width:60%;animation:u2rScan 4s ease-in-out infinite;pointer-events:none;"></span>' : ''}
           ${MEDAL_ICON[c.variant]}
-          <span style="display:flex;flex-direction:column;gap:2px;"><span style="${c.variant === 'violet' ? 'font-weight:700;' : ''}font-size:14px;color:${c.variant === 'violet' ? '#E9C2FF' : '#F5F0E6'};">${esc(c.name)}</span>${c.xpLabel ? `<span style="${MONO}font-size:10px;color:${c.variant === 'violet' ? '#9B7FB5' : '#8F8778'};">${esc(c.xpLabel)}</span>` : ''}</span>
+          <span style="display:flex;flex-direction:column;gap:2px;"><span style="${c.variant === 'violet' ? 'font-weight:700;' : ''}font-size:14px;color:${c.variant === 'violet' ? '#E9C2FF' : '#F5F0E6'};">${esc(c.name)}</span>${c.xpLabel ? `<span style="${NUM}font-size:10px;color:${c.variant === 'violet' ? '#9B7FB5' : 'var(--u2-umber-2)'};">${esc(c.xpLabel)}</span>` : ''}</span>
         </div>`,
           )
           .join('')}
-        ${overflow > 0 ? `<div style="${MEDAL_CHIP_STYLE.steel}align-self:stretch;"><span style="${MONO}font-size:13px;color:#A79F90;">+${overflow}種</span></div>` : ''}
+        ${overflow > 0 ? `<div style="${MEDAL_CHIP_STYLE.steel}align-self:stretch;"><span style="${NUM}font-size:13px;color:var(--u2-umber-1);">+${overflow}種</span></div>` : ''}
       </div>
     </div>`;
 
@@ -530,7 +542,7 @@ export function resultStageHtml(
     .map((e) => {
       // デイリー達成行は特別様式(旧progressHtmlのxp-daily踏襲=達成の緑)
       const daily = e.label.startsWith('デイリー達成！');
-      return `<span${daily ? ' style="color:#9FE39F;"' : ''}>${esc(e.label)}</span><span style="color:${daily ? '#9FE39F' : '#D8D1C2'};text-align:right;">+${e.xp.toLocaleString()}</span>`;
+      return `<span${daily ? ' style="color:var(--u2-positive);"' : ''}>${esc(e.label)}</span><span style="color:${daily ? 'var(--u2-positive)' : '#D8D1C2'};text-align:right;">+${e.xp.toLocaleString()}</span>`;
     })
     .join('');
   const footRows = foot
@@ -539,10 +551,15 @@ export function resultStageHtml(
 
   const progressCardRows = rows
     .map((r) => {
-      const color = r.tone === 'ok' ? '#9FE39F' : r.tone === 'ember' ? '#FFB98A' : '#D8D1C2';
+      const color =
+        r.tone === 'ok'
+          ? 'var(--u2-positive)'
+          : r.tone === 'ember'
+            ? 'var(--u2-accent-soft)'
+            : '#D8D1C2';
       return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
         <span style="font-size:12.5px;color:#C4BBA8;">${esc(r.label)}</span>
-        <span style="${MONO}font-size:11.5px;color:${color};flex:none;">${esc(r.value)}</span>
+        <span style="${NUM}font-size:11.5px;color:${color};flex:none;">${esc(r.value)}</span>
       </div>`;
     })
     .join('');
@@ -583,7 +600,7 @@ export function resultStageHtml(
     <div class="u2r-gtl" style="position:absolute;left:0;top:0;transform-origin:top left;transform:scale(var(--u2s, 1));">
       <div style="position:absolute;left:56px;top:34px;display:flex;align-items:center;gap:14px;white-space:nowrap;">
         <div style="width:34px;height:2px;background:#FF6B2B;box-shadow:0 0 12px rgba(255,107,43,0.8);"></div>
-        <span style="${MONO}font-size:12px;letter-spacing:0.3em;color:#A79F90;">戦闘詳報${JP_SP}AFTER ACTION REPORT</span>
+        <span style="${KICKER}font-size:12px;letter-spacing:0.3em;color:var(--u2-umber-1);">戦闘詳報${JP_SP}AFTER ACTION REPORT</span>
       </div>
 
       <div style="position:absolute;left:56px;top:104px;width:1310px;white-space:nowrap;display:flex;align-items:flex-end;gap:44px;">${hero}</div>
@@ -612,36 +629,36 @@ export function resultStageHtml(
       <div style="position:absolute;right:56px;top:104px;width:452px;display:flex;flex-direction:column;gap:12px;">
         <div style="position:relative;background:linear-gradient(180deg, rgba(22,19,16,0.95), rgba(12,11,9,0.96));border:1px solid rgba(232,227,216,0.15);box-shadow:inset 0 1px 0 rgba(255,255,255,0.06), 0 12px 34px rgba(0,0,0,0.5);clip-path:polygon(22px 0, 100% 0, 100% 100%, 0 100%, 0 22px);padding:22px 28px;display:flex;flex-direction:column;gap:16px;">
           <div style="display:flex;justify-content:space-between;align-items:baseline;">
-            <span style="${MONO}font-size:11px;letter-spacing:0.26em;color:#A79F90;">経験${JP_SP}EXPERIENCE</span>
-            <span style="${MONO}font-size:11px;color:#9FE39F;">+<span data-cu="${progress.xpTotal}">0</span> XP</span>
+            <span style="${KICKER}font-size:11px;letter-spacing:var(--u2-track-kicker);color:var(--u2-umber-1);">経験${JP_SP}EXPERIENCE</span>
+            <span style="${NUM}font-size:11px;color:var(--u2-positive);">+<span data-cu="${progress.xpTotal}">0</span> XP</span>
           </div>
           <div style="display:flex;flex-direction:column;gap:9px;">
             <div style="display:flex;align-items:baseline;gap:12px;white-space:nowrap;">
-              <span style="${MONO}font-size:28px;line-height:1;color:#F5F0E6;">Lv ${level.level.toLocaleString()}</span>
-              ${gained > 0 ? `<span style="${MONO}font-size:12.5px;color:#9FE39F;">▲ +${gained.toLocaleString()}</span>` : ''}
+              <span style="${HERO}font-size:28px;line-height:1;color:var(--u2-ivory-hi);">Lv ${level.level.toLocaleString()}</span>
+              ${gained > 0 ? `<span style="${NUM}font-size:12.5px;color:var(--u2-positive);">▲ +${gained.toLocaleString()}</span>` : ''}
             </div>
             <div style="position:relative;height:9px;background:rgba(232,227,216,0.1);box-shadow:inset 0 1px 2px rgba(0,0,0,0.7);">
               <div style="width:${xpRatio.toFixed(1)}%;height:9px;background:linear-gradient(90deg,#B23E14,#FF6B2B 70%,#FFA061);box-shadow:0 0 14px rgba(255,107,43,0.55);transform-origin:left;animation:u2rGrow 1.4s cubic-bezier(0.16,1,0.3,1);"></div>
               <div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg,transparent 0 38px,rgba(4,4,8,0.95) 38px 40px);"></div>
             </div>
-            <div class="u2r-xp-rows" style="display:grid;grid-template-columns:1fr auto;row-gap:5px;${MONO}font-size:11px;color:#8F8778;">
+            <div class="u2r-xp-rows" style="display:grid;grid-template-columns:1fr auto;row-gap:5px;${NUM}font-size:11px;color:var(--u2-umber-2);">
               ${xpRows}${footRows}
             </div>
           </div>
           <div style="border-top:1px solid rgba(232,227,216,0.1);padding-top:16px;display:flex;flex-direction:column;gap:10px;">
             <div style="display:flex;justify-content:space-between;align-items:baseline;">
-              <span style="font-size:11.5px;color:#8F8778;">超越階級</span>
-              ${level.level >= 100000 ? `<span style="${MONO}font-size:10px;color:#77705F;">十万位階の伝承</span>` : ''}
+              <span style="font-size:11.5px;color:var(--u2-umber-2);">超越階級</span>
+              ${level.level >= 100000 ? `<span style="${MONO}font-size:10px;color:var(--u2-umber-3);">十万位階の伝承</span>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:16px;">
               <span style="position:relative;width:56px;height:56px;flex:none;display:flex;align-items:center;justify-content:center;">
                 <span style="position:absolute;inset:0;border:1.5px solid rgba(255,160,97,0.7);transform:rotate(45deg);box-shadow:0 0 18px rgba(255,107,43,0.3);"></span>
                 <span style="position:absolute;inset:7px;border:1px solid rgba(255,180,120,0.3);transform:rotate(45deg);"></span>
-                <span style="font-weight:700;font-size:25px;color:#FFB98A;">${esc([...rank.name][0] ?? '兵')}</span>
+                <span style="font-weight:700;font-size:25px;color:var(--u2-accent-soft);">${esc([...rank.name][0] ?? '兵')}</span>
               </span>
               <span style="display:flex;flex-direction:column;gap:4px;">
-                <span style="font-weight:700;font-size:25px;letter-spacing:0.1em;color:#FFD9BC;text-shadow:0 0 20px rgba(255,107,43,0.35);">${esc(rank.name)}</span>
-                <span style="${MONO}font-size:11px;color:#8F8778;">次階級「${esc(nri.nextName)}」まで <span style="color:#FFB98A;">${nri.remain.toLocaleString()}</span></span>
+                <span style="font-weight:700;font-size:25px;letter-spacing:0.1em;color:var(--u2-accent-pale);text-shadow:0 0 20px rgba(255,107,43,0.35);">${esc(rank.name)}</span>
+                <span style="${MONO}font-size:11px;color:var(--u2-umber-2);">次階級「${esc(nri.nextName)}」まで <span style="${NUM}color:var(--u2-accent-soft);">${nri.remain.toLocaleString()}</span></span>
               </span>
             </div>
             <div style="position:relative;height:4px;background:rgba(232,227,216,0.1);">
@@ -652,7 +669,7 @@ export function resultStageHtml(
         </div>
 
         <div style="background:linear-gradient(180deg, rgba(22,19,16,0.94), rgba(12,11,9,0.95));border:1px solid rgba(232,227,216,0.13);box-shadow:inset 0 1px 0 rgba(255,255,255,0.05);clip-path:polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);padding:16px 24px;display:flex;flex-direction:column;gap:11px;">
-          <span style="${MONO}font-size:10.5px;letter-spacing:0.24em;color:#77705F;">この試合の進行</span>
+          <span style="${KICKER}font-size:10.5px;letter-spacing:0.24em;color:var(--u2-umber-3);">この試合の進行</span>
           ${progressCardRows}
         </div>
 
@@ -669,8 +686,8 @@ export function resultStageHtml(
 
     <div class="u2r-gbr" style="position:absolute;right:0;bottom:0;transform-origin:bottom right;transform:scale(var(--u2s, 1));">
       <div style="position:absolute;right:56px;bottom:56px;display:flex;gap:28px;font-size:12.5px;color:#A79F90;white-space:nowrap;">
-        <span><span style="color:#FFB98A;">Ⓐ</span> 再出撃</span>
-        <span><span style="color:#B9B1A0;">Ⓑ</span> メニュー</span>
+        <span><span style="color:var(--u2-accent-soft);">Ⓐ</span> 再出撃</span>
+        <span><span style="color:var(--u2-ivory-dim);">Ⓑ</span> メニュー</span>
       </div>
     </div>
   `;

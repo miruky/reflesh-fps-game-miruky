@@ -65,11 +65,14 @@
 
   --serif: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
   --sans: 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
-  --mono: ui-monospace, 'SF Mono', 'Roboto Mono', 'DejaVu Sans Mono', monospace;
-  /* 英語ディスプレイ(OS内蔵コンデンス系のみ。外部フォント禁止) */
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Roboto Mono', 'DejaVu Sans Mono', monospace;
+  /* 英語ディスプレイ(OS内蔵コンデンス系のみ。外部フォント禁止)。
+     R59-W2: ui2.css の --u2-font-display と同一序列へ統一(正典はあちら)。
+     Avenir Next Condensed を DIN Alternate より先へ(W400-800の実weightが揃う。
+     DIN AlternateはBold単段で太字が合成になる)。Android内蔵の Roboto Condensed を追加。 */
   --display:
-    'Bahnschrift', 'DIN Alternate', 'Avenir Next Condensed', 'Arial Narrow', 'Hiragino Sans',
-    sans-serif;
+    'Bahnschrift', 'Avenir Next Condensed', 'DIN Alternate', 'Roboto Condensed', 'Arial Narrow',
+    'Hiragino Sans', sans-serif;
   /* UIエイリアス: アセットレス準拠。外部フォント名を直接参照する代わりにこれを使う */
   --font-ui: var(--display);
   --font-mono: var(--mono);
@@ -1372,6 +1375,9 @@ tr.score-ally td {
   z-index: 10;
   pointer-events: none;
   user-select: none;
+  /* R59-W2: HUD共通で数字を等幅整列(タイマー/弾数/スコアの桁踊り根絶)。
+     継承プロパティのため子のfont-family指定(mono/display)にもそのまま効く */
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 .hud-top-left {
@@ -9109,6 +9115,7 @@ tr.score-ally td {
   position: relative;
   padding-left: 14px;
   font-family: var(--display); /* メダル名は英字(DOUBLE KILL等) */
+  font-stretch: var(--u2-stretch, 100%); /* R59-W2: displayのコンデンス絞りに追随 */
   font-size: 32px;
   letter-spacing: 0.05em;
 }
@@ -9131,6 +9138,7 @@ tr.score-ally td {
 }
 .badge-name {
   font-family: var(--display);
+  font-stretch: var(--u2-stretch, 100%); /* R59-W2 */
   font-size: 20px;
   letter-spacing: 0.06em;
 }
@@ -9787,8 +9795,10 @@ body.killcam-active .kc-card {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+/* R59-W2 FONT-APPLY-B: シネマ帯の英字=display(軍用コンデンス)様式へ */
 .kc-banner {
-  font-family: var(--mono, monospace);
+  font-family: var(--display, sans-serif);
+  font-stretch: var(--u2-stretch, 100%);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.42em;
@@ -9806,7 +9816,8 @@ body.killcam-active .kc-card {
 }
 .kc-weapon {
   margin-top: 2px;
-  font-family: var(--mono, monospace);
+  font-family: var(--display, sans-serif);
+  font-stretch: var(--u2-stretch, 100%);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.24em;
@@ -9990,11 +10001,13 @@ body.killcam-active .hud-death {
   gap: 10px;
   animation: fkc-fade-in 0.45s 0.15s var(--ease-out, ease) both;
 }
+/* R59-W2 FONT-APPLY-B: FINAL KILLCAM=display(軍用コンデンス)様式へ */
 .hud-fkc-label {
   position: relative;
   overflow: hidden;
   padding: 0 3px;
-  font-family: var(--mono, monospace);
+  font-family: var(--display, sans-serif);
+  font-stretch: var(--u2-stretch, 100%);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.44em;

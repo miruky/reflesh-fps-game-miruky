@@ -57,14 +57,22 @@
   position: absolute;
   left: 150px;
   top: 88px;
+  /* R59-W2 FIX: 0×0アンカー群直下の絶対配置子は shrink-to-fit が min-content へ潰れ、
+     章タイトルのCJKが縦折れする(result R56潜在バグと同型)。max-content で1行幅を保証 */
+  width: max-content;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
+/* R59-W2 FONT-APPLY-B: 英キッカー=正典様式(display系コンデンス+最ワイド字間)。
+   和文はHiraginoへ自然フォールバックするため混植可(FONT-TOKENS契約)。 */
 .u2c-kicker {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 12px;
-  letter-spacing: 0.38em;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
   color: #b08a66;
 }
 .u2c-title {
@@ -89,17 +97,20 @@
   );
   margin-top: 6px;
 }
+/* R59-W2: 進捗数字=計器数字(tabular等幅で桁ブレ根絶) */
 .u2c-progressline {
   display: flex;
   align-items: center;
   gap: 14px;
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
   font-size: 13px;
-  color: #a79f90;
+  color: var(--u2-umber-1);
   white-space: nowrap;
 }
 .u2c-progressline b {
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
   font-weight: 700;
 }
 .u2c-growbar {
@@ -157,7 +168,9 @@
   white-space: nowrap;
 }
 .u2c-chapter-no {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 11px;
   letter-spacing: 0.24em;
   color: #b08a66;
@@ -179,12 +192,14 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
   font-size: 12px;
-  color: #a79f90;
+  color: var(--u2-umber-1);
 }
 .u2c-chapter-prog b {
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
 }
 .u2c-chapter-prog .u2c-growbar {
   width: 90px;
@@ -214,14 +229,17 @@
 .u2c-mission:hover:not(:disabled),
 .u2c-mission:focus-visible,
 .u2c-mission:focus {
-  color: #ffa061;
+  color: var(--u2-accent-hi);
   transform: translateX(8px);
   border-left-color: rgba(255, 107, 43, 0.7);
 }
+/* R59-W2: 任務符号(CH1-2)=display+ワイド字間(BO系の任務行様式) */
 .u2c-mission-code {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 12px;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--u2-track-wide);
   color: #b08a66;
 }
 .u2c-mission-name {
@@ -240,7 +258,7 @@
 }
 .u2c-mission-reward {
   font-size: 10.5px;
-  color: #f5d06b;
+  color: var(--u2-gold);
   border: 1px solid rgba(184, 134, 46, 0.5);
   padding: 1px 8px;
 }
@@ -267,7 +285,7 @@
 }
 .u2c-star.on {
   background: rgba(255, 107, 43, 0.25);
-  border-color: #ffa061;
+  border-color: var(--u2-accent-hi);
   box-shadow: 0 0 8px rgba(255, 107, 43, 0.6);
 }
 
@@ -288,7 +306,9 @@
   padding: 16px 20px;
 }
 .u2c-plate-kicker {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 10.5px;
   letter-spacing: 0.24em;
   color: #8f8b84;
@@ -300,7 +320,9 @@
    この項目だけ和文UIフォント(.u2-stage既定)で描画し、数字の可読性を回復する
    (.u2c-plate-kickerと同じ詳細度=単一クラスなので、CSS内で後勝ちさせている)。 */
 .u2c-cast-kicker {
-  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  font-family: var(--u2-font-body);
+  font-stretch: 100%;
+  font-weight: var(--u2-w-body);
 }
 .u2c-plate p {
   font-size: 13px;
@@ -400,7 +422,7 @@
 }
 .u2c-quiet:hover {
   border-color: rgba(255, 160, 97, 0.7);
-  color: #ffa061;
+  color: var(--u2-accent-hi);
 }
 
 /* ═══ 下帯(mock03逐語) ═══ */
@@ -439,11 +461,11 @@
   margin-right: 6px;
 }
 .u2c-key.accent {
-  border-color: #ff6b2b;
-  color: #ffb98a;
+  border-color: var(--u2-accent);
+  color: var(--u2-accent-soft);
 }
 .u2c-hint-note {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 11px;
   color: #6e6a62;
 }
@@ -506,9 +528,12 @@
   padding-left: 16px;
 }
 .u2c-intel h3 {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 11px;
-  letter-spacing: 0.3em;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
   color: #b08a66;
   margin-bottom: 8px;
 }
@@ -553,7 +578,9 @@
   border-top: none;
 }
 .u2c-meta-row dt {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 10.5px;
   letter-spacing: 0.24em;
   color: #8f8b84;
@@ -569,7 +596,9 @@
 .u2c-meta-row dd.num {
   /* R55 W-C2[LOW]: 橙は行動/選択/達成のみの鉄則違反(規定時間は単なる情報表示)。
      等幅で数値性は保ちつつ、他ddと同じ無彩色へ揃える。 */
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
 }
 .u2c-select {
   width: 100%;
@@ -586,7 +615,7 @@
    勝たせる。 */
 #menu .u2c-select:focus-visible,
 #menu .u2c-select:focus {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: 3px;
 }
 .u2c-chip {
@@ -603,7 +632,7 @@
 }
 .u2c-chip:hover {
   border-color: rgba(255, 160, 97, 0.7);
-  color: #ffa061;
+  color: var(--u2-accent-hi);
 }
 .u2c-chip.selected {
   background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
@@ -614,6 +643,8 @@
   position: absolute;
   right: 96px;
   bottom: 96px;
+  /* R59-W2 FIX: min-content潰れでボタンが2行縦積みになるのを根治(0×0アンカー同型) */
+  width: max-content;
   display: flex;
   gap: 12px;
   align-items: center;
@@ -625,6 +656,8 @@
    (このファイル下部)の .u2c-group-tl > .u2c-band-left / .u2c-group-tr > .u2c-band-meta
    が絶対配置で担う。 */
 .u2c-band-left {
+  /* R59-W2 FIX: mission-result のキッカーが min-content 潰れで3行縦積み+罫線貫通(0×0アンカー同型) */
+  width: max-content;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -636,13 +669,16 @@
   box-shadow: 0 0 12px rgba(255, 107, 43, 0.8);
 }
 .u2c-band-kicker {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 12px;
-  letter-spacing: 0.3em;
-  color: #a79f90;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
+  color: var(--u2-umber-1);
 }
 .u2c-band-meta {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 11px;
   letter-spacing: 0.16em;
   color: #5e594f;
@@ -711,18 +747,18 @@
   letter-spacing: 0.06em;
 }
 .u2c-note.unlock {
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
 }
 .u2c-note.first {
-  color: #9fe39f;
+  color: var(--u2-positive);
 }
 /* R55 W-C6[17]: 金(#f5d06b)は鉄則(金=EXOTIC/経済のみ)違反だったため、
    達成/未達で意味付きの色に分離する(達成=熾火橙/未達=無彩色)。 */
 .u2c-note.challenge.met {
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
 }
 .u2c-note.challenge.unmet {
-  color: #8f8778;
+  color: var(--u2-umber-2);
 }
 .u2c-statcards {
   display: flex;
@@ -740,22 +776,32 @@
   gap: 8px;
   min-width: 168px;
 }
+/* R59-W2: 統計カード=ヒーロー数字(コンデンス75%+W800+tabular)+display英字サブ */
 .u2c-statcard .label {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 10px;
   letter-spacing: 0.2em;
-  color: #77705f;
+  color: var(--u2-umber-3);
 }
 .u2c-statcard .value {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-stretch: 75%;
+  font-weight: var(--u2-w-hero);
+  letter-spacing: var(--u2-track-hero);
   font-size: 36px;
   line-height: 1;
-  color: #e8e3d8;
+  color: var(--u2-ivory);
 }
 .u2c-statcard .sub {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
   font-size: 10.5px;
-  color: #8f8778;
+  letter-spacing: var(--u2-track-wide);
+  text-transform: uppercase;
+  color: var(--u2-umber-2);
 }
 .u2c-statcard.ember {
   border-color: rgba(255, 107, 43, 0.45);
@@ -767,7 +813,7 @@
   color: #c9865c;
 }
 .u2c-statcard.ember .value {
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
   text-shadow: 0 0 18px rgba(255, 107, 43, 0.4);
 }
 .u2c-mr-actions {
@@ -800,16 +846,21 @@
   justify-content: space-between;
   align-items: baseline;
 }
+/* R59-W2: +XP=旧ミント#9fe39f → positiveトークン(役割色) */
 .u2c-xpcard-head .k {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 11px;
-  letter-spacing: 0.26em;
-  color: #a79f90;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
+  color: var(--u2-umber-1);
 }
 .u2c-xpcard-head .v {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
   font-size: 11px;
-  color: #9fe39f;
+  color: var(--u2-positive);
 }
 .u2c-xplist {
   list-style: none;
@@ -830,22 +881,26 @@
   animation-delay: calc(var(--i, 0) * 70ms);
 }
 .u2c-xplist li .xp {
-  font-family: ui-monospace, Consolas, monospace;
-  color: #9fe39f;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--u2-positive);
   flex: none;
 }
 .u2c-xplist li.daily {
-  color: #f5d06b;
+  color: var(--u2-gold);
 }
 .u2c-xptotal {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
   font-size: 15px;
-  color: #a79f90;
+  color: var(--u2-umber-1);
 }
 .u2c-xptotal b {
   font-size: 26px;
-  color: #ffb98a;
-  font-weight: 400;
+  font-stretch: 75%;
+  font-weight: var(--u2-w-hero);
+  letter-spacing: var(--u2-track-hero);
+  color: var(--u2-accent-soft);
   margin: 0 6px;
 }
 .u2c-levelrow {
@@ -855,13 +910,15 @@
   white-space: nowrap;
 }
 .u2c-levelrow .lv {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
   font-size: 15px;
-  color: #f5f0e6;
+  color: var(--u2-ivory-hi);
 }
 .u2c-title-badge {
   font-size: 11px;
-  color: #ffd9bc;
+  color: var(--u2-accent-pale);
   border: 1px solid rgba(255, 107, 43, 0.5);
   padding: 1px 9px;
 }
@@ -881,11 +938,11 @@
   color: #b9b4ac;
 }
 .u2c-progress-note.up {
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
   font-weight: 700;
 }
 .u2c-progress-note.rec {
-  color: #9fe39f;
+  color: var(--u2-positive);
 }
 .u2c-unlocks {
   list-style: none;
@@ -895,7 +952,7 @@
   flex-direction: column;
   gap: 5px;
   font-size: 12px;
-  color: #f5d06b;
+  color: var(--u2-gold);
 }
 
 /* ═══ 省モーション(R55 W-C2[MEDIUM]: hub/result/options等と同型。u2c-reduceは

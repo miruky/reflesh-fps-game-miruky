@@ -204,18 +204,23 @@
   flex-direction: column;
   gap: 10px;
 }
+/* R59-W2 FONT-APPLY-A: キッカーは正典様式(display+最ワイドtracking+大文字)へ。
+   色は場当たりの銅色#b08a66を灰墨(和文キッカー)へ統制。 */
 .u2d-kicker {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 12px;
-  letter-spacing: 0.38em;
-  color: #b08a66;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
+  color: var(--u2-umber-1);
 }
 .u2d-title {
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   font-size: 72px;
   line-height: 1;
   letter-spacing: 0.05em;
-  color: #f6f4f0;
+  color: var(--u2-ivory-hi);
   text-shadow:
     0 3px 26px rgba(0, 0, 0, 0.9),
     0 0 60px rgba(255, 150, 80, 0.12);
@@ -248,9 +253,9 @@
   cursor: pointer;
   text-align: left;
   padding: 11px 22px 11px 2px;
-  color: #edebe6;
+  color: var(--u2-ivory);
   font-family: inherit;
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   font-size: 23px;
   letter-spacing: 0.07em;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
@@ -259,11 +264,11 @@
     color 120ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .u2d-nav-item:hover {
-  color: #ffa061;
+  color: var(--u2-accent-hi);
   transform: translateX(8px);
 }
 .u2d-nav-item:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-focus);
   outline-offset: 3px;
 }
 .u2d-nav-item.selected {
@@ -274,7 +279,7 @@
      していた。縦は非選択と同値(11px)へ固定(横のプレート伸長は左寄せ縦積みのため他要素を
      動かさない正典デザイン=維持)。 */
   padding: 11px 34px 11px 18px;
-  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  background: linear-gradient(180deg, #ff7e3f, var(--u2-accent-deep) 60%, #d14c16);
   color: #1a0b04;
   text-shadow: none;
   box-shadow:
@@ -289,7 +294,7 @@
   color: #1a0b04;
 }
 .u2d-nav-item.selected:focus-visible {
-  outline: 2px solid #fff4e6;
+  outline: 2px solid var(--u2-ivory-hi);
 }
 .u2d-nav-item.selected::after {
   content: '';
@@ -298,7 +303,7 @@
   top: 50%;
   width: 16px;
   height: 16px;
-  background: #e85615;
+  background: var(--u2-accent-deep);
   transform: translateY(-50%) rotate(45deg);
   box-shadow: inset 1px -1px 0 rgba(255, 220, 190, 0.4);
 }
@@ -312,7 +317,7 @@
   flex-direction: column;
   gap: 8px;
   font-size: 14.5px;
-  color: #b9b4ac;
+  color: var(--u2-ivory-dim);
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
   white-space: nowrap;
 }
@@ -338,19 +343,20 @@
   align-items: baseline;
 }
 .u2d-lobby-count {
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   font-size: 17px;
-  color: #f6f4f0;
+  color: var(--u2-ivory-hi);
 }
 .u2d-lobby-count small {
-  font-weight: 700;
+  font-weight: var(--u2-w-strong);
   font-size: 13px;
-  color: #9aa0a8;
+  color: var(--u2-umber-1);
 }
+/* R59-W2 FONT-APPLY-A: 旧ミント#9fe39fは全廃 → 機能色positive(抑制オリーブ)へ。 */
 .u2d-lobby-net {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 11px;
-  color: #9fe39f;
+  color: var(--u2-positive);
 }
 .u2d-lobby-row2 {
   background: rgba(8, 7, 9, 0.86);
@@ -370,27 +376,30 @@
   flex: none;
 }
 .u2d-lobby-lv {
-  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
-  font-weight: 700;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 16px;
-  color: #ffb98a;
+  letter-spacing: var(--u2-track-tight);
+  color: var(--u2-accent-soft);
 }
 .u2d-lobby-name {
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   font-size: 16px;
-  color: #f0eee9;
+  color: var(--u2-ivory-hi);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .u2d-lobby-sub {
   font-size: 12px;
-  color: #8f8b84;
+  color: var(--u2-umber-2);
 }
 .u2d-lobby-role {
   margin-left: auto;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 11px;
-  color: #77705f;
+  color: var(--u2-umber-3);
 }
 .u2d-lobby-row3 {
   /* R55 W-C: 不透明契約(0.82+)をわずかに下回っていたため引き上げ */
@@ -399,7 +408,7 @@
   border-top: none;
   padding: 11px 20px;
   font-size: 12.5px;
-  color: #9aa0a8;
+  color: var(--u2-umber-1);
 }
 
 /* ── セクションパネル(実機能の作業面。ロビーカードと同じプレート言語) ── */
@@ -427,16 +436,19 @@
   border-bottom: 1px solid rgba(232, 227, 216, 0.1);
 }
 .u2d-panel-title {
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   font-size: 17px;
-  color: #f6f4f0;
+  color: var(--u2-ivory-hi);
   letter-spacing: 0.07em;
 }
 .u2d-panel-kicker {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 10.5px;
-  letter-spacing: 0.24em;
-  color: #8f8b84;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
+  color: var(--u2-umber-2);
 }
 .u2d-panel-body {
   flex: 1;
@@ -469,7 +481,7 @@
   width: 100%;
   border: 1px solid rgba(232, 227, 216, 0.14);
   background: rgba(14, 12, 11, 0.6);
-  color: #e8eaec;
+  color: var(--u2-ivory);
   font-family: inherit;
   cursor: pointer;
   text-align: left;
@@ -486,21 +498,21 @@
   border-color: rgba(255, 160, 97, 0.55);
 }
 .u2d-opt:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-focus);
   outline-offset: 2px;
 }
 .u2d-opt .u2d-opt-name {
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   font-size: 16px;
   letter-spacing: 0.05em;
-  color: #f0eee9;
+  color: var(--u2-ivory-hi);
 }
 .u2d-opt .u2d-opt-desc {
   font-size: 12.5px;
-  color: #9aa0a8;
+  color: var(--u2-umber-1);
 }
 .u2d-opt.selected {
-  background: linear-gradient(180deg, #ff7e3f, #e85615 60%, #d14c16);
+  background: linear-gradient(180deg, #ff7e3f, var(--u2-accent-deep) 60%, #d14c16);
   border-color: rgba(255, 220, 190, 0.55);
   box-shadow:
     0 4px 18px rgba(0, 0, 0, 0.45),
@@ -527,7 +539,7 @@
 .u2d-stagecard {
   border: 1px solid rgba(232, 227, 216, 0.14);
   background: rgba(14, 12, 11, 0.6);
-  color: #e8eaec;
+  color: var(--u2-ivory);
   font-family: inherit;
   cursor: pointer;
   text-align: left;
@@ -541,11 +553,11 @@
   border-color: rgba(255, 160, 97, 0.55);
 }
 .u2d-stagecard:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-focus);
   outline-offset: 2px;
 }
 .u2d-stagecard.selected {
-  border-color: #ff6b2b;
+  border-color: var(--u2-accent);
   box-shadow:
     0 0 0 1px rgba(255, 107, 43, 0.6),
     0 0 26px rgba(255, 107, 43, 0.2);
@@ -568,27 +580,27 @@
   position: absolute;
   left: 8px;
   top: 8px;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10px;
   letter-spacing: 0.2em;
-  color: rgba(247, 242, 232, 0.85);
+  color: color-mix(in srgb, var(--u2-ivory-hi) 85%, transparent);
   background: rgba(5, 6, 7, 0.65);
   padding: 3px 7px;
 }
 .u2d-stagecard.selected .u2d-stage-no {
   color: #1a0b04;
-  background: #ff6b2b;
+  background: var(--u2-accent);
 }
 .u2d-stage-name {
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   font-size: 15px;
   padding: 0 12px;
-  color: #f0eee9;
+  color: var(--u2-ivory-hi);
 }
 .u2d-stage-meta {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10px;
-  color: #77705f;
+  color: var(--u2-umber-3);
   padding: 0 12px;
   white-space: normal;
 }
@@ -621,19 +633,19 @@
   top: 2px;
   width: 14px;
   height: 14px;
-  background: #9aa0a8;
+  background: var(--u2-steel-2);
   transition: transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .u2d-toggle input:checked {
   background: rgba(255, 107, 43, 0.35);
-  border-color: #ff6b2b;
+  border-color: var(--u2-accent);
 }
 .u2d-toggle input:checked::after {
   transform: translateX(20px);
-  background: #ff6b2b;
+  background: var(--u2-accent);
 }
 .u2d-toggle input:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-focus);
   outline-offset: 2px;
 }
 .u2d-toggle input:disabled {
@@ -646,13 +658,13 @@
   gap: 3px;
 }
 .u2d-toggle-name {
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   font-size: 14.5px;
-  color: #f0eee9;
+  color: var(--u2-ivory-hi);
 }
 .u2d-toggle-desc {
   font-size: 12px;
-  color: #9aa0a8;
+  color: var(--u2-umber-1);
 }
 .u2d-rogue-locked {
   opacity: 0.4;
@@ -671,33 +683,39 @@
   height: 40px;
   border: 1px solid rgba(232, 227, 216, 0.25);
   background: rgba(14, 12, 11, 0.7);
-  color: #f0eee9;
+  color: var(--u2-ivory-hi);
   font-size: 20px;
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   cursor: pointer;
   font-family: inherit;
 }
 .u2d-zr-step:hover:not(:disabled) {
-  border-color: #ffa061;
-  color: #ffa061;
+  border-color: var(--u2-accent-hi);
+  color: var(--u2-accent-hi);
 }
 .u2d-zr-step:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-focus);
   outline-offset: 2px;
 }
 .u2d-zr-step:disabled {
   opacity: 0.35;
   cursor: default;
 }
+/* R59-W2 FONT-APPLY-A: 開始ラウンドの大数字はヒーロー数字様式(num+75%+W800+tabular)。 */
 .u2d-zr-val {
-  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
-  font-weight: 800;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-stretch: 75%;
+  font-weight: var(--u2-w-hero);
   font-size: 30px;
-  color: #ffb98a;
+  letter-spacing: var(--u2-track-hero);
+  color: var(--u2-accent-soft);
 }
 .u2d-zr-val small {
   font-size: 13px;
-  color: #77705f;
+  font-weight: var(--u2-w-body);
+  letter-spacing: var(--u2-track-tight);
+  color: var(--u2-umber-3);
   margin-left: 8px;
 }
 .u2d-zr-presets {
@@ -709,25 +727,25 @@
 .u2d-chip {
   border: 1px solid rgba(232, 227, 216, 0.2);
   background: rgba(14, 12, 11, 0.6);
-  color: #c4c0b8;
-  font-family: ui-monospace, Consolas, monospace;
+  color: var(--u2-ivory-dim);
+  font-family: var(--u2-font-mono);
   font-size: 12px;
   padding: 7px 12px;
   cursor: pointer;
 }
 .u2d-chip:hover {
-  border-color: #ffa061;
-  color: #ffa061;
+  border-color: var(--u2-accent-hi);
+  color: var(--u2-accent-hi);
 }
 .u2d-chip:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-focus);
   outline-offset: 2px;
 }
 .u2d-chip.selected {
-  background: linear-gradient(180deg, #ff7e3f, #e85615);
+  background: linear-gradient(180deg, #ff7e3f, var(--u2-accent-deep));
   border-color: rgba(255, 220, 190, 0.55);
   color: #1a0b04;
-  font-weight: 700;
+  font-weight: var(--u2-w-strong);
 }
 
 /* ── 下中央: 次のステージ帯+出撃CTA(mockのタイマーブロック位置に実CTA) ── */
@@ -750,15 +768,18 @@
   gap: 14px;
 }
 .u2d-band-label {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 10.5px;
-  letter-spacing: 0.24em;
-  color: #8f8b84;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
+  color: var(--u2-umber-2);
 }
 .u2d-band-value {
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   font-size: 17px;
-  color: #f0eee9;
+  color: var(--u2-ivory-hi);
 }
 /* R56追加: 出撃帯から武器庫へ(装備を変更)。band-info/launchと同じプレート言語で
    馴染ませつつ、出撃(主CTA=橙塗り)とは区別する中間トーンの二次ボタンとする。 */
@@ -774,32 +795,35 @@
   transition: border-color 120ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .u2d-band-armory-label {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 10.5px;
-  letter-spacing: 0.24em;
-  color: #8f8b84;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
+  color: var(--u2-umber-2);
 }
 .u2d-band-armory-main {
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   font-size: 17px;
-  color: #f0eee9;
+  color: var(--u2-ivory-hi);
   transition: color 120ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .u2d-band-armory:hover {
   border-color: rgba(255, 160, 97, 0.55);
 }
 .u2d-band-armory:hover .u2d-band-armory-main {
-  color: #ffa061;
+  color: var(--u2-accent-hi);
 }
 .u2d-band-armory:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-focus);
   outline-offset: 3px;
 }
 
 .u2d-launch {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(180deg, #ff7e3f, #e85615);
+  background: linear-gradient(180deg, #ff7e3f, var(--u2-accent-deep));
   padding: 12px 26px;
   display: flex;
   align-items: baseline;
@@ -812,18 +836,19 @@
   background: linear-gradient(180deg, #ff9861, #f26722);
 }
 .u2d-launch:focus-visible {
-  outline: 2px solid #fff4e6;
+  outline: 2px solid var(--u2-ivory-hi);
   outline-offset: 3px;
 }
 .u2d-launch-label {
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   color: #3a1505;
   letter-spacing: 0.1em;
 }
 .u2d-launch-main {
-  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
-  font-weight: 800;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-hero);
   font-size: 22px;
   color: #1a0b04;
   animation: u2d-blink 2s ease-in-out infinite;
@@ -878,7 +903,7 @@
   display: flex;
   gap: calc(26px * var(--u2s, 1));
   font-size: calc(13px * var(--u2s, 1));
-  color: #c4c0b8;
+  color: var(--u2-ivory-dim);
   align-items: center;
 }
 .u2d-key {
@@ -887,21 +912,21 @@
   height: calc(21px * var(--u2s, 1));
   border-radius: 50%;
   border: calc(1.5px * var(--u2s, 1)) solid rgba(232, 227, 216, 0.45);
-  color: #c4c0b8;
+  color: var(--u2-ivory-dim);
   align-items: center;
   justify-content: center;
   font-size: calc(10px * var(--u2s, 1));
-  font-weight: 800;
+  font-weight: var(--u2-w-hero);
   margin-right: calc(4px * var(--u2s, 1));
 }
 .u2d-key.accent {
-  border-color: #ff6b2b;
-  color: #ffb98a;
+  border-color: var(--u2-accent);
+  color: var(--u2-accent-soft);
 }
 .u2d-foot-mono {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: calc(11px * var(--u2s, 1));
-  color: #6e6a62;
+  color: var(--u2-umber-3);
 }
 /* R59②: 旧「☰ メニューへ」は面も枠も無い裸テキスト(bgα=0/枠0px/幅105px)で右下の暗闇に
    沈んでいた。共有導線プレート .u2-menubtn(ui2.css: 不透明面0.9+象牙枠+Escバッジ+

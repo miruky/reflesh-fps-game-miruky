@@ -28,8 +28,8 @@
   overflow: hidden;
   background: #08090c;
   color: #e8eaec;
-  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
-  letter-spacing: 0.04em;
+  font-family: var(--u2-font-body);
+  letter-spacing: var(--u2-track-normal);
   user-select: none;
 }
 
@@ -122,7 +122,7 @@
   border-color: rgba(255, 107, 43, 0.7);
 }
 .u2a-back:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: 2px;
 }
 .u2a-headings {
@@ -134,11 +134,16 @@
   align-items: flex-start;
   gap: 4px;
 }
+/* R59-W2 FONT-APPLY-B: キッカー=正典様式(.u2-kicker同値: display系コンデンス+最ワイド字間)。
+   旧monoの0.34emより締まる(-8px程度)が左寄せ・nowrapのため周辺boxは不変。 */
 .u2a-kicker {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 11px;
-  letter-spacing: 0.34em;
-  color: #8f959d;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
+  color: var(--u2-steel-2);
 }
 /* タイトル行=ビュー切替(メイン/サブ/投擲)。activeがモックの44px特大題 */
 .u2a-titles {
@@ -159,10 +164,10 @@
   transition: color 120ms ease;
 }
 .u2a-title:hover {
-  color: #ffa061;
+  color: var(--u2-accent-hi);
 }
 .u2a-title:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: 3px;
 }
 .u2a-title.on {
@@ -186,6 +191,11 @@
   height: 56px;
   display: flex;
   align-items: stretch;
+  /* R59-W2 FIX: 720p/4:3で内在幅が帯を超え特殊兵装タブがクリップ→到達不能だった。
+     下のpadding/fontフルード縮退で通常は収まり、極小窓でも横スクロールで必ず到達できる保険 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   background: rgba(10, 10, 13, 0.92);
   border: 1px solid rgba(232, 234, 236, 0.14);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
@@ -194,11 +204,12 @@
 .u2a-pad {
   display: flex;
   align-items: center;
-  padding: 0 18px;
-  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
+  padding: 0 min(18px, calc(6px + 12px * var(--u2s, 1)));
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
   font-weight: 700;
-  font-size: 13px;
-  color: #8f959d;
+  font-size: min(13px, calc(6px + 7px * var(--u2s, 1)));
+  color: var(--u2-steel-2);
 }
 .u2a-pad--lb {
   border-right: 1px solid rgba(232, 234, 236, 0.12);
@@ -210,15 +221,16 @@
 .u2a-tab {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 0 30px;
+  /* R59-W2 FIX: 16:9(--u2s=1)は従来値、縮小窓では比例縮退して帯内に収める */
+  gap: min(9px, calc(4px + 5px * var(--u2s, 1)));
+  padding: 0 min(30px, calc(8px + 22px * var(--u2s, 1)));
   background: none;
   border: none;
   border-right: 1px solid rgba(232, 234, 236, 0.07);
   color: #b9bec5;
   font-family: inherit;
   font-weight: 700;
-  font-size: 15.5px;
+  font-size: min(15.5px, calc(7px + 8.5px * var(--u2s, 1)));
   letter-spacing: 0.08em;
   cursor: pointer;
   transition:
@@ -226,7 +238,7 @@
     background 120ms ease;
 }
 .u2a-tab:hover {
-  color: #ffa061;
+  color: var(--u2-accent-hi);
   background: rgba(255, 107, 43, 0.07);
 }
 /* R55 W-C6[6][14]: 単一クラス+pseudo(0,3,0)はui2.cssの#menu .u2-stage button:focus-visible
@@ -236,7 +248,7 @@
    :focusも併記する。 */
 #menu .u2-stage .u2a-tab:focus-visible,
 #menu .u2-stage .u2a-tab:focus {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: -3px;
 }
 /* R59①: 旧実装は選択時に padding 0 34px + font-size 16.5px を与えており、選択タブの幅が
@@ -251,11 +263,13 @@
   font-weight: 800;
   box-shadow: inset 0 1px 0 rgba(255, 220, 190, 0.5);
 }
+/* R59-W2: 保有数=計器数字(tabular等幅) */
 .u2a-tab .u2a-tab-n {
-  font-family: 'Bahnschrift', Arial, sans-serif;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
   font-size: 11px;
   font-weight: 700;
-  color: #6e747c;
+  color: var(--u2-steel-3);
 }
 .u2a-tab.on .u2a-tab-n {
   color: #5a2408;
@@ -343,7 +357,7 @@
   background: rgba(24, 20, 17, 0.9);
 }
 .u2a-row:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: 2px;
 }
 /* R59①: 旧実装は選択行だけ height 84px(+8px)で、選択のたびに下の行全部が縦ズレしていた。
@@ -402,9 +416,13 @@
   flex: 1;
   min-width: 0;
 }
+/* R59-W2: 武器銘(FAMAS-G4等の英字)=display+コンデンス(実FPSのリスト様式) */
 .u2a-wname {
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
   font-weight: 700;
   font-size: 17px;
+  letter-spacing: var(--u2-track-tight);
   color: #dde0e4;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -417,7 +435,7 @@
   color: #6e747c;
 }
 .u2a-wsub {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10px;
   color: #787e86;
 }
@@ -480,9 +498,12 @@
   gap: 16px;
   white-space: nowrap;
 }
+/* R59-W2: 武器名プレート=display+コンデンス+W800(BO系の英字大見出し正典) */
 .u2a-nameplate {
   background: #f2f4f6;
   color: #101216;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
   font-weight: 800;
   font-size: 24px;
   letter-spacing: 0.06em;
@@ -490,10 +511,10 @@
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
 }
 .u2a-spec {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 12px;
   letter-spacing: 0.22em;
-  color: #8f959d;
+  color: var(--u2-steel-2);
 }
 .u2a-chips {
   margin-left: auto;
@@ -501,7 +522,7 @@
   gap: 8px;
 }
 .u2a-chip {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10.5px;
   color: #9aa0a8;
   border: 1px solid rgba(232, 234, 236, 0.2);
@@ -578,7 +599,7 @@
   right: auto;
   bottom: 2px;
   transform: translateX(-50%);
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10px;
   letter-spacing: 0.2em;
   color: #565c64;
@@ -618,23 +639,28 @@
 .u2a-pips i.on {
   background: #e8eaec;
 }
+/* R59-W2: 差分セル=計器数字。▲=positive(旧ミント#9fe39f廃止)/▼=negative(旧ピンク#e88b8b廃止) */
 .u2a-diffcell {
-  font-family: 'Bahnschrift', Arial, sans-serif;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
   font-size: 13px;
   font-weight: 700;
   color: #565c64;
 }
 .u2a-diffcell.up {
-  color: #9fe39f;
+  color: var(--u2-positive);
 }
 .u2a-diffcell.down {
-  color: #e88b8b;
+  color: var(--u2-negative);
 }
+/* R59-W2: TTK・DPS・rpm=計器数字(tabular等幅で桁ブレ根絶) */
 .u2a-ttk {
   margin-top: 4px;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
   font-size: 10.5px;
-  color: #6e747c;
+  color: var(--u2-steel-3);
 }
 
 /* カモ(モック: right6 bottom132) */
@@ -649,7 +675,7 @@
   white-space: nowrap;
 }
 .u2a-camohead {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10.5px;
   letter-spacing: 0.22em;
   color: #8f959d;
@@ -676,14 +702,14 @@
     opacity 120ms ease;
 }
 .u2a-swatch:hover:not(:disabled) {
-  border-color: #ffa061;
+  border-color: var(--u2-accent-hi);
 }
 .u2a-swatch:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: 2px;
 }
 .u2a-swatch.on {
-  border: 2px solid #ffa061;
+  border: 2px solid var(--u2-accent-hi);
   box-shadow: 0 0 14px rgba(255, 160, 97, 0.4);
 }
 /* R57③: 解放済み/未解放を一目で区別できるようにする。カモ本来の色は残しつつ
@@ -708,12 +734,12 @@
   background: linear-gradient(135deg, #2c3340, #181b22);
 }
 .u2a-camonext {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10.5px;
   color: #6e747c;
 }
 .u2a-camonote {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10.5px;
   color: #6e747c;
 }
@@ -750,7 +776,7 @@
   border-color: rgba(255, 160, 97, 0.85);
 }
 .u2a-slot:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: 2px;
 }
 .u2a-slot.empty {
@@ -758,7 +784,9 @@
   border: 1px dashed rgba(232, 234, 236, 0.22);
 }
 .u2a-slotkicker {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 9px;
   letter-spacing: 0.18em;
   color: #c9865c;
@@ -809,11 +837,11 @@
    ID負けし内側リングが発火しない。#menu .u2-stageを前置して(1,3,0)へ引き上げ、:focusも併記。 */
 #menu .u2-stage .u2a-popbtn:focus-visible,
 #menu .u2-stage .u2a-popbtn:focus {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: -2px;
 }
 .u2a-popbtn.on {
-  color: #ffa061;
+  color: var(--u2-accent-hi);
 }
 .u2a-popbtn:disabled {
   color: #565c64;
@@ -824,7 +852,7 @@
   font-size: 13.5px;
 }
 .u2a-popsub {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10px;
   color: #8f959d;
 }
@@ -896,10 +924,10 @@
   pointer-events: none;
 }
 .u2a-band-status {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10.5px;
   letter-spacing: 0.16em;
-  color: #6e747c;
+  color: var(--u2-steel-3);
 }
 .u2a-band-hints {
   display: flex;
@@ -910,7 +938,7 @@
 }
 .u2a-band-hints b {
   font-weight: 400;
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
 }
 /* R59②: 下帯右端の共有導線ボタン(ui2.cssの.u2-menubtn)。帯自体はpointer-events:noneの
    ヒント帯なので、ボタンだけ実クリック可能へ戻す(全画面「右下=メニューへ」の配置統一)。 */

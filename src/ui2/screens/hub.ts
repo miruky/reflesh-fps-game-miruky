@@ -20,8 +20,14 @@ import { BUILD_LABEL } from '../../version';
 import type { Profile } from '../types';
 import type { ScreenMount } from '../types';
 
-const MONO = "font-family:ui-monospace,'SF Mono','Cascadia Mono',Consolas,monospace;";
-const COND = "font-family:'Bahnschrift','Arial Narrow','Avenir Next Condensed',Arial,sans-serif;";
+// R59-W2 FONT-APPLY-A: 書体・数字・キッカーは ui2.css の --u2-* トークン契約を参照する
+// (生font-family/生hexの新設禁止)。MONO=データ/座標/BUILD、COND=欧文コンデンス見出し、
+// KICK=極小大文字キッカー(display+最ワイドtracking)、NUM=スタッツ数字(tabular等幅)。
+const MONO = 'font-family:var(--u2-font-mono);';
+const COND = 'font-family:var(--u2-font-display);font-stretch:var(--u2-stretch);';
+const KICK = `${COND}font-weight:var(--u2-w-strong);letter-spacing:var(--u2-track-kicker);text-transform:uppercase;`;
+const NUM =
+  'font-family:var(--u2-num);font-variant-numeric:tabular-nums lining-nums;letter-spacing:var(--u2-track-tight);';
 
 function lcg(seed: number): () => number {
   let s = seed >>> 0;
@@ -266,15 +272,15 @@ function earthSvg(): string {
 // (hub-daily-leftの残り時間表示は既存のtick()が別途毎秒更新するため対象外)。
 function dailyBodyHtml(daily: DailyChallengeDef, done: number): string {
   return (
-    `<span style="font-size:14.5px;font-weight:700;color:#E4DECF;">${daily.label}\u3000<span style="color:#9FE39F;${MONO}font-size:12px;font-weight:400;">報酬 +${fmtInt(daily.rewardXp)} XP</span></span>` +
+    `<span style="font-size:14.5px;font-weight:700;color:var(--u2-ivory);">${daily.label}\u3000<span style="color:var(--u2-positive);${MONO}font-size:12px;font-weight:400;">報酬 +${fmtInt(daily.rewardXp)} XP</span></span>` +
     `<div style="display:flex;align-items:center;gap:12px;">` +
     `<div style="position:relative;flex:1;height:4px;background:rgba(232,227,216,0.12);">` +
-    `<div style="width:${Math.round((done / Math.max(1, daily.target)) * 100)}%;height:4px;background:#FF6B2B;"></div>` +
+    `<div style="width:${Math.round((done / Math.max(1, daily.target)) * 100)}%;height:4px;background:var(--u2-accent);"></div>` +
     (daily.target > 1
       ? `<div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg, transparent 0 calc(${(100 / daily.target).toFixed(2)}% - 2px), rgba(4,4,8,0.9) calc(${(100 / daily.target).toFixed(2)}% - 2px) ${(100 / daily.target).toFixed(2)}%);"></div>`
       : '') +
     `</div>` +
-    `<span style="${MONO}font-size:12px;color:#E8E3D8;">${done} / ${daily.target}</span>` +
+    `<span style="${NUM}font-size:12px;color:var(--u2-ivory);">${done} / ${daily.target}</span>` +
     `</div>`
   );
 }
@@ -331,10 +337,13 @@ export const mountHub: ScreenMount = (host, root) => {
   // 省モーション時は複製せず縦積み(1行ずつ改行)にして3行の実データを常時可読にする。
   const tickerHtml = reduced
     ? ticker
-        .map((t) => `<span style="display:block;font-size:12.5px;line-height:1.3;color:#A79F90;">${t}</span>`)
+        .map(
+          (t) =>
+            `<span style="display:block;font-size:12.5px;line-height:1.3;color:var(--u2-umber-1);">${t}</span>`,
+        )
         .join('')
     : [...ticker, ...ticker]
-        .map((t) => `<span style="font-size:12.5px;color:#A79F90;">${t}</span>`)
+        .map((t) => `<span style="font-size:12.5px;color:var(--u2-umber-1);">${t}</span>`)
         .join('');
 
   root.innerHTML = `
@@ -358,47 +367,47 @@ export const mountHub: ScreenMount = (host, root) => {
     <svg width="52" height="52" viewBox="0 0 52 52" aria-hidden="true" style="animation:enzaOrbit 40s linear infinite;">
       <circle cx="26" cy="26" r="21" fill="none" stroke="rgba(255,150,80,0.4)" stroke-width="1" stroke-dasharray="4 7"/>
     </svg>
-    <div style="position:absolute;top:15px;width:22px;height:22px;background:rgba(20,16,14,0.9);border:1.5px solid #FFB98A;transform:rotate(45deg);box-shadow:0 0 18px rgba(255,150,80,0.5);"></div>
+    <div style="position:absolute;top:15px;width:22px;height:22px;background:rgba(20,16,14,0.9);border:1.5px solid var(--u2-accent-soft);transform:rotate(45deg);box-shadow:0 0 18px rgba(255,150,80,0.5);"></div>
   </div>
   <div style="position:absolute;left:1476px;top:328px;width:150px;height:1px;background:linear-gradient(90deg, rgba(255,185,138,0.7), rgba(255,185,138,0));"></div>
-  <div style="position:absolute;left:1492px;top:306px;${MONO}font-size:11px;letter-spacing:0.18em;color:#C9A288;white-space:nowrap;">軌道拠点「焔座」<br><span style="color:#77705F;">高度 408km · 同期中</span></div>
+  <div style="position:absolute;left:1492px;top:306px;${MONO}font-size:11px;letter-spacing:0.18em;color:var(--u2-umber-1);white-space:nowrap;">軌道拠点「焔座」<br><span style="color:var(--u2-umber-3);">高度 408km · 同期中</span></div>
   </div>
   <div style="position:absolute;inset:0;background:radial-gradient(120% 100% at 50% 46%, rgba(0,0,0,0) 58%, rgba(2,2,7,0.42) 88%, rgba(2,2,7,0.72) 100%);pointer-events:none;"></div>
   <div style="position:absolute;inset:0;background:repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 4px);pointer-events:none;"></div>
-  <div style="position:absolute;left:calc(56px * var(--u2s, 1));right:calc(56px * var(--u2s, 1));top:calc(95px * var(--u2s, 1));height:1px;background:linear-gradient(90deg, rgba(255,107,43,0.55) 0%, rgba(232,227,216,0.16) 22%, rgba(232,227,216,0.16) 78%, rgba(124,84,220,0.4) 100%);"></div>
+  <div style="position:absolute;left:calc(56px * var(--u2s, 1));right:calc(56px * var(--u2s, 1));top:calc(95px * var(--u2s, 1));height:1px;background:linear-gradient(90deg, var(--u2-accent-line) 0%, var(--u2-line) 22%, var(--u2-line) 78%, color-mix(in srgb, var(--u2-emperor) 42%, transparent) 100%);"></div>
 
   <div style="position:absolute;left:0;top:0;transform-origin:top left;transform:scale(var(--u2s, 1));">
     <div style="position:absolute;left:56px;top:0;height:95px;display:flex;align-items:center;gap:18px;white-space:nowrap;">
       <svg width="50" height="50" viewBox="0 0 56 56" aria-hidden="true">
-        <circle cx="28" cy="28" r="25" fill="none" stroke="#FF6B2B" stroke-width="1.6"/>
+        <circle cx="28" cy="28" r="25" fill="none" style="stroke:var(--u2-accent);" stroke-width="1.6"/>
         <circle cx="28" cy="28" r="25" fill="none" stroke="rgba(255,107,43,0.25)" stroke-width="5" stroke-dasharray="2 10"/>
-        <rect x="18.5" y="18.5" width="19" height="19" fill="rgba(255,107,43,0.10)" stroke="#E8E3D8" stroke-width="1.1" transform="rotate(45 28 28)"/>
-        <circle cx="28" cy="28" r="3.6" fill="#FF6B2B"/>
+        <rect x="18.5" y="18.5" width="19" height="19" fill="rgba(255,107,43,0.10)" style="stroke:var(--u2-ivory);" stroke-width="1.1" transform="rotate(45 28 28)"/>
+        <circle cx="28" cy="28" r="3.6" style="fill:var(--u2-accent);"/>
       </svg>
       <div style="display:flex;flex-direction:column;gap:4px;">
         <div style="display:flex;align-items:baseline;gap:12px;">
-          <span style="${COND}font-weight:800;font-size:31px;line-height:1;letter-spacing:0.02em;"><span style="color:#F4F6F8;">FPS-RE</span><span style="color:#FF6B2B;text-shadow:0 0 26px rgba(255,107,43,0.45);">FLESH</span></span>
-          <span style="font-weight:800;font-size:13px;color:#FFB98A;letter-spacing:0.28em;border-left:1px solid rgba(255,107,43,0.5);padding-left:12px;">焔座</span>
+          <span style="${COND}font-weight:var(--u2-w-hero);font-size:31px;line-height:1;letter-spacing:0.055em;"><span style="color:var(--u2-ivory-hi);">FPS-RE</span><span style="color:var(--u2-accent);text-shadow:0 0 26px rgba(255,107,43,0.45);">FLESH</span></span>
+          <span style="font-weight:800;font-size:13px;color:var(--u2-accent-soft);letter-spacing:0.28em;border-left:1px solid var(--u2-accent-line);padding-left:12px;">焔座</span>
         </div>
-        <span style="${MONO}font-size:10px;letter-spacing:0.22em;color:#77705F;">ENZA INTERFACE 2.0 · BUILD ${BUILD_LABEL} · 60FPS</span>
+        <span style="${MONO}font-size:10px;letter-spacing:0.22em;color:var(--u2-steel-3);">ENZA INTERFACE 2.0 · BUILD ${BUILD_LABEL} · 60FPS</span>
       </div>
     </div>
     <nav style="position:absolute;left:56px;top:158px;width:660px;display:flex;flex-direction:column;white-space:nowrap;">
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;">
-      <div style="width:34px;height:2px;background:#FF6B2B;box-shadow:0 0 12px rgba(255,107,43,0.8);"></div>
-      <span style="${MONO}font-size:11.5px;letter-spacing:0.3em;color:#A79F90;">作戦選択\u3000OPERATIONS</span>
+      <div style="width:34px;height:2px;background:var(--u2-accent);box-shadow:0 0 12px rgba(255,107,43,0.8);"></div>
+      <span style="${KICK}font-size:11.5px;color:var(--u2-umber-1);">作戦選択\u3000OPERATIONS</span>
       <div style="flex:1;height:1px;background:linear-gradient(90deg, rgba(232,227,216,0.2), rgba(232,227,216,0));"></div>
     </div>
     <button class="u2h-cta" data-nav="deploy" data-id="hub-nav-deploy" style="position:relative;display:flex;align-items:center;gap:20px;height:104px;padding:0 26px 0 22px;margin-bottom:10px;color:#1A0B04;">
       <span style="display:flex;flex-direction:column;gap:6px;flex:1;">
         <span style="display:flex;align-items:baseline;gap:16px;">
           <span style="font-weight:800;font-size:38px;line-height:1;letter-spacing:0.08em;">出撃</span>
-          <span style="${COND}font-weight:700;font-size:12px;letter-spacing:0.3em;color:#5A2408;">SORTIE</span>
+          <span style="${KICK}font-size:12px;color:#5A2408;">SORTIE</span>
         </span>
         <span style="font-size:13px;font-weight:700;color:#4A1D06;">${sub.sortie}</span>
       </span>
       <span style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
-        <span style="${COND}font-weight:800;font-size:16px;color:#3A1505;letter-spacing:0.1em;">01</span>
+        <span style="${NUM}font-weight:800;font-size:16px;color:#3A1505;">01</span>
         <span style="display:inline-flex;width:22px;height:22px;border-radius:50%;border:1.5px solid #3A1505;color:#3A1505;align-items:center;justify-content:center;font-size:10px;font-weight:800;">A</span>
       </span>
       <span style="position:absolute;right:-9px;top:50%;width:18px;height:18px;background:#D14C16;transform:translateY(-50%) rotate(45deg);box-shadow:inset 1px -1px 0 rgba(255,220,190,0.4);"></span>
@@ -407,50 +416,50 @@ export const mountHub: ScreenMount = (host, root) => {
       <span style="display:flex;flex-direction:column;gap:5px;flex:1;">
         <span style="display:flex;align-items:baseline;gap:14px;">
           <span style="font-weight:800;font-size:27px;line-height:1;letter-spacing:0.06em;text-shadow:0 2px 12px rgba(0,0,0,0.8);">武器庫</span>
-          <span style="${COND}font-weight:700;font-size:11px;letter-spacing:0.26em;color:#8F8778;">ARMORY</span>
+          <span style="${KICK}font-size:11px;color:var(--u2-umber-2);">ARMORY</span>
         </span>
-        <span style="font-size:12.5px;color:#8F8778;">${sub.armory}</span>
+        <span style="font-size:12.5px;color:var(--u2-umber-2);">${sub.armory}</span>
       </span>
-      <span style="${COND}font-weight:700;font-size:14px;color:#5E594F;letter-spacing:0.1em;">02</span>
+      <span style="${NUM}font-weight:700;font-size:14px;color:var(--u2-steel-3);">02</span>
     </button>
     <button class="u2h-row" data-nav="stages" data-id="hub-nav-stages" style="display:flex;align-items:center;gap:20px;padding:17px 20px 17px 4px;">
       <span style="display:flex;flex-direction:column;gap:5px;flex:1;">
         <span style="display:flex;align-items:baseline;gap:14px;">
           <span style="font-weight:800;font-size:27px;line-height:1;letter-spacing:0.06em;text-shadow:0 2px 12px rgba(0,0,0,0.8);">ステージ</span>
-          <span style="${COND}font-weight:700;font-size:11px;letter-spacing:0.26em;color:#8F8778;">STAGES</span>
+          <span style="${KICK}font-size:11px;color:var(--u2-umber-2);">STAGES</span>
         </span>
-        <span style="font-size:12.5px;color:#8F8778;">${sub.stages}</span>
+        <span style="font-size:12.5px;color:var(--u2-umber-2);">${sub.stages}</span>
       </span>
-      <span style="${COND}font-weight:700;font-size:14px;color:#5E594F;letter-spacing:0.1em;">03</span>
+      <span style="${NUM}font-weight:700;font-size:14px;color:var(--u2-steel-3);">03</span>
     </button>
     <button class="u2h-row" data-nav="campaign" data-id="hub-nav-campaign" style="display:flex;align-items:center;gap:20px;padding:17px 20px 17px 4px;">
       <span style="display:flex;flex-direction:column;gap:5px;flex:1;">
         <span style="display:flex;align-items:baseline;gap:14px;">
           <span style="font-weight:800;font-size:27px;line-height:1;letter-spacing:0.06em;text-shadow:0 2px 12px rgba(0,0,0,0.8);">キャンペーン</span>
-          <span style="${COND}font-weight:700;font-size:11px;letter-spacing:0.26em;color:#8F8778;">CAMPAIGN</span>
+          <span style="${KICK}font-size:11px;color:var(--u2-umber-2);">CAMPAIGN</span>
         </span>
-        <span style="font-size:12.5px;color:#8F8778;">${sub.campaign}</span>
+        <span style="font-size:12.5px;color:var(--u2-umber-2);">${sub.campaign}</span>
       </span>
-      <span style="display:flex;align-items:center;gap:9px;margin-right:6px;"><span style="position:relative;width:84px;height:3px;background:rgba(232,227,216,0.14);"><span style="position:absolute;left:0;top:0;width:${campPct}%;height:3px;background:#FF6B2B;"></span></span><span style="${MONO}font-size:10.5px;color:#C9865C;">${camp.cleared}/${camp.total}</span></span>
-      <span style="${COND}font-weight:700;font-size:14px;color:#5E594F;letter-spacing:0.1em;">04</span>
+      <span style="display:flex;align-items:center;gap:9px;margin-right:6px;"><span style="position:relative;width:84px;height:3px;background:rgba(232,227,216,0.14);"><span style="position:absolute;left:0;top:0;width:${campPct}%;height:3px;background:var(--u2-accent);"></span></span><span style="${NUM}font-size:10.5px;color:var(--u2-accent-soft);">${camp.cleared}/${camp.total}</span></span>
+      <span style="${NUM}font-weight:700;font-size:14px;color:var(--u2-steel-3);">04</span>
     </button>
     <button class="u2h-row" data-nav="zombie" data-id="hub-nav-zombie" style="display:flex;align-items:center;gap:20px;padding:17px 20px 17px 4px;">
       <span style="display:flex;flex-direction:column;gap:5px;flex:1;">
         <span style="display:flex;align-items:baseline;gap:14px;">
           <span style="font-weight:800;font-size:27px;line-height:1;letter-spacing:0.06em;text-shadow:0 2px 12px rgba(0,0,0,0.8);">ゾンビ</span>
-          <span style="${COND}font-weight:700;font-size:11px;letter-spacing:0.26em;color:#8F8778;">UNDEAD</span>
+          <span style="${KICK}font-size:11px;color:var(--u2-umber-2);">UNDEAD</span>
         </span>
-        <span style="font-size:12.5px;color:#8F8778;">${sub.zombie}</span>
+        <span style="font-size:12.5px;color:var(--u2-umber-2);">${sub.zombie}</span>
       </span>
-      <span style="${MONO}font-size:10.5px;color:#C9865C;margin-right:6px;">${sub.zombieBest}</span>
-      <span style="${COND}font-weight:700;font-size:14px;color:#5E594F;letter-spacing:0.1em;">05</span>
+      <span style="${NUM}font-size:10.5px;color:var(--u2-accent-soft);margin-right:6px;">${sub.zombieBest}</span>
+      <span style="${NUM}font-weight:700;font-size:14px;color:var(--u2-steel-3);">05</span>
     </button>
     <button class="u2h-row u2h-row--sys" data-nav="options" data-id="hub-nav-options" style="display:flex;align-items:center;gap:20px;padding:15px 20px 15px 4px;">
       <span style="display:flex;align-items:baseline;gap:14px;flex:1;">
         <span style="font-weight:800;font-size:22px;line-height:1;letter-spacing:0.06em;">システム</span>
-        <span style="font-size:12px;color:#77705F;">設定 · 操作 / ゲームパッド · 記録</span>
+        <span style="font-size:12px;color:var(--u2-umber-3);">設定 · 操作 / ゲームパッド · 記録</span>
       </span>
-      <span style="${COND}font-weight:700;font-size:14px;color:#5E594F;letter-spacing:0.1em;">06</span>
+      <span style="${NUM}font-weight:700;font-size:14px;color:var(--u2-steel-3);">06</span>
     </button>
     </nav>
   </div>
@@ -458,27 +467,27 @@ export const mountHub: ScreenMount = (host, root) => {
   <div style="position:absolute;right:0;top:0;transform-origin:top right;transform:scale(var(--u2s, 1));">
     <div style="position:absolute;right:56px;top:0;height:95px;display:flex;align-items:center;gap:26px;white-space:nowrap;">
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;">
-        <span style="${MONO}font-size:12px;color:#A79F90;">ローカル実行 · <span style="color:#9FE39F;">安定 60Hz</span></span>
-        <span data-id="hub-clock" style="${MONO}font-size:11px;color:#5E594F;"></span>
+        <span style="${MONO}font-size:12px;color:var(--u2-umber-1);">ローカル実行 · <span style="color:var(--u2-positive);">安定 60Hz</span></span>
+        <span data-id="hub-clock" style="${NUM}font-size:11px;letter-spacing:var(--u2-track-kicker);color:var(--u2-steel-3);"></span>
       </div>
       <div style="position:relative;display:flex;align-items:center;gap:16px;background:linear-gradient(180deg, rgba(22,20,18,0.94), rgba(11,10,9,0.96));border:1px solid rgba(232,227,216,0.18);box-shadow:inset 0 1px 0 rgba(255,255,255,0.07), 0 8px 28px rgba(0,0,0,0.5);padding:10px 20px 10px 16px;">
         <svg width="44" height="44" viewBox="0 0 52 52" aria-hidden="true">
-          <circle cx="26" cy="26" r="24" fill="none" stroke="#FF6B2B" stroke-width="1.3"/>
-          <rect x="15" y="15" width="22" height="22" fill="rgba(255,107,43,0.14)" stroke="#E8E3D8" stroke-width="1" transform="rotate(45 26 26)"/>
-          <text x="26" y="31" text-anchor="middle" font-size="14" font-weight="800" fill="#FFD9BC">${stamp}</text>
+          <circle cx="26" cy="26" r="24" fill="none" style="stroke:var(--u2-accent);" stroke-width="1.3"/>
+          <rect x="15" y="15" width="22" height="22" fill="rgba(255,107,43,0.14)" style="stroke:var(--u2-ivory);" stroke-width="1" transform="rotate(45 26 26)"/>
+          <text x="26" y="31" text-anchor="middle" font-size="14" font-weight="800" style="fill:var(--u2-accent-pale);">${stamp}</text>
         </svg>
         <div style="display:flex;flex-direction:column;gap:5px;">
           <div style="display:flex;align-items:center;gap:10px;">
-            <span style="font-size:16px;font-weight:800;color:#F5F0E6;">${rank}</span>
-            ${title ? `<span style="font-weight:800;font-size:12px;color:#FFD9BC;background:linear-gradient(90deg, rgba(255,107,43,0.22), rgba(255,107,43,0.06));border:1px solid rgba(255,107,43,0.55);padding:2px 10px;letter-spacing:0.05em;">${title}</span>` : ''}
+            <span style="font-size:16px;font-weight:800;color:var(--u2-ivory-hi);">${rank}</span>
+            ${title ? `<span style="font-weight:800;font-size:12px;color:var(--u2-accent-pale);background:linear-gradient(90deg, rgba(255,107,43,0.22), rgba(255,107,43,0.06));border:1px solid var(--u2-accent-line);padding:2px 10px;letter-spacing:0.05em;">${title}</span>` : ''}
           </div>
           <div style="display:flex;align-items:center;gap:10px;">
-            <span style="${MONO}font-size:14px;color:#E8E3D8;">Lv <span style="color:#FFB98A;">${fmtInt(lv.level)}</span></span>
+            <span style="${MONO}font-size:14px;color:var(--u2-ivory);">Lv <span style="${NUM}color:var(--u2-accent-soft);">${fmtInt(lv.level)}</span></span>
             <div style="position:relative;width:150px;height:5px;background:rgba(232,227,216,0.12);">
-              <div style="width:${xpPct}%;height:5px;background:linear-gradient(90deg,#B23E14,#FF6B2B 70%,#FFA061);box-shadow:0 0 10px rgba(255,107,43,0.6);"></div>
+              <div style="width:${xpPct}%;height:5px;background:linear-gradient(90deg,#B23E14,var(--u2-accent) 70%,var(--u2-accent-hi));box-shadow:0 0 10px rgba(255,107,43,0.6);"></div>
               <div style="position:absolute;inset:0;background:repeating-linear-gradient(90deg, transparent 0 14px, rgba(4,4,8,0.9) 14px 15.5px);"></div>
             </div>
-            <span style="${MONO}font-size:10px;color:#77705F;">${xpPct}%</span>
+            <span style="${NUM}font-size:10px;color:var(--u2-steel-3);">${xpPct}%</span>
           </div>
         </div>
       </div>
@@ -491,18 +500,18 @@ export const mountHub: ScreenMount = (host, root) => {
       nextMission
         ? `<button class="u2h-card" data-nav="campaign" style="position:relative;padding:18px 24px;display:flex;flex-direction:column;gap:10px;text-align:left;">
       <div style="display:flex;justify-content:space-between;align-items:baseline;">
-        <span style="${MONO}font-size:10.5px;letter-spacing:0.24em;color:#77705F;">作戦継続\u3000CAMPAIGN</span>
-        <span style="${MONO}font-size:10.5px;color:#C9865C;">第${nextMission.index}任務</span>
+        <span style="${KICK}font-size:10.5px;color:var(--u2-umber-3);">作戦継続\u3000CAMPAIGN</span>
+        <span style="${NUM}font-size:10.5px;color:var(--u2-accent-soft);">第${nextMission.index}任務</span>
       </div>
       <div style="display:flex;align-items:baseline;gap:12px;">
-        <span style="font-weight:800;font-size:20px;color:#F2EDE2;letter-spacing:0.05em;">「${nextMission.name}」</span>
-        <span style="font-size:11.5px;color:#8F8778;">${nextMission.chapter}</span>
+        <span style="font-weight:800;font-size:20px;color:var(--u2-ivory-hi);letter-spacing:0.05em;">「${nextMission.name}」</span>
+        <span style="font-size:11.5px;color:var(--u2-umber-2);">${nextMission.chapter}</span>
       </div>
       <div style="display:flex;align-items:center;gap:12px;">
         <div style="position:relative;flex:1;height:4px;background:rgba(232,227,216,0.12);">
-          <div style="width:${campPct}%;height:4px;background:linear-gradient(90deg,#B23E14,#FF6B2B);box-shadow:0 0 10px rgba(255,107,43,0.5);"></div>
+          <div style="width:${campPct}%;height:4px;background:linear-gradient(90deg,#B23E14,var(--u2-accent));box-shadow:0 0 10px rgba(255,107,43,0.5);"></div>
         </div>
-        <span style="${MONO}font-size:12px;color:#E8E3D8;">${campPct}%</span>
+        <span style="${NUM}font-size:12px;color:var(--u2-ivory);">${campPct}%</span>
       </div>
       <span style="position:absolute;right:8px;top:8px;width:12px;height:12px;border-right:1.5px solid rgba(255,107,43,0.6);border-top:1.5px solid rgba(255,107,43,0.6);"></span>
     </button>`
@@ -512,8 +521,8 @@ export const mountHub: ScreenMount = (host, root) => {
       daily
         ? `<div class="u2h-card" data-id="hub-daily-card" style="position:relative;padding:18px 24px;display:flex;flex-direction:column;gap:10px;">
       <div style="display:flex;justify-content:space-between;align-items:baseline;">
-        <span style="${MONO}font-size:10.5px;letter-spacing:0.24em;color:#77705F;">本日の試練\u3000DAILY</span>
-        <span data-id="hub-daily-left" style="${MONO}font-size:10.5px;color:#FF8B4D;"></span>
+        <span style="${KICK}font-size:10.5px;color:var(--u2-umber-3);">本日の試練\u3000DAILY</span>
+        <span data-id="hub-daily-left" style="${NUM}font-size:10.5px;color:var(--u2-accent-hi);"></span>
       </div>
       <div data-id="hub-daily-body" style="display:contents">${dailyBodyHtml(daily, dailyDone)}</div>
     </div>`
@@ -524,14 +533,14 @@ export const mountHub: ScreenMount = (host, root) => {
 
   <div style="position:absolute;left:0;right:0;bottom:0;height:64px;background:linear-gradient(0deg, rgba(3,3,7,0.96) 0%, rgba(3,3,7,0.78) 70%, rgba(3,3,7,0) 100%);border-top:1px solid rgba(232,227,216,0.12);display:flex;align-items:center;justify-content:space-between;padding:0 calc(56px * var(--u2s, 1));box-sizing:border-box;">
     <div style="display:flex;align-items:center;gap:18px;overflow:hidden;width:900px;">
-      <span style="flex:none;${MONO}font-size:10.5px;letter-spacing:0.22em;color:#FF8B4D;border:1px solid rgba(255,107,43,0.5);padding:3px 10px;">報\u3000INTEL</span>
+      <span style="flex:none;${KICK}font-size:10.5px;color:var(--u2-accent-hi);border:1px solid var(--u2-accent-line);padding:3px 10px;">報\u3000INTEL</span>
       <div style="overflow:hidden;flex:1;">
         <div style="display:flex;${reduced ? 'flex-direction:column;gap:2px;width:100%;' : 'gap:64px;animation:enzaTicker 26s linear infinite;width:max-content;'}white-space:nowrap;">${tickerHtml}</div>
       </div>
     </div>
-    <div style="display:flex;gap:30px;font-size:13px;color:#A79F90;flex:none;white-space:nowrap;">
-      <span style="display:flex;align-items:center;gap:7px;"><span style="color:#77705F;">▲▼</span> 選択</span>
-      <span style="display:flex;align-items:center;gap:7px;"><span style="width:22px;height:22px;border-radius:50%;border:1.5px solid #FF6B2B;color:#FFB98A;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;">A</span> 決定</span>
+    <div style="display:flex;gap:30px;font-size:13px;color:var(--u2-umber-1);flex:none;white-space:nowrap;">
+      <span style="display:flex;align-items:center;gap:7px;"><span style="color:var(--u2-umber-3);">▲▼</span> 選択</span>
+      <span style="display:flex;align-items:center;gap:7px;"><span style="width:22px;height:22px;border-radius:50%;border:1.5px solid var(--u2-accent);color:var(--u2-accent-soft);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;">A</span> 決定</span>
     </div>
   </div>`;
 

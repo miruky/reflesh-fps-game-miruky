@@ -24,8 +24,8 @@
      ウィンドウで画面全体が右下へずれ右端/下端がクリップされる。.u2-stage の既定配置に任せる。 */
   overflow: hidden;
   background: #050608;
-  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
-  letter-spacing: 0.04em;
+  font-family: var(--u2-font-body);
+  letter-spacing: var(--u2-track-normal);
   color: #e8eaec;
   user-select: none;
 }
@@ -129,7 +129,7 @@
    IDの有無で必ず負けるため(u2o-tabと同じ根治)、#menu .u2-stageを前置して詳細度(1,3,0)で
    確実に上回す。旧セレクタのままでは常時デッドコードだった。 */
 #menu .u2-stage .u2o-back:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: 2px;
 }
 .u2o-headtxt {
@@ -138,10 +138,13 @@
   gap: 4px;
 }
 .u2o-kicker {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 11px;
-  letter-spacing: 0.34em;
-  color: #8f959d;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
+  color: var(--u2-steel-2);
 }
 .u2o-title {
   font-weight: 800;
@@ -172,14 +175,14 @@
   cursor: pointer;
 }
 .u2o-tab:hover {
-  color: #ffa061;
+  color: var(--u2-accent-hi);
   border-color: rgba(255, 107, 43, 0.5);
 }
 /* R55 W-C3[23]: 単一クラス(0,2,0)はui2.cssの#menu .u2-stage button:focus-visible(1,2,1)に
    IDの有無で必ず負けるため(title.cssの#menu前置パターンと同じ根治)、ここも#menu .u2-stageを
    前置して詳細度(1,3,0)で確実に上回す。旧セレクタのままでは常時デッドコードだった。 */
 #menu .u2-stage .u2o-tab:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: -3px;
 }
 /* R59①: 選択時の font-weight 800 はカタカナ長音/小書き(オーディオ/アクセシビリティ)の
@@ -265,7 +268,7 @@
 }
 .u2o-row.sel .u2o-val,
 .u2o-row.sel .u2o-opt {
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
   font-weight: 800;
 }
 
@@ -280,7 +283,7 @@
   z-index: 2;
 }
 .u2o-step:hover {
-  color: #ffa061;
+  color: var(--u2-accent-hi);
 }
 .u2o-mid {
   display: flex;
@@ -305,12 +308,15 @@
   background: #e8eaec;
 }
 .u2o-row.sel .u2o-segs > i.on {
-  background: #ffb98a;
+  background: var(--u2-accent-soft);
 }
+/* R59-W2 FONT-APPLY-B: 設定値=計器数字(--u2-num正典スタック+tabular等幅で桁ブレ根絶) */
 .u2o-val {
-  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
   font-weight: 700;
   font-size: 17px;
+  letter-spacing: var(--u2-track-tight);
   color: #f4f6f8;
   min-width: 34px;
   text-align: right;
@@ -361,12 +367,12 @@
 }
 .u2o-action:hover {
   border-color: rgba(255, 107, 43, 0.6);
-  color: #ffa061;
+  color: var(--u2-accent-hi);
 }
 /* R55 W-C4[8]: 単一クラス(0,2,0)はui2.cssの#menu .u2-stage button:focus-visible(1,2,1)に
    必ず負けるため、#menu .u2-stageを前置して詳細度(1,3,0)で確実に上回す。 */
 #menu .u2-stage .u2o-action:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: -3px;
 }
 
@@ -400,9 +406,9 @@
   justify-content: center;
   background: rgba(15, 16, 19, 0.88);
   border: 1px solid rgba(232, 234, 236, 0.1);
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 13px;
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
 }
 .u2o-rebind-btn {
   height: 44px;
@@ -415,13 +421,13 @@
   font-family: inherit;
 }
 .u2o-rebind-btn:hover {
-  color: #ffa061;
+  color: var(--u2-accent-hi);
   border-color: rgba(255, 107, 43, 0.5);
 }
 /* R55 W-C4[8]: 単一クラス(0,2,0)はui2.cssの#menu .u2-stage button:focus-visible(1,2,1)に
    必ず負けるため、#menu .u2-stageを前置して詳細度(1,3,0)で確実に上回す。 */
 #menu .u2-stage .u2o-rebind-btn:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: -3px;
 }
 .u2o-rebind-btn.capturing {
@@ -430,9 +436,9 @@
   border-color: transparent;
 }
 .u2o-note {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 11.5px;
-  color: #6e747c;
+  color: var(--u2-steel-3);
   line-height: 1.9;
   white-space: normal;
   padding: 2px 4px 0;
@@ -490,10 +496,13 @@
   color: #f4f6f8;
 }
 .u2o-den {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 11px;
-  letter-spacing: 0.2em;
-  color: #8f959d;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
+  color: var(--u2-steel-2);
 }
 .u2o-ddesc {
   margin: 0;
@@ -505,9 +514,9 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 11.5px;
-  color: #6e747c;
+  color: var(--u2-steel-3);
   line-height: 1.9;
 }
 
@@ -532,10 +541,10 @@
   padding: 0 calc(60px * var(--u2s, 1));
 }
 .u2o-foot-save {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10.5px;
   letter-spacing: 0.18em;
-  color: #6e747c;
+  color: var(--u2-steel-3);
 }
 .u2o-hints {
   display: flex;
@@ -544,7 +553,7 @@
   color: #b9bec5;
 }
 .u2o-hints .a {
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
 }
 
 /* ══ ポーズ(canvas直上: filter禁止・面0.82+) ══ */
@@ -556,8 +565,8 @@
      この要素はここでposition/insetを持たなくても親のinset:0をそのまま実サイズとして継承する。
      配下(.u2p-veil/.u2p-wrap等)は元からinset:0/clamp/vw基準のレイアウトで組まれていたため、
      end-anchorグループ変換(u2o-group-tl方式)は不要 — フルード化しただけで全面へ自動追随する。 */
-  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
-  letter-spacing: 0.04em;
+  font-family: var(--u2-font-body);
+  letter-spacing: var(--u2-track-normal);
   color: #e8eaec;
   user-select: none;
 }
@@ -596,10 +605,13 @@
   min-width: min(360px, 42vw);
 }
 .u2p-kicker {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 11px;
-  letter-spacing: 0.34em;
-  color: #8f959d;
+  letter-spacing: var(--u2-track-kicker);
+  text-transform: uppercase;
+  color: var(--u2-steel-2);
 }
 .u2p-title {
   font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
@@ -641,7 +653,7 @@
 .u2p-btn:hover,
 #menu .u2-stage .u2p-btn:focus-visible {
   border-color: rgba(255, 107, 43, 0.55);
-  color: #ffa061;
+  color: var(--u2-accent-hi);
   transform: translateX(8px);
   outline: none;
 }
@@ -698,7 +710,7 @@
   position: relative;
   font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
   font-size: 22px;
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
 }
 .u2p-rank {
   display: flex;
@@ -711,10 +723,11 @@
   color: #f4f6f8;
 }
 .u2p-lv {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
   font-size: 12px;
   letter-spacing: 0.12em;
-  color: #8f959d;
+  color: var(--u2-steel-2);
 }
 .u2p-stats {
   display: flex;
@@ -725,16 +738,22 @@
   flex-direction: column;
   gap: 3px;
 }
+/* R59-W2: ポーズ統計=キッカー+計器数字(K/D等の桁ブレ根絶) */
 .u2p-stat .k {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 10.5px;
   letter-spacing: 0.22em;
-  color: #6e747c;
+  text-transform: uppercase;
+  color: var(--u2-steel-3);
 }
 .u2p-stat .v {
-  font-family: 'Bahnschrift', 'Arial Narrow', Arial, sans-serif;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
   font-weight: 700;
   font-size: 24px;
+  letter-spacing: var(--u2-track-tight);
   color: #f4f6f8;
 }
 .u2p-xp {
@@ -754,10 +773,10 @@
   transform-origin: 0 50%;
 }
 .u2p-xplabel {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10.5px;
   letter-spacing: 0.14em;
-  color: #6e747c;
+  color: var(--u2-steel-3);
 }
 .u2p-hints {
   position: absolute;
@@ -769,7 +788,7 @@
   color: #b9bec5;
 }
 .u2p-hints .a {
-  color: #ffb98a;
+  color: var(--u2-accent-soft);
 }
 /* O1: options表示中はwrap/hintsをJSがhidden=trueにする。display:flexを明示している
    のでUAの[hidden]既定(display:none)に競り負けないよう、ここで明示的に上書きする

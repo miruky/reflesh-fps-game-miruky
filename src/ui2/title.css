@@ -19,9 +19,9 @@
   inset: 0;
   overflow: hidden;
   background: #050607;
-  color: #e8eaec;
-  font-family: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
-  letter-spacing: 0.04em;
+  color: var(--u2-ivory);
+  font-family: var(--u2-font-body);
+  letter-spacing: var(--u2-track-normal);
   z-index: 40;
   /* 情景SVG(xMidYMid slice)と同一の cover-fit 倍率。100vw/100vhは.u2-titleが
      fixed;inset:0で常にviewport全面と一致するため、そのままビューポート基準で良い。 */
@@ -135,10 +135,10 @@
   transform-origin: top right;
   transform: scale(var(--u2s, 1));
   text-align: right;
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 11px;
   letter-spacing: 0.18em;
-  color: #6e747c;
+  color: var(--u2-steel-3);
   line-height: 1.9;
 }
 
@@ -164,32 +164,40 @@
 .u2-title__kicker i {
   width: 30px;
   height: 2px;
-  background: #ff6b2b;
+  background: var(--u2-accent);
 }
+/* R59-W2 FONT-APPLY-A: キッカーはモノスペースから軍用コンデンス(display)へ。
+   trackingはモック実測の0.42em(超ワイドの意匠値)を維持してbboxを保存する。 */
 .u2-title__kicker span {
-  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 13px;
   letter-spacing: 0.42em;
-  color: #9aa0a8;
+  color: var(--u2-steel-2);
 }
+/* R59-W2 FONT-APPLY-A: ロゴはdisplayトークン(macOSではArial Narrow→Avenir Next
+   Condensed Heavyへ格上げ)。コンデンス化で-47px縮む分をletter-spacing 0.015→0.051em
+   で補償し、モック実測幅(±2px)を保つ(タイトル画面/hubヘッダで同一補正)。 */
 .u2-title__word {
   display: flex;
   align-items: baseline;
   gap: 4px;
-  font-family: 'Bahnschrift', 'Arial Narrow', 'Avenir Next Condensed', Arial, sans-serif;
-  font-weight: 800;
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-hero);
   font-size: 118px;
   line-height: 0.94;
-  letter-spacing: 0.015em;
+  letter-spacing: 0.051em;
 }
 .u2-title__word-re {
-  color: #f4f6f8;
+  color: var(--u2-ivory-hi);
   text-shadow:
     0 2px 22px rgba(0, 0, 0, 0.85),
     0 0 60px rgba(200, 214, 228, 0.14);
 }
 .u2-title__word-flesh {
-  color: #ff6b2b;
+  color: var(--u2-accent);
   text-shadow:
     0 2px 22px rgba(0, 0, 0, 0.85),
     0 0 46px rgba(255, 107, 43, 0.5);
@@ -209,7 +217,7 @@
   width: 9px;
   height: 9px;
   background: rgba(255, 107, 43, 0.2);
-  border: 1.5px solid #ff6b2b;
+  border: 1.5px solid var(--u2-accent);
   transform: rotate(45deg);
 }
 
@@ -236,9 +244,9 @@
   border: none;
   cursor: pointer;
   text-align: left;
-  color: #c4c9cf;
+  color: var(--u2-ivory);
   font-family: inherit;
-  font-weight: 700;
+  font-weight: var(--u2-w-strong);
   font-size: 19px;
   letter-spacing: 0.06em;
   transition:
@@ -246,20 +254,20 @@
     transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .u2-title__nav-item--dim {
-  color: #878d95;
+  color: var(--u2-steel-2);
 }
 .u2-title__dia {
   width: 9px;
   height: 9px;
-  border: 1.5px solid rgba(196, 201, 207, 0.5);
+  border: 1.5px solid color-mix(in srgb, var(--u2-ivory) 50%, transparent);
   transform: rotate(45deg);
   flex: none;
 }
 .u2-title__nav-item--dim .u2-title__dia {
-  border-color: rgba(135, 141, 149, 0.5);
+  border-color: color-mix(in srgb, var(--u2-steel-2) 50%, transparent);
 }
 .u2-title__nav-item:hover {
-  color: #ffa061;
+  color: var(--u2-accent-hi);
   transform: translateX(8px);
 }
 /* W-C: 角丸ボックス型outlineは撤去(モックに無い)。フォーカス指標は.sel(橙文字+21px/800+
@@ -273,14 +281,14 @@
 }
 .u2-title__nav-item:focus-visible,
 .u2-title__nav-item.sel {
-  color: #ff8b4d;
-  font-weight: 800;
+  color: var(--u2-accent-hi);
+  font-weight: var(--u2-w-hero);
   font-size: 21px;
 }
 .u2-title__nav-item:focus-visible .u2-title__dia,
 .u2-title__nav-item.sel .u2-title__dia {
   border: none;
-  background: #ff6b2b;
+  background: var(--u2-accent);
   box-shadow: 0 0 10px rgba(255, 107, 43, 0.9);
   animation: u2ttlBlink 1.6s ease-in-out infinite;
 }
@@ -302,16 +310,16 @@
   background: linear-gradient(0deg, rgba(3, 4, 5, 0.88), rgba(3, 4, 5, 0));
 }
 .u2-title__copy {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 10.5px;
   letter-spacing: 0.2em;
-  color: #5e646c;
+  color: var(--u2-steel-3);
 }
 .u2-title__hints {
   display: flex;
   gap: 26px;
   font-size: 12.5px;
-  color: #9aa0a8;
+  color: var(--u2-umber-1);
   white-space: nowrap;
 }
 .u2-title__key {
@@ -319,8 +327,8 @@
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 1.5px solid #ff6b2b;
-  color: #ffb98a;
+  border: 1.5px solid var(--u2-accent);
+  color: var(--u2-accent-soft);
   align-items: center;
   justify-content: center;
   font-size: 10px;
@@ -348,31 +356,34 @@
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
   clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
 }
+/* R59-W2 FONT-APPLY-A: 明朝(生font-family)は書体4系統トークン契約の対象外のため、
+   和文見出しW800体系(.u2-head-jp同値)へ統一する。 */
 .u2-title__credits-panel h2 {
   margin: 0 0 18px;
-  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-family: var(--u2-font-body);
+  font-weight: var(--u2-w-hero);
   font-size: 26px;
   letter-spacing: 0.12em;
-  color: #f7f2e8;
+  color: var(--u2-ivory-hi);
 }
 .u2-title__credits-panel p {
   margin: 0 0 10px;
   font-size: 13.5px;
   line-height: 1.8;
-  color: #c4bba8;
+  color: var(--u2-ivory-dim);
 }
 .u2-title__credits-tech {
-  font-family: ui-monospace, Consolas, monospace;
+  font-family: var(--u2-font-mono);
   font-size: 11.5px;
   letter-spacing: 0.08em;
-  color: #8f8778;
+  color: var(--u2-umber-2);
 }
 .u2-title__credits-close {
   margin-top: 14px;
   padding: 10px 26px;
   background: rgba(14, 12, 11, 0.82);
   border: 1px solid rgba(232, 227, 216, 0.28);
-  color: #e8e3d8;
+  color: var(--u2-ivory);
   font-family: inherit;
   font-size: 13px;
   letter-spacing: 0.12em;
@@ -386,8 +397,8 @@
 .u2-title__credits-close:hover,
 #menu .u2-stage .u2-title__credits-close:focus-visible,
 #menu .u2-stage .u2-title__credits-close:focus {
-  border-color: #ffa061;
-  color: #ffd9bc;
+  border-color: var(--u2-accent-hi);
+  color: var(--u2-accent-pale);
   outline: none;
 }
 

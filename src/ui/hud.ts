@@ -1071,6 +1071,7 @@ export class Hud {
     document.body.classList.remove('killcam-active');
     // ファイナルキルカム オーバーレイもクリア
     this.fkcRoot.classList.remove('fkc-active');
+    document.body.classList.remove('killcam-active'); // R59-W2 FIX: 退避解除(showと対称)
     for (const id of ['kcveil', 'kcflash'] as const) {
       const n = this.el[id];
       if (n) n.style.opacity = '0';
@@ -2398,6 +2399,10 @@ export class Hud {
   /** ファイナルキルカム開始: シネマバー + バナーを表示する */
   showFinalKillcam(weaponName?: string | null, distM?: number): void {
     this.fkcRoot.classList.add('fkc-active');
+    // R59-W2 FIX: クロームHUD退避(body.killcam-active)は従来 update() 内トグルのみで、
+    // ファイナルキルカム中は update() が呼ばれず恒久不発だった(タイマー/弾数がシネマ帯と重なる)。
+    // show/hide で直接付け外しし、既存の退避CSSをそのまま効かせる。
+    document.body.classList.add('killcam-active');
     // R54-F7: シネマ帯下部の武器バナー(mono)。武器名未供給(旧試合互換/素手系)は非表示
     if (weaponName) {
       this.fkcWeaponEl.textContent =

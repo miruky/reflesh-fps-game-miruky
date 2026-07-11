@@ -7,28 +7,42 @@
   - アニメは transform/opacity のみ。@media prefers-reduced-motion と :root.reduce-motion の二重短絡
   - 座標はmock05実測(1920×1080)のpx。#hudはmain.tsがzoom=uiScaleを掛けるため比例縮尺される
 */
+/* R59-W2 FONT-APPLY-B: 焔座パレットの先行実装だったローカル同値トークンを、正典
+   (ui2.css :root の --u2-* FONT-TOKENS)への参照に寄せる(値は同値=1px/1色不変)。
+   ─ 同値でないもの(--keisen/--hibana-deep/帝王識別色 --kotei/--raitei/--kokurai)は
+     既存識別子として温存(FONT-TOKENS申し送りどおり)。
+   ─ 場当たり色(ミント#9fe39f/ピンク#f2a8a8/藤紫#dfa8ff・#c9b8ff)は役割トークン
+     (--u2-positive/--u2-negative系/--u2-emperor)へ張替え。淡色が要る箇所は
+     生hexを新設せず color-mix() でトークンから導出する(下の *-pale 群)。 */
 :root {
-  --sumi-0: #020207;
+  --sumi-0: var(--u2-void);
   --sumi-1: #0b0a0d;
   --sumi-2: #16130f;
-  --hagane-0: #f7f2e8;
-  --hagane-1: #e8e3d8;
-  --hagane-2: #c4bba8;
-  --hagane-3: #8f8778;
+  --hagane-0: var(--u2-ivory-hi);
+  --hagane-1: var(--u2-ivory);
+  --hagane-2: var(--u2-ivory-dim);
+  --hagane-3: var(--u2-umber-2);
   --keisen: rgba(232, 227, 216, 0.14);
   --hibana-deep: #b23e14;
-  --hibana: #ff6b2b;
-  --hibana-bright: #ffa061;
-  --hibana-pale: #ffd9bc;
-  --kogane: #f5d06b;
-  --kogane-deep: #b8862e;
-  --teki: #d24545;
-  --sofu: #9fb5c9;
+  --hibana: var(--u2-accent);
+  --hibana-bright: var(--u2-accent-hi);
+  --hibana-pale: var(--u2-accent-pale);
+  --kogane: var(--u2-gold);
+  --kogane-deep: var(--u2-gold-deep);
+  --teki: var(--u2-negative);
+  --sofu: var(--u2-steel-1);
   --kotei: #8b5cf6;
   --raitei: #8fdbff;
   --kokurai: #c44dff;
-  --u2h-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
-  --u2h-body: 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  /* 淡色(トークン導出。旧: teki-pale=#f2a8a8 / kogane-pale=#f7dc8e /
+     kotei-pale=#c9b8ff / raitei-pale=#bfeaff / kokurai-pale=#dfa8ff) */
+  --teki-pale: color-mix(in srgb, var(--u2-negative) 48%, var(--u2-ivory-hi));
+  --kogane-pale: color-mix(in srgb, var(--u2-gold) 72%, var(--u2-ivory-hi));
+  --kotei-pale: color-mix(in srgb, var(--kotei) 42%, var(--u2-ivory-hi));
+  --raitei-pale: color-mix(in srgb, var(--raitei) 48%, var(--u2-ivory-hi));
+  --kokurai-pale: color-mix(in srgb, var(--kokurai) 42%, var(--u2-ivory-hi));
+  --u2h-mono: var(--u2-font-mono);
+  --u2h-body: var(--u2-font-body);
   --u2h-ritual: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
 }
 
@@ -94,11 +108,11 @@
 #hud.u2-hud .u2h-cm-major {
   font-size: 13px;
   font-weight: 700;
-  color: #f2ede2;
+  color: var(--u2-ivory-hi);
 }
 #hud.u2-hud .u2h-cm-minor {
   font-size: 12px;
-  color: #b9b1a0;
+  color: var(--u2-ivory-dim);
 }
 #hud.u2-hud .u2h-compass-needle {
   width: 2px;
@@ -152,8 +166,16 @@
 }
 #hud.u2-hud .u2h-mp-mine { order: 1; color: var(--hibana-pale); }
 #hud.u2-hud .u2h-mp-mid { order: 2; }
-/* 敵チームは--teki(赤)系。ミニマップ/拠点ピルの敵色と統一(旧#9fc4e8は味方=青に寄っていた誤配色) */
-#hud.u2-hud .u2h-mp-enemy { order: 3; color: #f2a8a8; }
+/* 敵チームは--teki(赤)系。ミニマップ/拠点ピルの敵色と統一(旧#9fc4e8は味方=青に寄っていた誤配色)。
+   R59-W2: 旧ピンク#f2a8a8 → negativeトークン導出の淡赤へ(場当たり色の廃止) */
+#hud.u2-hud .u2h-mp-enemy { order: 3; color: var(--teki-pale); }
+/* R59-W2: チームスコア2値は等幅数字で桁ブレ根絶(コンデンス計器数字) */
+#hud.u2-hud .u2h-mp-cell > span {
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
+  font-weight: var(--u2-w-strong);
+}
 /* R55 W-C2: u2h-modeplate-wrap 直下の兄弟(clip-path対象外)。plate下部に沿う見た目は
    wrapの自動高さ(=plateの高さのみ、absoluteのtargetは高さに寄与しない)で従来どおり保たれる */
 #hud.u2-hud .u2h-mp-target {
@@ -197,11 +219,14 @@
   color: var(--hagane-3);
   white-space: nowrap;
 }
+/* R59-W2: 残時間=計器数字(コンデンス+tabular等幅。"4:57"の桁踊り根絶) */
 #hud.u2-hud .u2h-mp-timer {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
   font-size: 14px;
-  font-weight: 400;
-  color: #f2ede2;
+  font-weight: var(--u2-w-medium);
+  letter-spacing: var(--u2-track-tight);
+  color: var(--u2-ivory-hi);
 }
 /* ゾンビ/訓練ではモードプレートを畳む(専用表示が別にある。先取ラベルも同じwrapで畳む) */
 #hud.u2-hud[data-zombie] .u2h-modeplate-wrap,
@@ -229,7 +254,7 @@
   clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 100%, 0 100%);
   padding: 6px 18px;
   font-size: 13px;
-  color: #e4decf;
+  color: var(--u2-ivory);
   letter-spacing: 0.1em;
   opacity: 1;
   transition: opacity 0.35s ease, transform 0.35s ease;
@@ -275,15 +300,16 @@
   bottom: 6px;
   font-family: var(--u2h-mono);
   font-size: 10px;
-  color: #77705f;
+  color: var(--u2-umber-3);
 }
+/* R59-W2: UAV稼働=良化状態 → 旧ミント#9fe39fを役割トークン(抑制オリーブ)へ */
 #hud.u2-hud .u2h-mm-uav {
   position: absolute;
   right: 9px;
   bottom: 6px;
   font-family: var(--u2h-mono);
   font-size: 10px;
-  color: #9fe39f;
+  color: var(--u2-positive);
 }
 /* 主目標カード(mock: 左縁3px熾火+kicker+本文+進行バー) */
 #hud.u2-hud .u2h-objcard {
@@ -298,8 +324,11 @@
 #hud.u2-hud .u2h-objcard:not(:has(.u2h-mission:not([hidden]))):not(:has(.u2h-zones:not([hidden]))) {
   display: none;
 }
+/* R59-W2: キッカーは正典様式(display系+最ワイド字間。和文はHiraginoへ自然フォールバック) */
 #hud.u2-hud .u2h-obj-kicker {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 9.5px;
   letter-spacing: 0.24em;
   color: #c9865c;
@@ -311,7 +340,7 @@
 }
 #hud.u2-hud .u2h-obj-text {
   font-size: 14px;
-  color: #e4decf;
+  color: var(--u2-ivory);
   line-height: 1.5;
 }
 #hud.u2-hud .u2h-obj-bar {
@@ -330,7 +359,7 @@
 #hud.u2-hud .u2h-obj-wave {
   font-family: var(--u2h-mono);
   font-size: 10px;
-  color: #a79f90;
+  color: var(--u2-umber-1);
 }
 #hud.u2-hud .u2h-zones {
   display: flex;
@@ -358,7 +387,7 @@
 }
 #hud.u2-hud .u2h-zones .zone-enemy {
   border-color: var(--teki);
-  color: #f2a8a8;
+  color: var(--teki-pale);
   background: rgba(26, 9, 10, 0.94);
 }
 #hud.u2-hud .u2h-zones .zone-contested {
@@ -378,11 +407,14 @@
   align-items: baseline;
   gap: 5px;
 }
+/* R59-W2: 撃破/戦死=計器数字(コンデンス+tabular等幅) */
 #hud.u2-hud .u2h-kd b {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
   font-size: 15px;
-  font-weight: 400;
-  color: #f2ede2;
+  font-weight: var(--u2-w-medium);
+  letter-spacing: var(--u2-track-tight);
+  color: var(--u2-ivory-hi);
 }
 #hud.u2-hud .u2h-kd small {
   font-size: 10px;
@@ -397,7 +429,7 @@
 /* R56③: ゾンビのみ左上のキルストリークチップを金経済(zpoints)系の配色に寄せて視認性/一貫性を出す
    (中央大バナーはゾンビでは出さないため、この左上チップが唯一の表示になる) */
 #hud.u2-hud[data-zombie] .u2h-streakchip {
-  color: #f7dc8e;
+  color: var(--kogane-pale);
   text-shadow: 0 0 10px rgba(247, 220, 142, 0.5);
 }
 /* 温存計器(ボス/検知/S&D/訓練)を左上カラムの流れに正規化 */
@@ -422,12 +454,18 @@
   z-index: 12;
   pointer-events: none;
 }
+/* R59-W2: ラウンド大数字=ヒーロー数字様式(--u2-num正典スタック+75%絞り。
+   旧ローカルスタックはAvenir Next CondensedよりArial Narrowが先でmacOSのコンデンス感が
+   出ていなかった)。色はnegativeトークンへ(旧#c93a3aと同族) */
 #hud.u2-hud .u2h-zround-big {
-  font-family: 'Bahnschrift', 'Arial Narrow', 'Avenir Next Condensed', Arial, sans-serif;
-  font-weight: 800;
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-stretch: 75%;
+  font-weight: var(--u2-w-hero);
+  letter-spacing: var(--u2-track-hero);
   font-size: 106px;
   line-height: 1;
-  color: #c93a3a;
+  color: var(--u2-negative);
   text-shadow: 0 0 40px rgba(210, 69, 69, 0.55), 0 2px 6px rgba(0, 0, 0, 0.9);
 }
 #hud.u2-hud .u2h-zround-big.w2-round-special {
@@ -443,15 +481,18 @@
   gap: 3px;
 }
 #hud.u2-hud .u2h-zround-line {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
   font-size: 12px;
-  color: #b9b1a0;
+  color: var(--u2-ivory-dim);
 }
-#hud.u2-hud .u2h-zround-pts { color: #f7dc8e; }
+#hud.u2-hud .u2h-zround-pts { color: var(--kogane-pale); }
+/* R59-W2: 輪廻バッジの藤紫#dfa8ff → 帝王系の唯一の紫(--u2-emperor)へ統一 */
 #hud.u2-hud .u2h-rogue-badge {
   font-family: var(--u2h-mono);
   font-size: 11px;
-  color: #dfa8ff;
+  color: var(--u2-emperor);
 }
 #hud.u2-hud .u2h-zround .w2-powerups {
   position: absolute;
@@ -473,11 +514,15 @@
   padding: 10px 20px;
   margin-bottom: 12px;
 }
+/* R59-W2: 金ポイント=計器数字(コンデンス+tabular等幅) */
 #hud.u2-hud .u2h-zpp-num {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: var(--u2-w-strong);
+  letter-spacing: var(--u2-track-tight);
   font-size: 34px;
   line-height: 1;
-  color: #f7dc8e;
+  color: var(--kogane-pale);
   text-shadow: 0 0 18px rgba(245, 208, 107, 0.4);
 }
 #hud.u2-hud .u2h-zpp-label {
@@ -514,8 +559,13 @@
 }
 #hud.u2-hud .u2h-feed-name { color: var(--hagane-3); }
 #hud.u2-hud .u2h-feed-you { color: var(--hibana-pale); font-weight: 700; }
+/* R59-W2: キルフィードの武器銘(FAMAS-G4等の英字)=display様式(コンデンス+ワイド字間) */
 #hud.u2-hud .u2h-feed-weapon {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
+  letter-spacing: var(--u2-track-wide);
+  text-transform: uppercase;
   font-size: 10.5px;
   color: #5e594f;
 }
@@ -526,16 +576,20 @@
   font-size: 13px;
 }
 #hud.u2-hud .u2h-feed-row--you .u2h-feed-weapon { color: var(--hibana-pale); font-size: 11px; }
-#hud.u2-hud .u2h-feed-row--you .u2h-feed-name { color: #e4decf; }
+#hud.u2-hud .u2h-feed-row--you .u2h-feed-name { color: var(--u2-ivory); }
 /* 帝王キル行(mock実測: 紫電の銘) */
 #hud.u2-hud .u2h-feed-row--emp {
   background: linear-gradient(90deg, rgba(26, 10, 36, 0.95), rgba(16, 7, 22, 0.92));
   border-right: 3px solid var(--kokurai);
   box-shadow: 0 0 20px rgba(196, 77, 255, 0.18);
 }
-#hud.u2-hud .u2h-feed-row--emp .u2h-feed-you { color: #dfa8ff; }
+#hud.u2-hud .u2h-feed-row--emp .u2h-feed-you { color: var(--kokurai-pale); }
+/* 帝王キル行の銘は明朝儀式(和文)のまま=displayワイド字間の対象外に戻す */
 #hud.u2-hud .u2h-feed-row--emp .u2h-feed-weapon--emp {
   font-family: var(--u2h-ritual);
+  font-stretch: 100%;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   font-size: 12.5px;
   color: var(--kokurai);
 }
@@ -544,14 +598,14 @@
   border-right-color: var(--kotei);
   box-shadow: 0 0 20px rgba(139, 92, 246, 0.18);
 }
-#hud.u2-hud .u2h-feed-row--emp[data-emp='kotei'] .u2h-feed-you { color: #c9b8ff; }
+#hud.u2-hud .u2h-feed-row--emp[data-emp='kotei'] .u2h-feed-you { color: var(--kotei-pale); }
 #hud.u2-hud .u2h-feed-row--emp[data-emp='kotei'] .u2h-feed-weapon--emp { color: var(--kotei); }
 #hud.u2-hud .u2h-feed-row--emp[data-emp='raitei'] {
   background: linear-gradient(90deg, rgba(8, 24, 34, 0.95), rgba(6, 15, 22, 0.92));
   border-right-color: var(--raitei);
   box-shadow: 0 0 20px rgba(143, 219, 255, 0.18);
 }
-#hud.u2-hud .u2h-feed-row--emp[data-emp='raitei'] .u2h-feed-you { color: #bfeaff; }
+#hud.u2-hud .u2h-feed-row--emp[data-emp='raitei'] .u2h-feed-you { color: var(--raitei-pale); }
 #hud.u2-hud .u2h-feed-row--emp[data-emp='raitei'] .u2h-feed-weapon--emp { color: var(--raitei); }
 
 /* R55 W-C4[10]: 頭部/近接キル強調(data-kind)。焔座トークンの左罫線+武器文字色だけで控えめに
@@ -579,10 +633,14 @@
   pointer-events: none;
   z-index: 12;
 }
+/* R59-W2: スコアポップ(+100等)=計器数字様式 */
 #hud.u2-hud .u2h-pop {
   display: flex;
   gap: 8px;
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: var(--u2-w-strong);
+  letter-spacing: var(--u2-track-tight);
   font-size: 15px;
   color: var(--hibana-pale);
   text-shadow: 0 0 12px rgba(255, 107, 43, 0.7);
@@ -592,9 +650,10 @@
 }
 #hud.u2-hud .u2h-pop.show { opacity: 1; transform: translateY(0); }
 #hud.u2-hud .u2h-pop.out { opacity: 0; transform: translateY(-10px); }
+/* R59-W2: 頭部ボーナス等の副ポップ=旧ミント#9fe39f → positiveトークン */
 #hud.u2-hud .u2h-pop--sub {
   font-size: 11px;
-  color: #9fe39f;
+  color: var(--u2-positive);
   text-shadow: none;
 }
 
@@ -617,11 +676,15 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   padding: 12px 18px 6px 16px;
 }
+/* R59-W2: HP=計器数字(BO系のコンデンス太数字+tabular等幅で桁ブレ根絶) */
 #hud.u2-hud .u2h-hp {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: var(--u2-w-strong);
+  letter-spacing: var(--u2-track-tight);
   font-size: 44px;
   line-height: 1;
-  color: #f2ede2;
+  color: var(--u2-ivory-hi);
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
 }
 #hud.u2-hud .u2h-hp-label {
@@ -629,9 +692,11 @@
   color: var(--hagane-3);
 }
 #hud.u2-hud .u2h-hpmax {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
   font-size: 11px;
-  color: #77705f;
+  color: var(--u2-umber-3);
 }
 #hud.u2-hud .u2h-hpbar {
   position: relative;
@@ -721,17 +786,23 @@
   align-items: baseline;
   gap: 13px;
 }
+/* R59-W2: 兵装キッカー=正典キッカー様式 */
 #hud.u2-hud .u2h-w-kicker {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
+  font-weight: var(--u2-w-strong);
   font-size: 10.5px;
   letter-spacing: 0.2em;
   color: #c9865c;
 }
+/* R59-W2: 武器銘(FAMAS-G4等の英字)=display+コンデンス+W800(実FPSの兵装プレート様式) */
 #hud.u2-hud .u2h-w-name {
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
   font-weight: 800;
   font-size: 24px;
-  letter-spacing: 0.05em;
-  color: #f5f0e6;
+  letter-spacing: var(--u2-track-tight);
+  color: var(--u2-ivory-hi);
 }
 #hud.u2-hud .u2h-w-plate {
   position: relative;
@@ -776,11 +847,15 @@
   gap: 9px;
   padding: 8px 20px;
 }
+/* R59-W2: 残弾=BO系のコンデンス太数字(tabular等幅で発砲中の桁踊り根絶) */
 #hud.u2-hud .u2h-ammo {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: var(--u2-w-strong);
+  letter-spacing: var(--u2-track-tight);
   font-size: 56px;
   line-height: 1;
-  color: #f5f0e6;
+  color: var(--u2-ivory-hi);
   text-shadow: 0 0 20px rgba(255, 150, 80, 0.25);
 }
 #hud.u2-hud .u2h-ammo.hud-ammo-low {
@@ -788,9 +863,11 @@
   text-shadow: 0 0 20px rgba(210, 69, 69, 0.45);
 }
 #hud.u2-hud .u2h-reserve {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
   font-size: 19px;
-  color: #77705f;
+  color: var(--u2-umber-3);
 }
 #hud.u2-hud .u2h-w-underrow {
   display: flex;
@@ -802,7 +879,7 @@
   align-items: center;
   gap: 7px;
   font-size: 11.5px;
-  color: #a79f90;
+  color: var(--u2-umber-1);
   background: rgba(6, 7, 10, 0.86);
   border: 1px solid rgba(232, 227, 216, 0.14);
   padding: 5px 12px;
@@ -815,7 +892,9 @@
 }
 #hud.u2-hud .u2h-grenade b { font-weight: 400; }
 #hud.u2-hud .u2h-gcount {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
   font-size: 10.5px;
 }
 #hud.u2-hud .u2h-gcount.hud-gcount-empty { color: #5e594f; }
@@ -853,13 +932,19 @@
   flex-direction: column;
   gap: 1px;
 }
+/* R59-W2: ULT英字ラベル=display様式、%数値=tabular等幅 */
 #hud.u2-hud .u2h-ult-txt b {
+  font-family: var(--u2-font-display);
+  font-stretch: var(--u2-stretch);
   font-weight: 800;
+  letter-spacing: var(--u2-track-wide);
   font-size: 12px;
   color: var(--hibana-pale);
 }
 #hud.u2-hud .u2h-ult-txt small {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
   font-size: 10px;
   color: var(--hagane-3);
 }
@@ -869,7 +954,7 @@
   box-shadow: 0 0 20px rgba(255, 150, 80, 0.3);
 }
 #hud.u2-hud .u2h-ult.ult-active .u2h-ult-fill { stroke: var(--kogane); }
-#hud.u2-hud .u2h-ult.ult-active .u2h-ult-txt b { color: #f7dc8e; }
+#hud.u2-hud .u2h-ult.ult-active .u2h-ult-txt b { color: var(--kogane-pale); }
 #hud.u2-hud .u2h-ult[hidden] { display: none; }
 
 /* ════ ストリークチップ帯(mock実測、下中央左) ════ */
@@ -898,7 +983,7 @@
   bottom: calc(100% + 22px);
   font-family: var(--u2h-mono);
   font-size: 10px;
-  color: #f2a8a8;
+  color: var(--teki-pale);
   white-space: nowrap;
 }
 #hud.u2-hud .u2h-ss-slot {
@@ -921,9 +1006,9 @@
   top: 3px;
   font-family: var(--u2h-mono);
   font-size: 8px;
-  color: #77705f;
+  color: var(--u2-umber-3);
 }
-#hud.u2-hud .u2h-ss-icon { color: #b9b1a0; }
+#hud.u2-hud .u2h-ss-icon { color: var(--u2-ivory-dim); }
 #hud.u2-hud .u2h-ss-icon svg { width: 22px; height: 22px; display: block; }
 #hud.u2-hud .u2h-ss-name {
   font-family: var(--u2h-mono);
@@ -975,14 +1060,14 @@
 }
 #hud.u2-hud .u2h-zbuy-label {
   font-size: 14px;
-  color: #e4decf;
+  color: var(--u2-ivory);
 }
 #hud.u2-hud .u2h-zbuy.zbuy-broke {
   border-color: rgba(210, 69, 69, 0.5);
 }
 #hud.u2-hud .u2h-zbuy.zbuy-broke .u2h-zbuy-key {
   border-color: var(--teki);
-  color: #f2a8a8;
+  color: var(--teki-pale);
 }
 #hud.u2-hud .u2h-zbuy.zbuy-broke .u2h-zbuy-label {
   color: #a89083;
@@ -1035,7 +1120,7 @@
 #hud.u2-hud .hud-hell-badge {
   font-size: 12px;
   letter-spacing: 0.3em;
-  color: #f2a8a8;
+  color: var(--teki-pale);
   border: 1px solid rgba(210, 69, 69, 0.5);
   background: rgba(20, 7, 8, 0.92);
   padding: 4px 14px 4px 18px;
@@ -1070,7 +1155,7 @@
   font-family: var(--u2h-ritual);
   font-size: 17px;
   letter-spacing: 0.34em;
-  color: #c9b8ff;
+  color: var(--kotei-pale);
   text-shadow: 0 0 22px rgba(139, 92, 246, 0.9);
   background: none;
   border: none;
@@ -1078,9 +1163,11 @@
 }
 #hud.u2-hud .hud-de-badge::after { content: '　顕現'; }
 #hud.u2-hud .hud-de-timer {
-  font-family: var(--u2h-mono);
+  font-family: var(--u2-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: var(--u2-track-tight);
   font-size: 13px;
-  color: #c9b8ff;
+  color: var(--kotei-pale);
   background: none;
   border: none;
 }
@@ -1090,7 +1177,7 @@
   font-family: var(--u2h-ritual);
   font-size: 17px;
   letter-spacing: 0.34em;
-  color: #bfeaff;
+  color: var(--raitei-pale);
   text-shadow: 0 0 22px rgba(143, 219, 255, 0.9);
   background: none;
   border: none;
@@ -1105,7 +1192,7 @@
   font-family: var(--u2h-ritual);
   font-size: 20px;
   letter-spacing: 0.38em;
-  color: #e9c2ff;
+  color: var(--kokurai-pale);
   text-shadow: 0 0 28px rgba(196, 77, 255, 1);
   background: none;
   border: none;
@@ -1135,7 +1222,7 @@
   font-family: var(--u2h-mono);
   font-size: 11px;
   letter-spacing: 0.22em;
-  color: #9b7fb5;
+  color: color-mix(in srgb, var(--kokurai) 36%, var(--u2-umber-2));
   background: none;
 }
 /* チャージ/スピンゲージ(温存データ経路の小計器。mk3弧が主表示のため簡潔に) */
@@ -1349,7 +1436,10 @@ body.killcam-active #hud.u2-hud .u2h-scorepops,
 body.killcam-active #hud.u2-hud .u2h-announce,
 body.killcam-active #hud.u2-hud .u2h-zbuy,
 body.killcam-active #hud.u2-hud .u2h-statebar,
-body.killcam-active #hud.u2-hud .u2h-emp-frame {
+body.killcam-active #hud.u2-hud .u2h-emp-frame,
+body.killcam-active #hud.u2-hud .hud-radar,
+body.killcam-active #hud.u2-hud .u2h-minimap {
+  /* R59-W2 FIX: 左下の簡易レーダー/ミニマップもキルカム退避に含める(残置指摘) */
   opacity: 0;
   transition: opacity 0.25s ease;
 }

@@ -161,10 +161,10 @@
 }
 .u2r-btn:hover {
   border-color: rgba(255, 107, 43, 0.6);
-  color: #ffa061;
+  color: var(--u2-accent-hi);
 }
 #menu .u2-stage .u2r-btn:focus-visible {
-  outline: 2px solid #ffa061;
+  outline: 2px solid var(--u2-accent-hi);
   outline-offset: 2px;
 }
 
