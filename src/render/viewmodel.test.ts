@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { buildGunBody, CamoStandardMaterial, resolveSightY, ViewModel } from './viewmodel';
-import { WEAPON_DEFS, type ViewModelShape, type WeaponDef } from '../game/weapons';
-import { OPTIC_SPECS, resolveOpticId } from '../game/optics';
+import { buildGunBody, CamoStandardMaterial, resolveSightY, sightYOverride, ViewModel } from './viewmodel';
+import { WEAPON_DEFS, type ModelKey, type ViewModelShape, type WeaponDef } from '../game/weapons';
+import { classDefault, OPTIC_SPECS, resolveOpticId } from '../game/optics';
+import { SHAPE_SPECS, SHAPE_PAINTERS } from './weapon-shapes';
 import { CAMO_IDS, CAMO_VISUALS } from '../game/camo';
 
 // 一人称腕は sleeve/glove の固有色で塗られる。銃本体にこれらが混ざっていなければ
@@ -80,7 +81,7 @@ describe('buildGunBody', () => {
 
   for (const shape of Object.keys(ALL_SHAPES) as ViewModelShape[]) {
     it(`shape=${shape} が組める`, () => {
-      const def: WeaponDef = { ...base, shape };
+      const def: WeaponDef = { ...base, shape, modelKey: undefined };
       const { gun, muzzle } = buildGunBody(def);
       expect(meshCount(gun)).toBeGreaterThan(0);
       expect(muzzle.position.z).toBeLessThan(0);
@@ -94,6 +95,114 @@ describe('buildGunBody', () => {
     const suppressed = buildGunBody({ ...ar, attachmentIds: ['suppressor'] });
     expect(suppressed.muzzle.position.z).toBeLessThan(plain.muzzle.position.z);
     expect(hasArmMaterials(suppressed.gun)).toBe(false);
+  });
+});
+
+// ── R58 Phase B: shape共有解消(ModelKey)+ 視覚不変 + サイト位置フレームの検証 ──
+describe('R58 ModelKey shape共有解消', () => {
+  // 全ジオメトリのバイト署名(型/mesh位置 + position/color バッファのチェックサム)。
+  // merge 後の実頂点データまで含むため、一致すれば描画は画素単位で同一(=視覚不変の実測)。
+  function bufChecksum(attr: THREE.BufferAttribute | undefined): string {
+    if (!attr) return 'x';
+    const a = attr.array as ArrayLike<number>;
+    // 決定的な軽量ハッシュ(順序依存で全要素を畳み込む)
+    let h1 = 0x811c9dc5;
+    let h2 = 0;
+    for (let i = 0; i < a.length; i += 1) {
+      const v = Math.round(a[i]! * 1e6); // 6桁精度で量子化(浮動小数の等価判定)
+      h1 = ((h1 ^ (v & 0xffffffff)) * 0x01000193) >>> 0;
+      h2 = (h2 + v * (i + 1)) >>> 0;
+    }
+    return `${a.length}:${h1.toString(16)}:${(h2 >>> 0).toString(16)}`;
+  }
+  function geomSig(o: THREE.Object3D): string {
+    const parts: string[] = [];
+    o.traverse((m) => {
+      if (m instanceof THREE.Mesh) {
+        const g = m.geometry;
+        const pos = g.attributes.position as THREE.BufferAttribute | undefined;
+        const colr = g.attributes.color as THREE.BufferAttribute | undefined;
+        const p = m.position;
+        parts.push(
+          `${g.type}#${pos ? pos.count : 0}` +
+            `@${p.x.toFixed(5)},${p.y.toFixed(5)},${p.z.toFixed(5)}` +
+            `|P${bufChecksum(pos)}|C${bufChecksum(colr)}`,
+        );
+      }
+    });
+    return parts.sort().join('||');
+  }
+
+  const splitWeapons = Object.values(WEAPON_DEFS).filter((d) => d.modelKey !== undefined);
+
+  it('固有 modelKey を持つ武器が 24 挺(rifle×4/carbine×4/smg×4/dmr×2/sniper×3/sg×2/lmg×2/pistol×3)', () => {
+    expect(splitWeapons.length).toBe(24);
+  });
+
+  it('各固有 modelKey の SHAPE_SPECS は元の粗粒度 shape の逐語コピー(=寸法同一)', () => {
+    for (const d of splitWeapons) {
+      const coarse = (d.shape ?? classDefault(d.class)) as ModelKey;
+      const fineEntry = SHAPE_SPECS[d.modelKey!];
+      const coarseEntry = SHAPE_SPECS[coarse];
+      expect(fineEntry, d.id).toBeDefined();
+      // 値が完全一致(receiver 等ネストも含めて deep equal)
+      expect(fineEntry, d.id).toEqual(coarseEntry);
+    }
+  });
+
+  it('固有 modelKey 版と粗粒度 shape 版でジオメトリが完全一致(視覚不変)', () => {
+    for (const d of splitWeapons) {
+      const fine = buildGunBody(d);
+      const coarse = buildGunBody({ ...d, modelKey: undefined });
+      expect(geomSig(fine.gun), d.id).toBe(geomSig(coarse.gun));
+      // サイト契約(resolveSightY)も modelKey で変わらない(shape 基準のため)
+      expect(resolveSightY(d), d.id).toBeCloseTo(resolveSightY({ ...d, modelKey: undefined }), 6);
+    }
+  });
+
+  it('Phase B の SHAPE_PAINTERS は全空(painter フックは no-op=視覚不変)', () => {
+    expect(Object.keys(SHAPE_PAINTERS).length).toBe(0);
+  });
+
+  it('蜃気楼(shinkirou-sniper)は sniper-beam へ分離しつつ内蔵スコープを維持', () => {
+    const shin = WEAPON_DEFS['shinkirou-sniper'];
+    if (!shin) throw new Error('shinkirou-sniper missing');
+    expect(shin.modelKey).toBe('sniper-beam');
+    expect(shin.shape).toBe('sniper-bolt'); // 粗粒度=optics のスコープ判定は不変
+    // 内蔵スコープ(CircleGeometry レンズ)が描かれ、resolveSightY と一致
+    const { gun } = buildGunBody(shin);
+    let glassY = Number.NaN;
+    gun.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.geometry.type === 'CircleGeometry' && Number.isNaN(glassY)) {
+        glassY = o.position.y;
+      }
+    });
+    expect(Number.isNaN(glassY)).toBe(false);
+    expect(glassY).toBeCloseTo(resolveSightY(shin), 6);
+  });
+});
+
+// ── R58 Phase B: サイト位置を動かす外装(carryHandle)の狙点Yフレーム(dormant) ──
+describe('R58 sightYOverride フレーム', () => {
+  const rifleSil = SHAPE_SPECS.rifle;
+
+  it('carryHandle 未設定/none は null(=従来のアイアン/ビードY)', () => {
+    expect(sightYOverride(rifleSil)).toBeNull();
+    expect(sightYOverride({ ...rifleSil, carryHandle: 'none' })).toBeNull();
+  });
+
+  it('carryHandle=ar15/famas は CARRY_HANDLE_SIGHT_Y(0.116)を返す(3点共有・IRON_POST_Yより高い)', () => {
+    expect(sightYOverride({ ...rifleSil, carryHandle: 'ar15' })).toBeCloseTo(0.116, 6);
+    expect(sightYOverride({ ...rifleSil, carryHandle: 'famas' })).toBeCloseTo(0.116, 6);
+    // アイアン前ポスト(0.075)より必ず高い=キャリーハンドル内の狙点
+    expect(sightYOverride({ ...rifleSil, carryHandle: 'famas' })!).toBeGreaterThan(0.075);
+  });
+
+  it('shipping 武器は誰も carryHandle を立てていない(dormant=視覚不変)', () => {
+    for (const d of Object.values(WEAPON_DEFS)) {
+      const sil = SHAPE_SPECS[(d.modelKey ?? d.shape ?? classDefault(d.class)) as ModelKey];
+      expect(sightYOverride(sil), d.id).toBeNull();
+    }
   });
 });
 
@@ -218,9 +327,12 @@ describe('武器カモ(buildGunBody)', () => {
 describe('resolveSightY', () => {
   const base = Object.values(WEAPON_DEFS)[0];
   if (!base) throw new Error('WEAPON_DEFS is empty');
+  // R58: base(実武器)は modelKey を持つため、粗粒度 shape だけを試す合成 def では modelKey をクリアする
+  // (modelKey は shape より優先で SHAPE_SPECS を引くため。実武器では shape/modelKey は整合している)。
   const withShape = (shape: ViewModelShape, attachmentIds: string[] = []): WeaponDef => ({
     ...base,
     shape,
+    modelKey: undefined,
     attachmentIds,
   });
 
@@ -318,7 +430,7 @@ describe('resolveSightY', () => {
       ['dsr-bp', 0.092],
     ] as const) {
       const base = Object.values(WEAPON_DEFS)[0]!;
-      const def: WeaponDef = { ...base, shape };
+      const def: WeaponDef = { ...base, shape, modelKey: undefined };
       const { gun } = buildGunBody(def);
       let glassY = Number.NaN;
       gun.traverse((o) => {
@@ -350,7 +462,7 @@ describe('resolveSightY', () => {
   it('浮遊マイクロドット(r≤0.0022)の実Yが resolveSightY と一致する(ドリフト検出): iron post/bead/launcher', () => {
     const cases: WeaponDef[] = [
       withShape('rifle'), // iron post機
-      { ...base, shape: 'shotgun-pump', class: 'shotgun', attachmentIds: [] }, // bead機
+      { ...base, shape: 'shotgun-pump', class: 'shotgun', modelKey: undefined, attachmentIds: [] }, // bead機
       withShape('launcher'), // ゴーストリング機
     ];
     for (const def of cases) {
@@ -445,9 +557,9 @@ describe('R57⑧ サイトドット統一/二重ドット根絶', () => {
   it('非回帰: iron post/bead/launcher(光学無し)は従来通りマイクロドットを保持し resolveSightY と一致', () => {
     const base = Object.values(WEAPON_DEFS)[0]!;
     const cases: WeaponDef[] = [
-      { ...base, shape: 'rifle', attachmentIds: [] },
-      { ...base, shape: 'shotgun-pump', class: 'shotgun', attachmentIds: [] },
-      { ...base, shape: 'launcher', attachmentIds: [] },
+      { ...base, shape: 'rifle', modelKey: undefined, attachmentIds: [] },
+      { ...base, shape: 'shotgun-pump', class: 'shotgun', modelKey: undefined, attachmentIds: [] },
+      { ...base, shape: 'launcher', modelKey: undefined, attachmentIds: [] },
     ];
     for (const def of cases) {
       const { gun } = buildGunBody(def);

@@ -1,7 +1,34 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { ViewModelShape, WeaponDef } from '../game/weapons';
+import type { ModelKey, WeaponDef } from '../game/weapons';
 import { classDefault, OPTIC_SPECS, resolveOpticId } from '../game/optics';
+// R58: シルエット型 + SHAPE_SPECS + painter toolkit を weapon-shapes/ へ分割(Phase C 並列衝突ゼロ化)。
+// viewmodel は SHAPE_SPECS を保持せず import で解決する(値・座標は不変=視覚不変)。
+import {
+  SHAPE_SPECS,
+  SHAPE_PAINTERS,
+  chamferBox,
+  col,
+  setColor,
+  PAL,
+  type Silhouette,
+  type DetailSpec,
+  type ShadeMode,
+  type PainterCtx,
+  type Movable,
+} from './weapon-shapes';
+// 旧 viewmodel.ts で定義していたシルエット型の再export(既存 import 互換維持)。
+export type {
+  Silhouette,
+  ScopeSpec,
+  DetailSpec,
+  ShadeMode,
+  FeedKind,
+  HandguardKind,
+  StockKind,
+  MuzzleDevice,
+  AccentBand,
+} from './weapon-shapes';
 import {
   CAMO_VISUALS,
   equippedCamoFor,
@@ -40,6 +67,11 @@ const BARREL_Y = 0.012;
 // ドリフトを構造的に防ぐ(どちらか片方だけ変更すると照準がズレるため)。
 const IRON_POST_Y = 0.075;
 const BEAD_FLOAT = 0.008;
+// R58 サイト位置を動かす外装の狙点Y(単一真実源)。キャリーハンドル内蔵アイアンは
+// レシーバより高い位置に狙点が来る(FAMAS/SG-512)。buildGunBody(焼きドットY)と
+// resolveSightY(ADS収束契約値)が同じ CARRY_HANDLE_SIGHT_Y / sightYOverride を参照して
+// ドリフトを構造的に排除する。Phase B は carryHandle を立てる武器が無いので dormant(従来値のまま)。
+const CARRY_HANDLE_SIGHT_Y = 0.116;
 // R57⑧: 全光学サイト(reflex/holo/rmr/pico/canted/delta/hybrid)のレティクルドットを、
 // アイアンの浮遊マイクロドット(SphereGeometry r0.0021 ≒ 視覚直径0.0042)と同格の極小プレーン
 // ドットへ統一する共有定数。旧値は housing ごとに 0.008〜0.012 とバラつき、かつアイアンより
@@ -47,479 +79,23 @@ const BEAD_FLOAT = 0.008;
 // 加算(reflexDot)材だが小径・低エネルギーなので bloom閾値0.9 を超えない(むしろ縮小で減少)。
 const OPTIC_DOT_SIZE = 0.0046;
 
-// 頂点カラーの陰影モード。flat=均一、gradY=下暗上明の擬似AO、
-// machined=削り出し鋼(急勾配+稜線ベベル)、edgeHi=研磨リム(上端を二次で光らせる)。
-type ShadeMode = 'flat' | 'gradY' | 'machined' | 'edgeHi';
-
-// ── procedural シルエット定義 ───────────────────────────────────────────
-// 給弾方式。mag-curved/straight=着脱式弾倉、drum=ドラム、box=箱型、belt=ベルト給弾、
-// tube=チューブ弾倉(+フォアエンド)、horizontal=横置き弾倉(P90系)、none=なし
-type FeedKind =
-  | 'mag-curved'
-  | 'mag-straight'
-  | 'drum'
-  | 'box'
-  | 'belt'
-  | 'tube'
-  | 'horizontal'
-  | 'none';
-// ハンドガード形状。slim=細身、rail=レール付き、wood=木製、shroud=バレルシュラウド
-type HandguardKind = 'none' | 'slim' | 'rail' | 'wood' | 'shroud' | 'vented';
-// ストック形状。fixed=固定、skeleton=スケルトン、folding=折りたたみ
-type StockKind = 'none' | 'fixed' | 'skeleton' | 'folding';
-// マズルデバイス。brake=マズルブレーキ、flash=フラッシュハイダー、shroud=覆い
-type MuzzleDevice = 'none' | 'brake' | 'flash' | 'shroud';
-// アクセント帯(tracerColor)の貼り付け位置
-type AccentBand = 'receiver' | 'handguard' | 'stock' | 'slide';
-
-// 一体型光学機器(覗き口の太さ・長さ・高さ)
-interface ScopeSpec {
-  r: number;
-  len: number;
-  y: number;
-}
-
-// 1つの銃シルエットを完全に記述する行。SHAPE_SPECS が ViewModelShape ごとに保持する。
-interface Silhouette {
-  receiver: { w: number; h: number; d: number };
-  barrelGauge: number;
-  barrelLen: number;
-  feed: FeedKind;
-  handguard: HandguardKind;
-  stock: StockKind;
-  scope: ScopeSpec | null;
-  boltHandle: boolean;
-  muzzle: MuzzleDevice;
-  accentBand: AccentBand;
-  bodyScale: number;
-  // 任意: 給弾部のZオフセット(bullpup=グリップ後方へ)
-  feedZ?: number;
-  // 任意: 上下二連の二本バレル(shotgun-double)
-  twinBarrel?: boolean;
-  // 任意: 回転式シリンダ(revolver)
-  cylinder?: boolean;
-  // ── R11 任意ディテール上書き(全て optional・未指定は resolveDetail が導出) ──
-  // レシーバ造形。split=アッパー/ロア分割シーム
-  receiverStyle?: 'mono' | 'split';
-  // 排莢ポート(右面インセット+ブラスデフレクタ)を出すか
-  ejectionPort?: boolean;
-  // チャージングハンドル種別
-  chargingHandle?: 'none' | 'rear' | 'side' | 'top';
-  // 上面ピカティニーレール
-  railTop?: 'none' | 'short' | 'full';
-  // アイアンサイト種別
-  ironSight?: 'none' | 'fixed' | 'flip' | 'ghost' | 'bead';
-  // グリップ形状
-  gripStyle?: 'ar' | 'smg' | 'pistol' | 'wood';
-  // 銃身プロファイル
-  barrelProfile?: 'plain' | 'fluted' | 'heavy' | 'shroud';
-  // 拳銃可動スライド+セレーション
-  slide?: boolean;
-  // 露出ハンマー(revolver/shotgun-double)
-  hammer?: boolean;
-  // 放熱スリット本数(0=なし)
-  ventSlots?: number;
-  // アクセント帯を emissive 化するか(既定 true)
-  accentEmissive?: boolean;
-}
-
-// 全15形状を網羅した寸法表。Record<ViewModelShape, Silhouette> なので、
-// weapons.ts が ViewModelShape を増やすと「キー欠落」を tsc が検出する(exhaustive)。
-const SHAPE_SPECS: Record<ViewModelShape, Silhouette> = {
-  rifle: {
-    receiver: { w: 0.075, h: 0.095, d: 0.34 },
-    barrelGauge: 0.034,
-    barrelLen: 0.24,
-    feed: 'mag-curved',
-    handguard: 'rail',
-    stock: 'fixed',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1.0,
-  },
-  carbine: {
-    receiver: { w: 0.072, h: 0.092, d: 0.28 },
-    barrelGauge: 0.032,
-    barrelLen: 0.16,
-    feed: 'mag-curved',
-    handguard: 'rail',
-    stock: 'folding',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'flash',
-    accentBand: 'receiver',
-    bodyScale: 0.95,
-  },
-  bullpup: {
-    receiver: { w: 0.08, h: 0.1, d: 0.4 },
-    barrelGauge: 0.032,
-    barrelLen: 0.2,
-    feed: 'mag-curved',
-    handguard: 'slim',
-    stock: 'none',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'flash',
-    accentBand: 'receiver',
-    bodyScale: 0.95,
-    feedZ: 0.16,
-  },
-  smg: {
-    receiver: { w: 0.07, h: 0.088, d: 0.3 },
-    barrelGauge: 0.03,
-    barrelLen: 0.18,
-    feed: 'mag-straight',
-    handguard: 'slim',
-    stock: 'folding',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1.0,
-  },
-  pdw: {
-    receiver: { w: 0.07, h: 0.09, d: 0.3 },
-    barrelGauge: 0.028,
-    barrelLen: 0.14,
-    feed: 'horizontal',
-    handguard: 'shroud',
-    stock: 'folding',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'handguard',
-    bodyScale: 0.85,
-  },
-  'machine-pistol': {
-    receiver: { w: 0.062, h: 0.085, d: 0.22 },
-    barrelGauge: 0.026,
-    barrelLen: 0.1,
-    feed: 'mag-straight',
-    handguard: 'none',
-    stock: 'none',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'slide',
-    bodyScale: 0.8,
-  },
-  dmr: {
-    receiver: { w: 0.075, h: 0.095, d: 0.36 },
-    barrelGauge: 0.032,
-    barrelLen: 0.28,
-    feed: 'mag-curved',
-    handguard: 'slim',
-    stock: 'fixed',
-    scope: { r: 0.026, len: 0.15, y: 0.085 },
-    boltHandle: false,
-    muzzle: 'brake',
-    accentBand: 'receiver',
-    bodyScale: 1.18,
-  },
-  'sniper-bolt': {
-    receiver: { w: 0.075, h: 0.095, d: 0.34 },
-    barrelGauge: 0.034,
-    barrelLen: 0.24,
-    feed: 'mag-curved',
-    handguard: 'slim',
-    stock: 'fixed',
-    scope: { r: 0.03, len: 0.16, y: 0.08 },
-    boltHandle: true,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1.25,
-  },
-  // BO2 DSR-50: ブルパップ(弾倉がグリップ後方)・大型4ポートブレーキ・
-  // ベンチレーテッドシュラウド・大型スコープ。R8でDSR(yamasemi)専用に追加
-  'dsr-bp': {
-    receiver: { w: 0.082, h: 0.1, d: 0.38 },
-    barrelGauge: 0.038,
-    barrelLen: 0.3,
-    feed: 'mag-curved',
-    feedZ: 0.14,
-    handguard: 'vented',
-    stock: 'none',
-    scope: { r: 0.036, len: 0.22, y: 0.092 },
-    boltHandle: true,
-    muzzle: 'brake',
-    accentBand: 'receiver',
-    bodyScale: 1.35,
-  },
-  // 素手: buildGunBody が専用の早期分岐で拳を組むため、この行は網羅性のための最小値
-  fists: {
-    receiver: { w: 0.01, h: 0.01, d: 0.01 },
-    barrelGauge: 0.01,
-    barrelLen: 0.01,
-    feed: 'none',
-    handguard: 'none',
-    stock: 'none',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1,
-  },
-  'shotgun-pump': {
-    receiver: { w: 0.075, h: 0.095, d: 0.34 },
-    barrelGauge: 0.04,
-    barrelLen: 0.24,
-    feed: 'tube',
-    handguard: 'none',
-    stock: 'fixed',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1.1,
-  },
-  'shotgun-auto': {
-    receiver: { w: 0.08, h: 0.1, d: 0.36 },
-    barrelGauge: 0.04,
-    barrelLen: 0.26,
-    feed: 'box',
-    handguard: 'rail',
-    stock: 'skeleton',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1.08,
-  },
-  'shotgun-double': {
-    receiver: { w: 0.085, h: 0.105, d: 0.3 },
-    barrelGauge: 0.038,
-    barrelLen: 0.3,
-    feed: 'none',
-    handguard: 'wood',
-    stock: 'fixed',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'stock',
-    bodyScale: 1.05,
-    twinBarrel: true,
-  },
-  'lmg-belt': {
-    receiver: { w: 0.075, h: 0.095, d: 0.34 },
-    barrelGauge: 0.036,
-    barrelLen: 0.24,
-    feed: 'belt',
-    handguard: 'shroud',
-    stock: 'fixed',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'flash',
-    accentBand: 'receiver',
-    bodyScale: 1.15,
-  },
-  'lmg-drum': {
-    receiver: { w: 0.082, h: 0.1, d: 0.34 },
-    barrelGauge: 0.036,
-    barrelLen: 0.24,
-    feed: 'drum',
-    handguard: 'shroud',
-    stock: 'skeleton',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'flash',
-    accentBand: 'receiver',
-    bodyScale: 1.12,
-  },
-  pistol: {
-    receiver: { w: 0.075, h: 0.095, d: 0.34 },
-    barrelGauge: 0.034,
-    barrelLen: 0.24,
-    feed: 'none',
-    handguard: 'none',
-    stock: 'none',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 0.65,
-  },
-  revolver: {
-    receiver: { w: 0.05, h: 0.08, d: 0.2 },
-    barrelGauge: 0.024,
-    barrelLen: 0.16,
-    feed: 'none',
-    handguard: 'none',
-    stock: 'none',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'slide',
-    bodyScale: 0.72,
-    cylinder: true,
-  },
-  // ロケットランチャー: 肩担ぎの太い発射筒。前後グリップ相当はshroudハンドガード+AR gripで表現。
-  // 排気ベント: ventSlots=5 の shroud ハンドガード。簡易照門: ironSight='bead'(前ビード)。
-  // muzzle.z<0 契約: barFrontZ = -(recHalf+0.1*bs) - barLen/2*bs で常に負。brake は前端開放。
-  launcher: {
-    receiver: { w: 0.12, h: 0.12, d: 0.48 },
-    barrelGauge: 0.054,
-    barrelLen: 0.16,
-    feed: 'none',
-    handguard: 'shroud',
-    stock: 'skeleton',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'brake',
-    accentBand: 'receiver',
-    bodyScale: 1.4,
-    ventSlots: 5,
-    ironSight: 'bead',
-  },
-  // ── R33 新shape 8種 ─────────────────────────────────────────────────────
-  // sniper-semi: SVD系セミオートスナイパー(ボルトハンドルなし/ストレートマグ/PSO-1風スコープ)
-  'sniper-semi': {
-    receiver: { w: 0.076, h: 0.096, d: 0.35 },
-    barrelGauge: 0.032,
-    barrelLen: 0.30,
-    feed: 'mag-straight',
-    handguard: 'slim',
-    stock: 'fixed',
-    scope: { r: 0.026, len: 0.16, y: 0.086 },
-    boltHandle: false,
-    muzzle: 'brake',
-    accentBand: 'receiver',
-    bodyScale: 1.22,
-    railTop: 'short',
-    chargingHandle: 'side',
-  },
-  // antimateriel: Barrett系対物ライフル(大口径/ventSlots6/スケルトンストック/大型スコープ)
-  antimateriel: {
-    receiver: { w: 0.095, h: 0.11, d: 0.44 },
-    barrelGauge: 0.048,
-    barrelLen: 0.38,
-    feed: 'mag-straight',
-    handguard: 'shroud',
-    stock: 'skeleton',
-    scope: { r: 0.034, len: 0.20, y: 0.092 },
-    boltHandle: false,
-    muzzle: 'brake',
-    accentBand: 'receiver',
-    bodyScale: 1.45,
-    ventSlots: 6,
-    chargingHandle: 'side',
-    receiverStyle: 'split',
-    ejectionPort: true,
-  },
-  // shuriken-hand: 早期分岐で buildGunBody が専用ジオメトリを組む。この行は型網羅用最小値
-  'shuriken-hand': {
-    receiver: { w: 0.01, h: 0.01, d: 0.01 },
-    barrelGauge: 0.01,
-    barrelLen: 0.01,
-    feed: 'none',
-    handguard: 'none',
-    stock: 'none',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1,
-  },
-  // bow-japanese: 早期分岐で buildGunBody が専用ジオメトリを組む。この行は型網羅用最小値
-  'bow-japanese': {
-    receiver: { w: 0.01, h: 0.01, d: 0.01 },
-    barrelGauge: 0.01,
-    barrelLen: 0.01,
-    feed: 'none',
-    handguard: 'none',
-    stock: 'none',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1,
-  },
-  // war-fan: 早期分岐で buildGunBody が専用ジオメトリを組む。この行は型網羅用最小値
-  'war-fan': {
-    receiver: { w: 0.01, h: 0.01, d: 0.01 },
-    barrelGauge: 0.01,
-    barrelLen: 0.01,
-    feed: 'none',
-    handguard: 'none',
-    stock: 'none',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1,
-  },
-  // musket: 超長銃身火縄銃(木製前床/固定ストック/bead照門)
-  musket: {
-    receiver: { w: 0.062, h: 0.072, d: 0.28 },
-    barrelGauge: 0.020,
-    barrelLen: 0.52,
-    feed: 'none',
-    handguard: 'wood',
-    stock: 'fixed',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'stock',
-    bodyScale: 1.3,
-    gripStyle: 'wood',
-    ironSight: 'bead',
-    barrelProfile: 'plain',
-  },
-  // lightning-staff: 早期分岐で buildGunBody が専用ジオメトリを組む。この行は型網羅用最小値
-  'lightning-staff': {
-    receiver: { w: 0.01, h: 0.01, d: 0.01 },
-    barrelGauge: 0.01,
-    barrelLen: 0.01,
-    feed: 'none',
-    handguard: 'none',
-    stock: 'none',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1,
-  },
-  // minigun: 早期分岐で buildGunBody が6バレルジオメトリを組む。この行は型網羅用最小値
-  minigun: {
-    receiver: { w: 0.01, h: 0.01, d: 0.01 },
-    barrelGauge: 0.01,
-    barrelLen: 0.01,
-    feed: 'none',
-    handguard: 'none',
-    stock: 'none',
-    scope: null,
-    boltHandle: false,
-    muzzle: 'none',
-    accentBand: 'receiver',
-    bodyScale: 1,
-  },
-};
-
 // classDefault は optics.ts の単一真実源から import(shape 解決を viewmodel/match/optics で共有)。
+
+// R58: 3Dモデリング用の細粒度キー解決。modelKey(実在武器ごと)優先→shape(粗粒度)→クラス既定。
+// resolveDetail は依然 def.shape(粗粒度)基準=視覚不変。SHAPE_SPECS/SHAPE_PAINTERS だけがこの
+// 細粒度キーで引かれる(Phase B は逐語コピー=同一寸法、Phase C が固有シルエットへ改修)。
+function resolveModelKey(def: WeaponDef): ModelKey {
+  return def.modelKey ?? def.shape ?? classDefault(def.class);
+}
 
 // def から行を引く。Record<Union,V> 索引なので noUncheckedIndexedAccess でも undefined にならない。
 function resolveSilhouette(def: WeaponDef): Silhouette {
-  return SHAPE_SPECS[def.shape ?? classDefault(def.class)];
+  return SHAPE_SPECS[resolveModelKey(def)];
 }
 
 // シルエット行(寸法)から「造形ディテール」を導出する純関数。Silhouette の optional
 // 上書きがあれば優先し、無ければクラス/形状から決める。既存17行を1文字も触らずに
 // 新ディテールが乗る(後方互換)。enum を増やさず bool/既存enumで表現しswitch改修を避ける。
-interface DetailSpec {
-  receiverStyle: 'mono' | 'split';
-  ejectionPort: boolean;
-  charging: 'none' | 'rear' | 'side' | 'top';
-  railTop: 'none' | 'short' | 'full';
-  iron: 'none' | 'fixed' | 'flip' | 'ghost' | 'bead';
-  grip: 'ar' | 'smg' | 'pistol' | 'wood';
-  barrelProfile: 'plain' | 'fluted' | 'heavy' | 'shroud';
-  slide: boolean;
-  hammer: boolean;
-  ventSlots: number;
-  brassDeflector: boolean;
-  accentEmissive: boolean;
-}
 
 function resolveDetail(sil: Silhouette, def: WeaponDef): DetailSpec {
   const cls = def.class;
@@ -538,14 +114,17 @@ function resolveDetail(sil: Silhouette, def: WeaponDef): DetailSpec {
           ? 'side'
           : 'none');
   const railTop: DetailSpec['railTop'] =
-    sil.railTop ??
-    (sil.scope
-      ? 'short'
-      : sil.handguard === 'rail' || cls === 'ar' || cls === 'lmg'
-        ? 'full'
-        : cls === 'smg' || cls === 'br'
+    // R58 フレーム: 上部パンマグ(DP-28)は天面レールと干渉するためレール無しを強制(未使用時は従来通り)。
+    sil.topMag === 'pan'
+      ? 'none'
+      : sil.railTop ??
+        (sil.scope
           ? 'short'
-          : 'none');
+          : sil.handguard === 'rail' || cls === 'ar' || cls === 'lmg'
+            ? 'full'
+            : cls === 'smg' || cls === 'br'
+              ? 'short'
+              : 'none');
   const iron: DetailSpec['iron'] =
     sil.ironSight ??
     (shape === 'shotgun-double'
@@ -596,6 +175,17 @@ function resolveDetail(sil: Silhouette, def: WeaponDef): DetailSpec {
     brassDeflector: ejectionPort && cls !== 'shotgun',
     accentEmissive: sil.accentEmissive ?? true,
   };
+}
+
+// R58 フレーム: サイト位置を動かす外装(キャリーハンドル等)の狙点Yオーバーライド。
+// buildGunBody(焼きドットY)と resolveSightY(契約値)が同一関数を参照=ドリフト構造排除。
+// 未指定(=Phase B の全 shipping 武器)は null を返し、従来のアイアン/ビードYが使われる。
+// Phase C が Silhouette.carryHandle を立てると、両呼び出し側が同じ CARRY_HANDLE_SIGHT_Y を返す。
+// 注: topMag='pan'/receiverStyle='tube' は ADS収束Y(=射線基準の高さ)を実質変えない
+//     (パンは側方/レシーバ形状差)ため Y オーバーライドは持たせない(painter が造形で対処)。
+export function sightYOverride(sil: Silhouette): number | null {
+  if (sil.carryHandle && sil.carryHandle !== 'none') return CARRY_HANDLE_SIGHT_Y;
+  return null;
 }
 
 function assertNever(x: never): never {
@@ -1016,91 +606,6 @@ function disposeShared(): void {
 // billboard 用スクラッチ quaternion（毎フレーム alloc 回避）
 const _bbCamQ = new THREE.Quaternion();
 const _bbParentQ = new THREE.Quaternion();
-const _colCache = new Map<number, THREE.Color>();
-function col(hex: number): THREE.Color {
-  let c = _colCache.get(hex);
-  if (!c) {
-    c = new THREE.Color(hex);
-    _colCache.set(hex, c);
-  }
-  return c;
-}
-
-// 頂点カラーを焼く。flat 以外は gun ローカルYの上明下暗で擬似AO(エッジ・面の陰影)を作る。
-function setColor(g: THREE.BufferGeometry, color: THREE.Color, shade: ShadeMode): void {
-  const pos = g.attributes.position as THREE.BufferAttribute;
-  const n = pos.count;
-  const arr = new Float32Array(n * 3);
-  if (shade === 'flat') {
-    for (let i = 0; i < n; i += 1) {
-      arr[i * 3] = color.r;
-      arr[i * 3 + 1] = color.g;
-      arr[i * 3 + 2] = color.b;
-    }
-  } else {
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (let i = 0; i < n; i += 1) {
-      const y = pos.getY(i);
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
-    const span = Math.max(1e-5, maxY - minY);
-    for (let i = 0; i < n; i += 1) {
-      const t = (pos.getY(i) - minY) / span;
-      let f: number;
-      if (shade === 'gradY') {
-        f = 0.8 + 0.24 * t; // 下=0.80 / 上=1.04(軽い立体感)
-      } else if (shade === 'machined') {
-        // 削り出し鋼: 下暗→上明の急勾配 + 上稜(t>0.86)にベベルハイライト。
-        // 面内の微細縞(sin)は cyl16/ExtrudeGeometry の頂点密度では塗れず2トーンの
-        // artifact になるため入れない(勾配 + 稜線ベベルで削り出し感を出す)。
-        f = 0.72 + 0.3 * t + (t > 0.86 ? 0.22 : 0);
-      } else {
-        // edgeHi: 研磨リム。上端へ向け二次で持ち上げてエッジを強く光らせる
-        f = 0.68 + 0.52 * t * t;
-      }
-      arr[i * 3] = color.r * f;
-      arr[i * 3 + 1] = color.g * f;
-      arr[i * 3 + 2] = color.b * f;
-    }
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-}
-
-// 面取りボックス(丸角矩形をZ押し出し+前後ベベル)。箱っぽさを消すヒーロー面用。
-// 実寸で生成し bakeAt でスケール1配置する(ベベル幅を歪ませないため)。非indexed。
-function chamferBox(w: number, h: number, d: number, bevel: number): THREE.BufferGeometry {
-  const b = Math.max(0.0008, Math.min(bevel, w * 0.5 - 1e-3, h * 0.5 - 1e-3, d * 0.5 - 1e-3));
-  const hw = w / 2;
-  const hh = h / 2;
-  const s = new THREE.Shape();
-  s.moveTo(-hw + b, -hh);
-  s.lineTo(hw - b, -hh);
-  s.quadraticCurveTo(hw, -hh, hw, -hh + b);
-  s.lineTo(hw, hh - b);
-  s.quadraticCurveTo(hw, hh, hw - b, hh);
-  s.lineTo(-hw + b, hh);
-  s.quadraticCurveTo(-hw, hh, -hw, hh - b);
-  s.lineTo(-hw, -hh + b);
-  s.quadraticCurveTo(-hw, -hh, -hw + b, -hh);
-  const geo = new THREE.ExtrudeGeometry(s, {
-    depth: Math.max(0.001, d - 2 * b),
-    bevelEnabled: true,
-    bevelThickness: b,
-    bevelSize: b,
-    bevelSegments: 1,
-    steps: 1,
-    curveSegments: 1,
-  });
-  geo.computeBoundingBox();
-  const bb = geo.boundingBox;
-  if (bb) {
-    geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, -(bb.min.z + bb.max.z) / 2);
-  }
-  return geo;
-}
-
 // ── 銃本体ビルダ(ARMORY 3Dプレビューと共用) ──────────────────────────
 // 一人称腕(sleeve/glove)は含めない、純粋な銃メッシュ + トレーサー原点muzzle。
 // camoId: 省略(undefined)=プロファイルの装備カモを自動解決(ARMORYプレビューも
@@ -1897,21 +1402,21 @@ export function buildGunBody(
         : null;
   const camoMat = camo ? getCamoMaterial(camo) : null;
 
-  // ⑤ BO3寒色化: 頂点アルベドをブルースチール寄りへ(実際の陰影はvertexColor gradY+IBL/Bloom)。
-  // どれも arm hex 0x2b2e34/0x161820 と不一致(監査済み)。C_WOOD/C_BRASS は暖寒コントラスト維持で据置。
-  const C_BASE = 0x2c3340;
-  const C_DARK = 0x20242c;
-  const C_BARREL = 0x181b22;
-  const C_RAIL = 0x14171e;
-  const C_RIM = 0x515f74;
-  const C_GROOVE = 0x101319;
-  const C_POLISH = 0x424b58;
-  const C_POLISH_HI = 0x5a6a80;
-  const C_POLY = 0x191c22;
-  const C_GRIP = 0x21242b;
-  const C_WOOD = 0x5b3d24;
-  const C_WOOD_HI = 0x6d4a2c;
-  const C_BRASS = 0x8a6a2c;
+  // ⑤ BO3寒色化パレット。R58: 値は weapon-shapes/toolkit.ts の PAL(単一真実源)から取る
+  // (painter と generic-pass が同一色を使う)。ローカル別名は既存の全参照を無改変で維持するため据置。
+  const C_BASE = PAL.BASE;
+  const C_DARK = PAL.DARK;
+  const C_BARREL = PAL.BARREL;
+  const C_RAIL = PAL.RAIL;
+  const C_RIM = PAL.RIM;
+  const C_GROOVE = PAL.GROOVE;
+  const C_POLISH = PAL.POLISH;
+  const C_POLISH_HI = PAL.POLISH_HI;
+  const C_POLY = PAL.POLY;
+  const C_GRIP = PAL.GRIP;
+  const C_WOOD = PAL.WOOD;
+  const C_WOOD_HI = PAL.WOOD_HI;
+  const C_BRASS = PAL.BRASS;
 
   // 系統別バケツ(merge して1マテリアル・1メッシュへ)。accentFamは発光帯の行き先。
   const metalParts: THREE.BufferGeometry[] = [];
@@ -1922,12 +1427,7 @@ export function buildGunBody(
   const accentFam = det.accentEmissive ? accentParts : metalParts;
 
   // 可動ノード(name='vm:*', rest=identity)。系統バケツを持ち最後にmergeしてGroupへ。
-  interface Movable {
-    group: THREE.Group;
-    metal: THREE.BufferGeometry[];
-    polish: THREE.BufferGeometry[];
-    poly: THREE.BufferGeometry[];
-  }
+  // Movable 型は weapon-shapes/toolkit.ts が単一定義(PainterCtx.newMovable と共有)。
   const movables: Movable[] = [];
   const newMovable = (name: string): Movable => {
     const mv: Movable = { group: new THREE.Group(), metal: [], polish: [], poly: [] };
@@ -2056,8 +1556,12 @@ export function buildGunBody(
     boxP(accentFam, def.tracerColor, w, h, d, x, y, z, 0, 0, 0, 'flat');
 
   // ── レシーバ(面取りヒーロー面) + 上稜線リムハイライト + 分割シーム + マグウェル ──
-  // ヒーロー面は machined(削り出し鋼)で塗り、至近の主面に稜線ハイライトを立てる
-  bakeAt(metalParts, chamferBox(r.w, r.h, recD, 0.005), C_BASE, 0, 0, 0, 0, 0, 0, 'machined');
+  // ヒーロー面は machined(削り出し鋼)で塗り、至近の主面に稜線ハイライトを立てる。
+  // R58 フレーム: receiverStyle='tube'(MP5/Uzi 円筒アッパー)は角箱ヒーロー面を出さず
+  // painter が円筒レシーバを描く(未使用時=従来の角箱)。dormant(Phase B に tube 武器は無い)。
+  if (det.receiverStyle !== 'tube') {
+    bakeAt(metalParts, chamferBox(r.w, r.h, recD, 0.005), C_BASE, 0, 0, 0, 0, 0, 0, 'machined');
+  }
   boxP(metalParts, C_RIM, r.w * 0.52, 0.006, recD * 0.9, 0, r.h / 2 - 0.001, 0, 0, 0, 0, 'flat');
   if (det.receiverStyle === 'split') {
     boxP(metalParts, C_GROOVE, r.w + 0.001, 0.004, recD * 0.84, 0, 0.006, 0, 0, 0, 0, 'flat');
@@ -2213,7 +1717,10 @@ export function buildGunBody(
     // earPy 0.066→0.070 / full-rail 0.072→0.076。先端琥珀点は新しい耳先端へ追従
     // (x = 0.038 + sin0.18*h/2 ≈ 0.044, y = earPy + cos0.18*h/2 ≈ earPy+0.03)。
     // bead機(ショットガン)は前ビードがバレル上(高い)で耳と挟まないため耳を出さず単ドット構成に。
-    if (det.iron !== 'bead') {
+    // R58 フレーム: carryHandle 機(FAMAS/SG-512)は内蔵アイアンがハンドル内へ上がる=耳を出さない
+    // (painter がハンドル+内蔵サイトを描く)。dormant(Phase B に carryHandle 武器は無い)。
+    const hasCarryHandle = sil.carryHandle !== undefined && sil.carryHandle !== 'none';
+    if (det.iron !== 'bead' && !hasCarryHandle) {
       // full-rail機は耳を少し上げて上端レール線に枠を揃える(0.076)。他機は 0.070。
       const earPy = det.railTop === 'full' ? 0.076 : 0.070;
       for (const sx of [-1, 1] as const) {
@@ -2257,7 +1764,9 @@ export function buildGunBody(
       // (BO3参考画像スタイル)。狙点=resolveSightY IRON_POST_Y に一致・凍結(x0/z0.14 は不変)。
       // R50: ベゼルリング撤去 — 長く細くした耳の間に中央で浮かぶ。
       // R51: ユーザー要望「ドットをもう少し浮かせて」— 0.062→IRON_POST_Y(0.075)。
-      microDot(0, IRON_POST_Y, 0.14, 0.0021);
+      // R58 フレーム: carryHandle 機は狙点Yを CARRY_HANDLE_SIGHT_Y へ持ち上げる(resolveSightY と同一関数)。
+      // 未使用時は sightYOverride が null=IRON_POST_Y のまま(視覚不変)。
+      microDot(0, sightYOverride(sil) ?? IRON_POST_Y, 0.14, 0.0021);
     }
   }
 
@@ -2382,6 +1891,13 @@ export function buildGunBody(
       boxP(metalParts, C_DARK, 0.04, 0.09, 0.014, 0, -0.01, stockZ + 0.11);
       break;
     }
+    // R58 新ストック(wire=ワイヤー枠 / thumbhole=サムホール / wood=木製固定)。
+    // Phase B は本体で描かず painter が固有ストックを描く(未使用時=視覚不変)。case を用意して
+    // assertNever を満たす(型に stock 値を足したので switch を網羅させる)。
+    case 'wire':
+    case 'thumbhole':
+    case 'wood':
+      break;
     default:
       assertNever(sil.stock);
   }
@@ -2730,6 +2246,23 @@ export function buildGunBody(
     bakeAt(polyParts, chamferBox(0.04, 0.09, 0.05, 0.005), C_POLY, 0, -0.085, -0.2 * bs, angled ? 0.5 : 0, 0, 0);
   }
 
+  // ── R58 固有外装 painter フック(merge直前) ──
+  // 共有パス(receiver/barrel/handguard/feed/stock/muzzle/sight/optic)を全て描いた後、
+  // ModelKey 固有の「非サイト外装」を painter が足す(Phase B は SHAPE_PAINTERS 全空=no-op=視覚不変)。
+  // painter は ctx の bake系/chamferBox/PAL/寸法/buckets/newMovable だけで描く。サイト系ジオメトリ
+  // (ドット/レンズ/耳)は上の本体パスが所有し順序を保つ(契約テスト=「最初の PlaneGeometry」等に依存)。
+  const painter = SHAPE_PAINTERS[resolveModelKey(def)];
+  if (painter) {
+    const ctx: PainterCtx = {
+      metalParts, polishParts, polyParts, accentParts, accentFam, temps,
+      bake, bakeAt, boxP, tubeZ, coneZ, buildRailTop, accentLine, newMovable,
+      chamferBox, col, C: PAL,
+      bs, gauge, barR, barLen, recD, recHalf, barCenterZ, barFrontZ, BARREL_Y, r,
+      gun, def, sil, det, camoId: camo,
+    };
+    painter(ctx);
+  }
+
   // ── 系統別に1メッシュへ畳む + 可動Groupを追加 ──
   // カモ装備時はメタル/ポリマーバケツのみカモ材へ(研磨/発光帯/レンズは素のまま)。
   const addFamily = (parts: THREE.BufferGeometry[], material: THREE.Material, parent: THREE.Object3D): void => {
@@ -2801,6 +2334,11 @@ export function resolveSightY(def: WeaponDef): number {
     const isSgShape = resolvedShape === 'shotgun-pump' || resolvedShape === 'shotgun-double';
     return BARREL_Y + sil.barrelGauge * 0.6 + (isSgShape ? 0.016 : 0) + BEAD_FLOAT;
   }
+  // R58 フレーム: carryHandle 機(FAMAS/SG-512)は内蔵アイアンがハンドル内へ上がる。buildGunBody の
+  // 前照星ドットも同じ sightYOverride を使うため 3点(焼きドットY/契約値/テスト)が構造的に一致。
+  // dormant: Phase B に carryHandle 武器は無く sightYOverride は null → IRON_POST_Y のまま(視覚不変)。
+  const ov = sightYOverride(sil);
+  if (ov !== null) return ov;
   // R51: iron post(fixed/flip/ghost)機の狙点。ユーザー要望「もう少しドットを浮かせて」で 0.062→IRON_POST_Y。
   return IRON_POST_Y;
 }

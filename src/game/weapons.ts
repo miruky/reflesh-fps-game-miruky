@@ -51,6 +51,28 @@ export type ViewModelShape =
   | 'lightning-staff' // 細杖+先端発光クリスタル(早期分岐)
   | 'minigun';        // 6バレル感の太胴ミニガン(早期分岐)
 
+// R58: 3Dモデリング用の細粒度キー。ViewModelShape(粗粒度)は 2D SVG シルエット(menu/armory)や
+// optics(SCOPED_SHAPES/resolveOpticId/classDefault)が使う「クラス相当」の集合で、これは不変。
+// ModelKey は「実在武器ごとの固有シルエット」を表し viewmodel.buildGunBody / SHAPE_SPECS /
+// SHAPE_PAINTERS だけが解決する。WeaponDef.modelKey に設定し、未設定なら shape へフォールバック
+// する(=従来通り)。Phase B の固有キーは汎用エントリの逐語コピー(視覚不変)、Phase C が改修する。
+export type ModelKey =
+  | ViewModelShape
+  // AR系(rifle×4 / carbine×4 の共有解消)
+  | 'ar-famas' | 'ar-fal' | 'ar-scar-h' | 'ar-hk416'
+  | 'ar-mcx' | 'ar-arx' | 'ar-sg550' | 'ar-scar-l'
+  // SMG系(smg×4 の共有解消)
+  | 'smg-pm12' | 'smg-tmp' | 'smg-mp5sd' | 'smg-uzi'
+  // 狙撃/DMR系(dmr×2 / sniper-bolt×3=蜃気楼ビーム分離 の共有解消)
+  | 'dmr-svd' | 'dmr-wa2000'
+  | 'sniper-awm' | 'sniper-trg' | 'sniper-beam'
+  // 散弾系(shotgun-pump×2 の共有解消)
+  | 'sg-870' | 'sg-ithaca'
+  // LMG系(lmg-belt×2 の共有解消)
+  | 'lmg-m249' | 'lmg-rpk'
+  // 拳銃系(pistol×3 の共有解消)
+  | 'pistol-glock' | 'pistol-cz75' | 'pistol-93r';
+
 // 兵装画面のステータスバー(6軸・0..10)。computeWeaponBars で WeaponDef から導出する
 export interface WeaponBars {
   power: number;
@@ -115,6 +137,9 @@ export interface WeaponDef {
   // ── R7 任意フィールド(未指定で従来挙動) ──
   // procedural シルエット形状。未指定なら viewmodel がクラス既定へフォールバック
   shape?: ViewModelShape;
+  // R58: 3Dモデリング用の固有シルエットキー(実在武器ごと)。未指定なら shape へフォールバック。
+  // shape(2D SVG/optics 用の粗粒度)とは独立=menu/armory/optics には影響しない。
+  modelKey?: ModelKey;
   // 銃身長などの全体スケール。未指定なら viewmodel のクラス既定値
   bodyScale?: number;
   // R53-W2: Pack-a-Punch適用時に match がクローンdefへ積む「システム付与カモ」ID。
@@ -158,6 +183,7 @@ function risingPattern(steps: number, pitchDeg: number, driftDeg: number): Recoi
 export const WEAPON_DEFS: Record<string, WeaponDef> = {
   'kaede-ar': {
     id: 'kaede-ar',
+    modelKey: 'ar-famas',
     name: 'FAMAS-G4', // R57-④: 実在武器の非公式変種名(元ネタ: FAMAS F1/G2。G4は非実在の派生型番)
     slot: 'primary',
     damage: 40,
@@ -192,6 +218,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'tsubaki-smg': {
     id: 'tsubaki-smg',
+    modelKey: 'smg-pm12',
     name: 'PM14', // R57-④: 元ネタ Beretta PM12(数字ちょいずらし、非実在)
     slot: 'primary',
     damage: 30,
@@ -268,6 +295,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'hiiragi-sg': {
     id: 'hiiragi-sg',
+    modelKey: 'sg-870',
     name: 'M875', // R57-④: 元ネタ Remington 870(数字ちょいずらし、非実在)
     slot: 'primary',
     damage: 20, // 8ペレット×20=160、余裕の至近OSK
@@ -302,6 +330,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'miyama-br': {
     id: 'miyama-br',
+    modelKey: 'ar-fal',
     name: 'FAL-53', // R57-④: 元ネタ FN FAL(制式化年ふう非実在型番)
     slot: 'primary',
     damage: 46,
@@ -336,6 +365,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'kumagera-lmg': {
     id: 'kumagera-lmg',
+    modelKey: 'lmg-m249',
     name: 'M251', // R57-④: 元ネタ M249/M250系SAW(数字ちょいずらし、非実在)
     slot: 'primary',
     damage: 40,
@@ -371,6 +401,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   // ── R8 追加プライマリ(18) ────────────────────────────────────────
   'kasasagi-ar': {
     id: 'kasasagi-ar',
+    modelKey: 'ar-scar-h',
     name: 'SCAR-18S', // R57-④: 元ネタ FN SCAR 17S(数字ちょいずらし、非実在)
     slot: 'primary',
     damage: 50,
@@ -408,6 +439,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'ginyanma-ar': {
     id: 'ginyanma-ar',
+    modelKey: 'ar-mcx',
     name: 'MCX-9', // R57-④: 元ネタ SIG MCX(非実在バリアント番号)
     slot: 'primary',
     damage: 36,
@@ -479,6 +511,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'tobikuma-ar': {
     id: 'tobikuma-ar',
+    modelKey: 'ar-hk416',
     name: 'HK415', // R57-④: 元ネタ HK416(数字ちょいずらし、非実在。web検索で確認済み)
     slot: 'primary',
     damage: 46,
@@ -515,6 +548,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'shinonome-ar': {
     id: 'shinonome-ar',
+    modelKey: 'ar-arx',
     name: 'ARX-170', // R57-④: 元ネタ Beretta ARX-160(数字ちょいずらし、非実在)
     slot: 'primary',
     damage: 44,
@@ -550,6 +584,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'hayabusa-smg': {
     id: 'hayabusa-smg',
+    modelKey: 'smg-tmp',
     name: 'TMP-2', // R57-④: 元ネタ Steyr TMP(非実在の世代呼称)
     slot: 'primary',
     damage: 26,
@@ -586,6 +621,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'sasameki-smg': {
     id: 'sasameki-smg',
+    modelKey: 'smg-mp5sd',
     name: 'MP6SD', // R57-④: 元ネタ HK MP5SD(数字ちょいずらし、非実在=MP6自体が存在しないと確認済み)
     slot: 'primary',
     damage: 30,
@@ -657,6 +693,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'mozu-smg': {
     id: 'mozu-smg',
+    modelKey: 'smg-uzi',
     name: 'UZI-10', // R57-④: 元ネタ IWI Uzi系(非実在のバリアント番号)
     slot: 'primary',
     damage: 31,
@@ -692,6 +729,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'kagerou-br': {
     id: 'kagerou-br',
+    modelKey: 'ar-sg550',
     name: 'SG-512', // R57-④: 元ネタ SIG SG510/550系(非実在の型番)
     slot: 'primary',
     damage: 44,
@@ -727,6 +765,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'shirasagi-mk': {
     id: 'shirasagi-mk',
+    modelKey: 'dmr-svd',
     name: 'SVD-16', // R57-④: 元ネタ Dragunov SVD(数字ちょいずらし、非実在)
     slot: 'primary',
     // 速射DMR: 頭1発(70*1.9=133)、胴は2発(70*2=140)
@@ -766,6 +805,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'hibari-mk': {
     id: 'hibari-mk',
+    modelKey: 'dmr-wa2000',
     name: 'WA2200', // R57-④: 元ネタ Walther WA2000(数字ちょいずらし、非実在)
     slot: 'primary',
     // 重DMR: 頭1発(85*1.5=127.5)、胴は2発(85*2=170)
@@ -805,6 +845,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'raicho-sniper': {
     id: 'raicho-sniper',
+    modelKey: 'sniper-awm',
     name: 'AWR-338', // R57-④: 元ネタ Accuracy International AWM/AWP(.338LM。文字ちょいずらし、非実在)
     slot: 'primary',
     // 高速ボルト・クイックスコープ向き。base98<105 なので頭1発(98*1.9=186)で仕留める
@@ -844,6 +885,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'shirayuki-sniper': {
     id: 'shirayuki-sniper',
+    modelKey: 'sniper-trg',
     name: 'TRG-44', // R57-④: 元ネタ Sako TRG-42(数字ちょいずらし、非実在)
     slot: 'primary',
     // 最強ボルト(最後解放)。胴・頭ともOSK
@@ -954,6 +996,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'tsuchigumo-lmg': {
     id: 'tsuchigumo-lmg',
+    modelKey: 'lmg-rpk',
     name: 'RPK-14', // R57-④: 元ネタ Kalashnikov RPK-16(数字ちょいずらし、非実在)
     slot: 'primary',
     damage: 46,
@@ -1026,6 +1069,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   suzume: {
     id: 'suzume',
+    modelKey: 'pistol-glock',
     name: 'G16', // R57-④: 元ネタ Glock系(公式ラインは17番以降のみのため16は非実在)
     slot: 'secondary',
     damage: 34,
@@ -1061,6 +1105,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   // ── R8 追加セカンダリ(3) ─────────────────────────────────────────
   'kawasemi-pistol': {
     id: 'kawasemi-pistol',
+    modelKey: 'pistol-cz75',
     name: 'CZ76', // R57-④: 元ネタ CZ 75(数字ちょいずらし、非実在)
     slot: 'secondary',
     damage: 34,
@@ -1293,6 +1338,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'aoshigi-sg': {
     id: 'aoshigi-sg',
+    modelKey: 'sg-ithaca',
     name: 'ITH-39', // R57-④: 元ネタ Ithaca 37(数字ちょいずらし、非実在)
     slot: 'primary',
     // スラグ弾: pellets=1/72dmg。shotgunクラスで貫通0.6の中距離スナイパーSG
@@ -1369,6 +1415,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'mukudori-br': {
     id: 'mukudori-br',
+    modelKey: 'ar-scar-l',
     name: 'SCAR-14S', // R57-④: 元ネタ FN SCAR 16S(数字ちょいずらし、非実在)
     slot: 'primary',
     damage: 42,
@@ -1404,6 +1451,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'misago-pistol': {
     id: 'misago-pistol',
+    modelKey: 'pistol-93r',
     name: '95R', // R57-④: 元ネタ Beretta 93R/951R(数字ちょいずらし、非実在)
     slot: 'secondary',
     damage: 28,
@@ -1630,6 +1678,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   'shinkirou-sniper': {
     id: 'shinkirou-sniper',
+    modelKey: 'sniper-beam',
     name: '蜃気楼',
     slot: 'primary',
     // ビーム貫通スナイパー。special:'beam'でmatch側が3tick×50dmgビーム実装予定
