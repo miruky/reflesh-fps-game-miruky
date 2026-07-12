@@ -531,7 +531,10 @@ export function generateShopLayout(seed: number): ShopLayout {
   const slots: ShopSlot[] = [];
   let slotIndex = 0;
 
-  const perkCount = randInt(rand, 3, 4);
+  // R60②: 全パーク(6種)を全ステージに配置する(ダブルタップ等が無いステージがきつすぎた)。
+  // rand は従来どおり1個消費して下流(壁武器選出/ミステリーボックス位置)の決定列を不変に保つ
+  // (=既存ステージの壁武器レイアウトを変えない)。消費した値自体は使わない。
+  randInt(rand, 3, 4);
 
   // 壁武器: fists+DSR は必置、残り6本(optional)からoptionalCount個をシャッフル選出
   // 必置2 + optional4〜6 = 合計6〜8本
@@ -555,10 +558,11 @@ export function generateShopLayout(seed: number): ShopLayout {
     slotIndex += 1;
   }
 
-  // パーク自販機: shuffle して先頭 perkCount 個を採用(重複なし)
-  // perkCount(3〜4) < ALL_PERK_IDS.length(6) なので範囲内アクセスが保証される
+  // R60②: パーク自販機は ALL_PERK_IDS(6種)を全て配置する。shuffle は配置順(=3D割当順)の
+  // ステージ差を残しつつ rand を消費(下流の決定列を従来と同一に保つ)。全種を置くので
+  // ダブルタップ/ジャガーノグ等が「無いステージ」は発生しない。
   const perkPool = shuffle([...ALL_PERK_IDS], rand);
-  for (let i = 0; i < perkCount; i += 1) {
+  for (let i = 0; i < perkPool.length; i += 1) {
     const pid = perkPool[i]!;
     slots.push({
       kind: 'perk-machine',

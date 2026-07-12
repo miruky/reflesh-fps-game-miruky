@@ -105,6 +105,7 @@ export const PAD_ACTION_ROWS_U2: ReadonlyArray<[PadAction, string]> = [
   ['weaponswitch', '武器切替'],
   ['grenade', 'グレネード'],
   ['grenadeswitch', '投擲物切替'],
+  ['interact', 'インタラクト(調べる/購入)'], // R60④: 既定=D-pad上。リバインド可能に
   ['ultimate', 'アルティメット'],
   ['holdBreath', '息止め'],
   ['leanleft', '左リーン'],

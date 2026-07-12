@@ -477,8 +477,27 @@ const loop = new GameLoop(
     // finalkillcam 中は pause ボタンをスキップとして下のブロックで使うため、ここでは消費しない
     if (mode !== 'finalkillcam' && input.consumePausePressed()) {
       // R54-F7: フォト中のOptionsはロック解除=フォト終了(onLockChangeがポーズへ戻す)
-      if (mode === 'playing' || mode === 'photo') input.exitLock();
-      else if (mode === 'paused') input.requestLock(renderer.domElement);
+      if (mode === 'photo') {
+        input.exitLock();
+      } else if (mode === 'playing') {
+        // R60④: 純ゲームパッドはポインタロック未取得(=非trustedでrequestLock不可)のため、
+        // 従来の exitLock 経由(onLockChange発火)ではポーズできず試合が止まらなかった。
+        // マウス使用時(ロック中)は従来どおり exitLock→onLockChange に委ね、ロック非保持時
+        // (=ゲームパッドのみ)は直接ポーズへ遷移する。wasLocked を先に捕捉して二重遷移を防ぐ。
+        const wasLocked = input.locked;
+        input.exitLock();
+        if (!wasLocked) {
+          mode = 'paused';
+          menu.showPause();
+        }
+      } else if (mode === 'paused') {
+        // R60④: 再開もロック非依存に。requestLock はマウス照準復帰のベストエフォート
+        // (ゲームパッドでは gesture 制約で失敗するが、mode は直接 playing へ戻し menu を閉じる)。
+        sounds.ensure();
+        mode = 'playing';
+        menu.hide();
+        input.requestLock(renderer.domElement);
+      }
     }
     // メニュー(トップページ含む)をコントローラだけで操作する
     const nav = input.consumeUiNav();

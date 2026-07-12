@@ -171,7 +171,13 @@ export function weaponNameOf(weaponId: string): string {
 const NAME_TO_ID = new Map<string, string>();
 for (const [id, def] of Object.entries(WEAPON_DEFS)) NAME_TO_ID.set(def.name, id);
 export function weaponIdByName(name: string): string | null {
-  return NAME_TO_ID.get(name) ?? null;
+  const direct = NAME_TO_ID.get(name);
+  if (direct) return direct;
+  // R60③: ゾンビの Pack-a-Punch(鍛神台)は表示名へ「・改/改二/改三」を付す。逆引きが外れると
+  // camoWeaponId=null になり、PaP後の銃キルがカモ実績に一切計上されなかった(ゾンビでは早期に
+  // PaPし大半のキルがこの状態のため「解除が少ない」体感の根本原因)。接尾辞を剥がして基礎IDへ。
+  const stripped = name.replace(/・改(?:二|三)?$/, '');
+  return NAME_TO_ID.get(stripped) ?? null;
 }
 
 // ── 判定純関数 ────────────────────────────────────────────────────────────

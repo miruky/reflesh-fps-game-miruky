@@ -3,7 +3,7 @@
 // 公開面は match.ts の re-export シム経由でも従来どおり import できる。
 import { ZOMBIE_CROWD_INSTANCED } from '../render/zombie-crowd';
 import { penetrationFactor } from './ballistics';
-import type { BotKind, BotTier, BotTuning } from './bot';
+import type { BotKind, BotTier, BotTuning, Difficulty } from './bot';
 import type { RadioLine } from './campaign';
 import type { GameMode } from './modes';
 import type { PapTier } from './zombie-economy';
@@ -291,22 +291,27 @@ export function splitRadioLines(
 // - hellMode(トグル明示ON): 個人戦/チーム戦を問わず高確率(30%/35%)で自然湧き(従来どおり)
 // - トグルOFFのデフォルト: チーム系モード(teamBased)でのみ低確率(8%/13%)の自然湧きを許可。
 //   個人戦(FFA/ガンゲーム等)はデフォルトで達人/巨躯ゼロ(ユーザー要望)
+// R60①: 達人(master)は強すぎるため「精鋭(hard)」選択時のみ出現に制限する。巨躯(giant)は
+//   従来どおり(帯 [0.08,0.13) / hell [0.30,0.35) を不変に保ち、頻度を上げない)。master の帯に
+//   当たっても hard でなければ humanoid にフォールバック(=giant の頻度は難易度に依らず一定)。
 export function resolveNaturalBotKind(
   rand: () => number,
   teamBased: boolean,
   hellMode: boolean,
   allGiantMode: boolean,
+  difficulty: Difficulty = 'normal',
 ): BotKind {
+  const masterAllowed = difficulty === 'hard';
   if (allGiantMode) return 'giant';
   if (hellMode) {
     const r = rand();
-    if (r < 0.30) return 'master';
+    if (r < 0.30) return masterAllowed ? 'master' : 'humanoid';
     if (r < 0.35) return 'giant';
     return 'humanoid';
   }
   if (!teamBased) return 'humanoid';
   const r = rand();
-  if (r < 0.08) return 'master';
+  if (r < 0.08) return masterAllowed ? 'master' : 'humanoid';
   if (r < 0.13) return 'giant';
   return 'humanoid';
 }

@@ -184,11 +184,12 @@ describe('計器表示', () => {
 });
 
 describe('リバインド/ポーズ契約', () => {
-  it('リバインド表は旧PAD_ACTION_ROWSと同一の15アクション', () => {
-    expect(PAD_ACTION_ROWS_U2.length).toBe(15);
+  it('リバインド表は16アクション(R60④でinteractを追加)・重複なし', () => {
+    expect(PAD_ACTION_ROWS_U2.length).toBe(16); // 旧15 + R60④ interact
     expect(PAD_ACTION_ROWS_U2[0]).toEqual(['fire', '射撃']);
-    expect(PAD_ACTION_ROWS_U2[14]).toEqual(['scoreboard', 'スコアボード']);
+    expect(PAD_ACTION_ROWS_U2[15]).toEqual(['scoreboard', 'スコアボード']);
     const actions = PAD_ACTION_ROWS_U2.map(([a]) => a);
+    expect(actions).toContain('interact'); // R60④: リバインド可能に
     expect(new Set(actions).size).toBe(actions.length);
   });
 

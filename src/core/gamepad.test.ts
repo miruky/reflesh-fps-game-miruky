@@ -9,6 +9,16 @@ import {
   type PadAction,
 } from './gamepad';
 
+describe('R60④: interact(調べる/購入)がゲームパッドに割当済み', () => {
+  it('BO3_DEFAULT.interact は D-pad上(12)へ割当され、純ゲームパッドで購入/回収が可能', () => {
+    expect(BO3_DEFAULT.interact).toEqual([{ kind: 'button', index: 12 }]);
+    // 全プリセットが interact を継承(空配列=未割当が残っていない)
+    for (const preset of Object.values(PRESETS)) {
+      expect(preset.interact.length).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe('scaledRadialDeadzone', () => {
   it('デッドゾーン未満は完全に0', () => {
     const r = scaledRadialDeadzone(0.05, 0.05, 0.2);

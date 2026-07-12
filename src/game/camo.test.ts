@@ -177,6 +177,17 @@ describe('対象武器とクラス', () => {
     expect(weaponNameOf('kaede-ar')).toBe('FAMAS-G4');
     expect(weaponNameOf('unknown-id')).toBe('unknown-id');
   });
+
+  it('R60③: Pack-a-Punch接尾辞(・改/改二/改三)を剥がして逆引きできる(ゾンビのPaP後キルがカモに計上される)', () => {
+    expect(weaponIdByName('FAMAS-G4・改')).toBe('kaede-ar');
+    expect(weaponIdByName('FAMAS-G4・改二')).toBe('kaede-ar');
+    expect(weaponIdByName('FAMAS-G4・改三')).toBe('kaede-ar');
+    expect(weaponIdByName('DSR・改二')).toBe('yamasemi-dmr');
+    // 素の逆引きは従来どおり優先(接尾辞なしは無改変で解決)
+    expect(weaponIdByName('FAMAS-G4')).toBe('kaede-ar');
+    // 非武器名は接尾辞を剥がしても null のまま
+    expect(weaponIdByName('近接・改')).toBeNull();
+  });
 });
 
 describe('camoTierFor / goldFor', () => {

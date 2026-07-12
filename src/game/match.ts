@@ -1335,6 +1335,7 @@ export class Match {
               this.modeDef.teamBased,
               config.hellMode ?? false,
               config.allGiantMode ?? false,
+              config.difficulty, // R60①: 達人は精鋭(hard)選択時のみ自然湧き
             );
         // 超鬼畜倍率は spawnBot 内(KIND_TUNING合成後)で一元適用する(二重掛け防止)
         // キルフィード/スコアボードで一目で分かるよう、達人/巨躯は種名を表示名にする

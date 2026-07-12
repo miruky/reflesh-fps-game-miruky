@@ -89,7 +89,10 @@ export const BO3_DEFAULT: GamepadBindings = {
   streak5: [],
   streak6: [],
   streak7: [],
-  interact: [],
+  // R60④: interact(調べる/購入)を D-pad 上へ既定割当。旧 [] のため純ゲームパッドでは
+  // ゾンビの壁購入/パーク/鍛神台/ドア、S&D設置解除、回収系が一切操作不能だった(致命)。
+  // DUP は他アクション未使用の空きボタン。options でリバインドも可能。
+  interact: btn(GP.DUP),
   fire: [{ kind: 'trigger', index: GP.R2, threshold: TRIGGER_FIRE }],
   ads: [{ kind: 'trigger', index: GP.L2, threshold: TRIGGER_ADS }],
   weaponswitch: btn(GP.TRIANGLE),
