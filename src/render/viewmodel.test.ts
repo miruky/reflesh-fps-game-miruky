@@ -20,8 +20,8 @@ import { CAMO_IDS, CAMO_VISUALS } from '../game/camo';
 
 // 一人称腕は sleeve/glove の固有色で塗られる。銃本体にこれらが混ざっていなければ
 // 「腕なし」と判定できる(dark/darker/accent とは別色)。
-const SLEEVE_HEX = 0x536047;
-const GLOVE_HEX = 0x6f714f;
+const SLEEVE_HEX = 0x58a8c7;
+const GLOVE_HEX = 0x2f718c;
 
 describe('reloadAnimationPose', () => {
   it('開始/終了は静止し、中盤だけマガジンと支持手を動かす', () => {
@@ -1625,7 +1625,7 @@ describe('R53: 帝王溜め段(setEmperorChargeStage)+白芯雷脈(setKatanaVein
     sprinting: false,
   };
 
-  function makeKunaiVm(): { vm: ViewModel; kunai: THREE.Object3D } {
+  function makeKunaiVm(): { vm: ViewModel; kunai: THREE.Object3D; grip: THREE.Object3D } {
     const camera = new THREE.PerspectiveCamera();
     const vm = new ViewModel(camera);
     const def = WEAPON_DEFS['fists'];
@@ -1633,29 +1633,31 @@ describe('R53: 帝王溜め段(setEmperorChargeStage)+白芯雷脈(setKatanaVein
     vm.setWeapon(def);
     const kunai = vm.root.getObjectByName('vm:kunai');
     if (!kunai) throw new Error('vm:kunai missing');
-    return { vm, kunai };
+    const grip = vm.root.getObjectByName('vm:fistGrip');
+    if (!grip) throw new Error('vm:fistGrip missing');
+    return { vm, kunai, grip };
   }
 
   it('段3で刀が大上段へ(rotation.x が rest より大きく上向く)、段0で復帰する', () => {
-    const { vm, kunai } = makeKunaiVm();
+    const { vm, grip } = makeKunaiVm();
     for (let i = 0; i < 30; i += 1) vm.update(1 / 60, HIP_STATE);
-    const restRx = kunai.rotation.x;
+    const restRx = grip.rotation.x;
     vm.setEmperorChargeStage(3);
     for (let i = 0; i < 90; i += 1) vm.update(1 / 60, HIP_STATE);
-    // EMPEROR_CHARGE_MAX の kunai r[0]=-1.15 がフル(level=1.0)で乗る
-    expect(kunai.rotation.x).toBeLessThan(restRx - 0.8);
+    // EMPEROR_CHARGE_MAX の共通グリップ r[0]=-1.15 がフル(level=1.0)で乗る
+    expect(grip.rotation.x).toBeLessThan(restRx - 0.8);
     vm.setEmperorChargeStage(0);
     for (let i = 0; i < 120; i += 1) vm.update(1 / 60, HIP_STATE);
-    expect(kunai.rotation.x).toBeCloseTo(restRx, 2);
+    expect(grip.rotation.x).toBeCloseTo(restRx, 2);
     vm.dispose();
   });
 
   it('段の単調性: 段1 < 段2 < 段3 の持ち上げ量', () => {
-    const { vm, kunai } = makeKunaiVm();
+    const { vm, grip } = makeKunaiVm();
     const rxAt = (stage: 0 | 1 | 2 | 3): number => {
       vm.setEmperorChargeStage(stage);
       for (let i = 0; i < 90; i += 1) vm.update(1 / 60, HIP_STATE);
-      return kunai.rotation.x;
+      return grip.rotation.x;
     };
     const r0 = rxAt(0);
     const r1 = rxAt(1);
@@ -1668,11 +1670,11 @@ describe('R53: 帝王溜め段(setEmperorChargeStage)+白芯雷脈(setKatanaVein
   });
 
   it('ADS中は溜めポーズが縮退する(照準契約優先: level×(1-adsProgress))', () => {
-    const { vm, kunai } = makeKunaiVm();
+    const { vm, grip } = makeKunaiVm();
     vm.setEmperorChargeStage(3);
     for (let i = 0; i < 90; i += 1) vm.update(1 / 60, { ...HIP_STATE, adsProgress: 1 });
-    // ADSガードポーズ(FIST_POSES.ads r[0]=-0.22)そのもの=溜め加算はゼロ
-    expect(kunai.rotation.x).toBeCloseTo(-0.22, 1);
+    // ADS共通グリップ(FIST_POSES.ads r[0]=-0.1)そのもの=溜め加算はゼロ
+    expect(grip.rotation.x).toBeCloseTo(-0.1, 1);
     vm.dispose();
   });
 
@@ -1714,6 +1716,46 @@ describe('R53: 帝王溜め段(setEmperorChargeStage)+白芯雷脈(setKatanaVein
     const blade = vm.root.getObjectByName('vm:lightningBlade');
     expect(blade).toBeTruthy();
     expect(blade!.getObjectByName('vm:katanaVeins')).toBeTruthy();
+    vm.dispose();
+  });
+
+  it('クナイと右手は同じグリップ階層で固定され、全帝モード・斬撃中も腕メッシュは一組だけ', () => {
+    const { vm, kunai, grip } = makeKunaiVm();
+    const rightHand = vm.root.getObjectByName('vm:fistRHand');
+    expect(rightHand?.parent).toBe(grip);
+    expect(kunai.parent).toBe(grip);
+    const armMeshCount = (): number => {
+      let count = 0;
+      vm.root.traverse((node) => {
+        if (node instanceof THREE.Mesh && node.userData.firstPersonArm === true) count += 1;
+      });
+      return count;
+    };
+    const armRigCount = (): number => {
+      let count = 0;
+      vm.root.traverse((node) => {
+        if (node.userData.firstPersonArmsRig === true) count += 1;
+      });
+      return count;
+    };
+    const verify = (): void => {
+      expect(armMeshCount()).toBe(10);
+      expect(armRigCount()).toBe(1);
+      expect(rightHand?.parent).toBe(grip);
+      expect(kunai.parent).toBe(grip);
+    };
+    verify();
+    vm.setKunaiDarkMode(true);
+    for (let i = 0; i < 30; i += 1) vm.update(1 / 60, HIP_STATE);
+    verify();
+    vm.setKunaiLightningMode(true, true);
+    vm.fire(false, true, 0);
+    for (let i = 0; i < 30; i += 1) vm.update(1 / 60, HIP_STATE);
+    verify();
+    vm.setKunaiDarkMode(false);
+    vm.setKunaiLightningMode(true, false);
+    for (let i = 0; i < 30; i += 1) vm.update(1 / 60, HIP_STATE);
+    verify();
     vm.dispose();
   });
 });

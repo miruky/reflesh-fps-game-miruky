@@ -1076,8 +1076,8 @@ export class Match {
     // R55 W-C5 [15]: キル瞬間のADS率(killcamが補間して渡す)で武器を構える。これにより
     // 一人称再生の望遠FOV(録画fov=ADSズーム)と銃の構えが整合する。scopeReveal01は0固定
     // (スコープ武器を再び沈めて隠さない=DOMスコープはkillcam開始時に閉じている前提)。
-    resetViewmodelAdsPose: (adsRatio = 0) => {
-      this.viewModel.update(0, {
+    updateViewmodelReplayPose: (adsRatio, dt) => {
+      this.viewModel.update(dt, {
         adsProgress: Math.max(0, Math.min(1, adsRatio)),
         mouseDX: 0,
         mouseDY: 0,
@@ -1091,6 +1091,9 @@ export class Match {
         sprinting: false,
         scopeWeapon: false,
       });
+    },
+    replayViewmodelShot: () => {
+      this.viewModel.fire(this.activeWeapon.def.scope === true, true);
     },
   });
 
@@ -4943,7 +4946,7 @@ export class Match {
         ? from.clone().addScaledVector(dir, hitToi(hit))
         : from.clone().addScaledVector(dir, remainingRange);
       this.effects.tracer(tracerFrom, end, weapon.def.tracerColor);
-      this.killcam.recordShot(tracerFrom, end, weapon.def.tracerColor, this.elapsed);
+      this.killcam.recordShot(tracerFrom, end, weapon.def.tracerColor, this.elapsed, true);
       if (!hit) return;
       const toi = hitToi(hit);
 

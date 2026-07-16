@@ -2296,7 +2296,9 @@ export class Menu {
     else this.profile.selectedCamos[def.id] = camoId;
     saveProfile(this.profile);
     // buildGunBody がプロファイルから装備カモを解決するので、作り直しだけで反映される
-    this.previewWeapon(this.currentPrimaryDef());
+    // 副武器を編集中でも、選択した当該武器をそのまま再構築する。
+    // 常にprimaryへ戻していた旧経路では保存だけ成功し、見た目の反映確認ができなかった。
+    this.previewWeapon(def.slot === 'primary' ? this.currentPrimaryDef() : def);
   }
 
   // 10分割セグメント点火バー(0..10)。左から value 個を点灯。box-shadow glow は使わない。

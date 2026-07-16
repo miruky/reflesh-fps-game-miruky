@@ -2,7 +2,13 @@
 // 保存形式は core/profile.ts、積算は progression.ts、描画は render/viewmodel.ts が担う。
 // このモジュールは weapons.ts 以外に依存しない(決定論・副作用なし)。
 
-import { PRIMARY_IDS, WEAPON_DEFS, type WeaponClass, type WeaponDef } from './weapons';
+import {
+  PRIMARY_IDS,
+  SECONDARY_IDS,
+  WEAPON_DEFS,
+  type WeaponClass,
+  type WeaponDef,
+} from './weapons';
 
 // ── カモID ────────────────────────────────────────────────────────────────
 // 9段の武器別カモ(キル階段) + ダイヤ(クラス制覇) + ダークマター(全クラス制覇)
@@ -124,8 +130,11 @@ export function camoName(id: CamoId): string {
 }
 
 // ── 対象武器とクラス ──────────────────────────────────────────────────────
-// カモ対象 = 全プライマリから fists(クナイ)を除いた35本
-export const CAMO_WEAPON_IDS: readonly string[] = PRIMARY_IDS.filter((id) => id !== 'fists');
+// カモ対象 = fists(専用ラダー)を除く全プライマリ + 全セカンダリ。
+// 同じ武器IDを複数スロットへ公開する将来変更でも分母が二重にならないよう Set で正規化する。
+export const CAMO_WEAPON_IDS: readonly string[] = [
+  ...new Set([...PRIMARY_IDS.filter((id) => id !== 'fists'), ...SECONDARY_IDS]),
+];
 
 // カモ対象武器が属するクラス集合(出現順・重複なし)。ダークマター判定の分母になる
 export const CAMO_CLASSES: readonly WeaponClass[] = CAMO_WEAPON_IDS.reduce<WeaponClass[]>(
@@ -215,21 +224,21 @@ export function goldFor(stats: WeaponCamoStats | undefined): boolean {
   return camoTierFor(stats) >= CAMO_TIERS.length;
 }
 
-// exoticクラスのゴールド条件。ビーム/ミニガン/扇/弓など、命中の
-// 部位をプレイヤーが安定して選べない特殊兵装ではHSを必要条件にしない。
+// 特殊兵装のゴールド条件。ビーム/ミニガン/扇/弓に加え、爆風主体で命中部位を
+// プレイヤーが安定して選べない業火RLではHSを必要条件にしない。
 // 9段ラダーの最終到達点は標準武器と同じ500キルに維持し、金→ダイヤの順序も保つ。
 export const EXOTIC_GOLD_KILLS = 500;
 export const EXOTIC_GOLD_HS = 0;
+export const GOLD_HEADSHOT_EXEMPT_WEAPON_IDS: readonly string[] = ['gouka-rl'];
 
 /**
  * 武器クラスを考慮したゴールド解除条件を返す。
- * exotic クラスは 500kills(ヘッドショット不要)、それ以外は標準(500kills+HS100)。
- * launcher は緩和しない(exotic 内でも shooter 系とは別枠)。
+ * exotic クラスと業火RLは 500kills(ヘッドショット不要)、それ以外は標準(500kills+HS100)。
  */
 export function goldConditionFor(weaponId: string): { kills: number; headshots: number } {
   const goldTier = CAMO_TIERS.find((t) => t.id === 'gold')!;
   const cls = WEAPON_DEFS[weaponId]?.class;
-  if (cls === 'exotic') {
+  if (cls === 'exotic' || GOLD_HEADSHOT_EXEMPT_WEAPON_IDS.includes(weaponId)) {
     return { kills: EXOTIC_GOLD_KILLS, headshots: EXOTIC_GOLD_HS };
   }
   return { kills: goldTier.kills, headshots: goldTier.headshots };
@@ -331,7 +340,7 @@ export function camoProgress(
   const tier = CAMO_TIERS.find((t) => t.id === camoId);
   if (!tier) return { current: 0, target: 1, label: '' };
   const s = statsOf(allStats, weaponId);
-  // ゴールドは武器クラス依存条件(exotic は500kills・HS不要)
+  // ゴールドは武器依存条件(exotic/業火RLは500kills・HS不要)
   const effectiveKills = camoId === 'gold' ? goldConditionFor(weaponId).kills : tier.kills;
   const effectiveHs = camoId === 'gold' ? goldConditionFor(weaponId).headshots : tier.headshots;
   if (effectiveHs > 0 && s.kills >= effectiveKills) {

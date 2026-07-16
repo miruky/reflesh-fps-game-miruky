@@ -107,6 +107,10 @@ function buildHandGeometries(
   side: -1 | 1,
   supportHand: boolean,
 ): Record<HandMaterialFamily, THREE.BufferGeometry> {
+  // 支持手は掌を銃側(+local Y)へ向ける。単純に左手を右手と同じ向きで置くと、
+  // 手の甲がハンドガードへ貼り付き「銃の部品」に見える。いったん反対側の手型を作って
+  // Z軸で180°返すことで、親指の左右は正しいまま掌・4指だけを銃へ巻き付ける。
+  const geometrySide: -1 | 1 = supportHand ? (side === -1 ? 1 : -1) : side;
   const buckets: Record<HandMaterialFamily, THREE.BufferGeometry[]> = {
     glove: [],
     palm: [],
@@ -141,13 +145,13 @@ function buildHandGeometries(
 
   const xOffsets = [-0.027, -0.009, 0.009, 0.027];
   for (let i = 0; i < xOffsets.length; i += 1) {
-    const x = (xOffsets[i] ?? 0) * side;
+    const x = (xOffsets[i] ?? 0) * geometrySide;
     const edge = i === 0 || i === 3;
     const lengthBias = edge ? 0.88 : 1;
     // 右人差し指だけ僅かに伸ばし、トリガーへ掛かる輪郭を作る。支持手は4指を均等に巻く。
     const triggerFinger = !supportHand && i === 0;
     const curl = triggerFinger ? 0.66 : supportHand ? 1.08 : 1.02;
-    const spread = side * (i - 1.5) * 0.035;
+    const spread = geometrySide * (i - 1.5) * 0.035;
 
     const proximal = new THREE.CapsuleGeometry(0.0083, 0.025 * lengthBias, 4, 7);
     transformGeometry(
@@ -189,15 +193,15 @@ function buildHandGeometries(
   const thumb0 = new THREE.CapsuleGeometry(0.0102, 0.027, 4, 8);
   transformGeometry(
     thumb0,
-    new THREE.Vector3(0.037 * side, -0.002, 0.001),
-    new THREE.Euler(0.52, 0.24 * side, -0.78 * side),
+    new THREE.Vector3(0.037 * geometrySide, -0.002, 0.001),
+    new THREE.Euler(0.52, 0.24 * geometrySide, -0.78 * geometrySide),
   );
   buckets.glove.push(thumb0);
   const thumb1 = new THREE.CapsuleGeometry(0.0086, 0.021, 4, 8);
   transformGeometry(
     thumb1,
-    new THREE.Vector3(0.047 * side, -0.019, -0.023),
-    new THREE.Euler(0.92, 0.2 * side, -0.62 * side),
+    new THREE.Vector3(0.047 * geometrySide, -0.019, -0.023),
+    new THREE.Euler(0.92, 0.2 * geometrySide, -0.62 * geometrySide),
   );
   buckets.palm.push(thumb1);
 
@@ -224,18 +228,26 @@ function buildHandGeometries(
     const stitch = new THREE.CapsuleGeometry(0.0012, 0.042, 2, 5);
     transformGeometry(
       stitch,
-      new THREE.Vector3(sx * side, 0.029, 0.014),
+      new THREE.Vector3(sx * geometrySide, 0.029, 0.014),
       new THREE.Euler(Math.PI / 2, 0, 0),
     );
     buckets.stitch.push(stitch);
   }
 
-  return {
+  const merged = {
     glove: mergeHandParts(buckets.glove, 'glove'),
     palm: mergeHandParts(buckets.palm, 'palm'),
     armor: mergeHandParts(buckets.armor, 'armor'),
     stitch: mergeHandParts(buckets.stitch, 'stitch'),
   };
+  if (supportHand) {
+    for (const geometry of Object.values(merged)) {
+      geometry.rotateZ(Math.PI);
+      geometry.computeBoundingBox();
+      geometry.userData.palmFacesWeapon = true;
+    }
+  }
+  return merged;
 }
 
 function buildConnectedSleeve(side: -1 | 1, material: THREE.MeshStandardMaterial): THREE.Mesh {
@@ -302,6 +314,7 @@ function buildArmSide(
     : side < 0 ? 'vm:leftHand' : 'vm:rightHand';
   applyPose(hand, pose.hand);
   hand.userData.connectedLimb = true;
+  hand.userData.palmFacesWeapon = side < 0;
   hand.add(buildConnectedSleeve(side, materials.sleeve));
   const geometries = buildHandGeometries(side, side < 0);
   const handMeshes: Array<[HandMaterialFamily, THREE.MeshStandardMaterial]> = [

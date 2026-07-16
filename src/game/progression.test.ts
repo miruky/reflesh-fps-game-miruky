@@ -726,7 +726,7 @@ describe('カモチャレンジ積算(applyMatch)', () => {
     const profile = emptyProfile();
     const progress = applyMatch(
       profile,
-      summary({ kills: 500, killsByWeapon: { 'gouka-rl': 500 }, hsByWeapon: { 'gouka-rl': 100 } }),
+      summary({ kills: 500, killsByWeapon: { 'gouka-rl': 500 } }),
     );
     const ids = progress.newCamos.map((c) => c.camoId);
     expect(ids).toContain('gold');
@@ -742,7 +742,7 @@ describe('カモチャレンジ積算(applyMatch)', () => {
     }
     const progress = applyMatch(
       profile,
-      summary({ kills: 500, killsByWeapon: { 'gouka-rl': 500 }, hsByWeapon: { 'gouka-rl': 100 } }),
+      summary({ kills: 500, killsByWeapon: { 'gouka-rl': 500 } }),
     );
     const ids = progress.newCamos.map((c) => c.camoId);
     expect(ids).toContain('gold');
@@ -765,11 +765,24 @@ describe('カモチャレンジ積算(applyMatch)', () => {
     expect(profile.weaponStats).toEqual({});
   });
 
-  it('副武器・近接など対象外IDは統計のみ積み、解除は発生しない', () => {
+  it('副武器も主武器と同じラダーで解除され、未知IDは統計のみ積む', () => {
     const profile = emptyProfile();
     const progress = applyMatch(profile, summary({ kills: 200, killsByWeapon: { suzume: 200 } }));
     expect(profile.weaponStats['suzume']).toEqual({ kills: 200, headshots: 0 });
-    expect(progress.newCamos).toHaveLength(0);
+    expect(progress.newCamos.map((entry) => entry.camoId)).toEqual([
+      'dirt',
+      'woodland',
+      'tiger',
+      'blue',
+      'red',
+      'ghost',
+    ]);
+    const unknown = applyMatch(
+      profile,
+      summary({ kills: 200, killsByWeapon: { 'unknown-secondary': 200 } }),
+    );
+    expect(profile.weaponStats['unknown-secondary']).toEqual({ kills: 200, headshots: 0 });
+    expect(unknown.newCamos).toHaveLength(0);
   });
 
   it('カモ解除XPにも xpMul が掛かる', () => {

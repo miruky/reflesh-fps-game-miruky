@@ -18,6 +18,7 @@ import {
   equippedCamoFor,
   EXOTIC_GOLD_HS,
   EXOTIC_GOLD_KILLS,
+  GOLD_HEADSHOT_EXEMPT_WEAPON_IDS,
   goldConditionFor,
   goldFor,
   goldForWeapon,
@@ -40,7 +41,7 @@ import {
   type CamoId,
   type WeaponCamoStats,
 } from './camo';
-import { WEAPON_DEFS } from './weapons';
+import { SECONDARY_IDS, WEAPON_DEFS } from './weapons';
 
 // exoticクラスの代表武器(HSを安定して狙えない弓/ビーム)
 const EXOTIC_ID = 'gekkou-bow';
@@ -143,9 +144,10 @@ describe('カモ段階表', () => {
 });
 
 describe('対象武器とクラス', () => {
-  it('カモ対象はfists除く35本のプライマリ', () => {
-    expect(CAMO_WEAPON_IDS).toHaveLength(35);
+  it('カモ対象はfists除く全プライマリと全セカンダリ', () => {
+    expect(CAMO_WEAPON_IDS).toHaveLength(41);
     expect(CAMO_WEAPON_IDS).not.toContain('fists');
+    for (const id of SECONDARY_IDS) expect(CAMO_WEAPON_IDS).toContain(id);
     for (const id of CAMO_WEAPON_IDS) expect(WEAPON_DEFS[id], id).toBeDefined();
   });
 
@@ -160,7 +162,8 @@ describe('対象武器とクラス', () => {
   it('camoClassOf は対象外・未知IDで null', () => {
     expect(camoClassOf('kaede-ar')).toBe('ar');
     expect(camoClassOf('fists')).toBeNull();
-    expect(camoClassOf('suzume')).toBeNull(); // 副武器は対象外
+    expect(camoClassOf('suzume')).toBe('pistol');
+    expect(camoClassOf('banjin-smg')).toBe('exotic');
     expect(camoClassOf('nope')).toBeNull();
   });
 
@@ -222,8 +225,9 @@ describe('diamondFor / darkMatterFor', () => {
     expect(diamondFor('smg', all)).toBe(true);
   });
 
-  it('単独武器クラス(launcher)はその1本のゴールドでダイヤ', () => {
-    const all: Record<string, WeaponCamoStats> = { 'gouka-rl': { kills: 500, headshots: 100 } };
+  it('単独武器クラス(launcher)は業火RLの500キルだけでゴールドとダイヤ', () => {
+    const all: Record<string, WeaponCamoStats> = { 'gouka-rl': { kills: 500, headshots: 0 } };
+    expect(goldForWeapon('gouka-rl', all['gouka-rl'])).toBe(true);
     expect(diamondFor('launcher', all)).toBe(true);
   });
 
@@ -243,10 +247,10 @@ describe('isCamoUnlocked / camoProgress', () => {
     expect(isCamoUnlocked('dirt', 'tsubaki-smg', all)).toBe(false);
   });
 
-  it('対象外武器(fists/副武器)は常に未解除', () => {
+  it('対象外武器(fists/未知ID)は常に未解除', () => {
     const all = allGoldStats();
     expect(isCamoUnlocked('dirt', 'fists', all)).toBe(false);
-    expect(isCamoUnlocked('diamond', 'suzume', all)).toBe(false);
+    expect(isCamoUnlocked('diamond', 'no-such-weapon', all)).toBe(false);
   });
 
   it('diamond は武器のクラスで、dark-matter は全体で判定', () => {
@@ -535,8 +539,8 @@ describe('報酬カモ(jingai/shinrai)', () => {
   });
 });
 
-// ── R57-⑤ C: exotic金の解除閾値・3経路の単一真実源(逆転解消) ──────────────
-describe('exotic金の解除条件統一(goldForWeapon / camoProgress / camoTierForが一致)', () => {
+// ── R57-⑤ C: HS困難武器の金解除閾値・3経路の単一真実源 ──────────────────
+describe('HS困難武器の金解除条件統一(goldForWeapon / camoProgress / camoTierForが一致)', () => {
   it('exoticクラスと判定が前提どおり(gekkou-bow/shinkirou-sniperはexotic)', () => {
     expect(WEAPON_DEFS[EXOTIC_ID]?.class).toBe('exotic');
     expect(WEAPON_DEFS[EXOTIC_ID2]?.class).toBe('exotic');
@@ -548,6 +552,8 @@ describe('exotic金の解除条件統一(goldForWeapon / camoProgress / camoTier
     expect(EXOTIC_GOLD_HS).toBe(0);
     expect(goldConditionFor(EXOTIC_ID)).toEqual({ kills: 500, headshots: 0 });
     expect(goldConditionFor(EXOTIC_ID2)).toEqual({ kills: 500, headshots: 0 });
+    expect(GOLD_HEADSHOT_EXEMPT_WEAPON_IDS).toContain('gouka-rl');
+    expect(goldConditionFor('gouka-rl')).toEqual({ kills: 500, headshots: 0 });
     // 非exoticは標準(500/100)のまま
     expect(goldConditionFor('kaede-ar')).toEqual({ kills: 500, headshots: 100 });
   });
@@ -586,6 +592,20 @@ describe('exotic金の解除条件統一(goldForWeapon / camoProgress / camoTier
     expect(ph.target).toBe(500);
     expect(ph.current).toBe(500);
     expect(ph.label).not.toContain('HS');
+  });
+
+  it('業火RL金: 3経路が500キル境界で一致し、進捗表示にもHSを出さない', () => {
+    const short = { kills: 499, headshots: 999 };
+    const exact = { kills: 500, headshots: 0 };
+    expect(goldForWeapon('gouka-rl', short)).toBe(false);
+    expect(goldByTier('gouka-rl', short)).toBe(false);
+    expect(goldByProgress('gouka-rl', short)).toBe(false);
+    expect(goldForWeapon('gouka-rl', exact)).toBe(true);
+    expect(goldByTier('gouka-rl', exact)).toBe(true);
+    expect(goldByProgress('gouka-rl', exact)).toBe(true);
+    const progress = camoProgress('gold', 'gouka-rl', { 'gouka-rl': exact });
+    expect(progress).toMatchObject({ current: 500, target: 500 });
+    expect(progress.label).not.toContain('HS');
   });
 
   it('camoTierFor: weaponId省略は従来どおり標準500/100(後方互換・非exotic影響なし)', () => {

@@ -24,8 +24,9 @@ const FK_P            = 9;
 // bot slot    : posX,posY,posZ, headY, yaw, alive  = 6 floats
 const FK_B            = 6;
 const FK_FRAME_STRIDE = FK_P + FK_MAX_BOTS * FK_B; // 225
-// shot slot   : from(3) + to(3) + color(1) + time(1) = 8 floats
-const FK_S            = 8;
+// shot slot   : from(3) + to(3) + color(1) + time(1) + playerShot(1) = 9 floats
+// playerShot は一人称再生時に viewmodel の発砲・反動まで同時再現する識別ビット。
+const FK_S            = 9;
 // R55 W-C2 ④: recordFrame が player slot の初回記録前(まず起こらないが保険)に使う既定FOV。
 // core/settings.ts DEFAULT_SETTINGS.fov(78)に合わせた仮値で、通常は最初のtickで即上書きされる。
 const FK_DEFAULT_FOV  = 78;
@@ -188,6 +189,16 @@ export function fkIsStale(elapsed: number, killElapsed: number, bufferSeconds: n
   return elapsed - killElapsed > bufferSeconds - 1;
 }
 
+/** 前回カーソルより後、現在カーソル以下の射撃だけを一度再生する。 */
+export function fkShotShouldReplay(shotT: number, prevCursor: number, cursor: number): boolean {
+  return shotT > prevCursor && shotT <= cursor;
+}
+
+/** 録画20Hzの前後フレームから、再生フレーム用ADS率を安全に補間する。 */
+export function fkInterpolateAds(a: number, b: number, t: number): number {
+  return THREE.MathUtils.clamp(a + (b - a) * THREE.MathUtils.clamp(t, 0, 1), 0, 1);
+}
+
 // fkRecordFrame の bot 位置読み出し用スクラッチ(旧 match.ts BOT_POS_SCRATCH と同役)
 const BOT_POS_SCRATCH = new THREE.Vector3();
 
@@ -213,28 +224,15 @@ export interface KillcamDeps {
    * カメラ位置に銃が浮いて映るのを防ぐ)。begin()で分岐設定し、再生終了/dispose で復元する。
    */
   setViewmodelVisible(v: boolean): void;
-  /**
-   * R55 W-C4 [3]: 一人称キルカム開始直前に、武器viewmodelのローカル姿勢(root.position/rotation)を
-   * ADS/スコープ非適用の中立(rest/hip)ポーズへリセットする。
-   * 背景: viewmodel.ts の ViewModel.update() は毎フレーム、スコープ武器のADS覗き込み度
-   * (scopeReveal01)に応じて `pos.y -= 0.55 * scopeReveal01` を適用し、「覗き込み中はDOMスコープに
-   * 隠れるよう銃を画面外へ大きく沈める退避ポーズ」を組む。killcam再生中(advanceFinalKillcam→
-   * killcam.advance())は effects/atmosphere のみを前進させ ViewModel.update() 自体を呼ばない設計
-   * のため、root の position/rotation は「決着キル発生フレーム」の最後のライブ値で凍結されたまま
-   * になる。決着キルの瞬間にスコープADS中だった場合、begin() が setViewmodelVisible(true) で
-   * 再表示すると、この退避ポーズ(画面外へ沈んだ銃)がそのまま再生尺(最大 CK_WIN_PRE+CK_WIN_POST
-   * ≈4s)露出してしまう。begin() の一人称分岐は setViewmodelVisible(true) の直前にこのフックを呼び、
-   * 中立ポーズへ戻してから再表示する。
-   * R55 W-C5 [15]: 引数 adsRatio(0..1, 省略時undefined)は決着キル瞬間の記録済みADS率
-   * (fkBuf player slot6を線形補間した値)。再生カメラFOV(fkLastFov)はキル瞬間の実ADSズーム値の
-   * ままのため、ここでヒップ(0)へ丸め込むと「望遠画なのに銃はヒップ構え」という不整合が出る。
-   * 実装側(match.ts)はこの値で ViewModel.update 相当を叩き、FOVと整合したADS/構えポーズへ
-   * 復元することが期待される契約。
-   * オプショナル: 未実装(undefined)の場合、または実装が引数を無視する場合は何もしない/常に
-   * ヒップへ戻す(後方互換フォールバック。このラウンドは killcam.ts 単独担当のため match.ts 側の
-   * 実装配線は別工程で行う — 未対応でも既存挙動=ヒップ扱いのまま安全に動作する)。
-   */
+  /** 後方互換: 新しい毎フレーム再生フックが無い場合の開始時1回ポーズ復元。 */
   resetViewmodelAdsPose?(adsRatio?: number): void;
+  /**
+   * 一人称キルカメラの各再生フレームで、録画済みADS率へviewmodelを更新する。
+   * scopeRevealは呼び出し側で0固定にし、DOMスコープへ退避した銃を凍結表示しない。
+   */
+  updateViewmodelReplayPose?(adsRatio: number, dt: number): void;
+  /** 録画済みのプレイヤー射撃を跨いだ瞬間、銃口発光・機関部・視覚反動を再生する。 */
+  replayViewmodelShot?(): void;
   /**
    * R55 W-C2/W-C3 ④: カメラが実際に一人称FPSビュー(通常プレイ/ADS)を描画中かどうか。
    * RC-XD操縦中や旧来の死亡三人称killcam中はカメラ(位置/向き/FOV)を別システムが所有し、
@@ -405,7 +403,7 @@ export class KillcamController {
     // ままで「実際に見ていた画」と無関係)は一人称パスへ分岐しない。fkFindFrames(killT)で
     // キル瞬間を挟む記録フレームのライブビット(スロット8)を検査し、両フレームともFPS視点
     // だったときだけ一人称を確定する(安全側=フォールバックは常に三人称シネマ)。
-    const [kfA, kfB, kfT] = this.fkFindFrames(killT);
+    const [kfA, kfB] = this.fkFindFrames(killT);
     const killFrameWasFpsView = this.fkFrameIsFpsView(kfA) && this.fkFrameIsFpsView(kfB);
     // R55 ④: killer=プレイヤーかつキル瞬間が一人称視点だったときは一人称(fkSetCamera が
     // 毎フレーム録画値から直接カメラ姿勢を組む)。三人称基底(ckCamPos/ドリー方向/壁チェック)と
@@ -413,15 +411,16 @@ export class KillcamController {
     if (this.fkKillerIsPlayer && killFrameWasFpsView) {
       this.fkFirstPersonActive = true;
       this.deps.getCamera().rotation.order = 'YXZ';
-      // R55 W-C5 [15]: キル瞬間のADS率(fkBuf slot6を補間)を渡し、resetViewmodelAdsPose側で
-      // ヒップへ丸め込まず実際の構え(ADS/スコープ度合い)へ復元できるようにする。
-      // FOV(fkLastFov)はキル瞬間の実ADSズーム値のまま再生されるため、銃のポーズもそれに
-      // 整合させる(望遠画なのにヒップ構え、という不整合の根治)。
-      const offKA = kfA * FK_FRAME_STRIDE; const offKB = kfB * FK_FRAME_STRIDE;
-      const adsAtKill = this.fkBuf[offKA + 6]! + (this.fkBuf[offKB + 6]! - this.fkBuf[offKA + 6]!) * kfT;
-      // R55 W-C4 [3]: 再表示より先に中立化/整合させる(スコープADS退避ポーズの露出根治。
-      // resetViewmodelAdsPose の契約は KillcamDeps 参照)。
-      this.deps.resetViewmodelAdsPose?.(adsAtKill);
+      // キル瞬間の静止値ではなく、再生窓の先頭フレームのADS姿勢から始める。
+      // advance() が以後毎フレーム更新するため「決着時スコープ姿勢のまま固定」を起こさない。
+      const [sfA, sfB, sfT] = this.fkFindFrames(this.fkCursor);
+      const offSA = sfA * FK_FRAME_STRIDE; const offSB = sfB * FK_FRAME_STRIDE;
+      const adsAtStart = fkInterpolateAds(this.fkBuf[offSA + 6]!, this.fkBuf[offSB + 6]!, sfT);
+      if (this.deps.updateViewmodelReplayPose) {
+        this.deps.updateViewmodelReplayPose(adsAtStart, 0);
+      } else {
+        this.deps.resetViewmodelAdsPose?.(adsAtStart);
+      }
       this.deps.setViewmodelVisible(true);
       this.fkPlaying = true;
       return;
@@ -581,7 +580,13 @@ export class KillcamController {
     if (this.fkFill < FK_MAX_FRAMES) this.fkFill++;
   }
 
-  recordShot(from: THREE.Vector3, to: THREE.Vector3, color: number, elapsed: number): void {
+  recordShot(
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    color: number,
+    elapsed: number,
+    playerShot = false,
+  ): void {
     if (this.deps.isZombie()) return;
     const h   = this.fkShotHead;
     const off = h * FK_S;
@@ -593,6 +598,7 @@ export class KillcamController {
     this.fkShotBuf[off + 5] = to.z;
     this.fkShotBuf[off + 6] = color;
     this.fkShotBuf[off + 7] = elapsed;
+    this.fkShotBuf[off + 8] = playerShot ? 1 : 0;
     this.fkShotHead = (h + 1) % FK_MAX_SHOTS;
     if (this.fkShotFill < FK_MAX_SHOTS) this.fkShotFill++;
   }
@@ -628,6 +634,14 @@ export class KillcamController {
     if (iA < 0) return false;
     this.fkApplyFrame(iA, iB, t);
     this.fkSetCamera(iA, iB, t);
+    if (this.fkFirstPersonActive) {
+      const offA = iA * FK_FRAME_STRIDE;
+      const offB = iB * FK_FRAME_STRIDE;
+      const ads = fkInterpolateAds(this.fkBuf[offA + 6]!, this.fkBuf[offB + 6]!, t);
+      // viewmodelの反動・機関部もキルカメラのゲーム時間で進める。実時間dtを使うと
+      // 0.2倍スロー中だけ銃の反動が通常速度で戻り、背景と銃の時間軸が分離してしまう。
+      this.deps.updateViewmodelReplayPose?.(ads, Math.max(0, cursor - this.fkPrevCursor));
+    }
     // キル瞬間: 白フラッシュ小 + ヒット音(1回のみ)
     const afterKill = cursor - this.fkWinKill;
     if (afterKill >= 0) {
@@ -876,12 +890,15 @@ export class KillcamController {
       const h   = (this.fkShotHead - this.fkShotFill + i + FK_MAX_SHOTS) % FK_MAX_SHOTS;
       const off = h * FK_S;
       const st  = this.fkShotBuf[off + 7]!;
-      if (st > prevCursor && st <= cursor) {
+      if (fkShotShouldReplay(st, prevCursor, cursor)) {
         this.deps.tracer(
           new THREE.Vector3(this.fkShotBuf[off    ]!, this.fkShotBuf[off + 1]!, this.fkShotBuf[off + 2]!),
           new THREE.Vector3(this.fkShotBuf[off + 3]!, this.fkShotBuf[off + 4]!, this.fkShotBuf[off + 5]!),
           this.fkShotBuf[off + 6]!,
         );
+        if (this.fkFirstPersonActive && this.fkShotBuf[off + 8]! > 0.5) {
+          this.deps.replayViewmodelShot?.();
+        }
       }
     }
   }

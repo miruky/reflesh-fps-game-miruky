@@ -23,6 +23,7 @@ vi.mock('three', async (importActual) => {
     toneMapping = 0;
     outputColorSpace = '';
     toneMappingExposure = 1;
+    shadowMap = { enabled: false, type: 0 };
     setPixelRatio(): void {}
     setSize(w: number, h: number): void {
       this.domElement.width = w;

@@ -44,15 +44,17 @@ function getRenderer(): THREE.WebGLRenderer | null {
     canvas.height = THUMB_H;
     _renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: false,
-      powerPreference: 'low-power',
+      antialias: true,
+      powerPreference: 'high-performance',
       // toDataURL は描画バッファ保持が必須
       preserveDrawingBuffer: true,
     });
     _renderer.setPixelRatio(1); // サムネは等倍で十分
     _renderer.setSize(THUMB_W, THUMB_H, false);
-    _renderer.toneMapping = THREE.NeutralToneMapping;
+    _renderer.toneMapping = THREE.ACESFilmicToneMapping;
     _renderer.outputColorSpace = THREE.SRGBColorSpace;
+    _renderer.shadowMap.enabled = true;
+    _renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   } catch {
     _renderer = null;
   }
@@ -130,6 +132,17 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
   const thumbSunDir = isDark && elevation < 28 ? sunDirection(28, azimuth) : sunDir;
   const sun = new THREE.DirectionalLight(sunColor, sunIntensity);
   sun.position.copy(thumbSunDir).multiplyScalar(def.size);
+  sun.castShadow = true;
+  const shadowExtent = def.size * 0.42;
+  sun.shadow.camera.left = -shadowExtent;
+  sun.shadow.camera.right = shadowExtent;
+  sun.shadow.camera.top = shadowExtent;
+  sun.shadow.camera.bottom = -shadowExtent;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = def.size * 2.5;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.bias = -0.00035;
+  sun.shadow.normalBias = 0.025;
   scene.add(sun);
 
   // フィルライト(太陽の逆側・強度控えめ): 影側の完全黒潰れを防ぐ
@@ -151,6 +164,7 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
   const groundMesh = new THREE.Mesh(groundGeo, groundMat);
   groundMesh.rotation.x = -Math.PI / 2;
   groundMesh.position.y = 0;
+  groundMesh.receiveShadow = true;
   scene.add(groundMesh);
 
   // ─ ステージボックス(generateStage の BoxSpec を全て追加) ──────
@@ -181,14 +195,18 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
     const mesh = new THREE.Mesh(sharedBox, mat);
     mesh.position.set(b.x, b.y, b.z);
     mesh.scale.set(b.w, b.h, b.d);
+    mesh.castShadow = b.h > 0.7;
+    mesh.receiveShadow = true;
     scene.add(mesh);
   }
 
-  // 本編と同じ固有ランドマーク／地表動線／中遠景をlow予算でサムネにも反映する。
+  // 本編と同じ固有ランドマーク／地表動線／中遠景をmedium予算でサムネにも反映する。
+  // 生成はメニューのidle時間に1枚ずつ行い、完成後はdataURLだけを保持するため、
+  // 戦闘中の描画負荷を増やさず外装・瓦礫・屋上設備まで読める密度を確保できる。
   // プレビューと出撃後のアート方向が一致し、全31面をシルエットだけでも識別できる。
   const cinematicKit = buildCinematicStageKit({
     stage: def,
-    tier: 'low',
+    tier: 'medium',
     boxes: layout.boxes.filter((box) => !box.ghost && !box.decor),
     propPlacements: layout.propPlacements,
   });
@@ -200,9 +218,9 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
   // 「カメラ≒太陽方向の少し横」にすることで lit な面が正面に来る。
   // lookAt は最大高さの 30% ほど上(= 建物天面を中央やや上に収める)。
   //
-  const camAzDeg = azimuth + 45;
-  const camElDeg = 32;
-  const camDist = def.size * 0.52; // stage 全体より少し寄り・中心の建物が映える距離
+  const camAzDeg = azimuth + 38 + ((def.seed >>> 4) % 17) - 8;
+  const camElDeg = 27 + ((def.seed >>> 9) % 7);
+  const camDist = def.size * 0.47; // BO3マップカードのようにランドマークへ一段寄る
 
   const camAzRad = THREE.MathUtils.degToRad(camAzDeg);
   const camElRad = THREE.MathUtils.degToRad(camElDeg);
@@ -214,7 +232,18 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
     Math.cos(camAzRad) * Math.cos(camElRad) * camDist,
   );
   // 最大高さの 30% 上空を注視点にしてビルが下寄り中央に収まるよう調整
-  camera.lookAt(0, def.maxHeight * 0.3, 0);
+  const heroBoxes = layout.boxes
+    .filter((box) => !box.ghost && !box.decor && box.h >= Math.max(2.5, def.maxHeight * 0.25))
+    .sort((a, b) => b.w * b.h * b.d - a.w * a.h * a.d)
+    .slice(0, 4);
+  const heroWeight = heroBoxes.reduce((sum, box) => sum + Math.max(1, box.w * box.d), 0);
+  const targetX = heroWeight > 0
+    ? heroBoxes.reduce((sum, box) => sum + box.x * Math.max(1, box.w * box.d), 0) / heroWeight
+    : 0;
+  const targetZ = heroWeight > 0
+    ? heroBoxes.reduce((sum, box) => sum + box.z * Math.max(1, box.w * box.d), 0) / heroWeight
+    : 0;
+  camera.lookAt(targetX * 0.32, def.maxHeight * 0.28, targetZ * 0.32);
 
   // ─ レンダ ─────────────────────────────────────────────────────
   // 暗系ステージはサムネ専用 exposure ブースト(実ゲームのbloom0.9則はサムネ非適用)

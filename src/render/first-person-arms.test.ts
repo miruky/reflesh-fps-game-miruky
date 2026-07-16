@@ -61,6 +61,22 @@ describe('first-person arms', () => {
     expect(rightHand?.getObjectByName('vm:rightSleeveConnected')).toBeInstanceOf(THREE.Mesh);
     expect(rig.getObjectByName('vm:leftArm')?.children).toHaveLength(0);
     expect(rig.getObjectByName('vm:rightArm')?.children).toHaveLength(0);
+    expect(rig.getObjectByName('vm:leftHand')?.userData.palmFacesWeapon).toBe(true);
+    expect(rig.getObjectByName('vm:rightHand')?.userData.palmFacesWeapon).toBe(false);
+    disposeRig(rig, mats);
+  });
+
+  it('左支持手の掌面を銃側へ返し、右射撃手の掌面は従来向きを保つ', () => {
+    const mats = materials();
+    const rig = buildFirstPersonArms(mats, options);
+    const leftPalm = rig.getObjectByName('vm:leftHand:palm') as THREE.Mesh;
+    const rightPalm = rig.getObjectByName('vm:rightHand:palm') as THREE.Mesh;
+    leftPalm.geometry.computeBoundingBox();
+    rightPalm.geometry.computeBoundingBox();
+    expect(leftPalm.geometry.boundingBox!.getCenter(new THREE.Vector3()).y).toBeGreaterThan(0);
+    expect(rightPalm.geometry.boundingBox!.getCenter(new THREE.Vector3()).y).toBeLessThan(0);
+    expect(leftPalm.geometry.userData.palmFacesWeapon).toBe(true);
+    expect(rightPalm.geometry.userData.palmFacesWeapon).toBeUndefined();
     disposeRig(rig, mats);
   });
 

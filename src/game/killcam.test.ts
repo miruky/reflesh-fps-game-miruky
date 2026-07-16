@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fkIsStale } from './match';
+import { fkInterpolateAds, fkShotShouldReplay } from './killcam';
 
 // ── CK(シネマティックキルカム) ウィンドウ計算の純関数テスト ──────────────────
 // match.ts の CK定数・ckSpeedAt・ckCamPos と同じロジックを純関数として再現してテストする。
@@ -12,6 +13,20 @@ const FK_WIN_POST = 1.2;
 // 再生窓(シネマティック化で変更)
 const CK_WIN_PRE  = 2.5;
 const CK_WIN_POST = 1.5;
+
+describe('一人称キルカメラのviewmodel再生', () => {
+  it('ADS率を録画フレーム間で補間し、範囲外入力も0..1へ収める', () => {
+    expect(fkInterpolateAds(0.2, 0.8, 0.5)).toBeCloseTo(0.5, 6);
+    expect(fkInterpolateAds(-1, 2, -1)).toBe(0);
+    expect(fkInterpolateAds(-1, 2, 2)).toBe(1);
+  });
+
+  it('射撃は前回カーソルより後・現在カーソル以下で一度だけ再生する', () => {
+    expect(fkShotShouldReplay(10.1, 10, 10.2)).toBe(true);
+    expect(fkShotShouldReplay(10, 10, 10.2)).toBe(false);
+    expect(fkShotShouldReplay(10.21, 10, 10.2)).toBe(false);
+  });
+});
 
 // ─── 実時間計算ヘルパー ────────────────────────────────────────────────────
 function realTimeCost(gameStart: number, gameEnd: number, killT: number, steps = 10000): number {
