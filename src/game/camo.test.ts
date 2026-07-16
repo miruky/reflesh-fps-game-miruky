@@ -104,9 +104,10 @@ describe('カモ段階表', () => {
       expect(v.metalness, id).toBeGreaterThanOrEqual(0);
       expect(v.metalness, id).toBeLessThanOrEqual(1);
     }
-    // 仕様の要: gold=金属金, diamond=強スペキュラ, dark-matter=脈動
+    // 仕様の要: gold=金属金, diamond=高密度スタッドだが抗グレア, dark-matter=脈動
     expect(CAMO_VISUALS.gold.metalness).toBe(1.0);
-    expect(CAMO_VISUALS.diamond.roughness).toBeLessThanOrEqual(0.2);
+    expect(CAMO_VISUALS.diamond.roughness).toBeGreaterThanOrEqual(0.24);
+    expect(CAMO_VISUALS.diamond.roughness).toBeLessThanOrEqual(0.32);
     expect(CAMO_VISUALS['dark-matter'].pattern).toBe('pulse');
   });
 
@@ -116,8 +117,9 @@ describe('カモ段階表', () => {
     expect(CAMO_VISUALS.diamond.scale).toBeGreaterThanOrEqual(80);
     expect(CAMO_VISUALS.diamond.colorA).not.toBe(CAMO_VISUALS.diamond.colorC);
     expect(CAMO_VISUALS.diamond.metalness).toBeGreaterThanOrEqual(0.85);
-    expect(CAMO_VISUALS.diamond.envMapIntensity).toBeLessThanOrEqual(1);
-    expect(CAMO_VISUALS.diamond.emissiveIntensity).toBeLessThanOrEqual(0.15);
+    expect(CAMO_VISUALS.diamond.envMapIntensity).toBeLessThanOrEqual(0.4);
+    expect(CAMO_VISUALS.diamond.sparkle).toBeLessThanOrEqual(0.25);
+    expect(CAMO_VISUALS.diamond.emissiveIntensity).toBeLessThanOrEqual(0.02);
   });
 
   // Diamondの鏡面反射はenvMap、微細な瞬きはsparkleで別管理する。上限を固定し、

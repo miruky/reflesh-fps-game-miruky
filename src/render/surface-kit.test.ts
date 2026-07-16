@@ -39,6 +39,8 @@ function mockShader(): {
       '  #include <color_fragment>',
       '  #include <roughnessmap_fragment>',
       '  #include <metalnessmap_fragment>',
+      '  vec3 normal = vec3(0.0, 1.0, 0.0);',
+      '  #include <normal_fragment_maps>',
       '  gl_FragColor = diffuseColor;',
       '}',
     ].join('\n'),
@@ -180,6 +182,19 @@ describe('applySurfaceKit — onBeforeCompile が例外なく完走する', () =
       const metalIfIdx = shader.fragmentShader.indexOf('#ifdef SK_METAL\n    roughnessFactor');
       expect(roughIdx).toBeGreaterThan(-1);
       expect(metalIfIdx).toBeGreaterThan(roughIdx);
+      mat.dispose();
+    });
+
+    it(`${kit}: normal_fragment_maps 後へ材質別マイクロ法線が入る`, () => {
+      const mat = new THREE.MeshStandardMaterial();
+      applySurfaceKit(mat, kit);
+      const shader = mockShader();
+      runOnBeforeCompile(mat, shader);
+      const normalIdx = shader.fragmentShader.indexOf('#include <normal_fragment_maps>');
+      const perturbIdx = shader.fragmentShader.indexOf('normal = sk_perturbNormal', normalIdx);
+      expect(normalIdx).toBeGreaterThan(-1);
+      expect(perturbIdx).toBeGreaterThan(normalIdx);
+      expect(shader.fragmentShader).toContain('vec3 sk_perturbNormal');
       mat.dispose();
     });
 

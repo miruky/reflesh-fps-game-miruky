@@ -594,10 +594,10 @@ export const CAMO_VISUALS: Record<CamoId, CamoVisual> = {
   // 高密度の銀色ダイヤスタッド。スタッド中心は白金、外周は暗い銀とし、同じマスクで
   // roughness/metalness/擬似凹凸を切り替える。白発光で塗り潰さず、小さな鏡面が個別に光る。
   diamond: {
-    id: 'diamond', colorA: 0x51461e, colorB: 0xc09237, colorC: 0xe4e9eb,
-    pattern: 'diamond-stud', scale: 132, metalness: 0.9, roughness: 0.2,
-    emissive: 0xe7edf0, emissiveIntensity: 0.045,
-    envMapIntensity: 0.58, sparkle: 0.42,
+    id: 'diamond', colorA: 0x51461e, colorB: 0xc09237, colorC: 0xb9c0c2,
+    pattern: 'diamond-stud', scale: 132, metalness: 0.86, roughness: 0.26,
+    emissive: 0xc3c9cc, emissiveIntensity: 0.012,
+    envMapIntensity: 0.32, sparkle: 0.2,
   },
   // ダークマター = 暗紫の脈動ノイズ(uTimeアニメ)
   'dark-matter': {

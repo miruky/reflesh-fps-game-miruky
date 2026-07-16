@@ -95,6 +95,8 @@ import { GodRaysPass } from '../render/godrays';
 import { AdsDofPass } from '../render/dof';
 import { patchPcss, unpatchPcss, isPcssPatched } from '../render/pcss';
 import { AutoExposure } from '../render/exposure';
+import { buildCinematicSetDressing } from '../render/cinematic-set-dressing';
+import { AaaStageAssetPipeline } from '../render/aaa-asset-pipeline';
 import type { PropMatFamily } from '../render/prop-visuals';
 import { floorDetailGlsl, floorDetailGlslCommon } from '../render/surface-kit';
 import { KillcamController, FK_WIN_POST } from './killcam';
@@ -655,6 +657,7 @@ export class Match {
   private deathVeil = 0; // 遷移黒幕 0..1(無条件減衰)
   private postfxActive = false; // PostFX(medium/high)有効
   private atmosphere: Atmosphere | null = null; // 映画的アトモスフィア(草/フォグ/粒子/遠景)
+  private aaaAssetPipeline: AaaStageAssetPipeline | null = null;
   private postfx: PostFXPass | null = null; // ジュース専用PostFX(被弾パルス・enable-gate)
   private baseDpr = 0; // 動的DPRの基準(初回setで確定=main.tsが設定した実効pixelRatio)
   private resScale = 1; // 現在の解像度スケール 0.6..1
@@ -1832,6 +1835,16 @@ export class Match {
     const visibleBoxes = boxes.filter(
       (b) => !(b as { ghost?: boolean }).ghost && !(b as { decor?: boolean }).decor,
     );
+    // AAA set dressing: 数百個の微細瓦礫・紙片・濡れ/焦げ染み・ケーブルを3〜4DCへ
+    // インスタンス/マージし、巨大な単色床の「CG平面」感を解消する。物理は一切追加しない。
+    this.scene.add(buildCinematicSetDressing({
+      size,
+      seed: this.config.stage.seed,
+      tier,
+      palette,
+      boxes: visibleBoxes,
+      propPlacements: v2Placements,
+    }));
     // 障害物のビジュアル装飾(当たり判定には一切触れない・純粋に飾り)
     buildStagePropDecor(this.scene, visibleBoxes, palette);
     this.buildAtmosphere(this.config.stage.palette, this.config.stage.size);
@@ -1876,6 +1889,27 @@ export class Match {
     } else {
       prewarmSurfaceKitVariants(this.scene, this.renderer, this.camera, tier);
     }
+
+    // 外部AAAアセットは非同期・fail-open。現在のプロシージャル景観を常に残したまま、
+    // manifestに登録されたglTF/GLBだけを表示前compile後に重ねる。ロード失敗で試合を止めない。
+    this.aaaAssetPipeline = new AaaStageAssetPipeline(this.scene, this.renderer, this.camera);
+    const pipeline = this.aaaAssetPipeline;
+    void pipeline.load({
+      stageId: this.config.stage.id,
+      tier,
+      propPlacements: v2Placements,
+    }).then((report) => {
+      if (this.aaaAssetPipeline === pipeline) this.scene.userData.aaaAssetReport = report;
+    }).catch((error: unknown) => {
+      if (this.aaaAssetPipeline === pipeline) {
+        this.scene.userData.aaaAssetReport = {
+          requested: 0,
+          loaded: 0,
+          failed: 1,
+          errors: [error instanceof Error ? error.message : String(error)],
+        };
+      }
+    });
   }
 
   // 共有unitBoxへ体積AOの頂点カラーを焼く。天面=明・側面=高さで階調・底面=暗。
@@ -9366,6 +9400,8 @@ export class Match {
     this.nPressTimestamps = [];
     this.nTripleArmed = false;
     this.viewModel.setKunaiLightningMode(false);
+    this.aaaAssetPipeline?.dispose();
+    this.aaaAssetPipeline = null;
     this.atmosphere?.dispose(); // 草/フォグ/粒子/遠景/リムライトを解放(scene.traverse前)
     this.atmosphere = null;
     // R30 雨パーティクル解放

@@ -37,6 +37,7 @@ import {
   type CamoVisual,
 } from '../game/camo';
 import { loadProfile } from '../core/profile';
+import { buildFirstPersonArms, disposeFirstPersonArmSkeletons } from './first-person-arms';
 
 const HIP_POSITION = new THREE.Vector3(0.24, -0.22, -0.5);
 // ADS 収束座標。X/Z は全武器共通、Y は武器ごとに resolveSightY で動的算出する
@@ -414,7 +415,9 @@ function camoPatternGLSL(v: CamoVisual): string {
         vec3 camoCol = mix(${A}, ${B}, 0.36 + goldGrain * 0.44);
         vec3 studSilver = mix(vec3(0.34, 0.36, 0.38), ${C}, pow(camoStudHeight, 0.58));
         camoCol = mix(camoCol, studSilver, camoStudMask);
-        camoCol = mix(camoCol, vec3(1.0, 0.97, 0.86), studCrown * 0.26);
+        // 芯を純白へ持ち上げると晴天IBL+Bloomで銃全体が白板化する。形状コントラストは
+        // 保ったまま、白金色と寄与率を制限して反射エネルギーの上限を固定する。
+        camoCol = mix(camoCol, vec3(0.82, 0.80, 0.72), studCrown * 0.12);
         camoEmissiveMul = 0.08 + 0.92 * studCrown;`;
     case 'pulse':
       // 脈動(溶岩/ダークマター): 流動するノイズ脈+時間で明滅する発光(uCamoTime)
@@ -539,7 +542,10 @@ float camoNoise(vec3 p) {
 ${camoPatternGLSL(v)}
   float camoLum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
   float camoShade = clamp(camoLum * 3.6, 0.35, 1.3);
-  diffuseColor.rgb = camoCol * camoShade;
+  diffuseColor.rgb = camoCol * camoShade;${studSurface ? `
+  // 晴天・マズルフラッシュ・HDR環境反射が重なってもアルベドが白へ飽和しない最終安全弁。
+  // 鏡面ハイライトはroughness/metalness側に残るため、立体的な銀スタッドは失わない。
+  diffuseColor.rgb = min(diffuseColor.rgb, vec3(0.68));` : ''}
 }`,
     )
     .replace(
@@ -557,11 +563,11 @@ totalEmissiveRadiance *= camoEmissiveMul;${sparkle > 0 ? camoSparkleEmissiveGLSL
       )
       .replace(
         '#include <roughnessmap_fragment>',
-        '#include <roughnessmap_fragment>\nroughnessFactor = mix(0.28, 0.10, camoStudMask);',
+        '#include <roughnessmap_fragment>\nroughnessFactor = mix(0.36, 0.20, camoStudMask);',
       )
       .replace(
         '#include <metalnessmap_fragment>',
-        '#include <metalnessmap_fragment>\nmetalnessFactor = mix(0.82, 0.985, camoStudMask);',
+        '#include <metalnessmap_fragment>\nmetalnessFactor = mix(0.76, 0.90, camoStudMask);',
       );
   }
 }
@@ -3060,46 +3066,35 @@ export class ViewModel {
     const { gun, muzzle } = buildGunBody(def, camo);
     const bs = def.bodyScale ?? resolveSilhouette(def).bodyScale;
     const { sleeve, glove } = getShared();
-    const limb = (
-      mat: THREE.Material,
-      w: number,
-      h: number,
-      d: number,
-      x: number,
-      y: number,
-      z: number,
-      rx: number,
-      ry: number,
-      rz: number,
-    ): THREE.Mesh => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-      m.position.set(x, y, z);
-      m.rotation.set(rx, ry, rz);
-      return m;
-    };
     if (def.shape === 'fists') {
       // クナイ(ダガー): 右手が柄(局所 z≈-0.10)を順手で握り、左手は添え手として前方へ構える。
       // 銃握り位置の手を流用せず、柄の位置に手首を合わせる専用配置。
       // vm:fist* として名付け、update が rest↔逆手ADS を補間する(FIST_POSES の rest と一致)
-      const rArmF = limb(sleeve, 0.08, 0.08, 0.32, 0.08, -0.2, 0.12, 0.5, -0.12, 0);
-      rArmF.name = 'vm:fistRArm';
-      const rHandF = limb(glove, 0.06, 0.07, 0.1, 0.02, -0.07, -0.09, 0.2, 0.05, 0);
-      rHandF.name = 'vm:fistRHand';
-      const lArmF = limb(sleeve, 0.08, 0.08, 0.3, -0.1, -0.16, -0.02, 0.42, 0.24, 0.1);
-      lArmF.name = 'vm:fistLArm';
-      const lHandF = limb(glove, 0.065, 0.06, 0.09, -0.11, -0.09, -0.16, 0.25, 0.1, 0);
-      lHandF.name = 'vm:fistLHand';
-      gun.add(rArmF, rHandF, lArmF, lHandF);
+      gun.add(buildFirstPersonArms({ sleeve, glove }, {
+        fists: true,
+        right: {
+          arm: [0.08, -0.2, 0.12, 0.5, -0.12, 0],
+          hand: [0.02, -0.07, -0.09, 0.2, 0.05, 0],
+        },
+        left: {
+          arm: [-0.1, -0.16, -0.02, 0.42, 0.24, 0.1],
+          hand: [-0.11, -0.09, -0.16, 0.25, 0.1, 0],
+        },
+      }));
       return { gun, muzzle };
     }
-    // 右手(グリップ)と右前腕(画面右下へ抜ける)
-    const rHand = limb(glove, 0.06, 0.07, 0.11, 0.0, -0.11, 0.11, 0.3, 0, 0);
-    const rArm = limb(sleeve, 0.08, 0.08, 0.3, 0.03, -0.22, 0.3, 0.62, -0.1, 0);
-    // 左手(ハンドガード)と左前腕。前腕の手首側が左手に届くよう、ハンドガード
-    // 寄りに置いて横断ヨーを抑える(以前は左下へ流れて手と分離していた)
-    const lHand = limb(glove, 0.06, 0.07, 0.11, 0.0, -0.05, -0.16 * bs, 0.2, 0, 0);
-    const lArm = limb(sleeve, 0.08, 0.08, 0.3, -0.03, -0.13, -0.04, 0.5, 0.2, 0.12);
-    gun.add(rHand, rArm, lHand, lArm);
+    // 右手はグリップ、左手はハンドガードへ。両腕とも3ボーンSkinnedMeshで、
+    // 武器グループのADS・スウェイ・反動・リロードへ従来どおり追従する。
+    gun.add(buildFirstPersonArms({ sleeve, glove }, {
+      right: {
+        arm: [0.03, -0.22, 0.3, 0.62, -0.1, 0],
+        hand: [0, -0.11, 0.11, 0.3, 0, 0],
+      },
+      left: {
+        arm: [-0.03, -0.13, -0.04, 0.5, 0.2, 0.12],
+        hand: [0, -0.05, -0.16 * bs, 0.2, 0, 0],
+      },
+    }));
     return { gun, muzzle };
   }
 
@@ -3170,6 +3165,7 @@ export class ViewModel {
   // accentキャッシュは最後に1度だけ解放(二重freeなし)。2回呼んでも例外なし。
   dispose(): void {
     for (const entry of this.cache.values()) {
+      disposeFirstPersonArmSkeletons(entry.gun);
       entry.gun.traverse((node) => {
         if (node instanceof THREE.Mesh) {
           node.geometry.dispose();

@@ -178,6 +178,59 @@ const SK_ROUGHNESS_GLSL = /* glsl */ `
   #ifdef SK_METAL
     roughnessFactor = mix(roughnessFactor, 0.9, sk_rustAmt);
   #endif
+  #ifdef SK_WOOD
+    roughnessFactor = clamp(roughnessFactor + (sk_fbm(vSkWorldPos.xz * 3.4) - 0.5) * 0.16, 0.46, 0.92);
+  #endif
+  #ifdef SK_STONE
+    roughnessFactor = clamp(roughnessFactor + (sk_fbm(vSkWorldPos.xz * 7.0) - 0.5) * 0.12, 0.72, 1.0);
+  #endif
+  #ifdef SK_PAINT
+    roughnessFactor = clamp(roughnessFactor + (sk_fbm(vSkWorldPos.xz * 10.0) - 0.5) * 0.1, 0.38, 0.82);
+  #endif
+`;
+
+// テクスチャを追加せず、微細な凹凸法線を画面空間微分から復元する。
+// normal mapと同じ段階(normal_fragment_maps後)へ適用するため、照明・IBL・SSAOのすべてが
+// 凹凸を正しく拾う。強度は材質ごとに抑え、遠距離のモアレや鏡面ちらつきを避ける。
+const SK_NORMAL_COMMON_GLSL = /* glsl */ `
+  vec3 sk_perturbNormal(vec3 surfPos, vec3 surfNormal, float height, float strength) {
+    vec3 sigmaX = dFdx(surfPos);
+    vec3 sigmaY = dFdy(surfPos);
+    vec3 r1 = cross(sigmaY, surfNormal);
+    vec3 r2 = cross(surfNormal, sigmaX);
+    float det = dot(sigmaX, r1);
+    vec2 grad = vec2(dFdx(height), dFdy(height));
+    return normalize(abs(det) * surfNormal - sign(det) * (grad.x * r1 + grad.y * r2) * strength);
+  }
+`;
+
+const SK_NORMAL_GLSL = /* glsl */ `
+  {
+    float skHeight = 0.5;
+    float skNormalStrength = 0.0;
+    #ifdef SK_METAL
+      skHeight = sk_fbm(vSkWorldPos.xz * 18.0 + 71.0);
+      skNormalStrength = 0.055;
+    #endif
+    #ifdef SK_WOOD
+      float skWoodBase = sk_fbm(vec2(vSkWorldPos.x * 0.55, vSkWorldPos.z * 18.0) + 19.0);
+      skHeight = skWoodBase * 0.72 + sk_fbm(vSkWorldPos.xz * 5.0) * 0.28;
+      skNormalStrength = 0.085;
+    #endif
+    #ifdef SK_STONE
+      skHeight = sk_fbm(vSkWorldPos.xz * 9.0 + 43.0);
+      skNormalStrength = 0.15;
+    #endif
+    #ifdef SK_PAINT
+      skHeight = sk_fbm(vSkWorldPos.xz * 22.0 + 17.0);
+      skNormalStrength = 0.045;
+    #endif
+    #ifdef SK_FOLIAGE
+      skHeight = sk_fbm(vSkWorldPos.xz * 14.0 + 29.0);
+      skNormalStrength = 0.035;
+    #endif
+    normal = sk_perturbNormal(vSkWorldPos, normal, skHeight, skNormalStrength);
+  }
 `;
 
 /**
@@ -208,12 +261,16 @@ export function applySurfaceKit(mat: THREE.MeshStandardMaterial, kit: SurfaceKit
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        `#include <common>\n#define ${defineName}\nvarying vec3 vSkWorldPos;\nfloat sk_rustAmt = 0.0;\n${SK_NOISE_GLSL}`,
+        `#include <common>\n#define ${defineName}\nvarying vec3 vSkWorldPos;\nfloat sk_rustAmt = 0.0;\n${SK_NOISE_GLSL}\n${SK_NORMAL_COMMON_GLSL}`,
       )
       .replace('#include <color_fragment>', `#include <color_fragment>\n${SK_COLOR_GLSL}`)
       .replace(
         '#include <roughnessmap_fragment>',
         `#include <roughnessmap_fragment>\n${SK_ROUGHNESS_GLSL}`,
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>\n${SK_NORMAL_GLSL}`,
       );
   };
 }

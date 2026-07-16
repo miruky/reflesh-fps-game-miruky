@@ -256,13 +256,14 @@ describe('武器カモ(buildGunBody)', () => {
     }
   });
 
-  it('ゴールドは金属金(metalness 1.0)+微発光、ダイヤは強スペキュラ', () => {
+  it('ゴールドは金属金(metalness 1.0)+微発光、ダイヤは抗グレアの金属スタッド', () => {
     const gold = camoMats(buildGunBody(ar, 'gold').gun)[0];
     expect(gold).toBeDefined();
     expect(gold!.metalness).toBe(1.0);
     expect(gold!.emissiveIntensity).toBeGreaterThan(0);
     const dia = camoMats(buildGunBody(ar, 'diamond').gun)[0];
-    expect(dia!.roughness).toBeLessThanOrEqual(0.2);
+    expect(dia!.roughness).toBeGreaterThanOrEqual(0.24);
+    expect(dia!.envMapIntensity).toBeLessThanOrEqual(0.4);
   });
 
   it('camoId=null/不正ID/プロファイル無しはカモ材を使わない', () => {
