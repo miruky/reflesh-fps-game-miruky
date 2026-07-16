@@ -375,15 +375,13 @@ try {
     if (!start) {
       record('deploy:launch', 'FAIL', 'startボタン不在');
     } else {
-      await start.focus();
-      await page.keyboard.press('Enter'); // click detail===0 → 即時発火(hold不要)
-      let hud = await q(page, S.hudRoot, 10_000);
-      // headless Chromiumでは稀にfocus直後のEnter既定clickが落ちる。画面がまだ出撃前なら
-      // HTMLElement.click()(detail===0)で同じキーボード/ゲームパッド経路を一度だけ再試行する。
-      if (!hud && (await start.isVisible().catch(() => false))) {
-        await start.evaluate((el) => el.click());
-        hud = await q(page, S.hudRoot, 20_000);
-      }
+      // HTMLElement.click()はdetail===0で、実装上のキーボード/ゲームパッド即時出撃経路と同じ。
+      // headlessの合成Enterは既定clickを稀に落とすため、DOM契約を決定論的に1回だけ送る。
+      await start.evaluate((element) => element.click());
+      // 初回だけRapier/Matchを遅延取得・初期化する。GitHubのソフトウェアWebGLでは
+      // シェーダプリウォームを含め10秒を超えるため、実アプリの完了状態を十分待つ。
+      // 連打再試行はlaunchingガードの検査を曖昧にするので行わない。
+      const hud = await q(page, S.hudRoot, 45_000);
       if (!hud) {
         record('deploy:launch', 'FAIL', '出撃してもHUDが可視にならない(試合が始まらない)');
       } else {
@@ -426,7 +424,8 @@ try {
         const fireLocked = await page.evaluate(() => !!document.pointerLockElement);
         if (fireLocked && diamondEquipped) {
           try {
-            await page.locator('#app canvas').first().hover();
+            // fake pointer lock取得後はメニューが隠れcanvasが全面にある。hover()の
+            // actionability判定は低速WebGLで不要に待つため、直接mouse入力を送る。
             await page.mouse.down({ button: 'left' });
             await page.waitForTimeout(260);
             await shot(page, 'hud-diamond-firing');
