@@ -8,6 +8,7 @@ import { Input } from './core/input';
 import { GameLoop } from './core/loop';
 import { loadProfile, saveProfile } from './core/profile';
 import { loadSettings, resolveGraphicsTier } from './core/settings';
+import { resolveRenderPixelRatio } from './render/render-budget';
 import { missionById } from './game/campaign';
 import type { Match, MatchConfig } from './game/match';
 import { PhotoMode } from './game/photo';
@@ -76,8 +77,13 @@ const renderer = new THREE.WebGLRenderer({
 });
 renderer.setSize(window.innerWidth, window.innerHeight);
 // 適応DPRの基準pixelRatio。試合開始時にここへ戻すことで前試合の低下段を持ち越さない
-const BASE_DPR = Math.min(window.devicePixelRatio, graphicsTier === 'high' ? 2 : 1.5);
-renderer.setPixelRatio(BASE_DPR);
+let baseDpr = resolveRenderPixelRatio(
+  window.innerWidth,
+  window.innerHeight,
+  window.devicePixelRatio,
+  graphicsTier,
+);
+renderer.setPixelRatio(baseDpr);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 // R15: 白飛び解消 — AgXは明部を白へ脱色させ「色が際立たない/白飛び」の主因だった。
@@ -240,7 +246,15 @@ async function launch(config: MatchConfig): Promise<void> {
     frameEma = 0.0166;
     bestFrame = 0.0166;
     dprStep = 0;
-    renderer.setPixelRatio(BASE_DPR);
+    overBudgetS = 0;
+    underBudgetS = 0;
+    baseDpr = resolveRenderPixelRatio(
+      window.innerWidth,
+      window.innerHeight,
+      window.devicePixelRatio,
+      graphicsTier,
+    );
+    renderer.setPixelRatio(baseDpr);
     sounds.setReverb(deriveReverbPreset(config.stage));
     // BGMをステージのムード別プロファイルへ。ゾンビは専用の不穏→高揚プロファイル、
     // 夜市yoichiのみネオン特化。それ以外はステージのムード。かっこいい軍事エレクトロニカ
@@ -262,6 +276,7 @@ async function launch(config: MatchConfig): Promise<void> {
       renderer,
       new Set<string>(profile.unlockedMedals),
     );
+    await match.prepareRendering();
     hud.reset();
     // BO2 ミニマップ: 試合ごとにステージのボックスデータをセットアップ
     hud.setupMinimap(match.minimapBoxes(), config.stage.size);
@@ -467,6 +482,14 @@ input.onLockChange((locked) => {
 });
 
 window.addEventListener('resize', () => {
+  baseDpr = resolveRenderPixelRatio(
+    window.innerWidth,
+    window.innerHeight,
+    window.devicePixelRatio,
+    graphicsTier,
+  );
+  renderer.setPixelRatio(baseDpr * DPR_STEPS[dprStep]!);
+  match?.setBasePixelRatio(baseDpr);
   renderer.setSize(window.innerWidth, window.innerHeight);
   if (match) match.resize(window.innerWidth, window.innerHeight);
 });
@@ -487,19 +510,28 @@ let frameEma = 0.0166; // 秒(初期60fps相当)
 let bestFrame = 0.0166; // 観測フロア(表示周期/GPU余力の推定)。速い時は素早く追従・遅い時は緩慢
 let dprStep = 0; // DPR_STEPS のインデックス
 let lastDprChangeMs = 0;
+let overBudgetS = 0;
+let underBudgetS = 0;
 function adaptResolution(dt: number, nowMs: number): void {
   if (!match || mode !== 'playing') return;
-  frameEma += (dt - frameEma) * 0.06; // ~0.5s平滑
-  bestFrame += (dt - bestFrame) * (dt < bestFrame ? 0.3 : 0.002); // フロア追従(速く沈み遅く浮く)
+  // タブ復帰や初回RT確保の単発停止を「持続的なGPU不足」と誤認しないよう50msでクランプ。
+  const sampleDt = Math.min(dt, 0.05);
+  frameEma += (sampleDt - frameEma) * 0.06; // ~0.5s平滑
+  bestFrame += (sampleDt - bestFrame) * (sampleDt < bestFrame ? 0.3 : 0.01);
+  const over = frameEma > 0.0195 && frameEma > bestFrame * 1.18;
+  overBudgetS = over ? overBudgetS + sampleDt : Math.max(0, overBudgetS - sampleDt * 2);
+  underBudgetS = frameEma < 0.0135
+    ? underBudgetS + sampleDt
+    : Math.max(0, underBudgetS - sampleDt * 2);
   if (nowMs - lastDprChangeMs < 1000) return; // 再確保は1秒に1回まで
-  // 降格は「絶対しきい(>18ms)」かつ「自身のフロア比1.35超(=GPU律速の悪化)」の両立時のみ。
-  // 30Hzパネル/rAFスロットル(表示律速)では frameEma≈bestFrame で発火せず最小固定を回避
-  if (frameEma > 0.018 && frameEma > bestFrame * 1.35 && dprStep < DPR_STEPS.length - 1) {
+  if (overBudgetS > 1.5 && dprStep < DPR_STEPS.length - 1) {
     dprStep += 1;
+    overBudgetS = 0;
     lastDprChangeMs = nowMs;
     match.setResolutionScale(DPR_STEPS[dprStep]!);
-  } else if (frameEma < 0.013 && dprStep > 0) {
+  } else if (underBudgetS > 3 && dprStep > 0) {
     dprStep -= 1; // 十分軽い(<13ms)→1段戻す
+    underBudgetS = 0;
     lastDprChangeMs = nowMs;
     match.setResolutionScale(DPR_STEPS[dprStep]!);
   }

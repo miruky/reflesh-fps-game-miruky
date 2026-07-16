@@ -4,8 +4,11 @@ import {
   buildGunBody,
   CamoStandardMaterial,
   reloadAnimationPose,
+  resolveFirstPersonGripProfile,
   resolveMuzzleFlashProfile,
   resolveSightY,
+  resolveViewmodelAdsTarget,
+  resolveVisualRecoilProfile,
   sightYOverride,
   ViewModel,
   weaponHasIntegralSuppressor,
@@ -69,6 +72,87 @@ describe('reloadAnimationPose', () => {
     expect(leftHand!.rotation.y).toBeCloseTo(restRotation.y, 7);
     expect(leftHand!.rotation.z).toBeCloseTo(restRotation.z, 7);
     expect(magazine!.position.length()).toBeLessThan(1e-7);
+    vm.dispose();
+  });
+});
+
+describe('武器別の腕姿勢・ADS・視覚反動', () => {
+  it('全武器の両手姿勢が有限値で、手と腕の6要素契約を満たす', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      const grip = resolveFirstPersonGripProfile(def);
+      for (const values of [
+        grip.left.arm,
+        grip.left.hand,
+        grip.right.arm,
+        grip.right.hand,
+      ]) {
+        expect(values, def.id).toHaveLength(6);
+        expect(values.every(Number.isFinite), def.id).toBe(true);
+      }
+    }
+  });
+
+  it('天雷杖は前後2点保持かつADSで後端をカメラから遠ざける', () => {
+    const def = WEAPON_DEFS['tenrai-staff']!;
+    const grip = resolveFirstPersonGripProfile(def);
+    expect(grip.left.hand[2]).toBeLessThan(grip.right.hand[2] - 0.2);
+    expect(grip.reloadGesture).toBe('staff');
+    const target = resolveViewmodelAdsTarget(def);
+    expect(target.x).toBeGreaterThan(0.1);
+    expect(target.y).toBeLessThan(-0.1);
+    expect(target.z).toBeLessThan(-0.55);
+  });
+
+  it('通常銃のADSサイト契約は従来値を維持する', () => {
+    const def = WEAPON_DEFS['kaede-ar']!;
+    const target = resolveViewmodelAdsTarget(def);
+    expect(target.x).toBe(0);
+    expect(target.y).toBeCloseTo(-resolveSightY(def), 6);
+    expect(target.z).toBeCloseTo(-0.42, 6);
+  });
+
+  it('全武器の視覚反動は小さく有限で、くないには銃反動を加えない', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      const recoil = resolveVisualRecoilProfile(def);
+      expect(Object.values(recoil).every(Number.isFinite), def.id).toBe(true);
+      expect(recoil.back, def.id).toBeGreaterThanOrEqual(0);
+      expect(recoil.back, def.id).toBeLessThanOrEqual(0.18);
+      expect(recoil.pitch, def.id).toBeLessThanOrEqual(0.22);
+      expect(recoil.yaw, def.id).toBeLessThanOrEqual(0.012);
+      expect(recoil.roll, def.id).toBeLessThanOrEqual(0.018);
+    }
+    expect(resolveVisualRecoilProfile(WEAPON_DEFS.fists!)).toEqual({
+      back: 0,
+      pitch: 0,
+      yaw: 0,
+      roll: 0,
+    });
+  });
+
+  it('発砲で微小な横反動が生じ、約2秒で中立へ滑らかに復帰する', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    vm.setWeapon(WEAPON_DEFS['kaede-ar']!);
+    const state = {
+      adsProgress: 0,
+      mouseDX: 0,
+      mouseDY: 0,
+      moveFactor: 0,
+      grounded: true,
+      reloadRatio: null,
+      raiseRatio: 0,
+      motionScale: 1,
+      alive: true,
+      scopeReveal01: 0,
+      sprinting: false,
+    };
+    vm.fire(false, true);
+    vm.update(0, state);
+    expect(Math.abs(vm.root.rotation.y)).toBeGreaterThan(0.001);
+    expect(Math.abs(vm.root.rotation.z)).toBeGreaterThan(0.001);
+    for (let i = 0; i < 120; i += 1) vm.update(1 / 60, state);
+    expect(Math.abs(vm.root.rotation.y)).toBeLessThan(0.0001);
+    expect(Math.abs(vm.root.rotation.z)).toBeLessThan(0.0001);
     vm.dispose();
   });
 });
@@ -1587,8 +1671,8 @@ describe('R53: 帝王溜め段(setEmperorChargeStage)+白芯雷脈(setKatanaVein
     const { vm, kunai } = makeKunaiVm();
     vm.setEmperorChargeStage(3);
     for (let i = 0; i < 90; i += 1) vm.update(1 / 60, { ...HIP_STATE, adsProgress: 1 });
-    // ADS逆手ポーズ(FIST_POSES.ads r[0]=-2.0)そのもの=溜め加算はゼロ
-    expect(kunai.rotation.x).toBeCloseTo(-2.0, 1);
+    // ADSガードポーズ(FIST_POSES.ads r[0]=-0.22)そのもの=溜め加算はゼロ
+    expect(kunai.rotation.x).toBeCloseTo(-0.22, 1);
     vm.dispose();
   });
 

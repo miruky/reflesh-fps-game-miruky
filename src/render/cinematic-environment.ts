@@ -187,6 +187,79 @@ function configure(
   return mesh;
 }
 
+function addScenicWind(
+  mesh: THREE.InstancedMesh,
+  material: THREE.MeshStandardMaterial,
+): void {
+  const time = { value: 0 };
+  material.onBeforeCompile = (shader): void => {
+    shader.uniforms.uScenicTime = time;
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nuniform float uScenicTime;',
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+#ifdef USE_INSTANCING
+  float scenicPhase = instanceMatrix[3].x * 0.071 + instanceMatrix[3].z * 0.053;
+#else
+  float scenicPhase = 0.0;
+#endif
+  float scenicCrown = smoothstep(-1.2, 1.8, position.y);
+  float scenicWind = sin(uScenicTime * 0.72 + scenicPhase) * 0.035
+                   + sin(uScenicTime * 1.31 + scenicPhase * 1.7) * 0.012;
+  transformed.x += scenicWind * scenicCrown;
+  transformed.z += scenicWind * scenicCrown * 0.42;`,
+      );
+  };
+  material.customProgramCacheKey = (): string => 'hibana-scenic-wind-v1';
+  mesh.onBeforeRender = (): void => {
+    time.value = (performance.now() % 600_000) * 0.001;
+  };
+}
+
+function addWaterRipples(
+  mesh: THREE.InstancedMesh,
+  material: THREE.MeshStandardMaterial,
+): void {
+  const time = { value: 0 };
+  material.onBeforeCompile = (shader): void => {
+    shader.uniforms.uScenicWaterTime = time;
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec2 vScenicWaterPos;',
+      )
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvScenicWaterPos = position.xz;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nuniform float uScenicWaterTime;\nvarying vec2 vScenicWaterPos;',
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+float scenicWaveA = sin(vScenicWaterPos.x * 8.0 + uScenicWaterTime * 0.82);
+float scenicWaveB = sin((vScenicWaterPos.x + vScenicWaterPos.y) * 11.0 - uScenicWaterTime * 0.57);
+float scenicRipple = scenicWaveA * 0.5 + scenicWaveB * 0.5;
+diffuseColor.rgb *= 0.965 + scenicRipple * 0.035;`,
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + scenicRipple * 0.035, 0.08, 0.28);',
+      );
+  };
+  material.customProgramCacheKey = (): string => 'hibana-scenic-water-ripple-v1';
+  mesh.onBeforeRender = (): void => {
+    time.value = (performance.now() % 600_000) * 0.001;
+  };
+}
+
 function treeTrunkGeometry(dead: boolean): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
   const trunk = new THREE.CylinderGeometry(0.22, 0.36, 4.8, 8, 3);
@@ -276,6 +349,7 @@ function buildVegetation(
     crowns.name = profile.vegetation === 'conifer' ? 'aaa:snow-conifer-crowns' : 'aaa:tree-canopies';
     crowns.castShadow = false;
     crowns.receiveShadow = true;
+    addScenicWind(crowns, crowns.material as THREE.MeshStandardMaterial);
   } else {
     crownGeometry.dispose();
   }
@@ -469,9 +543,7 @@ function buildWater(
   if (!profile.water || budget.water <= 0) return null;
   const geometry = new THREE.CircleGeometry(1, 32);
   geometry.rotateX(-Math.PI / 2);
-  const mesh = new THREE.InstancedMesh(
-    geometry,
-    new THREE.MeshStandardMaterial({
+  const material = new THREE.MeshStandardMaterial({
       color: shade(options.stage.palette.sky, -0.32, 0.08),
       roughness: 0.16,
       metalness: 0.22,
@@ -481,9 +553,13 @@ function buildWater(
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -3,
-    }),
+    });
+  const mesh = new THREE.InstancedMesh(
+    geometry,
+    material,
     budget.water,
   );
+  addWaterRipples(mesh, material);
   mesh.name = 'aaa:reflective-water-and-puddles';
   mesh.castShadow = false;
   mesh.receiveShadow = true;

@@ -1,4 +1,4 @@
-import { Vector2, Vector3, type WebGLRenderer, type WebGLRenderTarget } from 'three';
+import { MathUtils, Vector2, Vector3, type WebGLRenderer, type WebGLRenderTarget } from 'three';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import type { GradeParams } from '../game/stage';
 
@@ -24,6 +24,7 @@ export const GRADE_SHADER = {
     uniform float uVignetteR;
     uniform float uGrain;
     uniform float uChroma;
+    uniform float uTealOrange;
     uniform float uTime;
     uniform vec2 uResolution;
     varying vec2 vUv;
@@ -49,6 +50,12 @@ export const GRADE_SHADER = {
       // 彩度
       float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
       c = mix(vec3(luma), c, uSat);
+      // 同じHDRパス内で寒色の影と暖色の光を僅かに分離する。別PostFXを常時1枚
+      // 回さず、立体感と素材の色分離だけを増やす。
+      float shadowMask = 1.0 - smoothstep(0.08, 0.52, luma);
+      float lightMask = smoothstep(0.28, 1.1, luma);
+      c *= mix(vec3(1.0), vec3(0.90, 1.025, 1.065), shadowMask * uTealOrange);
+      c *= mix(vec3(1.0), vec3(1.065, 1.015, 0.91), lightMask * uTealOrange);
       // 周辺減光(中央は uVignetteR まで無減光。vignetteR を高めに保ち中央を広く残す)
       float vig = smoothstep(uVignetteR, uVignetteR - 0.45, length(d));
       c *= mix(1.0, vig, uVignette);
@@ -66,7 +73,13 @@ export const GRADE_SHADER = {
 class GradePass extends ShaderPass {
   private readonly animate: boolean;
 
-  constructor(animate: boolean, width: number, height: number, params: GradeParams) {
+  constructor(
+    animate: boolean,
+    width: number,
+    height: number,
+    params: GradeParams,
+    tealOrange: number,
+  ) {
     super({
       name: GRADE_SHADER.name,
       uniforms: {
@@ -78,6 +91,7 @@ class GradePass extends ShaderPass {
         uVignetteR: { value: params.vignetteR },
         uGrain: { value: params.grain },
         uChroma: { value: params.chroma },
+        uTealOrange: { value: tealOrange },
         uTime: { value: 0 },
         uResolution: { value: new Vector2(width, height) },
       },
@@ -113,7 +127,13 @@ class GradePass extends ShaderPass {
 // アスペクト補正に使う(composer のリサイズでも setSize が追従)。
 export function createGradePass(
   params: GradeParams,
-  opts: { reduceMotion?: boolean; width?: number; height?: number } = {},
+  opts: { reduceMotion?: boolean; width?: number; height?: number; tealOrange?: number } = {},
 ): ShaderPass {
-  return new GradePass(!opts.reduceMotion, opts.width ?? 1, opts.height ?? 1, params);
+  return new GradePass(
+    !opts.reduceMotion,
+    opts.width ?? 1,
+    opts.height ?? 1,
+    params,
+    MathUtils.clamp(opts.tealOrange ?? 0, 0, 1),
+  );
 }

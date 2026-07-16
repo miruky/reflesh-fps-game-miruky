@@ -61,4 +61,29 @@ describe('cinematic environment', () => {
       dispose(b);
     }
   });
+
+  it('植生の微風と水面リップルは追加draw callなしの専用shader変種を持つ', () => {
+    const woodland = STAGES.find((stage) => stage.id === 'nakaniwa')!;
+    const harbor = STAGES.find((stage) => stage.id === 'kouwan')!;
+    const vegetation = buildCinematicEnvironment({
+      stage: woodland,
+      family: 'heritage',
+      tier: 'high',
+      boxes,
+    });
+    const waterRoot = buildCinematicEnvironment({
+      stage: harbor,
+      family: 'industrial',
+      tier: 'high',
+      boxes,
+    });
+    const crowns = vegetation.getObjectByName('aaa:tree-canopies') as THREE.InstancedMesh;
+    const water = waterRoot.getObjectByName('aaa:reflective-water-and-puddles') as THREE.InstancedMesh;
+    expect((crowns.material as THREE.Material).customProgramCacheKey()).toBe('hibana-scenic-wind-v1');
+    expect((water.material as THREE.Material).customProgramCacheKey()).toBe(
+      'hibana-scenic-water-ripple-v1',
+    );
+    dispose(vegetation);
+    dispose(waterRoot);
+  });
 });

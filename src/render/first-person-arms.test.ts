@@ -40,27 +40,31 @@ const options = {
 };
 
 describe('first-person arms', () => {
-  it('左右2本の3ボーンSkinnedMeshと左右の立体グローブを生成する', () => {
+  it('左右の手・手首・前腕を同じhand階層へ接続し、独立SkinnedMeshを生成しない', () => {
     const mats = materials();
     const rig = buildFirstPersonArms(mats, options);
     const skins: THREE.SkinnedMesh[] = [];
     rig.traverse((node) => {
       if (node instanceof THREE.SkinnedMesh) skins.push(node);
     });
-    expect(skins).toHaveLength(2);
-    expect(skins.every((skin) => skin.skeleton.bones.length === 3)).toBe(true);
+    expect(skins).toHaveLength(0);
     expect(rig.getObjectByName('vm:leftHand')).toBeDefined();
     expect(rig.getObjectByName('vm:rightHand')).toBeDefined();
     expect(rig.getObjectByName('vm:leftGloveSkin')).toBeInstanceOf(THREE.Mesh);
     expect(rig.getObjectByName('vm:rightGloveSkin')).toBeInstanceOf(THREE.Mesh);
-    expect(rig.getObjectByName('vm:leftHand:skin')).toBeInstanceOf(THREE.Mesh);
     expect(rig.getObjectByName('vm:rightHand:palm')).toBeInstanceOf(THREE.Mesh);
     expect(rig.getObjectByName('vm:rightHand:armor')).toBeInstanceOf(THREE.Mesh);
     expect(rig.getObjectByName('vm:rightHand:stitch')).toBeInstanceOf(THREE.Mesh);
+    const leftHand = rig.getObjectByName('vm:leftHand');
+    const rightHand = rig.getObjectByName('vm:rightHand');
+    expect(leftHand?.getObjectByName('vm:leftSleeveConnected')).toBeInstanceOf(THREE.Mesh);
+    expect(rightHand?.getObjectByName('vm:rightSleeveConnected')).toBeInstanceOf(THREE.Mesh);
+    expect(rig.getObjectByName('vm:leftArm')?.children).toHaveLength(0);
+    expect(rig.getObjectByName('vm:rightArm')?.children).toHaveLength(0);
     disposeRig(rig, mats);
   });
 
-  it('旧来の直方体腕を生成せず、滑らかな円筒袖と指を使う', () => {
+  it('旧来の直方体腕を生成せず、軽量な連続袖と立体指を使う', () => {
     const mats = materials();
     const rig = buildFirstPersonArms(mats, options);
     let boxes = 0;
@@ -71,7 +75,24 @@ describe('first-person arms', () => {
       vertices += node.geometry.getAttribute('position').count;
     });
     expect(boxes).toBe(0);
-    expect(vertices).toBeGreaterThan(3_000);
+    expect(vertices).toBeGreaterThan(1_500);
+    expect(vertices).toBeLessThan(8_000);
+    disposeRig(rig, mats);
+  });
+
+  it('片腕は袖1DC+手袋4DCに固定し、袖は必ずhandの子にある', () => {
+    const mats = materials();
+    const rig = buildFirstPersonArms(mats, options);
+    for (const side of ['left', 'right'] as const) {
+      const hand = rig.getObjectByName(`vm:${side}Hand`);
+      expect(hand).toBeDefined();
+      const meshes: THREE.Mesh[] = [];
+      hand!.traverse((node) => {
+        if (node instanceof THREE.Mesh) meshes.push(node);
+      });
+      expect(meshes).toHaveLength(5);
+      expect(meshes.filter((mesh) => mesh.userData.connectedToHand === true)).toHaveLength(1);
+    }
     disposeRig(rig, mats);
   });
 

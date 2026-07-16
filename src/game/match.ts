@@ -104,6 +104,7 @@ import {
 } from '../render/cinematic-lighting';
 import { installCinematicSky, type CinematicSkyHandle } from '../render/cinematic-sky';
 import { AaaStageAssetPipeline } from '../render/aaa-asset-pipeline';
+import { supportsAdvancedRendering, supportsN8aoRendering } from '../render/render-budget';
 import type { PropMatFamily } from '../render/prop-visuals';
 import {
   cinematicFloorColor,
@@ -677,7 +678,7 @@ export class Match {
   private killSurgeEnv = 0; // R20: キル確定サージのエンベロープ 0..1(キルで1へ、毎フレーム減衰)
   private cinemaEnv = 0; // R54-F7: シネマカメラ中のDOF風(uCinema)封筒 0..1
   private maxKillDistM = 0; // R54-F7: プレイヤーのキル最長水平距離(m)。ハイライト用
-  private postfxGrade = 0; // R21: Teal & Orange グレーディング強度(high=0.3, low/mid=0)
+  private postfxGrade = 0; // 常時グレードはGradePassへ統合。PostFXのidleゲート互換用
   private darkAuraEnv = 0; // R27: 黒帝オーラビネット封筒 0..1(黒帝中のみ > 0)
   private readonly hitDir = new THREE.Vector2(0, 0); // R20: 被弾方向(画面空間の単位ベクトル・平滑)
   // キルカメラ補間: 死亡時に固定するアンカー + 現在の補間カメラ姿勢(exp damping)
@@ -947,6 +948,8 @@ export class Match {
   private readonly _autoExposure = new AutoExposure();
   private _prevShadowType: THREE.ShadowMapType = THREE.PCFSoftShadowMap;
   private _pcssPatched = false;
+  private readonly _advancedRendering: boolean;
+  private readonly _n8aoRendering: boolean;
   // AutoExposure: indoor検出用タイマー・平滑値・scratch
   private _indoorCheckTimer = 0;
   private _indoor01 = 0;
@@ -1117,7 +1120,9 @@ export class Match {
     // PCSS: high tier の場合、マテリアル生成前にシェーダチャンクへパッチする。
     // buildStageScene より先に行わないとコンパイル済みシェーダへは反映されない。
     const _graphicsTier = resolveGraphicsTier(settings.graphicsQuality, renderer.capabilities.isWebGL2);
-    if (_graphicsTier === 'high' && !isPcssPatched()) {
+    this._advancedRendering = _graphicsTier === 'high' && supportsAdvancedRendering(renderer);
+    this._n8aoRendering = _graphicsTier === 'high' && supportsN8aoRendering(renderer);
+    if (this._advancedRendering && !isPcssPatched()) {
       this._prevShadowType = renderer.shadowMap.type;
       patchPcss();
       renderer.shadowMap.type = THREE.BasicShadowMap;
@@ -1385,12 +1390,6 @@ export class Match {
       this.humanoidCrowd = new HumanoidCrowdRenderer(this.scene);
     }
 
-    // シェーダ事前コンパイル(初フレーム/初撃破のスタッター防止)。ディゾルブ変種(dissolve1)は
-    // defineを一時点火してcompile→消灯の順で両プログラムをキャッシュへ載せる
-    for (const bot of this.bots) bot.prewarmDissolve(true);
-    this.renderer.compile(this.scene, this.camera);
-    for (const bot of this.bots) bot.prewarmDissolve(false);
-
     // 常闇カモ装備中(かつ gungame/training/snd 以外): 試合開始から黒帝モード永続
     // R54-W1 Q1: S&D除外(HP300ゲートと対称。ノーリスポーン戦術モードでの不公平を防ぐ)
     if (this.isNinja && permanentDarkEmperorEligible(config.mode)) {
@@ -1401,6 +1400,29 @@ export class Match {
         this.darkEmperorTimer = Infinity;
         this.viewModel.setKunaiDarkMode(true);
       }
+    }
+  }
+
+  /**
+   * 表示前シェーダ準備。KHR_parallel_shader_compile対応GPUではメインスレッドを数秒
+   * 固めずに進め、非対応環境だけ同期compileへフォールバックする。
+   */
+  async prepareRendering(): Promise<void> {
+    const compileVariant = async (): Promise<void> => {
+      try {
+        await this.renderer.compileAsync(this.scene, this.camera);
+      } catch {
+        this.renderer.compile(this.scene, this.camera);
+      }
+    };
+    // 通常描画を先に準備し、初フレームのヒッチを防止する。
+    await compileVariant();
+    // 撃破ディゾルブ変種も表示前にキャッシュ。終了時は例外の有無にかかわらず通常へ戻す。
+    for (const bot of this.bots) bot.prewarmDissolve(true);
+    try {
+      await compileVariant();
+    } finally {
+      for (const bot of this.bots) bot.prewarmDissolve(false);
     }
   }
 
@@ -1432,24 +1454,6 @@ export class Match {
     );
 
     if (tier === 'high') {
-      // ── HIGH TIER: N8AOPass(RenderPass代替) + GodRays + AdsDofPass ──
-      // N8AOPass はシーンを内部の beautyRenderTarget へ描画し AO を合成して出力する。
-      const n8ao = new N8AOPass(this.scene, this.camera, size.x, size.y);
-      n8ao.configuration.aoRadius = 2.0;
-      n8ao.configuration.distanceFalloff = 0.4;
-      n8ao.configuration.intensity = 2.5;
-      n8ao.configuration.halfRes = true;
-      n8ao.configuration.depthAwareUpsampling = true;
-      n8ao.configuration.transparencyAware = true;
-      // gammaCorrection=false: 後段 OutputPass が sRGB 変換するため二重 gamma を防ぐ
-      n8ao.configuration.gammaCorrection = false;
-      n8ao.setQualityMode('Medium');
-      this._n8aoPass = n8ao;
-
-      const godRays = new GodRaysPass();
-      godRays.setSize(size.x, size.y);
-      this._godRaysPass = godRays;
-
       const dof = new AdsDofPass(this.scene, this.camera as THREE.PerspectiveCamera);
       dof.setSize(size.x, size.y);
       this._adsDofPass = dof;
@@ -1457,20 +1461,34 @@ export class Match {
       // ムード別太陽強度を算出して保持(毎フレーム setIntensity に渡す)
       this._sunIntensity = this._resolveSunIntensity(resolveMood(p));
 
-      // パス順: N8AO → GodRays → Bloom → Grade → DOF → SMAA → Output → PostFX
-      composer.addPass(n8ao); // RenderPass 代替
+      if (this._n8aoRendering) {
+        // ── HIGH完全系: N8AO(RenderPass代替) + 深度連携GodRays ──
+        const n8ao = new N8AOPass(this.scene, this.camera, size.x, size.y);
+        n8ao.configuration.aoRadius = 2.0;
+        n8ao.configuration.distanceFalloff = 0.4;
+        n8ao.configuration.intensity = 2.5;
+        n8ao.configuration.halfRes = true;
+        n8ao.configuration.depthAwareUpsampling = true;
+        n8ao.configuration.transparencyAware = true;
+        n8ao.configuration.gammaCorrection = false;
+        n8ao.setQualityMode('Medium');
+        this._n8aoPass = n8ao;
+        composer.addPass(n8ao);
 
-      // 深度ブリッジ: N8AOPass は beautyRenderTarget に深度を書くが GodRaysPass は
-      // readBuffer.depthTexture を参照する。EffectComposer の ping-pong 両バッファに
-      // 同じ DepthTexture 参照を共有することで、どちらが readBuffer になっても深度が届く。
-      // setSize() は depthTexture JS オブジェクトを置換しないため resize 後も参照は有効。
-      const n8aoDepth = n8ao.beautyRenderTarget.depthTexture;
-      composer.readBuffer.depthTexture = n8aoDepth;
-      composer.readBuffer.depthBuffer = true;
-      composer.writeBuffer.depthTexture = n8aoDepth;
-      composer.writeBuffer.depthBuffer = true;
-
-      composer.addPass(godRays);
+        const godRays = new GodRaysPass();
+        godRays.setSize(size.x, size.y);
+        this._godRaysPass = godRays;
+        const n8aoDepth = n8ao.beautyRenderTarget.depthTexture;
+        composer.readBuffer.depthTexture = n8aoDepth;
+        composer.readBuffer.depthBuffer = true;
+        composer.writeBuffer.depthTexture = n8aoDepth;
+        composer.writeBuffer.depthBuffer = true;
+        composer.addPass(godRays);
+      } else {
+        // ANGLE Metal等の既知不安定系。PCSS/高密度ステージ/DOF/高品質Gradeは維持し、
+        // scene基幹だけRenderPassへすることで黒画面とAOの大きな固定コストを除去する。
+        composer.addPass(new RenderPass(this.scene, this.camera));
+      }
       composer.addPass(bloom);
       // アトモスフィアの映画的カラーグレード(ムード別・HDR空間=bloom後)
       composer.addPass(
@@ -1478,6 +1496,7 @@ export class Match {
           reduceMotion: this.settings.reduceMotion,
           width: size.x,
           height: size.y,
+          tealOrange: 0.28,
         }),
       );
       composer.addPass(dof); // bloom後/SMAA前(dof.ts の推奨位置)
@@ -1495,9 +1514,9 @@ export class Match {
         hitTint: [1, 0.32, 0.28],
         enabled: false, // hitPulse>0 のフレームだけ有効化(idleコストゼロ)
       });
-      // R21: Teal & Orange グレーディング。high tier のみ 0.3 を設定し常時1パス(予算内)
-      postfxH.setGrade(0.3);
-      this.postfxGrade = 0.3;
+      // Teal & Orangeは直前のGradePassへ統合済み。被弾等が無い平常時はこの追加パスを止める。
+      postfxH.setGrade(0);
+      this.postfxGrade = 0;
       composer.addPass(postfxH);
       this.postfx = postfxH;
     } else {
@@ -1510,6 +1529,7 @@ export class Match {
           reduceMotion: this.settings.reduceMotion,
           width: size.x,
           height: size.y,
+          tealOrange: 0.14,
         }),
       );
       composer.addPass(new SMAAPass(size.x, size.y));
@@ -1560,6 +1580,14 @@ export class Match {
     // instance buffer再生成は行わず、微細物visibilityと雲uniformだけを切り替える。
     applyCinematicDetailScale(this.cinematicDetailRoots, clamped);
     this.cinematicSky?.setDetailScale(clamped);
+  }
+
+  /** ウィンドウ/DPI変更時に動的スケールの基準を更新し、旧画面のDPRを持ち越さない。 */
+  setBasePixelRatio(dpr: number): void {
+    this.baseDpr = Math.max(0.5, Math.min(2, dpr));
+    const pr = this.baseDpr * this.resScale;
+    this.renderer.setPixelRatio(pr);
+    this.composer?.setPixelRatio(pr);
   }
 
   get activeWeapon(): Weapon {
@@ -1629,9 +1657,8 @@ export class Match {
     );
     sun.position.copy(this.sunDir).multiplyScalar(size); // 見える太陽と影方向を一致させる
     sun.castShadow = true;
-    // R12軽量化: mediumは1024²で影フラグメント1/4・VRAM 12MB→3MB。
-    // highは追従範囲±70mを3072²で覆い、約22px/mを確保しながら4096²比で
-    // VRAM/塗りを44%削る。mediumは1024²のまま。
+    // R12軽量化: mediumは1024²。highは追従範囲±70mを2560²で覆い、
+    // PCSSと接地影を併用して近景輪郭を保ちながら影RTの負荷を抑える。
     // ★3 hell/全巨躯モードは巨躯54体で影パス負荷が最大化するため、highでも2048²へ抑える
     // (VRAM 64MB→16MB・影フラグメント1/4。±70m追従ボックスで14.6px/m=中距離でも輪郭維持)
     // R51-4b: ゾンビモードも同種の高密度群像(108体規模)のため heavyHorde 扱いに含める
@@ -1639,16 +1666,17 @@ export class Match {
       (this.config.hellMode ?? false) ||
       (this.config.allGiantMode ?? false) ||
       this.config.mode === 'zombie';
-    // 3072²は4096²比でVRAM/塗りを44%削減しつつ、±70m追従領域で約22px/mを維持する。
-    // 接地影レイヤとPCSSを併用するため、近景の輪郭品質を落とさず負荷余力を作れる。
-    const shadowRes = tier === 'high' ? (heavyHorde ? 2048 : 3072) : 1024;
+    // PCSSの柔らかいカーネルと接地影レイヤにより、2560²でも近景輪郭を保てる。
+    // 3072²比で影RTの画素/VRAMを約31%削減。ソフトウェア描画は1024²へ安全降格する。
+    const highShadow = tier === 'high' && this._advancedRendering;
+    const shadowRes = highShadow ? (heavyHorde ? 2048 : 2560) : 1024;
     sun.shadow.mapSize.set(shadowRes, shadowRes);
     sun.shadow.bias = -0.0005; // シャドウアクネ除去
     sun.shadow.normalBias = 0.02; // ピーターパン(浮き影)防止
     sun.shadow.radius = 2; // PCFカーネル拡大(ほぼ0コストで柔らかく)
     // R29: エリア超拡大(280-360m)対応=ステージ全体を1枚で覆う方式をやめ、
     // プレイヤー追従シャドウボックス(±70m)へ。マップがどれだけ大きくても影の
-    // テクセル密度が一定(3072/140m≈22px/m)。中心はテクセルグリッドへ
+    // テクセル密度が一定(high通常時2560/140m≈18px/m)。中心はテクセルグリッドへ
     // スナップし、移動時のシャドウシマーを防ぐ(frame()で毎フレーム追従)。
     const half = SHADOW_FOLLOW_HALF;
     sun.shadow.camera.left = -half;
