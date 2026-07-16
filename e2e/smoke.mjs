@@ -29,6 +29,9 @@ const [VW, VH] = VIEWPORT.split('x').map(Number);
 const BASE = val('--base', '');
 const SHOT_DIR = process.env.UI2_SHOT_DIR || path.resolve('e2e/.shots');
 const PORT = Number(val('--port', '5199'));
+// GitHub ActionsのSwiftShaderは1080p WebGL canvasのreadbackだけで10秒を超えることがある。
+// 画面/描画ループの待機契約とは分離し、スクリーンショットI/Oにだけ十分な猶予を与える。
+const SCREENSHOT_TIMEOUT_MS = Number(process.env.UI2_SCREENSHOT_TIMEOUT_MS ?? 45_000);
 
 // ダイヤ迷彩の実シェーダーを毎回コンパイルする。武器IDは正典のweapons.tsから抽出し、
 // テスト側へ手書きの武器一覧を複製しない。全武器をGold条件済みにすることで既定ARの
@@ -140,7 +143,10 @@ async function startVite() {
 
 async function shot(page, name) {
   mkdirSync(SHOT_DIR, { recursive: true });
-  await page.screenshot({ path: path.join(SHOT_DIR, `${PROFILE}-${VIEWPORT}-${name}.png`) });
+  await page.screenshot({
+    path: path.join(SHOT_DIR, `${PROFILE}-${VIEWPORT}-${name}.png`),
+    timeout: SCREENSHOT_TIMEOUT_MS,
+  });
 }
 
 // 可視かつ実在する要素を待つ(短timeout、なければnull)
