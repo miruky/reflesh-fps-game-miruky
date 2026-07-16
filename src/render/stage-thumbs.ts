@@ -18,6 +18,7 @@
 import * as THREE from 'three';
 import type { StageDef } from '../game/stage';
 import { generateStage } from '../game/stage';
+import { buildCinematicStageKit } from './cinematic-stage-kit';
 
 // ── サムネイル寸法: 既存の .stage-preview aspect-ratio 160/92 に合わせる ──
 const THUMB_W = 320;
@@ -183,6 +184,16 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
     scene.add(mesh);
   }
 
+  // 本編と同じ固有ランドマーク／地表動線／中遠景をlow予算でサムネにも反映する。
+  // プレビューと出撃後のアート方向が一致し、全31面をシルエットだけでも識別できる。
+  const cinematicKit = buildCinematicStageKit({
+    stage: def,
+    tier: 'low',
+    boxes: layout.boxes.filter((box) => !box.ghost && !box.decor),
+    propPlacements: layout.propPlacements,
+  });
+  scene.add(cinematicKit);
+
   // ─ カメラ: 斜め俯瞰(かっこいい構図) ───────────────────────────
   //
   // 太陽方位 azimuth+45° の方角から高度 32° で見下ろす。
@@ -235,6 +246,13 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
   for (const mat of matMap.values()) {
     mat.dispose();
   }
+  cinematicKit.traverse((node) => {
+    if (!(node instanceof THREE.Mesh)) return;
+    node.geometry.dispose();
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+    for (const material of materials) material.dispose();
+    if (node instanceof THREE.InstancedMesh) node.dispose();
+  });
   scene.clear();
 
   // ─ キャッシュ登録 ─────────────────────────────────────────────

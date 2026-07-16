@@ -96,9 +96,10 @@ import { AdsDofPass } from '../render/dof';
 import { patchPcss, unpatchPcss, isPcssPatched } from '../render/pcss';
 import { AutoExposure } from '../render/exposure';
 import { buildCinematicSetDressing } from '../render/cinematic-set-dressing';
+import { buildCinematicStageKit } from '../render/cinematic-stage-kit';
 import { AaaStageAssetPipeline } from '../render/aaa-asset-pipeline';
 import type { PropMatFamily } from '../render/prop-visuals';
-import { floorDetailGlsl, floorDetailGlslCommon } from '../render/surface-kit';
+import { cinematicFloorColor, floorDetailGlsl, floorDetailGlslCommon } from '../render/surface-kit';
 import { KillcamController, FK_WIN_POST } from './killcam';
 import { selectHighlights } from './highlights';
 import type { MissionSummary } from './progression';
@@ -1656,7 +1657,7 @@ export class Match {
     // R20 rank3: ムード/床材質/バイオームから濡れ度を導き、床マテリアルへマクロ質感を挿す。
     // 追加DCゼロ・フラグメントALUのみで巨大床の「1色平面」読みを解消し、濡れパッチで減光した空IBLを拾う。
     const wetness = this.resolveWetness(palette);
-    const floorMat = new THREE.MeshStandardMaterial({ color: palette.floor, roughness: 0.95 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: cinematicFloorColor(palette.floor), roughness: 0.95 });
     this.applyMacroFloor(floorMat, wetness);
     const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(size + 2, 1, size + 2), floorMat);
     floorMesh.position.y = -0.5;
@@ -1842,6 +1843,15 @@ export class Match {
       seed: this.config.stage.seed,
       tier,
       palette,
+      boxes: visibleBoxes,
+      propPlacements: v2Placements,
+    }));
+    // 全固定／生成ステージへ、固有ヒーローランドマーク・中遠景・建物外装・屋上設備・
+    // 主要動線の路面ディテールを追加する。全て視覚専用でコライダー／BOTナビ／弾道は不変。
+    // tier別インスタンス予算により、高品質では最大密度、低品質では同じ美術方向を軽量維持する。
+    this.scene.add(buildCinematicStageKit({
+      stage: this.config.stage,
+      tier,
       boxes: visibleBoxes,
       propPlacements: v2Placements,
     }));

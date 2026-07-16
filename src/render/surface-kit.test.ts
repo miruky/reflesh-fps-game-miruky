@@ -9,11 +9,32 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   applySurfaceKit,
+  cinematicFloorColor,
   floorDetailGlsl,
   floorDetailGlslCommon,
   SURFACE_KIT_IDS,
   type SurfaceKitId,
 } from './surface-kit';
+
+describe('cinematicFloorColor', () => {
+  it('明るい床ほど強く抑え、色相を維持する', () => {
+    const bright = cinematicFloorColor('#dfe8f2');
+    const dark = cinematicFloorColor('#20242b');
+    const sourceBright = new THREE.Color('#dfe8f2');
+    const sourceDark = new THREE.Color('#20242b');
+    const brightHsl = { h: 0, s: 0, l: 0 };
+    const darkHsl = { h: 0, s: 0, l: 0 };
+    const sourceBrightHsl = { h: 0, s: 0, l: 0 };
+    const sourceDarkHsl = { h: 0, s: 0, l: 0 };
+    bright.getHSL(brightHsl);
+    dark.getHSL(darkHsl);
+    sourceBright.getHSL(sourceBrightHsl);
+    sourceDark.getHSL(sourceDarkHsl);
+    expect(sourceBrightHsl.l - brightHsl.l).toBeGreaterThan(sourceDarkHsl.l - darkHsl.l);
+    expect(brightHsl.h).toBeCloseTo(sourceBrightHsl.h, 6);
+    expect(darkHsl.h).toBeCloseTo(sourceDarkHsl.h, 6);
+  });
+});
 
 // THREE MeshStandardMaterial の実フラグメント/バーテックスシェーダの主要アンカー順を
 // 模した最小モック。onBeforeCompile 内の .replace() が実際に効くことを検証する。

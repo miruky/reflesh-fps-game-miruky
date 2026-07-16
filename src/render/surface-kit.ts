@@ -49,6 +49,24 @@ export const SURFACE_KIT_IDS: readonly SurfaceKitId[] = [
   'foliage',
 ];
 
+/**
+ * HDR環境光下で床だけが空色へ飽和するのを防ぐ、ステージ共通のアルベド補正。
+ * 明るいコンクリート／雪ほど減光量を増やし、暗い夜景床は僅かな締めだけに留める。
+ * fog・足音・ゲームデータのpaletteは変更せず、床メッシュの表示色だけを返す。
+ */
+export function cinematicFloorColor(hex: string): THREE.Color {
+  const color = new THREE.Color(hex);
+  const hsl = { h: 0, s: 0, l: 0 };
+  color.getHSL(hsl);
+  const reduction = hsl.l >= 0.72 ? 0.13 : hsl.l >= 0.55 ? 0.09 : 0.035;
+  color.setHSL(
+    hsl.h,
+    THREE.MathUtils.clamp(hsl.s * 1.05 + 0.01, 0, 1),
+    THREE.MathUtils.clamp(hsl.l - reduction, 0.035, 0.82),
+  );
+  return color;
+}
+
 interface KitBase {
   roughness: number;
   metalness: number;

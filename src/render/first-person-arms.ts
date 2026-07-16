@@ -12,6 +12,10 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 export interface FirstPersonArmMaterials {
   readonly sleeve: THREE.MeshStandardMaterial;
   readonly glove: THREE.MeshStandardMaterial;
+  readonly glovePalm: THREE.MeshStandardMaterial;
+  readonly gloveArmor: THREE.MeshStandardMaterial;
+  readonly gloveStitch: THREE.MeshStandardMaterial;
+  readonly skin: THREE.MeshStandardMaterial;
 }
 
 export interface FirstPersonArmPose {
@@ -51,74 +55,156 @@ function transformGeometry(
   return geometry;
 }
 
-/** 指・手のひらを1メッシュへまとめ、指を増やしても腕ごとのDCを増やさない。 */
-function buildHandGeometry(side: -1 | 1, supportHand: boolean): THREE.BufferGeometry {
-  const parts: THREE.BufferGeometry[] = [];
+type HandMaterialFamily = 'glove' | 'palm' | 'armor' | 'stitch' | 'skin';
 
-  // 掌は球を扁平化して角を完全に消す。FPSカメラ近接でも箱に見えない輪郭を優先。
-  parts.push(
+function mergeHandParts(parts: THREE.BufferGeometry[], family: HandMaterialFamily): THREE.BufferGeometry {
+  const merged = mergeGeometries(parts, false);
+  for (const part of parts) part.dispose();
+  if (!merged) throw new Error(`failed to build first-person hand ${family} geometry`);
+  merged.computeVertexNormals();
+  merged.userData.handMaterialFamily = family;
+  return merged;
+}
+
+/**
+ * 手を「暗い一塊」ではなく、手首・掌・5本指・関節・掌パッド・縫い目へ分ける。
+ * 指先を露出したタクティカルグローブにすることで、どの武器色／迷彩でも銃の一部に見えない。
+ * familyごとに結合するため、形状密度を増やしても片手5DCに固定される。
+ */
+function buildHandGeometries(
+  side: -1 | 1,
+  supportHand: boolean,
+): Record<HandMaterialFamily, THREE.BufferGeometry> {
+  const buckets: Record<HandMaterialFamily, THREE.BufferGeometry[]> = {
+    glove: [],
+    palm: [],
+    armor: [],
+    stitch: [],
+    skin: [],
+  };
+
+  // 手首から掌までを連続させる。旧実装では掌だけが銃の下に浮き、黒い銃床に見えていた。
+  buckets.glove.push(
     transformGeometry(
-      new THREE.SphereGeometry(1, 12, 8),
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Euler(0, 0, 0),
-      new THREE.Vector3(0.038, 0.031, 0.052),
+      new THREE.CylinderGeometry(0.027, 0.034, 0.062, 12, 2),
+      new THREE.Vector3(0, 0, 0.067),
+      new THREE.Euler(Math.PI / 2, 0, 0),
+    ),
+    transformGeometry(
+      new THREE.SphereGeometry(1, 16, 10),
+      new THREE.Vector3(0, 0.001, 0.005),
+      new THREE.Euler(-0.08, 0, 0),
+      new THREE.Vector3(0.043, 0.032, 0.059),
     ),
   );
 
-  // 4指をハンドガード／グリップへ巻く。各指は近位・遠位の2節にし、関節角を少しずつ変える。
-  const xOffsets = [-0.0255, -0.0085, 0.0085, 0.0255];
+  // 掌側の明るいスエードパッド。粗さと明度差で、金属レシーバとの境界を常に読ませる。
+  buckets.palm.push(
+    transformGeometry(
+      new THREE.SphereGeometry(1, 12, 8),
+      new THREE.Vector3(0, -0.028, -0.002),
+      new THREE.Euler(0.08, 0, 0),
+      new THREE.Vector3(0.034, 0.006, 0.043),
+    ),
+  );
+
+  const xOffsets = [-0.027, -0.009, 0.009, 0.027];
   for (let i = 0; i < xOffsets.length; i += 1) {
     const x = (xOffsets[i] ?? 0) * side;
-    const lengthBias = i === 0 || i === 3 ? 0.9 : 1;
-    const curl = supportHand ? 1.02 : 1.18;
-    const proximal = new THREE.CapsuleGeometry(0.0072, 0.027 * lengthBias, 3, 6);
+    const edge = i === 0 || i === 3;
+    const lengthBias = edge ? 0.88 : 1;
+    // 右人差し指だけ僅かに伸ばし、トリガーへ掛かる輪郭を作る。支持手は4指を均等に巻く。
+    const triggerFinger = !supportHand && i === 0;
+    const curl = triggerFinger ? 0.72 : supportHand ? 0.98 : 1.08;
+    const spread = side * (i - 1.5) * 0.035;
+
+    const proximal = new THREE.CapsuleGeometry(0.0083, 0.025 * lengthBias, 4, 7);
     transformGeometry(
       proximal,
-      new THREE.Vector3(x, -0.025, -0.028),
-      new THREE.Euler(curl, 0, side * (i - 1.5) * 0.035),
+      new THREE.Vector3(x, -0.013, -0.033),
+      new THREE.Euler(curl, 0, spread),
     );
-    parts.push(proximal);
+    buckets.glove.push(proximal);
 
-    const distal = new THREE.CapsuleGeometry(0.0067, 0.022 * lengthBias, 3, 6);
+    const middle = new THREE.CapsuleGeometry(0.0075, (triggerFinger ? 0.028 : 0.021) * lengthBias, 4, 7);
     transformGeometry(
-      distal,
-      new THREE.Vector3(x, -0.037, -0.049),
-      new THREE.Euler(curl + 0.42, 0, side * (i - 1.5) * 0.045),
+      middle,
+      new THREE.Vector3(x, triggerFinger ? -0.022 : -0.030, triggerFinger ? -0.059 : -0.055),
+      new THREE.Euler(curl + (triggerFinger ? 0.18 : 0.34), 0, spread * 1.15),
     );
-    parts.push(distal);
+    buckets.skin.push(middle);
+
+    const tip = new THREE.CapsuleGeometry(0.0069, 0.013 * lengthBias, 4, 7);
+    transformGeometry(
+      tip,
+      new THREE.Vector3(x, triggerFinger ? -0.031 : -0.044, triggerFinger ? -0.080 : -0.066),
+      new THREE.Euler(curl + (triggerFinger ? 0.28 : 0.58), 0, spread * 1.25),
+    );
+    buckets.skin.push(tip);
+
+    // 独立した4つのナックル。大きな一枚板を廃止し、指の始点を目で追えるようにする。
+    const knuckle = new THREE.SphereGeometry(1, 9, 6);
+    transformGeometry(
+      knuckle,
+      new THREE.Vector3(x, 0.029, -0.023),
+      new THREE.Euler(-0.12, 0, spread),
+      new THREE.Vector3(0.0092, 0.006, 0.0115),
+    );
+    buckets.armor.push(knuckle);
   }
 
-  // 親指。左右で鏡像化し、銃の側面へ自然に添わせる。
-  const thumb0 = new THREE.CapsuleGeometry(0.009, 0.026, 4, 7);
+  // 親指は掌の横から斜めに生える2節構造。先端を肌色に分け、5本指を明確にする。
+  const thumb0 = new THREE.CapsuleGeometry(0.0102, 0.027, 4, 8);
   transformGeometry(
     thumb0,
-    new THREE.Vector3(0.035 * side, -0.004, -0.004),
-    new THREE.Euler(0.56, 0.24 * side, -0.78 * side),
+    new THREE.Vector3(0.037 * side, -0.002, 0.001),
+    new THREE.Euler(0.52, 0.24 * side, -0.78 * side),
   );
-  parts.push(thumb0);
-  const thumb1 = new THREE.CapsuleGeometry(0.008, 0.019, 4, 7);
+  buckets.glove.push(thumb0);
+  const thumb1 = new THREE.CapsuleGeometry(0.0086, 0.021, 4, 8);
   transformGeometry(
     thumb1,
-    new THREE.Vector3(0.042 * side, -0.018, -0.021),
-    new THREE.Euler(0.92, 0.18 * side, -0.62 * side),
+    new THREE.Vector3(0.047 * side, -0.019, -0.023),
+    new THREE.Euler(0.92, 0.2 * side, -0.62 * side),
   );
-  parts.push(thumb1);
+  buckets.skin.push(thumb1);
 
-  // ナックルガードを薄い楕円で追加。グローブの面密度とシルエットを両立する。
-  const guard = new THREE.SphereGeometry(1, 10, 6);
+  // 分割型ナックルプレート、手首ストラップ、掌の縫製線。小さな陰影が距離感を作る。
+  const backPlate = new THREE.SphereGeometry(1, 12, 7);
   transformGeometry(
-    guard,
-    new THREE.Vector3(0, 0.021, -0.018),
-    new THREE.Euler(-0.12, 0, 0),
-    new THREE.Vector3(0.036, 0.011, 0.031),
+    backPlate,
+    new THREE.Vector3(0, 0.026, 0.008),
+    new THREE.Euler(-0.08, 0, 0),
+    new THREE.Vector3(0.031, 0.0065, 0.029),
   );
-  parts.push(guard);
+  buckets.armor.push(backPlate);
+  const wristStrap = new THREE.TorusGeometry(0.031, 0.0032, 5, 18);
+  wristStrap.translate(0, 0, 0.079);
+  buckets.armor.push(wristStrap);
+  const seam = new THREE.CapsuleGeometry(0.0014, 0.058, 2, 5);
+  transformGeometry(
+    seam,
+    new THREE.Vector3(0, 0.0325, 0.012),
+    new THREE.Euler(0, 0, Math.PI / 2),
+  );
+  buckets.stitch.push(seam);
+  for (const sx of [-0.024, 0.024]) {
+    const stitch = new THREE.CapsuleGeometry(0.0012, 0.042, 2, 5);
+    transformGeometry(
+      stitch,
+      new THREE.Vector3(sx * side, 0.029, 0.014),
+      new THREE.Euler(Math.PI / 2, 0, 0),
+    );
+    buckets.stitch.push(stitch);
+  }
 
-  const merged = mergeGeometries(parts, false);
-  for (const part of parts) part.dispose();
-  if (!merged) throw new Error('failed to build first-person hand geometry');
-  merged.computeVertexNormals();
-  return merged;
+  return {
+    glove: mergeHandParts(buckets.glove, 'glove'),
+    palm: mergeHandParts(buckets.palm, 'palm'),
+    armor: mergeHandParts(buckets.armor, 'armor'),
+    stitch: mergeHandParts(buckets.stitch, 'stitch'),
+    skin: mergeHandParts(buckets.skin, 'skin'),
+  };
 }
 
 function addSkinAttributes(geometry: THREE.BufferGeometry, length: number): void {
@@ -138,7 +224,7 @@ function addSkinAttributes(geometry: THREE.BufferGeometry, length: number): void
   geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(weights, 4));
 }
 
-function buildSleeve(material: THREE.MeshStandardMaterial, side: -1 | 1): THREE.Group {
+function buildSleeve(materials: FirstPersonArmMaterials, side: -1 | 1): THREE.Group {
   const group = new THREE.Group();
   const length = 0.29;
   const geometry = new THREE.CylinderGeometry(0.036, 0.046, length, 12, 6, false);
@@ -157,7 +243,7 @@ function buildSleeve(material: THREE.MeshStandardMaterial, side: -1 | 1): THREE.
   elbow.add(wrist);
 
   const skeleton = new THREE.Skeleton([shoulder, elbow, wrist]);
-  const sleeve = new THREE.SkinnedMesh(geometry, material);
+  const sleeve = new THREE.SkinnedMesh(geometry, materials.sleeve);
   sleeve.name = side < 0 ? 'vm:leftSleeveSkin' : 'vm:rightSleeveSkin';
   sleeve.add(shoulder);
   sleeve.bind(skeleton);
@@ -182,7 +268,7 @@ function buildSleeve(material: THREE.MeshStandardMaterial, side: -1 | 1): THREE.
   cuff.dispose();
   pad.dispose();
   if (armorGeo) {
-    const armor = new THREE.Mesh(armorGeo, material);
+    const armor = new THREE.Mesh(armorGeo, materials.gloveArmor);
     armor.name = side < 0 ? 'vm:leftSleeveArmor' : 'vm:rightSleeveArmor';
     markFirstPersonMesh(armor);
     group.add(armor);
@@ -196,7 +282,7 @@ function buildArmSide(
   materials: FirstPersonArmMaterials,
   fists: boolean,
 ): { arm: THREE.Group; hand: THREE.Group } {
-  const arm = buildSleeve(materials.sleeve, side);
+  const arm = buildSleeve(materials, side);
   arm.name = fists
     ? side < 0 ? 'vm:fistLArm' : 'vm:fistRArm'
     : side < 0 ? 'vm:leftArm' : 'vm:rightArm';
@@ -207,10 +293,22 @@ function buildArmSide(
     ? side < 0 ? 'vm:fistLHand' : 'vm:fistRHand'
     : side < 0 ? 'vm:leftHand' : 'vm:rightHand';
   applyPose(hand, pose.hand);
-  const handMesh = new THREE.Mesh(buildHandGeometry(side, side < 0), materials.glove);
-  handMesh.name = side < 0 ? 'vm:leftGloveSkin' : 'vm:rightGloveSkin';
-  markFirstPersonMesh(handMesh);
-  hand.add(handMesh);
+  const geometries = buildHandGeometries(side, side < 0);
+  const handMeshes: Array<[HandMaterialFamily, THREE.MeshStandardMaterial]> = [
+    ['glove', materials.glove],
+    ['palm', materials.glovePalm],
+    ['armor', materials.gloveArmor],
+    ['stitch', materials.gloveStitch],
+    ['skin', materials.skin],
+  ];
+  for (const [family, material] of handMeshes) {
+    const handMesh = new THREE.Mesh(geometries[family], material);
+    handMesh.name = family === 'glove'
+      ? side < 0 ? 'vm:leftGloveSkin' : 'vm:rightGloveSkin'
+      : `vm:${side < 0 ? 'left' : 'right'}Hand:${family}`;
+    markFirstPersonMesh(handMesh);
+    hand.add(handMesh);
+  }
   return { arm, hand };
 }
 

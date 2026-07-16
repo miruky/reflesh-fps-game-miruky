@@ -261,7 +261,7 @@ function assertNever(x: never): never {
 // ── 共有マテリアル(頂点カラー系統) ─────────────────────────────────────
 // バケツ方式: 系統ごとに1マテリアルへ merge するため、アルベドは頂点カラーで焼く。
 // metalVC/polishVC/polyVC/glassThin/glassScope/reflexDot は全銃で1度だけ生成(userData.shared=true)。
-// accent は emissive 帯用に tracerColor ごとにキャッシュ。sleeve/glove は腕専用(非merge)。
+// accent は emissive 帯用に tracerColor ごとにキャッシュ。腕・手は銃と明確に分離した多材質。
 // 銃はカメラ近接(near 0.05)なので envMapIntensity/emissiveIntensity を抑えて近接Bloomハロを回避。
 // ③透過根治: レンズは depthWrite:false の薄透過材へ分割。glassThin=レフレックス開口レンズ
 // (ほぼ素通し)、glassScope=倍率スコープ管(やや色付き)。両 DoubleSide で覗き方向不問。
@@ -273,7 +273,11 @@ interface SharedMats {
   glassScope: THREE.MeshStandardMaterial; // スコープ管レンズ(倍率・透過・merge除外)
   reflexDot: THREE.MeshBasicMaterial; // 赤ドット(加算・merge除外)
   sleeve: THREE.MeshStandardMaterial; // 腕(袖)
-  glove: THREE.MeshStandardMaterial; // 手(手袋)
+  glove: THREE.MeshStandardMaterial; // 手袋の本体
+  glovePalm: THREE.MeshStandardMaterial; // 掌のスエード補強
+  gloveArmor: THREE.MeshStandardMaterial; // ナックル／手首ガード
+  gloveStitch: THREE.MeshStandardMaterial; // 縫製線
+  skin: THREE.MeshStandardMaterial; // フィンガーレス部の指先
 }
 let sharedMats: SharedMats | null = null;
 const accentCache = new Map<number, THREE.MeshStandardMaterial>();
@@ -289,7 +293,16 @@ function vcMat(metalness: number, roughness: number): THREE.MeshStandardMaterial
   return m;
 }
 function clothMat(color: number, roughness: number): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ color, roughness });
+  const m = new THREE.MeshStandardMaterial({
+    color,
+    roughness,
+    metalness: 0,
+    // 一人称モデルはカメラ直下で逆光になりやすい。ごく弱い自己照明で黒潰れだけを防ぎ、
+    // 発光体には見えない強度に留める。
+    emissive: color,
+    emissiveIntensity: 0.045,
+    envMapIntensity: 0.28,
+  });
   m.userData.shared = true;
   return m;
 }
@@ -338,8 +351,14 @@ function getShared(): SharedMats {
       glassThin,
       glassScope,
       reflexDot,
-      sleeve: clothMat(0x2b2e34, 0.7),
-      glove: clothMat(0x161820, 0.55),
+      // 銃の黒ポリマーと同化しない寒色の袖 + 暖色オリーブのタクティカルグローブ。
+      // 金属度0・高roughnessで、ダイヤ／ゴールドの鏡面と視覚的に必ず分離する。
+      sleeve: clothMat(0x405169, 0.86),
+      glove: clothMat(0x887a62, 0.9),
+      glovePalm: clothMat(0xaa987b, 0.96),
+      gloveArmor: clothMat(0x24282d, 0.72),
+      gloveStitch: clothMat(0xd0a768, 0.88),
+      skin: clothMat(0xca8e69, 0.82),
     };
   }
   return sharedMats;
@@ -656,6 +675,10 @@ function disposeShared(): void {
     sharedMats.reflexDot.dispose();
     sharedMats.sleeve.dispose();
     sharedMats.glove.dispose();
+    sharedMats.glovePalm.dispose();
+    sharedMats.gloveArmor.dispose();
+    sharedMats.gloveStitch.dispose();
+    sharedMats.skin.dispose();
     sharedMats = null;
   }
   for (const m of accentCache.values()) m.dispose();
@@ -3065,12 +3088,13 @@ export class ViewModel {
   private buildGun(def: WeaponDef, camo: CamoId | null = null): { gun: THREE.Group; muzzle: THREE.Object3D } {
     const { gun, muzzle } = buildGunBody(def, camo);
     const bs = def.bodyScale ?? resolveSilhouette(def).bodyScale;
-    const { sleeve, glove } = getShared();
+    const { sleeve, glove, glovePalm, gloveArmor, gloveStitch, skin } = getShared();
+    const armMaterials = { sleeve, glove, glovePalm, gloveArmor, gloveStitch, skin };
     if (def.shape === 'fists') {
       // クナイ(ダガー): 右手が柄(局所 z≈-0.10)を順手で握り、左手は添え手として前方へ構える。
       // 銃握り位置の手を流用せず、柄の位置に手首を合わせる専用配置。
       // vm:fist* として名付け、update が rest↔逆手ADS を補間する(FIST_POSES の rest と一致)
-      gun.add(buildFirstPersonArms({ sleeve, glove }, {
+      gun.add(buildFirstPersonArms(armMaterials, {
         fists: true,
         right: {
           arm: [0.08, -0.2, 0.12, 0.5, -0.12, 0],
@@ -3085,14 +3109,14 @@ export class ViewModel {
     }
     // 右手はグリップ、左手はハンドガードへ。両腕とも3ボーンSkinnedMeshで、
     // 武器グループのADS・スウェイ・反動・リロードへ従来どおり追従する。
-    gun.add(buildFirstPersonArms({ sleeve, glove }, {
+    gun.add(buildFirstPersonArms(armMaterials, {
       right: {
         arm: [0.03, -0.22, 0.3, 0.62, -0.1, 0],
-        hand: [0, -0.11, 0.11, 0.3, 0, 0],
+        hand: [0.038, -0.08, 0.095, 0.26, -0.08, -0.05],
       },
       left: {
         arm: [-0.03, -0.13, -0.04, 0.5, 0.2, 0.12],
-        hand: [0, -0.05, -0.16 * bs, 0.2, 0, 0],
+        hand: [-0.04, -0.025, -0.16 * bs, 0.2, 0.08, 0.03],
       },
     }));
     return { gun, muzzle };
