@@ -1,6 +1,5 @@
 import './style.css';
 import { cancelPendingThumbs } from './render/stage-thumbs';
-import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { deriveReverbPreset, SoundKit, type BgmProfileKey } from './core/audio';
 import { resolveMood } from './render/atmosphere';
@@ -10,12 +9,18 @@ import { GameLoop } from './core/loop';
 import { loadProfile, saveProfile } from './core/profile';
 import { loadSettings, resolveGraphicsTier } from './core/settings';
 import { missionById } from './game/campaign';
-import { Match, type MatchConfig } from './game/match';
+import type { Match, MatchConfig } from './game/match';
 import { PhotoMode } from './game/photo';
-import { applyCampaignMission, applyMatch, applyScoreRecord, XP_MUL_NORMAL, XP_MUL_ZOMBIE } from './game/progression';
+import {
+  applyCampaignMission,
+  applyMatch,
+  applyScoreRecord,
+  XP_MUL_NORMAL,
+  XP_MUL_ZOMBIE,
+} from './game/progression';
 import { stageDefFromId } from './game/biomes';
 import { stageById } from './game/stages';
-import { motifWeightForMission } from './game/story-engine';
+import { motifWeightForMission } from './game/story-audio';
 import type { Hud } from './ui/hud';
 import type { Hud2 } from './ui2/hud2';
 import type { MenuCallbacks, MenuSelection } from './ui/menu-contracts';
@@ -56,13 +61,6 @@ if (!webglAvailable()) {
   throw new Error('WebGL を初期化できない');
 }
 
-try {
-  await RAPIER.init();
-} catch {
-  showFatal('物理エンジンの読み込みに失敗しました。通信環境を確認して再読み込みしてください。');
-  throw new Error('物理エンジンを初期化できない');
-}
-
 const settings = loadSettings();
 const profile = loadProfile();
 
@@ -85,7 +83,13 @@ renderer.toneMappingExposure = 1.0;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 appRoot.appendChild(renderer.domElement);
 const sounds = new SoundKit();
-sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi, settings.musicVolume, settings.voVolume);
+sounds.setVolumes(
+  settings.volMaster,
+  settings.volSfx,
+  settings.volUi,
+  settings.musicVolume,
+  settings.voVolume,
+);
 const input = new Input();
 input.attach(renderer.domElement);
 input.setGamepadBindings(settings.gamepadBindings);
@@ -109,13 +113,20 @@ if (USE_UI2) {
 const letterboxEl = document.createElement('div');
 letterboxEl.id = 'ck-letterbox';
 Object.assign(letterboxEl.style, {
-  position: 'fixed', inset: '0', pointerEvents: 'none',
-  zIndex: '5', opacity: '0', transition: 'opacity 0.1s',
+  position: 'fixed',
+  inset: '0',
+  pointerEvents: 'none',
+  zIndex: '5',
+  opacity: '0',
+  transition: 'opacity 0.1s',
 });
 const lbBarStyle = 'position:absolute;left:0;right:0;background:#000;height:10%;';
-const lbTop = document.createElement('div'); lbTop.setAttribute('style', lbBarStyle + 'top:0');
-const lbBot = document.createElement('div'); lbBot.setAttribute('style', lbBarStyle + 'bottom:0');
-letterboxEl.appendChild(lbTop); letterboxEl.appendChild(lbBot);
+const lbTop = document.createElement('div');
+lbTop.setAttribute('style', lbBarStyle + 'top:0');
+const lbBot = document.createElement('div');
+lbBot.setAttribute('style', lbBarStyle + 'bottom:0');
+letterboxEl.appendChild(lbTop);
+letterboxEl.appendChild(lbBot);
 document.body.appendChild(letterboxEl);
 
 // UIスケールはzoomで反映する。投影座標(ダメージ数値など)は
@@ -154,6 +165,9 @@ function applyMotion(): void {
 applyMotion();
 
 let match: Match | null = null;
+let matchConstructor: typeof import('./game/match').Match | null = null;
+let gameRuntimePromise: Promise<typeof import('./game/match').Match> | null = null;
+let launching = false;
 let chromaTimer = 0; // 被弾クロマアベの後始末タイマー(連続被弾で積み重ねない)
 let mode: 'menu' | 'playing' | 'paused' | 'result' | 'finalkillcam' | 'photo' = 'menu';
 let photoMode: PhotoMode | null = null; // R54-F7: フォトモード(mode==='photo' 中のみ非null)
@@ -161,54 +175,106 @@ let combatLoopsPaused = false; // 戦闘ループ音の一時停止状態(遷移
 let lastSelection: MenuSelection | null = null;
 let activeMissionId: string | null = null; // ストーリー進行中のミッションID(なければ通常戦)
 
+// 物理エンジンと約1万行の試合ランタイムはタイトル/装備画面では不要なので、最初の
+// 出撃時にだけ同時取得する。Promiseを共有して連打やリスタートでも二重初期化しない。
+async function ensureGameRuntime(): Promise<typeof import('./game/match').Match> {
+  if (matchConstructor) return matchConstructor;
+  if (!gameRuntimePromise) {
+    gameRuntimePromise = Promise.all([
+      import('@dimforge/rapier3d-compat'),
+      import('./game/match'),
+    ]).then(async ([rapier, runtime]) => {
+      await rapier.default.init();
+      matchConstructor = runtime.Match;
+      return runtime.Match;
+    });
+  }
+  try {
+    return await gameRuntimePromise;
+  } catch (error) {
+    // 一時的な通信失敗後に再試行できるよう、失敗Promiseをキャッシュし続けない。
+    gameRuntimePromise = null;
+    throw error;
+  }
+}
+
+function setLaunchLoading(visible: boolean): void {
+  document.documentElement.classList.toggle('runtime-loading', visible);
+  menuRoot!.setAttribute('aria-busy', String(visible));
+}
+
 // 共通の出撃処理。configを組んでMatchを起動しHUD/ロックへ遷移する
-function launch(config: MatchConfig): void {
+async function launch(config: MatchConfig): Promise<void> {
+  if (launching) return;
+  launching = true;
   cancelPendingThumbs(); // V32: 試合中のサムネ生成ヒッチ防止(メニュー復帰時に自動再キュー)
+  // AudioContextの解錠はユーザージェスチャの同期区間で済ませ、遅延import後に失効させない。
   sounds.ensure();
-  // reduceMotionは共有settingsを書き換えない(保存設定/SYSTEMチェックボックスの汚染防止)。
-  // MatchはこれまでどおりsettingsのreduceMotion(アプリ設定)を参照する。OSのprefers-
-  // reduced-motionはCSS(@media)側で尊重される
-  // リスタート経路の二重起動防止→ステージの空間残響→環境音ベッドの順に音場を用意
-  sounds.stopAmbience();
-  // ★V-D MEDIUM修正: 前試合のdisposeは音場セットアップの「前」に行う。前試合が黒雷帝で
-  // 終わっていると dispose→setEmperorBgm(null) が退避プロファイル(前ステージ曲)を復元する
-  // ため、後置きだと新ステージの setMusicProfile を上書きして曲を取り違える(「次のミッション」経路)
-  match?.dispose();
-  // 適応DPRの状態を初期化(前試合の解像度スケール段を持ち越さない)。共有rendererの
-  // pixelRatioも基準へ戻す(これを怠ると新試合のcomposerが低下値を継承し複利で劣化する)
-  frameEma = 0.0166;
-  bestFrame = 0.0166;
-  dprStep = 0;
-  renderer.setPixelRatio(BASE_DPR);
-  sounds.setReverb(deriveReverbPreset(config.stage));
-  // BGMをステージのムード別プロファイルへ。ゾンビは専用の不穏→高揚プロファイル、
-  // 夜市yoichiのみネオン特化。それ以外はステージのムード。かっこいい軍事エレクトロニカ
-  const bgmMood = resolveMood(config.stage.palette);
-  const bgmKey: BgmProfileKey =
-    config.mode === 'zombie'
-      ? 'zombie'
-      : bgmMood === 'night' && config.stage.id === 'yoichi'
-        ? 'night-neon'
-        : bgmMood;
-  sounds.setMusicProfile(bgmKey, motifWeightForMission(config.mission));
-  sounds.startAmbience(config.stage);
-  match = new Match(
-    config,
-    settings,
-    input,
-    sounds,
-    window.innerWidth / window.innerHeight,
-    renderer,
-    new Set<string>(profile.unlockedMedals),
-  );
-  hud.reset();
-  // BO2 ミニマップ: 試合ごとにステージのボックスデータをセットアップ
-  hud.setupMinimap(match.minimapBoxes(), config.stage.size);
-  hud.show();
-  spaceBg?.stop(); // 出撃中はメニュー背景の宇宙レンダラを止める(RAF/GPU圧迫防止)
-  menu.hide();
-  mode = 'playing';
-  input.requestLock(renderer.domElement);
+  setLaunchLoading(true);
+  let MatchRuntime: typeof import('./game/match').Match;
+  try {
+    MatchRuntime = await ensureGameRuntime();
+  } catch {
+    setLaunchLoading(false);
+    launching = false;
+    showFatal('ゲーム本体の読み込みに失敗しました。通信環境を確認して、もう一度お試しください。');
+    return;
+  }
+  try {
+    // reduceMotionは共有settingsを書き換えない(保存設定/SYSTEMチェックボックスの汚染防止)。
+    // MatchはこれまでどおりsettingsのreduceMotion(アプリ設定)を参照する。OSのprefers-
+    // reduced-motionはCSS(@media)側で尊重される
+    // リスタート経路の二重起動防止→ステージの空間残響→環境音ベッドの順に音場を用意
+    sounds.stopAmbience();
+    // ★V-D MEDIUM修正: 前試合のdisposeは音場セットアップの「前」に行う。前試合が黒雷帝で
+    // 終わっていると dispose→setEmperorBgm(null) が退避プロファイル(前ステージ曲)を復元する
+    // ため、後置きだと新ステージの setMusicProfile を上書きして曲を取り違える(「次のミッション」経路)
+    match?.dispose();
+    // 適応DPRの状態を初期化(前試合の解像度スケール段を持ち越さない)。共有rendererの
+    // pixelRatioも基準へ戻す(これを怠ると新試合のcomposerが低下値を継承し複利で劣化する)
+    frameEma = 0.0166;
+    bestFrame = 0.0166;
+    dprStep = 0;
+    renderer.setPixelRatio(BASE_DPR);
+    sounds.setReverb(deriveReverbPreset(config.stage));
+    // BGMをステージのムード別プロファイルへ。ゾンビは専用の不穏→高揚プロファイル、
+    // 夜市yoichiのみネオン特化。それ以外はステージのムード。かっこいい軍事エレクトロニカ
+    const bgmMood = resolveMood(config.stage.palette);
+    const bgmKey: BgmProfileKey =
+      config.mode === 'zombie'
+        ? 'zombie'
+        : bgmMood === 'night' && config.stage.id === 'yoichi'
+          ? 'night-neon'
+          : bgmMood;
+    sounds.setMusicProfile(bgmKey, motifWeightForMission(config.mission));
+    sounds.startAmbience(config.stage);
+    match = new MatchRuntime(
+      config,
+      settings,
+      input,
+      sounds,
+      window.innerWidth / window.innerHeight,
+      renderer,
+      new Set<string>(profile.unlockedMedals),
+    );
+    hud.reset();
+    // BO2 ミニマップ: 試合ごとにステージのボックスデータをセットアップ
+    hud.setupMinimap(match.minimapBoxes(), config.stage.size);
+    hud.show();
+    spaceBg?.stop(); // 出撃中はメニュー背景の宇宙レンダラを止める(RAF/GPU圧迫防止)
+    menu.hide();
+    mode = 'playing';
+    input.requestLock(renderer.domElement);
+  } catch (error) {
+    console.error('試合の初期化に失敗しました', error);
+    match?.dispose();
+    match = null;
+    sounds.quiesce();
+    showFatal('試合の初期化に失敗しました。ページを再読み込みして、もう一度お試しください。');
+  } finally {
+    setLaunchLoading(false);
+    launching = false;
+  }
 }
 
 function startMatch(selection: MenuSelection): void {
@@ -244,7 +310,11 @@ function startMatch(selection: MenuSelection): void {
 
 // ストーリー・ミッションを起動する。武器は自由選択(省略時=支給武器)
 let activeMissionPrimary: string | null = null; // リトライ時に選択武器を引き継ぐ
-function startMission(missionId: string, primaryId?: string, missionDifficulty?: 'easy' | 'normal' | 'hard'): void {
+function startMission(
+  missionId: string,
+  primaryId?: string,
+  missionDifficulty?: 'easy' | 'normal' | 'hard',
+): void {
   const mission = missionById(missionId);
   if (!mission) return;
   // 別ミッションへ移る時は前回の選択武器を持ち越さない(支給武器を黙って上書きしない)。
@@ -300,8 +370,21 @@ function exitPhoto(): void {
   photoMode = null;
   match?.setViewmodelVisibleForPhoto(true); // R58-F W3: フォト退出でviewmodel復元
   // フォト中に押されたキーの立ち上がり残骸(SPACE=jump等)を再開後の試合へ漏らさない
-  for (const a of ['jump', 'crouch', 'sprint', 'forward', 'back', 'left', 'right',
-    'weapon1', 'weapon2', 'grenade', 'streak1', 'streak2', 'interact'] as const) {
+  for (const a of [
+    'jump',
+    'crouch',
+    'sprint',
+    'forward',
+    'back',
+    'left',
+    'right',
+    'weapon1',
+    'weapon2',
+    'grenade',
+    'streak1',
+    'streak2',
+    'interact',
+  ] as const) {
     input.wasPressed(a);
   }
   hud.show();
@@ -331,7 +414,13 @@ const menuCallbacks: MenuCallbacks = {
   },
   onPhoto: () => enterPhoto(),
   onSettingsChanged: () => {
-    sounds.setVolumes(settings.volMaster, settings.volSfx, settings.volUi, settings.musicVolume, settings.voVolume);
+    sounds.setVolumes(
+      settings.volMaster,
+      settings.volSfx,
+      settings.volUi,
+      settings.musicVolume,
+      settings.voVolume,
+    );
     applyUiScale();
     applyAccent();
     applyMotion();
@@ -341,7 +430,14 @@ const menuCallbacks: MenuCallbacks = {
   },
 };
 const menu: MenuApi = USE_UI2
-  ? new (await import('./ui2/menu2')).Menu2(menuRoot, settings, profile, menuCallbacks, input, sounds)
+  ? new (await import('./ui2/menu2')).Menu2(
+      menuRoot,
+      settings,
+      profile,
+      menuCallbacks,
+      input,
+      sounds,
+    )
   : new (await import('./ui/menu')).Menu(menuRoot, settings, profile, menuCallbacks, input);
 
 // 初回はメニュー表示なので宇宙背景を起動する(ui2ではspaceBg=nullのため自然に不使用)
@@ -373,7 +469,10 @@ window.addEventListener('resize', () => {
 // タブ非表示中はRAFが止まりループ経由のpauseAmbienceが届かないため、ここで直接沈める。
 // 復帰時はループの既存配線(playing中はpauseAmbience(false))が次フレームで戻す
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { sounds.pauseAmbience(true); sounds.pauseCombatLoops(true); }
+  if (document.hidden) {
+    sounds.pauseAmbience(true);
+    sounds.pauseCombatLoops(true);
+  }
 });
 
 // R12軽量化(適応DPR): フレーム時間のEMAを取り、重い時に実解像度を段階的に下げてfps床を維持。
@@ -469,7 +568,8 @@ function perfhudSample(realDtS: number): void {
   const sorted = Array.from(perfhudBuf.subarray(0, n)).sort((a, b) => a - b);
   const pct = (q: number) => sorted[Math.min(n - 1, Math.floor(q * n))] ?? 0;
   const calls = renderer.info.render.calls;
-  const zLine = perfhudZombieRound >= 0 ? `\nZ R${perfhudZombieRound} VIS${perfhudZombieVisible}` : '';
+  const zLine =
+    perfhudZombieRound >= 0 ? `\nZ R${perfhudZombieRound} VIS${perfhudZombieVisible}` : '';
   perfhudEl.textContent = `p50 ${pct(0.5).toFixed(2)}ms  p95 ${pct(0.95).toFixed(2)}ms\ncalls ${calls}${zLine}`;
 }
 
@@ -541,10 +641,16 @@ const loop = new GameLoop(
         sounds.tickBgm();
         sounds.tickAmbience();
         sounds.pauseAmbience(false);
-        if (combatLoopsPaused) { sounds.pauseCombatLoops(false); combatLoopsPaused = false; }
+        if (combatLoopsPaused) {
+          sounds.pauseCombatLoops(false);
+          combatLoopsPaused = false;
+        }
       } else {
         sounds.stopBgm();
-        if ((mode === 'paused' || mode === 'finalkillcam' || mode === 'photo') && !combatLoopsPaused) {
+        if (
+          (mode === 'paused' || mode === 'finalkillcam' || mode === 'photo') &&
+          !combatLoopsPaused
+        ) {
           sounds.pauseAmbience(true);
           sounds.pauseCombatLoops(true);
           combatLoopsPaused = true;
@@ -589,9 +695,7 @@ const loop = new GameLoop(
         // 毎フレームここから記録専用ティックを駆動する(物理/AI/スコアには触れない)。
         match.tickKillcamTrailing(dt);
         // スキップ: スペース / ゲームパッドの任意ボタン(クリックはロック解除中のため非対応)
-        const skipPressed =
-          input.wasPressed('jump') ||
-          input.consumePausePressed();
+        const skipPressed = input.wasPressed('jump') || input.consumePausePressed();
         const done = match.advanceFinalKillcam(dt) || skipPressed;
         // R53: ファイナルキルカムは三人称固定(R48)のためスコープ表示経路は撤去済み
         // (旧 match.fkScopeInfo 消費 → hud.updateFinalKillcam(flash, adsRatio, isScope))。

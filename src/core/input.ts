@@ -66,7 +66,8 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   streak7: ['Digit9'],
   interact: ['KeyE'],
   leanleft: ['KeyQ'],
-  leanright: ['KeyE'],
+  // Eは補給箱・ストーリー目標等の操作専用。右リーンとの同時発火を構造的に避ける。
+  leanright: ['KeyX'],
   ultimate: ['KeyF'],
   ult2: ['KeyB'], // 風神・極大手裏剣(fists装備時のみ)
   ult3: ['KeyN'], // 雷帝・神獣降臨(fists装備時のみ)
@@ -399,7 +400,11 @@ export class Input {
     this.gpMoveZ = -fin(applyCurve(ld.y, cfg.curve, cfg.exp)); // 上=前進=+
 
     // 右スティック → 視点(符号/感度/反転/ADS減速は match.frame で適用)
-    const rd = scaledRadialDeadzone(fin(gp.axes[AX.RX] ?? 0), fin(gp.axes[AX.RY] ?? 0), cfg.deadzone);
+    const rd = scaledRadialDeadzone(
+      fin(gp.axes[AX.RX] ?? 0),
+      fin(gp.axes[AX.RY] ?? 0),
+      cfg.deadzone,
+    );
     const cx = fin(applyCurve(rd.x, cfg.curve, cfg.exp));
     const cy = fin(applyCurve(rd.y, cfg.curve, cfg.exp));
     this.gpLookMag = Math.hypot(cx, cy);

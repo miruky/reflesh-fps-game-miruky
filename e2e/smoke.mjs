@@ -6,7 +6,7 @@
 
   使い方:
     node e2e/smoke.mjs                       # 旧UI(クラシック)を1280x720で検証
-    node e2e/smoke.mjs --ui2                 # ?ui2 の新UIを検証(未実装画面はSKIP)
+    node e2e/smoke.mjs --ui2                 # 既定の新UIを検証
     node e2e/smoke.mjs --viewport=1920x1080  # ビューポート指定
     node e2e/smoke.mjs --base=http://localhost:5173  # 起動済みサーバを使う(省略時はvite devを自動起動)
     UI2_SHOT_DIR=/path node e2e/smoke.mjs    # スクショ保存先(既定: e2e/.shots ※gitignore対象外に注意)
@@ -40,7 +40,7 @@ const WEAPON_IDS = Array.from(
 
 // ── セレクタ契約 ──────────────────────────────────────────
 // classic: 現行UI(src/ui)。ui2: ENZA v2(src/ui2)が満たすべき data-id 契約。
-// ui2側の画面が未実装(セレクタ不在)の場合、その画面のチェックはSKIPになる。
+// UI2の全画面は出荷契約。セレクタ不在は回帰としてFAILにする。
 const SELECTORS = {
   classic: {
     query: 'classic', // 既定=ui2へ反転済みのため、旧UIは ?classic で明示
@@ -48,11 +48,31 @@ const SELECTORS = {
     hudRoot: '#hud:not([hidden])',
     screens: [
       { id: 'menu-top', open: null, expect: '#mfd-panel-deploy' }, // 起動直後
-      { id: 'campaign', open: '.mfd-tab[data-page="campaign"]', expect: '#mfd-panel-campaign:not([hidden])' },
-      { id: 'armory', open: '.mfd-tab[data-page="armory"]', expect: '#mfd-panel-armory:not([hidden])' },
-      { id: 'intel', open: '.mfd-tab[data-page="intel"]', expect: '#mfd-panel-intel:not([hidden])' },
-      { id: 'system', open: '.mfd-tab[data-page="system"]', expect: '#mfd-panel-system:not([hidden])' },
-      { id: 'deploy', open: '.mfd-tab[data-page="deploy"]', expect: '#mfd-panel-deploy:not([hidden])' },
+      {
+        id: 'campaign',
+        open: '.mfd-tab[data-page="campaign"]',
+        expect: '#mfd-panel-campaign:not([hidden])',
+      },
+      {
+        id: 'armory',
+        open: '.mfd-tab[data-page="armory"]',
+        expect: '#mfd-panel-armory:not([hidden])',
+      },
+      {
+        id: 'intel',
+        open: '.mfd-tab[data-page="intel"]',
+        expect: '#mfd-panel-intel:not([hidden])',
+      },
+      {
+        id: 'system',
+        open: '.mfd-tab[data-page="system"]',
+        expect: '#mfd-panel-system:not([hidden])',
+      },
+      {
+        id: 'deploy',
+        open: '.mfd-tab[data-page="deploy"]',
+        expect: '#mfd-panel-deploy:not([hidden])',
+      },
     ],
     weaponList: '[data-id="weapons"]',
     weaponItem: '[data-id="weapons"] button:not([disabled])',
@@ -135,9 +155,7 @@ async function q(page, sel, timeout = 4000) {
 // スクロール検証: 対象コンテナ(なければ可視領域内の任意のスクロール可能要素)でwheel→scrollTop変化
 async function checkScroll(page, containerSel, label) {
   const target = await page.evaluate((sel) => {
-    const cands = sel
-      ? [document.querySelector(sel)]
-      : Array.from(document.querySelectorAll('*'));
+    const cands = sel ? [document.querySelector(sel)] : Array.from(document.querySelectorAll('*'));
     for (const el of cands) {
       if (!el) continue;
       const cs = getComputedStyle(el);
@@ -166,7 +184,6 @@ async function checkScroll(page, containerSel, label) {
   if (after > before) record(`scroll:${label}`, 'PASS', `scrollTop ${before}→${after}`);
   else record(`scroll:${label}`, 'FAIL', `wheelしてもscrollTop不変(${before})`);
 }
-
 
 // ui2: 既知状態(hub)へ戻す。画面表示中ならback-to-hubを押す。
 async function ensureHub(page) {
@@ -210,6 +227,27 @@ try {
   ctx.setDefaultTimeout(10_000);
   await ctx.addInitScript((weaponIds) => {
     if (!/^https?:$/.test(location.protocol)) return;
+    // Headless Chromium はユーザー操作から呼んでも Pointer Lock を拒否する環境がある。
+    // request/exitとpointerlockchangeの契約だけをE2E内で再現し、Inputのlockedゲート以降を
+    // 本番と同じDOM入力経路で検証する。ゲーム本体や配信バンドルには一切入らない。
+    let fakePointerLockElement = null;
+    try {
+      Object.defineProperty(document, 'pointerLockElement', {
+        configurable: true,
+        get: () => fakePointerLockElement,
+      });
+      Element.prototype.requestPointerLock = function requestPointerLockForSmoke() {
+        fakePointerLockElement = document.querySelector('#app canvas') ?? document.documentElement;
+        document.dispatchEvent(new Event('pointerlockchange'));
+        return Promise.resolve();
+      };
+      document.exitPointerLock = () => {
+        fakePointerLockElement = null;
+        document.dispatchEvent(new Event('pointerlockchange'));
+      };
+    } catch {
+      // APIの上書きを許さない実ブラウザではネイティブPointer Lockへフォールバックする。
+    }
     const weaponStats = Object.fromEntries(
       weaponIds.map((id) => [id, { kills: 9999, headshots: 9999 }]),
     );
@@ -223,7 +261,10 @@ try {
     if (m.type() === 'error') errors.push({ type: 'console', text: m.text().slice(0, 300) });
   });
   page.on('pageerror', (e) =>
-    errors.push({ type: 'pageerror', text: (String(e) + ' @ ' + String(e?.stack ?? '').split('\n')[1]).slice(0, 400) }),
+    errors.push({
+      type: 'pageerror',
+      text: (String(e) + ' @ ' + String(e?.stack ?? '').split('\n')[1]).slice(0, 400),
+    }),
   );
 
   const target = url + '/' + (S.query ? `?${S.query}` : '');
@@ -233,7 +274,7 @@ try {
   if (PROFILE === 'ui2') {
     const title = await q(page, S.titleRoot, 8000);
     if (!title) {
-      record('boot:title', 'SKIP', 'ui2タイトル未実装(title-root不在) — 以降のui2チェックをSKIP');
+      record('boot:title', 'FAIL', 'ui2タイトルが表示されない(title-root不在)');
     } else {
       record('boot:title', 'PASS');
       await shot(page, 'title');
@@ -256,7 +297,7 @@ try {
     if (scr.open) {
       const opener = await q(page, scr.open, 2500);
       if (!opener) {
-        record(`screen:${scr.id}`, PROFILE === 'ui2' ? 'SKIP' : 'FAIL', `オープナー不在 ${scr.open}`);
+        record(`screen:${scr.id}`, 'FAIL', `オープナー不在 ${scr.open}`);
         continue;
       }
       await opener.click();
@@ -309,8 +350,13 @@ try {
           ),
         S.weaponItem,
       );
-      record('armory:select', marked ? 'PASS' : 'WARN', marked ? `${items.length}武器/選択反映` : '選択状態のマークを検出できず(クラス規約差?)');
-    } else record('armory:select', PROFILE === 'ui2' ? 'FAIL' : 'WARN', `武器ボタン${items.length}個`);
+      record(
+        'armory:select',
+        marked ? 'PASS' : 'WARN',
+        marked ? `${items.length}武器/選択反映` : '選択状態のマークを検出できず(クラス規約差?)',
+      );
+    } else
+      record('armory:select', PROFILE === 'ui2' ? 'FAIL' : 'WARN', `武器ボタン${items.length}個`);
   });
 
   // 4) 出撃 → 試合開始 → ポーズ → 再開 → 退出
@@ -352,7 +398,11 @@ try {
               });
             }),
         );
-        record('deploy:launch', alive ? 'PASS' : 'FAIL', alive ? '試合開始+描画ループ稼働' : 'rAF停止');
+        record(
+          'deploy:launch',
+          alive ? 'PASS' : 'FAIL',
+          alive ? '試合開始+描画ループ稼働' : 'rAF停止',
+        );
         await page.waitForTimeout(1200); // 数十フレーム回す(エラー収集)
         await shot(page, 'hud-ingame');
         const diamondEquipped = await page.evaluate(() => {
@@ -370,6 +420,29 @@ try {
           diamondEquipped ? 'Diamond装備で実描画済み' : 'Diamond装備状態が失われた',
         );
 
+        // ダイヤは発砲時だけ点光源・加算フラッシュを専用減光する。静止描画だけでは
+        // 回帰を検出できないため、実WebGL/実入力経路で自動射撃を数発通し、描画継続と
+        // console/pageerrorの無発生を後段のconsole:cleanまで監視する。
+        const fireLocked = await page.evaluate(() => !!document.pointerLockElement);
+        if (fireLocked && diamondEquipped) {
+          try {
+            await page.locator('#app canvas').first().hover();
+            await page.mouse.down({ button: 'left' });
+            await page.waitForTimeout(260);
+            await shot(page, 'hud-diamond-firing');
+          } finally {
+            await page.mouse.up({ button: 'left' });
+          }
+          await page.waitForTimeout(120);
+          record('camo:diamond-fire', 'PASS', 'Diamondで実射撃・反射減光経路を通過');
+        } else {
+          record(
+            'camo:diamond-fire',
+            'FAIL',
+            fireLocked ? 'Diamond装備を確認できず' : '実射撃用pointer lockを取得できない',
+          );
+        }
+
         // ポーズ(ロック解除経由 — Escape合成キーはネイティブunlockを起こさないためexitPointerLock)
         const locked = await page.evaluate(() => !!document.pointerLockElement);
         if (locked) {
@@ -380,14 +453,22 @@ try {
         }
         const resume = await q(page, S.resume, 4000);
         if (!resume) {
-          record('pause', locked ? 'FAIL' : 'SKIP', locked ? 'ロック解除してもポーズにならない' : 'pointer lock非対応環境のためポーズ経路を踏めず');
+          record(
+            'pause',
+            'FAIL',
+            locked ? 'ロック解除してもポーズにならない' : 'ポーズ経路を実行できない',
+          );
         } else {
           record('pause', 'PASS');
           await shot(page, 'pause');
           await resume.click();
           await page.waitForTimeout(600);
           const paused = await page.$(S.resume + ':visible');
-          record('pause:resume', paused === null ? 'PASS' : 'WARN', paused === null ? '' : '再開後もポーズ画面が見える');
+          record(
+            'pause:resume',
+            paused === null ? 'PASS' : 'WARN',
+            paused === null ? '' : '再開後もポーズ画面が見える',
+          );
           // 再度ポーズ→退出
           const locked2 = await page.evaluate(() => !!document.pointerLockElement);
           if (locked2) await page.evaluate(() => document.exitPointerLock());
@@ -396,7 +477,7 @@ try {
             await quit.click();
             const menuBack = await q(page, PROFILE === 'ui2' ? S.hubRoot : S.menuRoot, 6000);
             record('quit→menu', menuBack ? 'PASS' : 'FAIL');
-          } else record('quit→menu', 'SKIP', 'quitに到達できず');
+          } else record('quit→menu', 'FAIL', 'quitに到達できず');
         }
       }
     }
@@ -446,7 +527,8 @@ try {
   // 6) コンソール/ページエラー(環境既知のpointer lock失敗は許容)
   const ENV_ALLOW = [/pointer lock/i, /WrongDocumentError/];
   const realErrors = errors.filter((e) => !ENV_ALLOW.some((re) => re.test(e.text)));
-  if (realErrors.length === 0) record('console:clean', 'PASS', errors.length ? `環境既知${errors.length}件は許容` : '');
+  if (realErrors.length === 0)
+    record('console:clean', 'PASS', errors.length ? `環境既知${errors.length}件は許容` : '');
   else {
     record('console:clean', 'FAIL', `${realErrors.length}件`);
     for (const e of realErrors.slice(0, 10)) console.log(`   ${e.type}: ${e.text}`);
@@ -458,5 +540,7 @@ try {
 
 // ── 集計 ──────────────────────────────────────────────────
 const n = (s) => results.filter((r) => r.status === s).length;
-console.log(`\n== ${PROFILE}/${VIEWPORT}: PASS ${n('PASS')} / FAIL ${n('FAIL')} / WARN ${n('WARN')} / SKIP ${n('SKIP')} ==`);
+console.log(
+  `\n== ${PROFILE}/${VIEWPORT}: PASS ${n('PASS')} / FAIL ${n('FAIL')} / WARN ${n('WARN')} / SKIP ${n('SKIP')} ==`,
+);
 process.exit(n('FAIL') > 0 ? 1 : 0);

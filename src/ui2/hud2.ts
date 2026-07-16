@@ -1,54 +1,27 @@
 import './hud2.css'; // W-ENZA2: 焔座HUDクローム(mock05正典)
 import '../ui/rogue.css'; // 輪廻HUD(計器サブシステムは旧CSSペアを温存)
 import '../mk3-phase2.css'; // キルカム武器バナー/フォト(同上)
-import { RADAR_RANGE_M, RETICLE_COLORS } from '../core/settings';
+import { RADAR_RANGE_M } from '../core/settings';
 import type * as THREE from 'three';
 import type { MatchSnapshot } from '../game/match-types';
-import { MOVE_SPEEDS } from '../game/player';
-import { SUPPRESS_BADGE, ALWAYS_BADGE, medalRank, starPoints, type MedalEvent, type MedalId } from '../game/medals';
-import type { PowerUpKind } from '../game/zombie-economy';
+import { Hud } from '../ui/hud';
 import { GG_LADDER } from '../game/modes';
 import {
-  DETECT_ARC_LEN,
-  POWERUP_CHIP_SPECS,
-  RADIO_SPEAKER_NAMES,
-  SND_WIN_TARGET,
-  bossPhasePipStates,
   chargeArcDashoffset,
   clampN,
-  clampPapTier,
-  crosshairAdsFade,
   deriveEmperorState,
-  detectMeterBlinking,
-  detectMeterTier,
   emperorThemeAttr,
   emptyMomentQueue,
-  isPowerUpBlinking,
   isSpecialRoundEntering,
-  isZombieRepeatBadgeMuted,
   momentTone,
   momentWatermark,
-  radioSpeakerColor,
-  sndPhaseLabel,
-  sndPipStates,
-  sndProgressLabel,
-  splitDamageNumbersForFrame,
   stepCalmLatch,
   stepMomentQueue,
-  type CalmLatchState,
   type EmperorState,
   type Mk3Snapshot,
-  type MomentQueueState,
   type R53W2Snapshot,
 } from '../ui/hud-model';
 export * from '../ui/hud-model';
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-// レティクル色IDをCSS色へ。未知IDはアクセント色に追従
-function reticleColorValue(id: string): string {
-  return RETICLE_COLORS.find((c) => c.id === id)?.value ?? 'var(--accent)';
-}
 
 // ゾンビモード中は同じ実績を何度も再達成するため、目立つバッジ通知(中央カード)が煩わしくなる。
 // 再達成(firstUnlock=false)のみ抑止し、左フィード(pushMedalText)の軽量表示は残す。
@@ -62,39 +35,6 @@ function reticleColorValue(id: string): string {
 // 1個の集約バッジ(「+N KILLS」or「+合計ダメージ」)にまとめる(情報は消さず集約する)。
 type Project = (world: THREE.Vector3) => { x: number; y: number; behind: boolean };
 
-// ダメージ数値ノードのクラス名(kind別の色/サイズ段階)。個別ノード・集約ノード両方で共有する
-function dmgNumClass(kind: string): string {
-  return kind === 'kill'
-    ? 'hud-dmg-num hud-dmg-num--kill'
-    : kind === 'head'
-      ? 'hud-dmg-num hud-dmg-num--head'
-      : 'hud-dmg-num';
-}
-
-// 正多角形(頂点を真上に向ける)のSVG points文字列。バッジの六角/八角に使う
-function ngonPoints(cx: number, cy: number, n: number, r: number): string {
-  const pts: string[] = [];
-  for (let i = 0; i < n; i += 1) {
-    const a = (2 * Math.PI * i) / n - Math.PI / 2;
-    pts.push(`${(cx + r * Math.cos(a)).toFixed(1)},${(cy + r * Math.sin(a)).toFixed(1)}`);
-  }
-  return pts.join(' ');
-}
-
-// バッジ中央のアイコン(階級ごと)。crosshair/chevron/star/bolt
-function badgeIcon(tier: MedalEvent['tier']): string {
-  if (tier === 'bronze') {
-    return '<circle cx="60" cy="60" r="15"/><line x1="60" y1="37" x2="60" y2="83"/><line x1="37" y1="60" x2="83" y2="60"/>';
-  }
-  if (tier === 'silver') {
-    return '<polyline points="44,66 60,52 76,66"/><polyline points="44,80 60,66 76,80"/>';
-  }
-  if (tier === 'gold') {
-    return `<polygon points="${starPoints(60, 60, 5, 17, 7)}" fill="#fff" stroke="none"/>`;
-  }
-  return '<polyline points="65,36 49,62 60,62 55,84 75,56 64,56 65,36"/>';
-}
-
 const DIRECTIONS: Array<[number, string]> = [
   [0, '北'],
   [45, '北東'],
@@ -107,108 +47,14 @@ const DIRECTIONS: Array<[number, string]> = [
 ];
 
 const FEED_LIFETIME_MS = 4200;
-const PX_PER_DEG = 2.2;
 // ハードポイント/KC ミニマップ描画: ゾーン半径(match.tsの ZONE_RADIUS=3.5 と合わせる)
 const ZONE_R = 3.5;
-
-// ── R21 マルチキルバナー ──────────────────────────────────────────────────────────────────
-// マルチキル系メダルID(これらはバナーへルーティングし、pushMedalText/pushBadgeを出さない)
-// 既存8 + チェーン拡張8 = 16件
-const MULTI_KILL_IDS: ReadonlySet<MedalId> = new Set<MedalId>([
-  'double-kill', 'triple-kill', 'fury-kill', 'frenzy-kill',
-  'super-kill', 'mega-kill', 'ultra-kill', 'kill-chain',
-  'chain-10', 'chain-12', 'chain-15', 'chain-18',
-  'chain-20', 'chain-25', 'chain-30', 'chain-35',
-]);
-
-type MkCfg = {
-  pips: number;
-  color: string;
-  slamScale: number; // スラムインの強度(scale 値, 大きいほど強い)
-  chromaPx: number;  // クロマ収差のtext-shadowずれ幅(px)
-  lifetimeMs: number; // バナー表示時間(ms)
-};
-
-// 段ごとの迫力設定: white→blue→orange→red→gold へ段階的に色/強度が上がる
-const MK_CFG: Partial<Record<MedalId, MkCfg>> = {
-  'double-kill':  { pips: 2, color: '#eef2f6', slamScale: 1.20, chromaPx: 0,   lifetimeMs: 2200 },
-  'triple-kill':  { pips: 3, color: '#4ea8ff', slamScale: 1.25, chromaPx: 0.8, lifetimeMs: 2200 },
-  'fury-kill':    { pips: 4, color: '#ff9a3c', slamScale: 1.30, chromaPx: 1.4, lifetimeMs: 2400 },
-  'frenzy-kill':  { pips: 5, color: '#ff5a3c', slamScale: 1.35, chromaPx: 2.0, lifetimeMs: 2600 },
-  'super-kill':   { pips: 6, color: '#ff3a2c', slamScale: 1.38, chromaPx: 2.3, lifetimeMs: 2800 },
-  'mega-kill':    { pips: 7, color: '#ffcf4d', slamScale: 1.40, chromaPx: 2.5, lifetimeMs: 3000 },
-  'ultra-kill':   { pips: 8, color: '#ffcf4d', slamScale: 1.40, chromaPx: 2.5, lifetimeMs: 3200 },
-  'kill-chain':   { pips: 9,  color: '#ffd700', slamScale: 1.40, chromaPx: 3.0, lifetimeMs: 3600 },
-  // L: チェーン拡張(chain-10~chain-35 はバナーへ)
-  'chain-10': { pips: 10, color: '#ffd700', slamScale: 1.42, chromaPx: 3.0, lifetimeMs: 3800 },
-  'chain-12': { pips: 12, color: '#ffd700', slamScale: 1.43, chromaPx: 3.2, lifetimeMs: 4000 },
-  'chain-15': { pips: 15, color: '#e0c0ff', slamScale: 1.44, chromaPx: 3.5, lifetimeMs: 4200 },
-  'chain-18': { pips: 18, color: '#e0c0ff', slamScale: 1.45, chromaPx: 3.8, lifetimeMs: 4500 },
-  'chain-20': { pips: 20, color: '#c0a0ff', slamScale: 1.46, chromaPx: 4.0, lifetimeMs: 4800 },
-  'chain-25': { pips: 25, color: '#c0a0ff', slamScale: 1.47, chromaPx: 4.2, lifetimeMs: 5000 },
-  'chain-30': { pips: 30, color: '#ff80ff', slamScale: 1.48, chromaPx: 4.5, lifetimeMs: 5200 },
-  'chain-35': { pips: 35, color: '#ff80ff', slamScale: 1.48, chromaPx: 4.8, lifetimeMs: 5500 },
-};
 
 // 円形HPリングの可視弧長。r=38 の円周(2π·38≈238.76)の 240°/360°=2/3 が見える弧。
 // stroke-dasharray '159.17 238.76' と対で使い、offset=ARC*(1-hp比) で満欠を描く。
 // (旧HPリング弧長 159.17 はセグメントバー化で撤去 — mock05)
 
-export class Hud2 {
-  private readonly el: Record<string, HTMLElement> = {};
-  private compassMarks: Array<{ bearing: number; el: HTMLElement }> = [];
-  private lastStreak = 0;
-  private lastMoveState = '';
-  private lastUltActive = false; // オーバードライブ発動の立ち上がり検出用
-  private scopeOn = false; // スコープ表示の立ち上がり検出用
-  private wasSteady = false; // 息止め成立の立ち上がり検出用(集中グリント再発火)
-  // R55 W-C3 [24]: ガンゲームのランクアップ/セットバック・フラッシュ用タイマーハンドル。
-  // 連続発火時に個別ハンドルで管理し、他イベントのタイマーに巻き込まれて早期消灯しないようにする
-  private ggFlashTimerId = 0;
-  private ggSetbackTimerId = 0;
-  private badgeSeq = 0; // バッジSVGの一意ID用カウンタ(gradient/filterのid衝突回避)
-  private readonly badgeQueue: MedalEvent[] = []; // ALWAYS_BADGE複数同時→500ms間隔キュー
-  private badgeQueueTimer = 0;
-  private lastHpOff = ''; // HPリングの stroke-dashoffset 直近書込み値(無変化フレームの書込み抑止)
-  private lastPipMag = -1; // 弾ピップの生成済み本数(=装弾数)。変化時のみ作り直す
-  private lastPipAmmo = -1; // 弾ピップの点灯本数(=残弾)。変化時のみ点灯を更新
-  private lastZombiePerks: string = '';
-  // ── R21 マルチキルバナー ──
-  private mkBannerMs = 0;   // Date.now() at last multi-kill banner show(upgrade window 判定用)
-  private mkTimerId = 0;    // setTimeout handle(自動消去・中断再設定用)
-  // R55 W-C6 [9]: キルコンファーム CONFIRMED/DENIED バナー(単一要素使い回し)の消去タイマー。
-  // mkTimerId と同じ流儀で個別ハンドル管理し、連続発火時の早期消灯/状態漏れを防ぐ
-  private kcEventTimerId = 0;
-  private kcEventOutTimerId = 0;
-  // ── BO2 ミニマップ ──
-  private minimapCtx: CanvasRenderingContext2D | null = null;
-  private minimapStageSize = 60;
-  private minimapBoxes: Array<{ x: number; z: number; w: number; d: number; handle?: number }> = [];
-  // ── ファイナルキルカム: body 直下の独立オーバーレイ(hud.hide() の影響を受けない) ──
-  private readonly fkcRoot: HTMLElement;
-  private readonly fkcFlashEl: HTMLElement;
-  private readonly fkcWeaponEl: HTMLElement; // R54-F7: シネマ帯下部の「武器名 — 距離m」バナー
-  // ── R53-W2: PaP pips / パワーアップ / 特殊ラウンド / 無線字幕 / 検知 / ボスpips / S&D ──
-  private lastPapTier = -1; // PaPピップの生成済み段数(変化時のみ作り直す)
-  private lastPowerUpKey = ''; // アクティブなkind集合のキー(変化時のみDOM再構築)
-  private readonly powerUpEls = new Map<PowerUpKind, { root: HTMLElement; timeEl: HTMLElement }>();
-  private lastSpecialRound: 'rush' | null | undefined; // 前フレームのspecialRound(rush突入エッジ検出用)
-  private lastRadioLine: string | null = null; // 話者+本文のキー(変化検出、null=非表示)
-  private lastBossPhaseTotal = -1; // ボスフェーズpipsの生成済み総数(変化時のみ作り直す)
-  private lastSndPipTarget = -1; // S&D先取ピップの生成済み本数(変化時のみ作り直す)
-  // ── R53-W3 MK.III: Adaptive Presence / モーメント / 帝王プレゼンス / チャージ弧 ──
-  private mk3Calm: CalmLatchState = { calm: false, quietS: 0 };
-  private mk3CalmApplied = false; // data-calm の直近書込み状態(変化フレームのみdataset書換)
-  private mk3PrevT: number | null = null; // hud.updateはdtを受け取らないため実時間で刻む
-  private mk3Moments: MomentQueueState = emptyMomentQueue();
-  private mk3CountUpTarget: number | null = null; // 数値タイトルのカウントアップ対象(表示前半0.5s)
-  private mk3EmperorApplied = ''; // 帝王枠 data-state の直近値(変化時のみ書換)
-  private mk3ArcVisible = false;
-  private mk3LastArcOffset = ''; // チャージ弧 dashoffset の直近書込み(無変化スキップ)
-
-  constructor(private readonly root: HTMLElement) {
-    root.classList.add('u2-hud');
-    root.innerHTML = `
+const HUD2_MARKUP = `
       <!-- ════ 焔座HUD(mock05正典) クローム層 ════ -->
       <!-- 上中央: コンパス帯(万線目盛+漢字方位)+針+度数 -->
       <div class="u2h-compass-wrap" aria-hidden="true">
@@ -524,12 +370,16 @@ export class Hud2 {
       <div class="u2h-streaks" aria-hidden="true">
         <div class="u2h-ss-next" data-id="bo2ssnext"></div>
         <div class="u2h-ss-cauav" data-id="bo2cauav" hidden>COUNTER UAV <span data-id="bo2cauavt">30</span>s</div>
-        ${[0,1,2,3,4,5,6].map((i) => `
+        ${[0, 1, 2, 3, 4, 5, 6]
+          .map(
+            (i) => `
         <div class="u2h-ss-slot" data-id="bo2slot${i}">
-          <span class="u2h-ss-key">${3+i}</span>
+          <span class="u2h-ss-key">${3 + i}</span>
           <span class="u2h-ss-icon" data-id="bo2icon${i}"></span>
           <span class="u2h-ss-name" data-id="bo2name${i}"></span>
-        </div>`).join('')}
+        </div>`,
+          )
+          .join('')}
       </div>
       <div class="hud-rcxd-overlay" data-id="rcxdoverlay" hidden>
         <div class="hud-rcxd-label">RC-XD</div>
@@ -633,43 +483,21 @@ export class Hud2 {
       <div class="hud-zrevive-flash" data-id="zreviveflash"></div>
       <div class="hud-zboss-flash" data-id="zbossflash"></div>
     `;
-    root.querySelectorAll<HTMLElement>('[data-id]').forEach((node) => {
-      this.el[node.dataset.id ?? ''] = node;
-    });
-    this.buildCompass();
-    this.buildScope();
-    this.buildRadar();
-    // スコープの暗い周辺マスクが上のスコア/キルフィードを暗く沈めないよう、
-    // スコープを最前(=描画最背面)へ移し、他のHUDがマスクの上に描かれるようにする
-    const scopeEl = this.el['scope'];
-    if (scopeEl) this.root.insertBefore(scopeEl, this.root.firstChild);
 
-    // ── ファイナルキルカム オーバーレイ: body 直下へ追加(hud.hide() に影響されない) ──
-    this.fkcRoot = document.createElement('div');
-    this.fkcRoot.className = 'hud-fkc';
-    this.fkcRoot.setAttribute('aria-hidden', 'true');
-    this.fkcRoot.innerHTML = `
-      <div class="hud-fkc-flash"></div>
-      <div class="hud-fkc-bar hud-fkc-bar-t"></div>
-      <div class="hud-fkc-bar hud-fkc-bar-b"></div>
-      <div class="hud-fkc-banner">
-        <span class="hud-fkc-hairline"></span>
-        <span class="hud-fkc-label"><span class="hud-fkc-scan"></span>FINAL KILLCAM</span>
-        <span class="hud-fkc-hairline"></span>
-      </div>
-      <div class="hud-fkc-skip">SKIP : SPACE / Ⓐ</div>
-      <div class="p2-fkc-weapon" hidden></div>
-    `;
-    document.body.appendChild(this.fkcRoot);
-    this.fkcFlashEl = this.fkcRoot.querySelector('.hud-fkc-flash') as HTMLElement;
-    this.fkcWeaponEl = this.fkcRoot.querySelector('.p2-fkc-weapon') as HTMLElement;
+export class Hud2 extends Hud {
+  constructor(root: HTMLElement) {
+    super(root, { className: 'u2-hud', markup: HUD2_MARKUP });
   }
 
-  /**
-   * ミニマップを一度だけセットアップする(試合開始時に main.ts から呼ぶ)。
-   * ステージのボックスデータを保持し、毎フレーム drawMinimap() で直接描画する。
-   */
-  setupMinimap(
+  private ggFlashTimerId = 0;
+
+  private ggSetbackTimerId = 0;
+
+  private kcEventTimerId = 0;
+
+  private kcEventOutTimerId = 0;
+
+  override setupMinimap(
     boxes: ReadonlyArray<{ x: number; z: number; w: number; d: number }>,
     stageSize: number,
   ): void {
@@ -684,33 +512,7 @@ export class Hud2 {
     }
   }
 
-  // スコープのミルティックを #sc-marks に追加する。<use>が2回参照するので
-  // ハロー(暗縁)とコア(白)の両方へ自動的に描かれる
-  private buildScope(): void {
-    const marks = this.root.querySelector('#sc-marks');
-    if (!marks) return;
-    const TICKS: ReadonlyArray<[number, number]> = [
-      [16, 2.4],
-      [32, 1.8],
-      [48, 1.2],
-    ];
-    const line = (x1: number, y1: number, x2: number, y2: number): void => {
-      const el = document.createElementNS(SVG_NS, 'line');
-      el.setAttribute('x1', String(x1));
-      el.setAttribute('y1', String(y1));
-      el.setAttribute('x2', String(x2));
-      el.setAttribute('y2', String(y2));
-      marks.appendChild(el);
-    };
-    for (const [r, h] of TICKS) {
-      line(r, -h, r, h); // 右腕
-      line(-r, -h, -r, h); // 左腕
-      line(-h, r, h, r); // 下腕
-      line(-h, -r, h, -r); // 上腕
-    }
-  }
-
-  private buildCompass(): void {
+  protected override buildCompass(): void {
     const strip = this.el['compass'];
     if (!strip) return;
     this.compassMarks = DIRECTIONS.map(([bearing, label]) => {
@@ -722,11 +524,7 @@ export class Hud2 {
     });
   }
 
-  show(): void {
-    this.root.hidden = false;
-  }
-
-  hide(): void {
+  override hide(): void {
     this.root.hidden = true;
     // 帝王転調テーマの解除(三重保証その2)
     delete document.documentElement.dataset.emperor;
@@ -736,7 +534,7 @@ export class Hud2 {
     this.mk3EmperorApplied = '';
   }
 
-  reset(): void {
+  override reset(): void {
     const feed = this.el['feed'];
     if (feed) feed.innerHTML = '';
     const dmg = this.el['dmg'];
@@ -748,8 +546,14 @@ export class Hud2 {
     this.wasSteady = false;
     this.lastZombiePerks = '';
     // ガンゲームのランクアップ/セットバック・フラッシュタイマーも前試合から持ち越さない
-    if (this.ggFlashTimerId) { window.clearTimeout(this.ggFlashTimerId); this.ggFlashTimerId = 0; }
-    if (this.ggSetbackTimerId) { window.clearTimeout(this.ggSetbackTimerId); this.ggSetbackTimerId = 0; }
+    if (this.ggFlashTimerId) {
+      window.clearTimeout(this.ggFlashTimerId);
+      this.ggFlashTimerId = 0;
+    }
+    if (this.ggSetbackTimerId) {
+      window.clearTimeout(this.ggSetbackTimerId);
+      this.ggSetbackTimerId = 0;
+    }
     // ★W4C C-1: MK.III状態の完全リセット。前試合の終了間際に発行されたモーメント
     // (キュー上限4件)が次試合の開幕へ流出するのを根治する
     this.mk3Moments = emptyMomentQueue();
@@ -770,9 +574,15 @@ export class Hud2 {
     const mk3arc = this.el['mk3arc'];
     if (mk3arc) mk3arc.hidden = true;
     const zperks = this.el['zperks'];
-    if (zperks) { zperks.innerHTML = ''; zperks.hidden = true; }
+    if (zperks) {
+      zperks.innerHTML = '';
+      zperks.hidden = true;
+    }
     const zbuy = this.el['zbuy'];
-    if (zbuy) { zbuy.hidden = true; zbuy.textContent = ''; }
+    if (zbuy) {
+      zbuy.hidden = true;
+      zbuy.textContent = '';
+    }
     const deEl = this.el['darkemperor'];
     if (deEl) deEl.hidden = true;
     const raiteiEl = this.el['raitei'];
@@ -784,7 +594,10 @@ export class Hud2 {
     const spinEl = this.el['spingauge'];
     if (spinEl) spinEl.hidden = true;
     // R21 マルチキルバナーのリセット(前試合の残表示・タイマーを完全クリア)
-    if (this.mkTimerId) { window.clearTimeout(this.mkTimerId); this.mkTimerId = 0; }
+    if (this.mkTimerId) {
+      window.clearTimeout(this.mkTimerId);
+      this.mkTimerId = 0;
+    }
     this.mkBannerMs = 0;
     const mkbanner = this.el['mkbanner'];
     if (mkbanner) {
@@ -792,8 +605,14 @@ export class Hud2 {
       mkbanner.classList.remove('mk-enter', 'mk-punch', 'mk-exit');
     }
     // R55 W-C6 [9]: キルコンファームバナーのリセット(前試合の残表示・タイマーを完全クリア)
-    if (this.kcEventTimerId) { window.clearTimeout(this.kcEventTimerId); this.kcEventTimerId = 0; }
-    if (this.kcEventOutTimerId) { window.clearTimeout(this.kcEventOutTimerId); this.kcEventOutTimerId = 0; }
+    if (this.kcEventTimerId) {
+      window.clearTimeout(this.kcEventTimerId);
+      this.kcEventTimerId = 0;
+    }
+    if (this.kcEventOutTimerId) {
+      window.clearTimeout(this.kcEventOutTimerId);
+      this.kcEventOutTimerId = 0;
+    }
     const kcEventEl = this.el['kcevent'];
     if (kcEventEl) {
       kcEventEl.hidden = true;
@@ -819,7 +638,10 @@ export class Hud2 {
     if (medalStack) medalStack.innerHTML = '';
     // バッジキューリセット
     this.badgeQueue.length = 0;
-    if (this.badgeQueueTimer) { window.clearInterval(this.badgeQueueTimer); this.badgeQueueTimer = 0; }
+    if (this.badgeQueueTimer) {
+      window.clearInterval(this.badgeQueueTimer);
+      this.badgeQueueTimer = 0;
+    }
     // ミニマップ: 試合ごとにクリア(前試合のキャッシュを持ち越さない)
     if (this.minimapCtx) {
       const c = this.el['minimap'] as HTMLCanvasElement | undefined;
@@ -850,13 +672,16 @@ export class Hud2 {
     if (detect) detect.hidden = true;
     this.lastBossPhaseTotal = -1;
     const bossphases = this.el['bossphases'];
-    if (bossphases) { bossphases.innerHTML = ''; bossphases.hidden = true; }
+    if (bossphases) {
+      bossphases.innerHTML = '';
+      bossphases.hidden = true;
+    }
     this.lastSndPipTarget = -1;
     const snd = this.el['snd'];
     if (snd) snd.hidden = true;
   }
 
-  update(
+  override update(
     snap: MatchSnapshot,
     width: number,
     height: number,
@@ -913,7 +738,7 @@ export class Hud2 {
     if (minimapEl) minimapEl.hidden = inZombie || inTraining;
     const timerEl = this.el['timer'];
     if (timerEl && timerEl.parentElement) {
-      (timerEl.parentElement as HTMLElement).style.display = (inZombie || inTraining) ? 'none' : '';
+      (timerEl.parentElement as HTMLElement).style.display = inZombie || inTraining ? 'none' : '';
     }
     const zplate = this.el['zpointsplate'];
     if (zplate) zplate.hidden = !inZombie;
@@ -984,57 +809,10 @@ export class Hud2 {
     }
   }
 
-  // ── R54-F5 輪廻: バッジ+供物選択パネル(snap.rogue消費。undefined=完全非表示) ──
-  private rogueOptionsSig = ''; // 選択肢の再構築判定(毎フレームのinnerHTML再構築を避ける)
-  private updateRogue(rogue: MatchSnapshot['rogue']): void {
-    const badge = this.el['rogue-badge'];
-    if (badge) {
-      badge.hidden = rogue === undefined;
-      if (rogue) this.text('rogue-cards-n', String(rogue.cards.length));
-    }
-    const panel = this.el['rogue-pick'];
-    if (!panel) return;
-    const pick = rogue?.pick;
-    panel.hidden = pick === undefined;
-    if (!pick) {
-      this.rogueOptionsSig = '';
-      return;
-    }
-    const sig = pick.options.map((o) => o.id).join(',');
-    if (sig !== this.rogueOptionsSig) {
-      this.rogueOptionsSig = sig;
-      const wrap = this.el['rogue-options'];
-      if (wrap) {
-        const rarityJa = { common: '常', rare: '稀', epic: '極' } as Record<string, string>;
-        wrap.innerHTML = pick.options
-          .map(
-            (o) => `
-          <div class="rogue-card rogue-card--${o.rarity}">
-            <span class="rogue-card-rarity">${rarityJa[o.rarity] ?? '常'}</span>
-            <strong>${o.name}</strong>
-            <small>${o.desc}</small>
-          </div>`,
-          )
-          .join('');
-      }
-    }
-    this.text('rogue-remain', String(Math.max(0, Math.ceil(pick.remainS))));
-  }
-
-  private text(id: string, value: string): void {
-    const node = this.el[id];
-    if (node && node.textContent !== value) node.textContent = value;
-  }
-
-  // 先取スコアラベルの共通整形。無限先取(zombie等)では target が Infinity のため
-  // 生文字列化すると '先取 Infinity' の壊れ表示になる — 有限のときだけ出す。
   private formatScoreGoal(scoreTarget: number): string {
     return Number.isFinite(scoreTarget) ? `先取 ${scoreTarget}` : '';
   }
 
-  // R55 W-C2: teamscore(mine/enemy診断セル)とscoretarget(先取ラベル)はDOM上は
-  // 兄弟の別要素(clip-path回避でwrap直下へ分離済み)だが、常に同じ条件で出し分けるため
-  // hidden切替を一箇所へ集約する(呼び出し漏れによる「片方だけ残る」退行を防ぐ)。
   private setTeamscoreHidden(hidden: boolean): void {
     const teamscore = this.el['teamscore'];
     if (teamscore) teamscore.hidden = hidden;
@@ -1042,117 +820,7 @@ export class Hud2 {
     if (target) target.hidden = hidden;
   }
 
-  private updateCompass(yaw: number, _width: number): void {
-    const headingDeg = ((-yaw * 180) / Math.PI + 360 * 4) % 360;
-    // コンパス帯のmask外に置いた数値方位(3桁ゼロ詰め・360°は0°へ丸め込む)
-    this.text('hdg', String(Math.round(headingDeg) % 360).padStart(3, '0'));
-    for (const mark of this.compassMarks) {
-      const relative = ((mark.bearing - headingDeg + 540) % 360) - 180;
-      const visible = Math.abs(relative) <= 65;
-      mark.el.style.opacity = visible ? '1' : '0';
-      if (visible) {
-        // ラベル自身の幅の半分を引いて文字の中心を目盛り位置に合わせる
-        mark.el.style.transform = `translateX(${relative * PX_PER_DEG}px) translateX(-50%)`;
-      }
-    }
-  }
-
-  private updateCrosshair(snap: MatchSnapshot, height: number): void {
-    const crosshair = this.el['crosshair'];
-    if (!crosshair) return;
-    // 形状・色はユーザー設定に追従(腰だめクロスヘア)
-    if (crosshair.dataset.reticle !== snap.reticleStyle) {
-      crosshair.dataset.reticle = snap.reticleStyle;
-    }
-    crosshair.style.setProperty('--reticle-color', reticleColorValue(snap.reticleColor));
-    // R53 T6: adsKeepsCrosshair=true の武器はADS中も腰だめクロスヘアをフルで維持する
-    // (擬似要素レティクル消し込み用の--adsと、4本バーのbarOpacityの両方を凍結する。
-    // スコープ/倍率光学の全消し=下のscopedWeapon分岐は対象外・従来どおり)
-    const fade = crosshairAdsFade(snap.adsProgress, snap.adsKeepsCrosshair === true);
-    // 覗き込み量を毎フレーム公開。CSS側で circle/chevron 擬似要素レティクルを
-    // ADS進行に応じて消し込む(barはJSのopacityで消えるが擬似要素は非対象なため)。
-    crosshair.style.setProperty('--ads', String(fade.adsVar));
-    if (!snap.alive) {
-      crosshair.style.opacity = '0';
-      return;
-    }
-    // スコープ/倍率光学の覗き込み中はDOMスコープに任せ、通常クロスヘアは丸ごと消す
-    // (.ch-dotはバー不透明度の影響を受けないため、コンテナごと0にする)
-    if ((snap.scopedWeapon || snap.adsOpticActive) && snap.adsProgress > 0.5) {
-      crosshair.style.opacity = '0';
-      return;
-    }
-    crosshair.style.opacity = '1';
-    const fovRad = (snap.fov * Math.PI) / 180;
-    const gap = 4 + (Math.tan(snap.spreadRad) / Math.tan(fovRad / 2)) * (height / 2);
-    // ADS序盤で4本バーを素早く消す(係数2.5=ads≈0.4で消灯)。keepsCrosshairの武器は消さない。
-    const barOpacity = String(fade.barOpacity);
-    const set = (id: string, transform: string) => {
-      const bar = this.el[id];
-      if (bar) {
-        bar.style.transform = transform;
-        bar.style.opacity = barOpacity;
-      }
-    };
-    set('cht', `translate(-50%, ${-gap - 9}px)`);
-    set('chb', `translate(-50%, ${gap}px)`);
-    set('chl', `translate(${-gap - 9}px, -50%)`);
-    set('chr', `translate(${gap}px, -50%)`);
-  }
-
-  // DSR風スコープ。adsProgress 0.5→1で開き、ピン留めの照準点は常に中央=弾着点。
-  // 揺れはフレーム/グラスの視差にのみ使う(reduceMotion時は無効)
-  private updateScope(snap: MatchSnapshot, width: number, height: number): void {
-    const scope = this.el['scope'];
-    if (!scope) return;
-    const t = clampN((snap.adsProgress - 0.5) / 0.5, 0, 1);
-    // R13: ネイティブ狙撃(scopedWeapon)に加え、後付け倍率光学(adsOpticActive)でもオーバーレイを開く
-    const on = snap.alive && (snap.scopedWeapon || snap.adsOpticActive) && t > 0;
-    scope.hidden = !on;
-    if (!on) {
-      this.scopeOn = false;
-      this.wasSteady = false;
-      return;
-    }
-    // レティクル種別と光学クラス(native=全画面暗転 / magnified=後付け光学は軽量オーバーレイで
-    // ビューモデルを残す)を data属性で公開。CSSが厳密に1レティクルだけ可視化+暗転量を切替
-    if (scope.dataset.reticle !== snap.sightStyle) scope.dataset.reticle = snap.sightStyle;
-    const opticClass = snap.scopedWeapon ? 'native' : 'magnified';
-    if (scope.dataset.opticClass !== opticClass) scope.dataset.opticClass = opticClass;
-    scope.style.opacity = String(t);
-    scope.style.setProperty('--in', String(t));
-    scope.style.setProperty('--conv', String(1 - t));
-    scope.style.setProperty('--scope-reticle', reticleColorValue(snap.reticleColor));
-    scope.style.setProperty('--breath', String(snap.scope.breath01));
-
-    const lens = Math.min(width, height);
-    const fovRad = (snap.fov * Math.PI) / 180;
-    const pxPerDeg = ((lens / 2) * (Math.PI / 180)) / Math.tan(fovRad / 2);
-    const cap = lens * 0.025;
-    const swx = snap.reduceMotion ? 0 : clampN(snap.scope.sway.x * pxPerDeg, -cap, cap);
-    const swy = snap.reduceMotion ? 0 : clampN(snap.scope.sway.y * pxPerDeg, -cap, cap);
-    scope.style.setProperty('--swx', `${swx}px`);
-    scope.style.setProperty('--swy', `${swy}px`);
-
-    scope.classList.toggle('steady', snap.scope.steady);
-    scope.classList.toggle('engaged', snap.aimAssistEngaged);
-    scope.classList.toggle('reduced', snap.reduceMotion);
-
-    // 立ち上がり(覗き込み開始)でレンズグリント
-    if (!this.scopeOn) {
-      if (!snap.reduceMotion) this.restartAnimation('scopeglint', 'show');
-      this.scopeOn = true;
-    }
-    // 息止め成立の瞬間にもグリントを再発火し「集中した」手応えを返す
-    if (snap.scope.steady && !this.wasSteady && !snap.reduceMotion) {
-      this.restartAnimation('scopeglint', 'show');
-    }
-    this.wasSteady = snap.scope.steady;
-    this.text('scoperange', snap.rangeM > 0 ? String(Math.round(snap.rangeM)) : '--');
-    this.text('scopezoom', snap.zoomX.toFixed(1));
-  }
-
-  private updateAmmo(snap: MatchSnapshot): void {
+  protected override updateAmmo(snap: MatchSnapshot): void {
     this.text('weapon', snap.weaponName);
     // W-ENZA2 U3: match.ts(共有)は 'PRIMARY'/'SECONDARY' のまま(変更不可)。
     // 表示直前にHud2側だけ明朝儀式命名へ置換する
@@ -1171,49 +839,7 @@ export class Hud2 {
     if (fill && snap.reloading) fill.style.width = `${snap.reloadRatio * 100}%`;
   }
 
-  // 現在武器の装弾数。match.ts が snap.magSize を供給すればそれを採用し、
-  // 無い間は「装備直後の残弾=満タン=装弾数」を利用した最大残弾トラッカでフォールバックする。
-  private magSizeOf(snap: MatchSnapshot): number {
-    // magSize は MatchSnapshot の必須フィールド(match.tsが weapon.magazine.capacity を供給)
-    return Math.max(1, Math.floor(snap.magSize));
-  }
-
-  // 弾ピップ列。装弾数ぶんのセルを一度だけ生成し、残弾に応じて先頭から点灯する。
-  // ピップ本数は snap.magSize(=装弾数)基準で正規化(/30 の固定スケール誤りを回避)。
-  private updateAmmoPips(snap: MatchSnapshot): void {
-    const host = this.el['ammopips'];
-    if (!host) return;
-    const mag = this.magSizeOf(snap);
-    // 大容量/無限(素手 magSize 999 等)はピップ列を出さず数値表示のみに退避する。
-    // 上限を設けないとDOMノードが弾倉容量ぶん無制限に増えHUDが崩れヒッチする
-    if (mag > 60) {
-      if (this.lastPipMag !== 0) {
-        host.replaceChildren();
-        this.lastPipMag = 0;
-        this.lastPipAmmo = -1;
-      }
-      return;
-    }
-    if (mag !== this.lastPipMag) {
-      const frag = document.createDocumentFragment();
-      for (let i = 0; i < mag; i += 1) frag.appendChild(document.createElement('i'));
-      host.replaceChildren(frag);
-      this.lastPipMag = mag;
-      this.lastPipAmmo = -1; // セル再生成後は必ず点灯を貼り直す
-    }
-    if (snap.ammo !== this.lastPipAmmo) {
-      const pips = host.children;
-      for (let i = 0; i < pips.length; i += 1) {
-        (pips[i] as HTMLElement).classList.toggle('spent', i >= snap.ammo);
-      }
-      this.lastPipAmmo = snap.ammo;
-    }
-  }
-
-  // ── BO2 スコアストリークパネル ────────────────────────────────────────────────────────
-  // 7スロット縦積みパネル。バンク済み=lit、非バンク=dim。次のストリークまでの残pts上部表示。
-  // idx:  0=RC-XD / 1=UAV / 2=HK / 3=CarePackage / 4=CounterUAV / 5=Lightning / 6=SensorTurret
-  private readonly BO2_SVG_ICONS = [
+  protected override readonly BO2_SVG_ICONS = [
     // RC-XD: ラジコン車 (車体+アンテナ)
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4" y="13" width="16" height="6" rx="1"/><circle cx="8" cy="20" r="1.8"/><circle cx="16" cy="20" r="1.8"/><line x1="15" y1="13" x2="17" y2="8"/><line x1="17" y1="8" x2="17" y2="5"/></svg>`,
     // UAV: レーダーディッシュ (円 + 放射線)
@@ -1230,14 +856,13 @@ export class Hud2 {
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="7" y="14" width="10" height="6" rx="1"/><rect x="9" y="10" width="6" height="4"/><line x1="12" y1="10" x2="12" y2="4"/><line x1="12" y1="4" x2="17" y2="7"/></svg>`,
   ];
 
-  // W-ENZA2 U3: 英語ゲーム用語を明朝儀式命名へローカライズ(表示はHud2内で完結、match.ts非変更)
-  // 火車=RC-XD(遣いの業火車) / 天眼=UAV(千里の眼) / 羅刹=HKミサイル(誅殺の魔) / 天賜=補給箱(降臨の匣)
-  // 結界=カウンターUAV(隠形の術) / 雷撃=雷撃ストライク / 番人=センサー砲台
-  private readonly BO2_NAMES = ['火車', '天眼', '羅刹', '天賜', '結界', '雷撃', '番人'];
-  private readonly BO2_COSTS = [325, 425, 525, 550, 600, 750, 800];
-  private readonly BO2_SLOT_COUNT = 7;
+  protected override readonly BO2_NAMES = ['火車', '天眼', '羅刹', '天賜', '結界', '雷撃', '番人'];
 
-  private updateBO2Streaks(snap: MatchSnapshot): void {
+  protected override readonly BO2_COSTS = [325, 425, 525, 550, 600, 750, 800];
+
+  protected override readonly BO2_SLOT_COUNT = 7;
+
+  protected override updateBO2Streaks(snap: MatchSnapshot): void {
     // ゾンビモードではパネルを隠す
     const panel = this.root.querySelector<HTMLElement>('.u2h-streaks');
     // V31修正: ガンゲームでもストリークパネルを隠す(ストリーク無効モード)
@@ -1304,8 +929,7 @@ export class Hud2 {
     }
   }
 
-  // ── BO2 方形ミニマップ描画 ────────────────────────────────────────────────────────────
-  private drawMinimap(snap: MatchSnapshot): void {
+  protected override drawMinimap(snap: MatchSnapshot): void {
     const ctx = this.minimapCtx;
     if (!ctx) return;
     const MAP = (this.el['minimap'] as HTMLCanvasElement | undefined)?.width ?? 236;
@@ -1323,14 +947,24 @@ export class Hud2 {
     ctx.strokeStyle = 'rgba(232,227,216,0.055)';
     ctx.lineWidth = 1;
     for (let g = 38; g < MAP; g += 38) {
-      ctx.beginPath(); ctx.moveTo(g + 0.5, 0); ctx.lineTo(g + 0.5, MAP); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, g + 0.5); ctx.lineTo(MAP, g + 0.5); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(g + 0.5, 0);
+      ctx.lineTo(g + 0.5, MAP);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, g + 0.5);
+      ctx.lineTo(MAP, g + 0.5);
+      ctx.stroke();
     }
     // 距離リング(mock: 内=橙0.2/外=白鋼0.08)+視界コーン(自機は常に上向き)
     ctx.strokeStyle = 'rgba(255,107,43,0.2)';
-    ctx.beginPath(); ctx.arc(CX, CY, MAP * 0.246, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(CX, CY, MAP * 0.246, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.strokeStyle = 'rgba(232,227,216,0.08)';
-    ctx.beginPath(); ctx.arc(CX, CY, MAP * 0.44, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(CX, CY, MAP * 0.44, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.fillStyle = 'rgba(255,150,80,0.12)';
     ctx.beginPath();
     ctx.moveTo(CX, CY);
@@ -1354,7 +988,12 @@ export class Hud2 {
       if (b.handle !== undefined && snap.destroyedPropHandles?.has(b.handle)) continue;
       const relBX = (b.x - snap.playerX) * scale;
       const relBZ = (b.z - snap.playerZ) * scale;
-      ctx.strokeRect(relBX - b.w * scale / 2, relBZ - b.d * scale / 2, b.w * scale, b.d * scale);
+      ctx.strokeRect(
+        relBX - (b.w * scale) / 2,
+        relBZ - (b.d * scale) / 2,
+        b.w * scale,
+        b.d * scale,
+      );
     }
 
     // 味方ドット(装甲青=sofu)
@@ -1380,11 +1019,12 @@ export class Hud2 {
       const zx = snap.hardpointZoneRelX * scale;
       const zz = snap.hardpointZoneRelZ * scale;
       const zr = ZONE_R * scale;
-      const hpColor = snap.hardpointOwner === 'mine'
-        ? 'rgba(255,107,43,0.9)'
-        : snap.hardpointOwner === 'enemy'
-          ? 'rgba(210,69,69,0.9)'
-          : 'rgba(245,208,107,0.9)';
+      const hpColor =
+        snap.hardpointOwner === 'mine'
+          ? 'rgba(255,107,43,0.9)'
+          : snap.hardpointOwner === 'enemy'
+            ? 'rgba(210,69,69,0.9)'
+            : 'rgba(245,208,107,0.9)';
       ctx.strokeStyle = hpColor;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -1447,7 +1087,7 @@ export class Hud2 {
     }
   }
 
-  private updateObjective(snap: MatchSnapshot): void {
+  protected override updateObjective(snap: MatchSnapshot): void {
     // ── ハードポイント方向インジケータ ──
     const hpInd = this.el['hpindicator'];
     if (hpInd) {
@@ -1465,7 +1105,13 @@ export class Hud2 {
           chip.classList.toggle('hp-mine', snap.hardpointOwner === 'mine');
           chip.classList.toggle('hp-enemy', snap.hardpointOwner === 'enemy');
           chip.classList.toggle('hp-contested', snap.hardpointContested === true);
-          const label = snap.hardpointContested ? 'CONTEST' : snap.hardpointOwner === 'mine' ? 'SECURE' : snap.hardpointOwner === 'enemy' ? 'LOSING' : 'EMPTY';
+          const label = snap.hardpointContested
+            ? 'CONTEST'
+            : snap.hardpointOwner === 'mine'
+              ? 'SECURE'
+              : snap.hardpointOwner === 'enemy'
+                ? 'LOSING'
+                : 'EMPTY';
           if (chip.textContent !== label) chip.textContent = label;
         }
         // カウントダウン
@@ -1479,7 +1125,13 @@ export class Hud2 {
         // 矢印形状の色(SVG fill は style 経由でも効く)
         const shape = this.el['hparrowshape'];
         if (shape) {
-          const col = snap.hardpointContested ? '#ffffff' : snap.hardpointOwner === 'mine' ? 'var(--accent)' : snap.hardpointOwner === 'enemy' ? '#ff4040' : '#ffd700';
+          const col = snap.hardpointContested
+            ? '#ffffff'
+            : snap.hardpointOwner === 'mine'
+              ? 'var(--accent)'
+              : snap.hardpointOwner === 'enemy'
+                ? '#ff4040'
+                : '#ffd700';
           shape.style.fill = col;
         }
       }
@@ -1567,25 +1219,7 @@ export class Hud2 {
     }
   }
 
-  private updateGrenade(snap: MatchSnapshot): void {
-    this.text('gname', snap.grenadeName);
-    this.text('gcount', `x ${snap.grenadeCount}`);
-    const grenade = this.el['gcount'];
-    if (grenade) grenade.classList.toggle('hud-gcount-empty', snap.grenadeCount === 0);
-
-    const cook = this.el['cook'];
-    if (cook) cook.hidden = snap.cookRatio <= 0;
-    const fill = this.el['cookfill'];
-    if (fill && snap.cookRatio > 0) {
-      fill.style.width = `${snap.cookRatio * 100}%`;
-      fill.classList.toggle('cook-danger', snap.cookRatio > 0.7);
-    }
-
-    const whiteout = this.el['whiteout'];
-    if (whiteout) whiteout.style.opacity = String(Math.min(1, snap.whiteout * 1.15));
-  }
-
-  private updateHp(snap: MatchSnapshot): void {
+  protected override updateHp(snap: MatchSnapshot): void {
     this.text('hp', String(snap.hp));
     this.text('hpmax', `/ ${snap.maxHp}`);
     const fill = this.el['hpbarfill'];
@@ -1618,7 +1252,7 @@ export class Hud2 {
     if (snap.tookDamage) this.restartAnimation('flash', 'show');
   }
 
-  private pushFeed(snap: MatchSnapshot): void {
+  protected override pushFeed(snap: MatchSnapshot): void {
     const feed = this.el['feed'];
     if (!feed) return;
     // 帝王状態は行生成時に固定(mock05: 帝王キル=状態色の銘行)
@@ -1657,307 +1291,7 @@ export class Hud2 {
     while (feed.childElementCount > 6) feed.firstElementChild?.remove();
   }
 
-  private pushHits(snap: MatchSnapshot): void {
-    const marker = this.el['hitmarker'];
-    if (!marker || snap.hits.length === 0) return;
-    // R20 ティア言語: snipe > kill > head > hit > limb(最弱)を1段だけ選ぶ。
-    // 'limb'はmatch.ts側の配線待ちだが、HUDのティア対応(クラス/CSS)は先に用意しておく
-    // (MatchSnapshot.hits の型は既に 'limb' を含む)。
-    const strongest = snap.hits.includes('snipe')
-      ? 'hm-snipe'
-      : snap.hits.includes('kill')
-        ? 'hm-kill'
-        : snap.hits.includes('head')
-          ? 'hm-head'
-          : snap.hits.includes('hit')
-            ? 'hm-hit'
-            : 'hm-limb';
-    marker.classList.remove('hm-hit', 'hm-head', 'hm-kill', 'hm-snipe', 'hm-limb', 'show');
-    void marker.offsetWidth;
-    marker.classList.add(strongest, 'show');
-
-    // キル確定時、画面中心から広がる光輪(省モーション時はスキップ)。
-    // スコープ覗き込み中はクロスヘアが opacity:0 になるため、隠れない #hud 直下へ付ける
-    if ((strongest === 'hm-kill' || strongest === 'hm-snipe') && !snap.reduceMotion) {
-      const ring = document.createElement('span');
-      ring.className =
-        strongest === 'hm-snipe' ? 'hud-kill-ring hud-kill-ring--snipe' : 'hud-kill-ring';
-      this.root.appendChild(ring);
-      window.setTimeout(() => ring.remove(), 220);
-    }
-    // R20 hm-kill: 6本の細針が中心から弾ける高速な放射スパーク(kill-ringと同型のDOM+寿命)。
-    // reduceMotion時はスキーム全体を出さない(spawnゲート=CSSアニメも走らない)
-    if (strongest === 'hm-kill' && !snap.reduceMotion) {
-      const spark = document.createElement('span');
-      spark.className = 'hud-hit-spark';
-      spark.innerHTML = '<i></i><i></i><i></i><i></i><i></i><i></i>';
-      this.root.appendChild(spark);
-      window.setTimeout(() => spark.remove(), 200);
-    }
-  }
-
-  private pushDamageNumbers(snap: MatchSnapshot, project: Project): void {
-    const layer = this.el['dmg'];
-    if (!layer) return;
-    // ノード生成の唯一の入口。個別分・集約分どちらもここを通す(寿命管理を一本化しリーク差異を無くす)
-    const spawnAt = (x: number, y: number, className: string, text: string): void => {
-      const node = document.createElement('span');
-      node.className = className;
-      node.textContent = text;
-      node.style.left = `${x}px`;
-      node.style.top = `${y}px`;
-      layer.appendChild(node);
-      requestAnimationFrame(() => node.classList.add('rise'));
-      window.setTimeout(() => node.remove(), 750);
-    };
-    const spawn = (world: THREE.Vector3, className: string, text: string): void => {
-      const point = project(world);
-      if (point.behind) return;
-      spawnAt(point.x, point.y, className, text);
-    };
-    // 軽量化監査#8: 1フレームに生成するノード数を DAMAGE_NUMBER_FRAME_CAP に頭打ちし、
-    // 超過分は1個の集約バッジへまとめる(≤上限時は従来どおり全件個別表示・挙動不変)
-    const { shown, overflow } = splitDamageNumbersForFrame(snap.damageNumbers);
-    for (const dn of shown) {
-      spawn(dn.world, dmgNumClass(dn.kind), String(dn.amount));
-    }
-    if (overflow) {
-      // キルを1件でも含む超過分は件数を強調(「+N KILLS」)、それ以外は合計ダメージ量を表示。
-      // 既存のダメージ数値クラスを流用するため見た目は浮かない。
-      // V51-B: 代表点がカメラ後方でもバッジ自体は消さない(画面中央下へフォールバック表示)
-      const label = overflow.hasKill ? `+${overflow.count} KILLS` : `+${overflow.totalAmount}`;
-      const cls = dmgNumClass(overflow.hasKill ? 'kill' : 'body');
-      const point = project(overflow.anchor.world);
-      if (point.behind) {
-        spawnAt(layer.clientWidth / 2, layer.clientHeight * 0.62, cls, label);
-      } else {
-        spawnAt(point.x, point.y, cls, label);
-      }
-    }
-  }
-
-  // メダル表示: 初取得=中央のバッジ解放カード / 2回目以降=左の大文字。HSは抑止(フィードのみ)
-  // R21: マルチキル系はバナーへルーティングし、従来のテキスト行/バッジには出さない
-  // 同一キルで複数バッジ: medalRank最上位を即時表示、残りは500ms間隔キューへ
-  private pushMedals(snap: MatchSnapshot): void {
-    // medalRank降順にソートして最上位バッジを即時に出す
-    const sorted = [...snap.medals].sort((a, b) => medalRank(b.id) - medalRank(a.id));
-    const inZombieMode = snap.zombieRound !== undefined;
-    let topBadgeFired = false;
-    for (const m of sorted) {
-      if (SUPPRESS_BADGE.has(m.id)) {
-        // V48修正: 抑止=中央バッジのみ。左のテキスト行では通知する(完全不可視化の回帰を修正)
-        this.pushMedalText(m);
-        continue;
-      }
-      if (MULTI_KILL_IDS.has(m.id)) {
-        this.pushMultiKillBanner(m, snap.reduceMotion);
-        continue;
-      }
-      if (isZombieRepeatBadgeMuted(m.firstUnlock, inZombieMode)) {
-        // ゾンビモードの再達成: バッジ/キューを一切使わず、左フィードの軽量表示のみ残す
-        this.pushMedalText(m);
-        continue;
-      }
-      if (m.firstUnlock || ALWAYS_BADGE.has(m.id)) {
-        if (!topBadgeFired) {
-          this.renderBadge(m);
-          topBadgeFired = true;
-        } else if (this.badgeQueue.length < 2) {
-          // キュー上限2: 溢れた分はテキストフィードへ降格
-          this.badgeQueue.push(m);
-          if (!this.badgeQueueTimer) {
-            this.badgeQueueTimer = window.setInterval(() => { this.flushBadgeQueue(); }, 500);
-          }
-        } else {
-          this.pushMedalText(m);
-        }
-      } else {
-        this.pushMedalText(m);
-      }
-    }
-  }
-
-  private flushBadgeQueue(): void {
-    const m = this.badgeQueue.shift();
-    if (!m) {
-      window.clearInterval(this.badgeQueueTimer);
-      this.badgeQueueTimer = 0;
-      return;
-    }
-    this.renderBadge(m);
-  }
-
-  // R21 マルチキルバナー: 画面中央上寄りに段階エスカレーション演出で表示する。
-  // 連続段更新(1.5秒以内)はバナー昇格更新(スケールパンチ+ピップ追加)。単一バナー要素を再利用。
-  private pushMultiKillBanner(m: MedalEvent, reduceMotion: boolean): void {
-    const cfg = MK_CFG[m.id];
-    if (!cfg) return;
-
-    const banner = this.el['mkbanner'];
-    if (!banner) return;
-    const label = this.el['mklabel'];
-    const pips = this.el['mkpips'];
-
-    const now = Date.now();
-    // 1.5秒以内に既バナーが表示中ならアップグレード(パンチ)。それ以外はスラムイン
-    const upgrading = !banner.hidden && (now - this.mkBannerMs) < 1500;
-
-    // 既存の消去タイマーをキャンセル
-    if (this.mkTimerId) {
-      window.clearTimeout(this.mkTimerId);
-      this.mkTimerId = 0;
-    }
-
-    // ── ラベル更新 ──
-    if (label) {
-      if (label.textContent !== m.name) label.textContent = m.name;
-      label.style.color = cfg.color;
-      // クロマ収差: 赤/青をずらした二重残像(段が上がるほど増幅)
-      if (cfg.chromaPx > 0) {
-        label.style.textShadow = [
-          `${cfg.chromaPx}px 0 0 rgba(255,30,30,0.55)`,
-          `${-cfg.chromaPx}px 0 0 rgba(30,80,255,0.50)`,
-          `0 0 26px ${cfg.color}`,
-          `0 2px 8px rgba(0,0,0,0.92)`,
-        ].join(', ');
-      } else {
-        label.style.textShadow = `0 0 26px ${cfg.color}, 0 2px 8px rgba(0,0,0,0.92)`;
-      }
-    }
-
-    // ── スカルピップ列: アセットレス inline SVG 菱形。キル数ぶん全点灯 ──
-    if (pips) {
-      const pipSvg =
-        `<svg class="mk-pip" viewBox="0 0 10 10" aria-hidden="true">` +
-        `<polygon points="5,0.5 9.5,5 5,9.5 0.5,5"` +
-        ` fill="currentColor" stroke="currentColor" stroke-width="1"/></svg>`;
-      let pipHtml = '';
-      for (let i = 0; i < cfg.pips; i += 1) pipHtml += pipSvg;
-      pips.innerHTML = pipHtml;
-      pips.style.color = cfg.color;
-    }
-
-    // スラム強度を CSS 変数で公開(keyframe が参照)
-    banner.style.setProperty('--mk-scale', String(cfg.slamScale));
-
-    if (reduceMotion) {
-      // 省モーション: アニメなし即時表示
-      banner.hidden = false;
-      banner.classList.remove('mk-enter', 'mk-punch', 'mk-exit');
-    } else if (upgrading) {
-      // アップグレード: 既存バナーをスケールパンチ
-      banner.classList.remove('mk-enter', 'mk-exit');
-      void banner.offsetWidth; // reflow でアニメ再起動
-      banner.classList.add('mk-punch');
-      banner.hidden = false;
-    } else {
-      // 新規: スラムイン
-      banner.classList.remove('mk-punch', 'mk-exit');
-      banner.hidden = false;
-      void banner.offsetWidth;
-      banner.classList.add('mk-enter');
-    }
-
-    this.mkBannerMs = now;
-
-    // 表示時間経過後に消去
-    this.mkTimerId = window.setTimeout(() => {
-      this.mkTimerId = 0;
-      if (!banner.hidden) {
-        if (reduceMotion) {
-          banner.hidden = true;
-          banner.classList.remove('mk-enter', 'mk-punch', 'mk-exit');
-        } else {
-          banner.classList.remove('mk-enter', 'mk-punch');
-          void banner.offsetWidth;
-          banner.classList.add('mk-exit');
-          window.setTimeout(() => {
-            banner.hidden = true;
-            banner.classList.remove('mk-exit');
-          }, 300);
-        }
-      }
-    }, cfg.lifetimeMs);
-  }
-
-  private renderBadge(m: MedalEvent): void {
-    const stack = this.el['badgestack'];
-    if (!stack) return;
-    const card = document.createElement('div');
-    card.className = 'hud-badge';
-    card.style.color = m.color;
-    const tag = m.firstUnlock ? '実績解放' : '達成';
-    card.innerHTML = `${this.makeBadgeSvg(m)}<div class="badge-name">${m.name}</div><div class="badge-tag">${tag}</div>`;
-    stack.appendChild(card);
-    requestAnimationFrame(() => card.classList.add('show'));
-    window.setTimeout(() => {
-      card.classList.add('out');
-      window.setTimeout(() => card.remove(), 500);
-    }, 3200);
-    // cap 2
-    while (stack.childElementCount > 2) stack.firstElementChild?.remove();
-  }
-
-  private pushMedalText(m: MedalEvent): void {
-    const stack = this.el['medalstack'];
-    if (!stack) return;
-    const row = document.createElement('div');
-    row.className = 'hud-medal';
-    row.style.color = m.color;
-    const combo = m.combo >= 2 ? `<i>×${m.combo}</i>` : '';
-    row.innerHTML = `<span>${m.name}</span>${combo}`;
-    stack.appendChild(row);
-    requestAnimationFrame(() => row.classList.add('show'));
-    window.setTimeout(() => {
-      row.classList.add('out');
-      window.setTimeout(() => row.remove(), 400);
-    }, 1800);
-    while (stack.childElementCount > 6) stack.firstElementChild?.remove();
-  }
-
-  // 階級ごとに形の違うエンブレムをSVGで生成(盾/六角/星/八角 + 金属グラデ + グロー + 中央アイコン)
-  private makeBadgeSvg(m: MedalEvent): string {
-    const id = `bdg${this.badgeSeq++}`;
-    const shape =
-      m.tier === 'bronze'
-        ? '<path d="M60 8 L106 24 V62 C106 90 86 106 60 116 C34 106 14 90 14 62 V24 Z"/>'
-        : m.tier === 'gold'
-          ? `<polygon points="${starPoints(60, 60, 5, 52, 23)}"/>`
-          : `<polygon points="${ngonPoints(60, 60, m.tier === 'silver' ? 6 : 8, 52)}"/>`;
-    return `<svg viewBox="0 0 120 120" class="badge-svg" aria-hidden="true">
-      <defs>
-        <radialGradient id="${id}g" cx="50%" cy="36%" r="68%">
-          <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
-          <stop offset="0.4" stop-color="currentColor" stop-opacity="0.92"/>
-          <stop offset="1" stop-color="#080a0e" stop-opacity="0.96"/>
-        </radialGradient>
-        <filter id="${id}f" x="-40%" y="-40%" width="180%" height="180%">
-          <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="currentColor" flood-opacity="0.9"/>
-        </filter>
-      </defs>
-      <g filter="url(#${id}f)" fill="url(#${id}g)" stroke="currentColor" stroke-width="3" stroke-linejoin="round">${shape}</g>
-      <g class="badge-icon" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">${badgeIcon(m.tier)}</g>
-    </svg>`;
-  }
-
-  // レーダーのブリップ(敵マーカー)を上限数だけプールしておく。毎フレーム属性更新のみ
-  private buildRadar(): void {
-    const group = this.el['radarblips'];
-    if (!group) return;
-    for (let i = 0; i < 12; i += 1) {
-      const blip = document.createElementNS(SVG_NS, 'circle');
-      blip.setAttribute('class', 'radar-blip');
-      blip.setAttribute('r', '2.6');
-      blip.setAttribute('cx', '0');
-      blip.setAttribute('cy', '0');
-      (blip as unknown as HTMLElement).style.display = 'none';
-      group.appendChild(blip);
-    }
-  }
-
-  // 視認できている敵を相対方位で円形レーダーに描く。透視防止のため可視判定済みのみ来る
-  private updateRadar(snap: MatchSnapshot): void {
+  protected override updateRadar(snap: MatchSnapshot): void {
     const radar = this.el['radar'];
     const group = this.el['radarblips'];
     if (!radar || !group) return;
@@ -1991,39 +1325,7 @@ export class Hud2 {
     }
   }
 
-  // R30 ダメージ方向アーク: 画面中央周りの赤い弧セグメント(被弾方向に幅40°、0.6sフェード)。
-  // PostFXの方向ヴィネット(uHitDir)と2チャンネル併走=シェーダは面の赤み、DOMは輪郭の方位。
-  // reduceMotion時はグロー無しの簡略描画(CSSの .rm)。
-  private pushIncoming(snap: MatchSnapshot): void {
-    const layer = this.el['incoming'];
-    if (!layer) return;
-    for (const angle of snap.incoming) {
-      const DEG = 40;
-      const R = 82;
-      const halfRad = (DEG / 2) * (Math.PI / 180);
-      const a0 = angle - halfRad;
-      const a1 = angle + halfRad;
-      const x0 = Math.sin(a0) * R;
-      const y0 = -Math.cos(a0) * R;
-      const x1 = Math.sin(a1) * R;
-      const y1 = -Math.cos(a1) * R;
-      const svg = document.createElementNS(SVG_NS, 'svg');
-      svg.setAttribute('class', snap.reduceMotion ? 'hud-incoming-arc rm' : 'hud-incoming-arc');
-      svg.setAttribute('viewBox', '-100 -100 200 200');
-      svg.setAttribute('aria-hidden', 'true');
-      const path = document.createElementNS(SVG_NS, 'path');
-      path.setAttribute('d', `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R} ${R} 0 0 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`);
-      path.setAttribute('class', 'hud-incoming-arc-path');
-      svg.appendChild(path);
-      layer.appendChild(svg);
-      window.setTimeout(() => svg.remove(), 620);
-    }
-  }
-
-  // R30 スコアイベントリボン: 右下(ストリークUI付近)に「+100 キル」等が上へ積み上がる。
-  // snap.scoreEvents(消費型・キル/HS/確保/メダルXP)を単一コンテナへ append、
-  // 2.5sフェード(2150ms表示+350ms退場)・最大4行。旧中央トーストはR30で本リボンへ一本化。
-  private pushXpRibbon(snap: MatchSnapshot): void {
+  protected override pushXpRibbon(snap: MatchSnapshot): void {
     const layer = this.el['xpribbon'];
     if (!layer || snap.scoreEvents.length === 0) return;
     for (const ev of snap.scoreEvents) {
@@ -2040,64 +1342,7 @@ export class Hud2 {
     while (layer.childElementCount > 4) layer.firstElementChild?.remove();
   }
 
-  private updateDeath(snap: MatchSnapshot): void {
-    const death = this.el['death'];
-    if (!death) return;
-    death.hidden = snap.alive;
-    if (!snap.alive) this.text('respawn', snap.respawnIn.toFixed(1));
-
-    // ── R11 キルカメラ・シネマ(#hud直下・opacity/body classで駆動) ──
-    // シネマ枠はカメラの真実(killcamCamActive)に連動=bailで観戦へ切替時も乖離しない
-    const kcActive = snap.killcamCamActive && snap.killcamWeapon !== null;
-    document.body.classList.toggle('killcam-active', kcActive);
-    if (kcActive) {
-      if (snap.killcam !== null) this.text('kcname', snap.killcam);
-      if (snap.killcamWeapon !== null) this.text('kcweapon', snap.killcamWeapon);
-      this.text('kcdist', String(snap.killcamDistM));
-      const timer = this.el['kctimer'];
-      if (timer) timer.style.width = `${Math.max(0, Math.min(1, snap.killcamRatio)) * 100}%`;
-    }
-    // 黒幕/フラッシュ/終盤ビネットは opacity のみ(遷移で常時滑らかに減衰)
-    const veil = this.el['kcveil'];
-    if (veil) veil.style.opacity = String(Math.max(0, Math.min(1, snap.deathVeil)));
-    const flash = this.el['kcflash'];
-    if (flash) flash.style.opacity = String(Math.max(0, Math.min(1, snap.killcamFlash)));
-    const vign = this.el['kcvign'];
-    if (vign) vign.classList.toggle('final', snap.killcamFinal);
-  }
-
-  private updateMovement(snap: MatchSnapshot): void {
-    // スピードライン: スプリント速度を超えた量に応じて画面の縁を締める
-    const speedlines = this.el['speedlines'];
-    if (speedlines) {
-      const over = (snap.speed - MOVE_SPEEDS.sprint) / (MOVE_SPEEDS.airMax - MOVE_SPEEDS.sprint);
-      // 画面揺れ軽減(アクセシビリティ)時はスピードラインを出さない
-      speedlines.style.opacity =
-        snap.alive && !snap.reduceMotion ? String(Math.min(0.55, Math.max(0, over) * 0.6)) : '0';
-    }
-
-    const move = this.el['move'];
-    let state = '';
-    if (snap.wallRunning) state = 'WALL RUN';
-    else if (snap.sliding) state = 'SLIDE';
-    else if (snap.airborne) state = 'AIR';
-    if (move) {
-      move.hidden = state === '' || !snap.alive;
-      // 状態が切り替わった瞬間だけラベルを更新してパルスさせる
-      if (state !== this.lastMoveState && state !== '') {
-        this.text('movestate', state);
-        move.classList.remove('show');
-        void move.offsetWidth;
-        move.classList.add('show');
-      }
-      const fill = this.el['speedfill'];
-      if (fill) fill.style.width = `${Math.min(100, (snap.speed / MOVE_SPEEDS.airMax) * 100)}%`;
-    }
-    this.lastMoveState = state;
-  }
-
-  // アルティメットの充填メーター。満タンで点灯、発動中はオーバードライブ表示
-  private updateUlt(snap: MatchSnapshot): void {
+  protected override updateUlt(snap: MatchSnapshot): void {
     const ring = this.el['ultring'];
     const c01 = Math.min(1, snap.ultCharge);
     if (ring) ring.setAttribute('stroke-dashoffset', (65.97 * (1 - c01)).toFixed(2));
@@ -2121,9 +1366,7 @@ export class Hud2 {
     this.lastUltActive = snap.ultActive;
   }
 
-  // 連続キルの節目で中央上にバナーを出す
-  // R56③: ゾンビモードは左上のコンパクトチップ(streak)に一本化し、この大演出は出さない。
-  private updateBanner(snap: MatchSnapshot): void {
+  protected override updateBanner(snap: MatchSnapshot): void {
     const banner = this.el['banner'];
     if (!banner) return;
     const inZombie = snap.zombieRound !== undefined;
@@ -2149,7 +1392,7 @@ export class Hud2 {
     this.lastStreak = snap.streak;
   }
 
-  private renderScoreboard(snap: MatchSnapshot): void {
+  protected override renderScoreboard(snap: MatchSnapshot): void {
     const body = this.el['scorerows'];
     if (!body) return;
     this.text('scoremode', snap.modeName);
@@ -2171,14 +1414,19 @@ export class Hud2 {
     }
   }
 
-  /** キルコンファーム CONFIRMED / DENIED バナーを一時表示する */
-  private pushKcEvent(ev: 'confirmed' | 'denied'): void {
+  protected override pushKcEvent(ev: 'confirmed' | 'denied'): void {
     const el = this.el['kcevent'];
     if (!el) return;
     // R55 W-C6 [9]: 単一要素使い回しのため、直前の消去タイマー(out遷移/hidden化とも)を
     // 必ずキャンセルしてから再スケジュールする(mkTimerId方式に統一)
-    if (this.kcEventTimerId) { window.clearTimeout(this.kcEventTimerId); this.kcEventTimerId = 0; }
-    if (this.kcEventOutTimerId) { window.clearTimeout(this.kcEventOutTimerId); this.kcEventOutTimerId = 0; }
+    if (this.kcEventTimerId) {
+      window.clearTimeout(this.kcEventTimerId);
+      this.kcEventTimerId = 0;
+    }
+    if (this.kcEventOutTimerId) {
+      window.clearTimeout(this.kcEventOutTimerId);
+      this.kcEventOutTimerId = 0;
+    }
     el.textContent = ev === 'confirmed' ? 'CONFIRMED' : 'DENIED';
     el.dataset.kind = ev;
     el.hidden = false;
@@ -2196,18 +1444,7 @@ export class Hud2 {
     }, 900);
   }
 
-  private restartAnimation(id: string, className: string): void {
-    const node = this.el[id];
-    if (!node) return;
-    node.classList.remove(className);
-    void node.offsetWidth;
-    node.classList.add(className);
-  }
-
-  // ── ファイナルキルカム ──────────────────────────────────────────────
-
-  /** ファイナルキルカム開始: シネマバー + バナーを表示する */
-  showFinalKillcam(weaponName?: string | null, distM?: number): void {
+  override showFinalKillcam(weaponName?: string | null, distM?: number): void {
     this.fkcRoot.classList.add('fkc-active');
     // R59-W2 FIX: クロームHUD退避(body.killcam-active)は従来 update() 内トグルのみで、
     // ファイナルキルカム中は update() が呼ばれず恒久不発だった(タイマー/弾数がシネマ帯と重なる)。
@@ -2215,8 +1452,7 @@ export class Hud2 {
     document.body.classList.add('killcam-active');
     // R54-F7: シネマ帯下部の武器バナー(mono)。武器名未供給(旧試合互換/素手系)は非表示
     if (weaponName) {
-      this.fkcWeaponEl.textContent =
-        distM && distM > 0 ? `${weaponName} — ${distM}m` : weaponName;
+      this.fkcWeaponEl.textContent = distM && distM > 0 ? `${weaponName} — ${distM}m` : weaponName;
       this.fkcWeaponEl.hidden = false;
     } else {
       this.fkcWeaponEl.hidden = true;
@@ -2234,37 +1470,6 @@ export class Hud2 {
     }
   }
 
-  /** ファイナルキルカム終了: オーバーレイを隠す。スコープが残っていたら消す */
-  hideFinalKillcam(): void {
-    this.fkcRoot.classList.remove('fkc-active');
-    // キルカム終了時にスコープオーバーレイを確実に閉じる
-    const scope = this.el['scope'];
-    if (scope) {
-      scope.hidden = true;
-      this.scopeOn = false;
-    }
-  }
-
-  /**
-   * フラッシュ強度(0..1)を毎フレーム更新する。
-   * R48でファイナルキルカムは三人称固定になったため、R53でスコープオーバーレイ
-   * 駆動(adsRatio/isScope引数・hud-scope要素の開閉)を撤去した(表示経路が恒久的に
-   * 死んでいたため)。killcam開始時にスコープが開いていた場合の強制クローズは
-   * hideFinalKillcam() 側の安全策としてそのまま残す。
-   */
-  updateFinalKillcam(flash: number): void {
-    this.fkcFlashEl.style.opacity = String(flash > 0.001 ? flash : 0);
-  }
-
-  /**
-   * R55 ④: ファイナルキルカムが一人称(killer=プレイヤー)かを通知する。killcam開始直後に
-   * main.ts から一度だけ呼ばれる(Hud2限定 — classic hud.ts は三人称固定のまま対象外)。
-   * hud.update() は killcam 再生中呼ばれない(main.ts の二重update防止ゲート)ため、
-   * クロスヘアは直近の 'playing' フレームの状態で凍結される。一人称時は「きちんとエイム
-   * して当てた」ことを見せるため、画面中央のクロスヘアを明示的に可視化して固定する
-   * (ADSで消えていた/フェードしていた場合の上書きも兼ねる)。三人称時は何もしない
-   * (既存の凍結挙動を変えない)。
-   */
   setFinalKillcamFirstPerson(firstPerson: boolean): void {
     if (!firstPerson) return;
     const crosshair = this.el['crosshair'];
@@ -2273,7 +1478,7 @@ export class Hud2 {
     crosshair.style.setProperty('--ads', '0');
   }
 
-  private updateZombieShopHud(snap: MatchSnapshot): void {
+  protected override updateZombieShopHud(snap: MatchSnapshot): void {
     const inZombie = snap.zombieRound !== undefined;
 
     // ── パーク所持アイコン ──
@@ -2376,106 +1581,7 @@ export class Hud2 {
     }
   }
 
-  private pushZombiePointFloats(snap: MatchSnapshot, project: Project): void {
-    if (!snap.zombiePointFloats?.length) return;
-    const layer = this.el['dmg'];
-    if (!layer) return;
-    for (const pf of snap.zombiePointFloats) {
-      const pt = project(pf.world);
-      if (pt.behind) continue;
-      const node = document.createElement('span');
-      node.className = 'hud-zpfloat';
-      node.textContent = `+${pf.amount}`;
-      node.style.left = `${pt.x}px`;
-      node.style.top = `${pt.y - 30}px`;
-      layer.appendChild(node);
-      requestAnimationFrame(() => node.classList.add('rise'));
-      window.setTimeout(() => node.remove(), 900);
-    }
-  }
-
-  private updateZombieReviveFlash(snap: MatchSnapshot): void {
-    const el = this.el['zreviveflash'];
-    if (!el) return;
-    const v = snap.zombieReviveFlash ?? 0;
-    el.style.opacity = v > 0.001 ? String(v) : '0';
-  }
-
-  private updateZombieBossFlash(snap: MatchSnapshot): void {
-    const el = this.el['zbossflash'];
-    if (!el) return;
-    const v = snap.zombieBossFlash ?? 0;
-    el.style.opacity = v > 0.001 ? String(v) : '0';
-  }
-
-  private updateDarkEmperorHud(snap: MatchSnapshot): void {
-    const el = this.el['darkemperor'];
-    if (!el) return;
-    const secs = snap.darkEmperorS ?? 0;
-    // 黒雷帝が最上位: 黒雷帝発動中は黒帝バッジを隠す(黒雷帝バッジが単独表示)
-    const active = secs > 0 && !snap.kokuraiteiMode;
-    el.hidden = !active;
-    if (active) {
-      const timerEl = this.el['detimer'];
-      if (snap.darkEmperorPermanent) {
-        if (timerEl) timerEl.hidden = true;
-      } else {
-        if (timerEl) timerEl.hidden = false;
-        const mm = Math.floor(secs / 60);
-        const ss = Math.floor(secs % 60);
-        this.text('detimer', `${mm}:${String(ss).padStart(2, '0')}`);
-      }
-    }
-  }
-
-  private updateRaiteiHud(snap: MatchSnapshot): void {
-    const el = this.el['raitei'];
-    if (!el) return;
-    // バッジ優先度: 黒雷帝 > 黒帝 > 雷帝。上位モード発動中は雷帝バッジを隠す
-    const darkActive = (snap.darkEmperorS ?? 0) > 0;
-    el.hidden = !(snap.raiteiMode && !snap.kokuraiteiMode && !darkActive);
-  }
-
-  private updateKokuraiteiHud(snap: MatchSnapshot): void {
-    const el = this.el['kokuraitei'];
-    if (!el) return;
-    el.hidden = !snap.kokuraiteiMode;
-  }
-
-  private updateChargeGauge(snap: MatchSnapshot): void {
-    const el = this.el['chargegauge'];
-    if (!el) return;
-    const ratio = snap.chargeRatio ?? 0;
-    el.hidden = ratio <= 0;
-    if (ratio > 0) {
-      const fill = this.el['chargefill'];
-      if (fill) {
-        (fill as HTMLElement).style.width = `${Math.round(ratio * 100)}%`;
-        fill.classList.toggle('charge-full', ratio >= 1);
-        fill.classList.toggle('charge-kokuraitei', !!snap.kokuraiteiMode);
-      }
-    }
-  }
-
-  // 修羅スピンアップRPMゲージ(hud-charge-gauge流儀の小ゲージ)。minigun装備+スピン>0のみ表示。
-  // 発射開始しきい(400rpm≒0.22)まで緑、以降は黄、フルスピン間近(≥0.85)で赤
-  private updateSpinGauge(snap: MatchSnapshot): void {
-    const el = this.el['spingauge'];
-    if (!el) return;
-    const spin = snap.minigunSpin01 ?? 0;
-    el.hidden = spin <= 0;
-    if (spin > 0) {
-      const fill = this.el['spinfill'];
-      if (fill) {
-        (fill as HTMLElement).style.width = `${Math.round(spin * 100)}%`;
-        fill.classList.toggle('spin-mid', spin >= 0.22 && spin < 0.85);
-        fill.classList.toggle('spin-hot', spin >= 0.85);
-      }
-    }
-  }
-
-  // ── ガンゲーム HUD ──────────────────────────────────────────────────────────────────────
-  private updateGunGameHud(snap: MatchSnapshot): void {
+  protected override updateGunGameHud(snap: MatchSnapshot): void {
     const el = this.el['gg'];
     if (!el) return;
     const inGG = snap.ggRank !== undefined;
@@ -2509,91 +1615,20 @@ export class Hud2 {
     // トップ3リーダーボード
     const top3El = this.el['ggtop3'];
     if (top3El && snap.ggTop3) {
-      top3El.innerHTML = snap.ggTop3.map((e, i) =>
-        `<div class="gg-top3-row${e.isPlayer ? ' gg-top3-you' : ''}">` +
-        `<span class="gg-top3-pos">${i + 1}</span>` +
-        `<span class="gg-top3-name">${e.isPlayer ? 'YOU' : e.name}</span>` +
-        `<span class="gg-top3-rank">${e.rank}</span>` +
-        `</div>`
-      ).join('');
+      top3El.innerHTML = snap.ggTop3
+        .map(
+          (e, i) =>
+            `<div class="gg-top3-row${e.isPlayer ? ' gg-top3-you' : ''}">` +
+            `<span class="gg-top3-pos">${i + 1}</span>` +
+            `<span class="gg-top3-name">${e.isPlayer ? 'YOU' : e.name}</span>` +
+            `<span class="gg-top3-rank">${e.rank}</span>` +
+            `</div>`,
+        )
+        .join('');
     }
   }
 
-  // ══════════════════════════════════════════════════════════════════════
-  // R53-W2: match.ts(M2a/M2b)配線待ちの拡張HUD。全て snap.<field> が undefined の間は
-  // 自然に非表示のまま(既存モードの見た目・挙動に一切影響しない)。
-  // ══════════════════════════════════════════════════════════════════════
-
-  // PaP(Pack-a-Punch)段数ピップ。武器名の隣に橙の小菱形×tier(papTier=0/undefinedで非表示)
-  private updatePapPips(snap: R53W2Snapshot): void {
-    const host = this.el['pappips'];
-    if (!host) return;
-    const tier = clampPapTier(snap.papTier);
-    if (tier === this.lastPapTier) return;
-    this.lastPapTier = tier;
-    host.innerHTML = '';
-    for (let i = 0; i < tier; i += 1) {
-      const pip = document.createElement('i');
-      pip.className = 'w2-pap-pip';
-      host.appendChild(pip);
-    }
-  }
-
-  // アクティブパワーアップの横並びチップ(insta/double/nuke/maxammo/carpenter、5種色分け)。
-  // kind集合が変化した時だけDOM再構築し、残秒は毎フレームテキストのみ更新(BO2ストリーク流儀)。
-  // 残3s未満のみ点滅(reduceMotion時は非点滅)。zombiePowerUps(ワールドドロップ)は
-  // 3Dビーコンで視認できるためHUDマーカーは実装しない(意図的な不実装)。
-  private updatePowerUps(snap: R53W2Snapshot): void {
-    const host = this.el['powerups'];
-    if (!host) return;
-    const list = snap.activePowerUps ?? [];
-    if (list.length === 0) {
-      if (this.lastPowerUpKey !== '') {
-        this.lastPowerUpKey = '';
-        this.powerUpEls.clear();
-        host.innerHTML = '';
-      }
-      return;
-    }
-    const key = list.map((p) => p.kind).join(',');
-    if (key !== this.lastPowerUpKey) {
-      this.lastPowerUpKey = key;
-      host.innerHTML = '';
-      this.powerUpEls.clear();
-      for (const p of list) {
-        const spec = POWERUP_CHIP_SPECS[p.kind];
-        const chip = document.createElement('div');
-        chip.className = 'w2-pu-chip';
-        chip.style.setProperty('--pu-color', spec.color);
-        chip.title = spec.label;
-        chip.setAttribute('aria-label', spec.label);
-        chip.innerHTML = `<span class="w2-pu-icon">${spec.icon}</span><span class="w2-pu-time"></span>`;
-        host.appendChild(chip);
-        const timeEl = chip.querySelector('.w2-pu-time') as HTMLElement;
-        this.powerUpEls.set(p.kind, { root: chip, timeEl });
-      }
-    }
-    for (const p of list) {
-      const ref = this.powerUpEls.get(p.kind);
-      if (!ref) continue;
-      const txt = String(Math.max(0, Math.ceil(p.remainS)));
-      if (ref.timeEl.textContent !== txt) ref.timeEl.textContent = txt;
-      ref.root.classList.toggle('w2-pu-blink', isPowerUpBlinking(p.remainS, snap.reduceMotion));
-    }
-  }
-
-  // 毒霧ビネット: 緑の縁オーバーレイ。.hud-vignette(被弾/低HP=赤)とは別要素・別z層のため、
-  // 双方が同時に出ても色が混線せず both が独立に見える(opacity/色のみで駆動しDOM競合なし)
-  private updatePoisonVignette(snap: R53W2Snapshot): void {
-    const el = this.el['poisonvign'];
-    if (!el) return;
-    const p01 = clampN(snap.poison01 ?? 0, 0, 1);
-    el.style.opacity = p01 > 0.001 ? String(p01 * 0.6) : '0';
-  }
-
-  // 特殊ラウンド(餓鬼の大群)突入バナー: 'rush'へ遷移した瞬間だけ一発表示(CONFIRMEDバナー流儀)。
-  // ラウンド数字はspecialRound中ずっと赤色化(バナーとは独立に持続)
-  private updateSpecialRound(snap: R53W2Snapshot): void {
+  protected override updateSpecialRound(snap: R53W2Snapshot): void {
     const special = snap.specialRound ?? null;
     if (isSpecialRoundEntering(this.lastSpecialRound, special)) {
       const banner = this.el['specialbanner'];
@@ -2631,153 +1666,7 @@ export class Hud2 {
     }
   }
 
-  // 無線字幕: 話者名+本文。クロスヘア聖域外(下部)・キルフィード(右上)と非衝突。
-  // radioLine非null→表示(フェードイン)、null→フェードアウト。長文はCSSで2行clamp
-  private updateRadioLine(snap: R53W2Snapshot): void {
-    const el = this.el['radio'];
-    if (!el) return;
-    const line = snap.radioLine ?? null;
-    const key = line ? `${line.speaker}:${line.text}` : null;
-    if (key === this.lastRadioLine) return;
-    this.lastRadioLine = key;
-    if (line) {
-      this.text('radiotext', line.text);
-      const speakerEl = this.el['radiospeaker'];
-      const color = radioSpeakerColor(line.speaker);
-      if (speakerEl) {
-        speakerEl.textContent = RADIO_SPEAKER_NAMES[line.speaker];
-        speakerEl.style.color = color;
-      }
-      el.style.setProperty('--radio-color', color); // 左端バーの話者色(CSS側 border-left が参照)
-      el.hidden = false;
-      el.classList.remove('w2-out');
-      void el.offsetWidth;
-      el.classList.add('w2-show');
-    } else {
-      el.classList.remove('w2-show');
-      el.classList.add('w2-out');
-      window.setTimeout(() => {
-        // フェード待機中に新しい無線が来ていたら(lastRadioLineが非null)隠さない
-        if (!this.lastRadioLine) el.hidden = true;
-      }, 320);
-    }
-  }
-
-  // 潜入検知メーター: 目アイコン+半円弧ゲージ。0=白/0.5+=黄/0.9+=赤点滅(detect01未定義で非表示)
-  private updateDetectMeter(snap: R53W2Snapshot): void {
-    const el = this.el['detect'];
-    if (!el) return;
-    const shown = snap.detect01 !== undefined;
-    el.hidden = !shown;
-    if (!shown) return;
-    const d01 = clampN(snap.detect01 ?? 0, 0, 1);
-    const tier = detectMeterTier(d01);
-    el.classList.toggle('w2-tier-wary', tier === 'wary');
-    el.classList.toggle('w2-tier-alert', tier === 'alert');
-    el.classList.toggle('w2-detect-blink', detectMeterBlinking(d01, snap.reduceMotion));
-    const arc = this.el['detectarc'];
-    if (arc) {
-      arc.setAttribute('stroke-dasharray', String(DETECT_ARC_LEN));
-      arc.setAttribute('stroke-dashoffset', String(DETECT_ARC_LEN * (1 - d01)));
-    }
-  }
-
-  // ボスフェーズ菱形pips: 既存ボスHPバーの近くにidx/totalを表示(bossPhase未定義で非表示)
-  private updateBossPhases(snap: R53W2Snapshot): void {
-    const host = this.el['bossphases'];
-    if (!host) return;
-    const bp = snap.bossPhase ?? null;
-    host.hidden = !bp;
-    if (!bp) return;
-    if (bp.total !== this.lastBossPhaseTotal) {
-      this.lastBossPhaseTotal = bp.total;
-      host.innerHTML = '';
-      const n = clampN(Math.round(bp.total), 1, 12);
-      for (let i = 0; i < n; i += 1) {
-        const pip = document.createElement('i');
-        pip.className = 'w2-boss-phase-pip';
-        host.appendChild(pip);
-      }
-    }
-    const states = bossPhasePipStates(bp.idx, bp.total);
-    const pips = host.children;
-    for (let i = 0; i < pips.length; i += 1) {
-      const state = states[i] ?? 'pending';
-      const pip = pips[i] as HTMLElement;
-      pip.classList.toggle('w2-pip-done', state === 'done');
-      pip.classList.toggle('w2-pip-active', state === 'active');
-    }
-  }
-
-  // S&D HUD: ラウンドピップ(先取4・チーム色)/フェーズチップ/設置後ボム大カウントダウン/
-  // 設置・解除プログレスバー/所持アイコン。sndPhase未定義で非表示(非S&Dモードは無影響)
-  private updateSndHud(snap: R53W2Snapshot): void {
-    const host = this.el['snd'];
-    if (!host) return;
-    const active = snap.sndPhase !== undefined;
-    host.hidden = !active;
-    if (!active) return;
-
-    if (this.lastSndPipTarget !== SND_WIN_TARGET) {
-      this.lastSndPipTarget = SND_WIN_TARGET;
-      for (const id of ['sndpipsmine', 'sndpipsenemy'] as const) {
-        const row = this.el[id];
-        if (!row) continue;
-        row.innerHTML = '';
-        for (let i = 0; i < SND_WIN_TARGET; i += 1) {
-          const pip = document.createElement('i');
-          pip.className = 'w2-snd-pip';
-          row.appendChild(pip);
-        }
-      }
-    }
-    const score: [number, number] = snap.sndScore ?? [0, 0];
-    const mineStates = sndPipStates(score[0]);
-    const enemyStates = sndPipStates(score[1]);
-    const mineRow = this.el['sndpipsmine'];
-    if (mineRow) {
-      const pips = mineRow.children;
-      for (let i = 0; i < pips.length; i += 1) {
-        (pips[i] as HTMLElement).classList.toggle('w2-snd-pip-lit', mineStates[i] ?? false);
-      }
-    }
-    const enemyRow = this.el['sndpipsenemy'];
-    if (enemyRow) {
-      const pips = enemyRow.children;
-      for (let i = 0; i < pips.length; i += 1) {
-        (pips[i] as HTMLElement).classList.toggle('w2-snd-pip-lit', enemyStates[i] ?? false);
-      }
-    }
-
-    this.text('sndphase', sndPhaseLabel(snap.sndPhase));
-
-    const bombEl = this.el['sndbomb'];
-    if (bombEl) {
-      const showBomb = snap.sndPhase === 'planted' && snap.sndBombTimer !== undefined;
-      bombEl.hidden = !showBomb;
-      if (showBomb) this.text('sndbombtime', Math.max(0, snap.sndBombTimer ?? 0).toFixed(1));
-    }
-
-    const progEl = this.el['sndprogress'];
-    if (progEl) {
-      const showProg = snap.sndProgress01 !== undefined;
-      progEl.hidden = !showProg;
-      if (showProg) {
-        this.text('sndprogresslabel', sndProgressLabel(snap.sndProgressKind));
-        const fill = this.el['sndprogressfill'];
-        if (fill) fill.style.transform = `scaleX(${clampN(snap.sndProgress01 ?? 0, 0, 1)})`;
-      }
-    }
-
-    const carrierEl = this.el['sndcarrier'];
-    if (carrierEl) carrierEl.hidden = !snap.sndCarrierIsPlayer;
-  }
-
-  // ══ R53-W3 MK.III「LIVING INSTRUMENT」════════════════════════════════════
-  // per-frame DOM書込みの規律: dataset/hidden/クラスは「変化フレームのみ」。
-  // 毎フレーム走るのはカウントアップ中のtext()(同値スキップ)とチャージ弧の
-  // dashoffset(直近値スキップ)のみ。
-  private updateMk3(snap: Mk3Snapshot): void {
+  protected override updateMk3(snap: Mk3Snapshot): void {
     const now = performance.now();
     const dt = this.mk3PrevT === null ? 0 : clampN((now - this.mk3PrevT) / 1000, 0, 0.1);
     this.mk3PrevT = now;

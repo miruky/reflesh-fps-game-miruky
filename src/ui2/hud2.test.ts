@@ -1,6 +1,7 @@
 // W-ENZA2 F5: 戦闘HUD(hud2)の契約テスト — jsdom不使用(純関数+ソース/CSSピンのみ)
 import { describe, expect, it } from 'vitest';
 import src from './hud2.ts?raw';
+import sharedSrc from '../ui/hud.ts?raw';
 
 import {
   Hud2,
@@ -17,6 +18,10 @@ import {
 } from './hud2';
 
 describe('Hud2 公開面(旧Hudミラー — main.ts無改修で差し替わる契約)', () => {
+  it('Classicの共通HUD処理を継承し、二重実装しない', () => {
+    expect(src.includes('export class Hud2 extends Hud')).toBe(true);
+  });
+
   it('main.tsが呼ぶ全メソッドがprototypeに存在する', () => {
     for (const m of [
       'setupMinimap',
@@ -41,13 +46,17 @@ describe('帝王転調テーマ属性(enza-core契約: kotei/raitei/kokurai)', (
   });
   it('deriveEmperorState の優先度: 黒雷帝 > 黒帝 > 雷帝', () => {
     const base = { kokuraiteiMode: false, darkEmperorS: 0, raiteiMode: false } as Mk3Snapshot;
-    expect(deriveEmperorState({ ...base, kokuraiteiMode: true, raiteiMode: true })).toBe('kokuraitei');
+    expect(deriveEmperorState({ ...base, kokuraiteiMode: true, raiteiMode: true })).toBe(
+      'kokuraitei',
+    );
     expect(deriveEmperorState({ ...base, darkEmperorS: 10, raiteiMode: true })).toBe('dark');
     expect(deriveEmperorState({ ...base, raiteiMode: true })).toBe('raitei');
     expect(deriveEmperorState(base)).toBeNull();
   });
   it('三重保証: reset/hide/状態変化点の全てで data-emperor を解除するコードがある', () => {
-    expect(src.match(/delete document\.documentElement\.dataset\.emperor/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(
+      src.match(/delete document\.documentElement\.dataset\.emperor/g)?.length ?? 0,
+    ).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -84,11 +93,13 @@ describe('焔座クロームのソース/CSS契約', () => {
     expect(src.includes("import './hud2.css'")).toBe(true);
   });
   it('省モーションのJSゲート(snap.reduceMotion)が広く残っている(台帳: 16箇所)', () => {
-    expect((src.match(/reduceMotion/g) ?? []).length).toBeGreaterThanOrEqual(14);
+    const inherited = sharedSrc.match(/reduceMotion/g)?.length ?? 0;
+    const ui2Specific = src.match(/reduceMotion/g)?.length ?? 0;
+    expect(inherited + ui2Specific).toBeGreaterThanOrEqual(14);
   });
   it('帝王フレームはdata-stateで3態切替される(CSS側変種のフック)', () => {
     expect(src.includes('frame.dataset.state = empKey')).toBe(true);
-    expect(src.includes("emperorThemeAttr(empKey as EmperorState)")).toBe(true);
+    expect(src.includes('emperorThemeAttr(empKey as EmperorState)')).toBe(true);
   });
   it('死亡幕は明朝儀式「戦死」', () => {
     expect(src.includes('<div class="hud-death-title">戦死</div>')).toBe(true);
@@ -101,40 +112,172 @@ describe('焔座クロームのソース/CSS契約', () => {
   it('全ライタ参照data-idがコンストラクタDOMに存在する(退行網)', () => {
     const ids = [
       // スコア/モード/コンパス
-      'modename', 'kills', 'deaths', 'streak', 'compass', 'hdg', 'timer', 'teamscore',
-      'scoremine', 'scoretarget', 'scoreenemy', 'announce',
+      'modename',
+      'kills',
+      'deaths',
+      'streak',
+      'compass',
+      'hdg',
+      'timer',
+      'teamscore',
+      'scoremine',
+      'scoretarget',
+      'scoreenemy',
+      'announce',
       // 目標系
-      'zones', 'mission', 'obj-text', 'obj-bar', 'obj-wave', 'boss', 'boss-name', 'boss-bar',
-      'bossphases', 'detect', 'detectarc', 'training', 'tr-dps', 'tr-acc', 'tr-hs', 'tr-streak',
-      'hpindicator', 'hparrowwrap', 'hparrowshape', 'hpchip', 'hptime', 'kcevent',
+      'zones',
+      'mission',
+      'obj-text',
+      'obj-bar',
+      'obj-wave',
+      'boss',
+      'boss-name',
+      'boss-bar',
+      'bossphases',
+      'detect',
+      'detectarc',
+      'training',
+      'tr-dps',
+      'tr-acc',
+      'tr-hs',
+      'tr-streak',
+      'hpindicator',
+      'hparrowwrap',
+      'hparrowshape',
+      'hpchip',
+      'hptime',
+      'kcevent',
       // S&D
-      'snd', 'sndpipsmine', 'sndphase', 'sndpipsenemy', 'sndbomb', 'sndbombtime',
-      'sndprogress', 'sndprogresslabel', 'sndprogressfill', 'sndcarrier',
+      'snd',
+      'sndpipsmine',
+      'sndphase',
+      'sndpipsenemy',
+      'sndbomb',
+      'sndbombtime',
+      'sndprogress',
+      'sndprogresslabel',
+      'sndprogressfill',
+      'sndcarrier',
       // ゾンビ
-      'zombie', 'zround', 'zkills', 'zpoints', 'zpointsplate', 'zpointsbig', 'zperks', 'zbuy',
-      'rogue-badge', 'rogue-cards-n', 'rogue-pick', 'rogue-options', 'rogue-remain', 'powerups',
-      'specialbanner', 'zreviveflash', 'zbossflash',
+      'zombie',
+      'zround',
+      'zkills',
+      'zpoints',
+      'zpointsplate',
+      'zpointsbig',
+      'zperks',
+      'zbuy',
+      'rogue-badge',
+      'rogue-cards-n',
+      'rogue-pick',
+      'rogue-options',
+      'rogue-remain',
+      'powerups',
+      'specialbanner',
+      'zreviveflash',
+      'zbossflash',
       // 帝王/状態
-      'hell', 'darkemperor', 'detimer', 'raitei', 'kokuraitei', 'chargegauge', 'chargefill',
-      'spingauge', 'spinfill', 'mk3emperor', 'mk3arc', 'mk3arcfill',
-      'mk3moment', 'mk3momentmark', 'mk3momenttitle', 'mk3momentsub',
+      'hell',
+      'darkemperor',
+      'detimer',
+      'raitei',
+      'kokuraitei',
+      'chargegauge',
+      'chargefill',
+      'spingauge',
+      'spinfill',
+      'mk3emperor',
+      'mk3arc',
+      'mk3arcfill',
+      'mk3moment',
+      'mk3momentmark',
+      'mk3momenttitle',
+      'mk3momentsub',
       // フィード/演出
-      'feed', 'crosshair', 'cht', 'chb', 'chl', 'chr', 'hitmarker', 'dmg', 'incoming',
-      'xpribbon', 'vignette', 'poisonvign', 'flash', 'ultflash', 'whiteout', 'speedlines',
-      'move', 'movestate', 'speedfill', 'banner', 'mkbanner', 'mklabel', 'mkpips',
-      'radio', 'radiospeaker', 'radiotext', 'medalstack', 'badgestack',
+      'feed',
+      'crosshair',
+      'cht',
+      'chb',
+      'chl',
+      'chr',
+      'hitmarker',
+      'dmg',
+      'incoming',
+      'xpribbon',
+      'vignette',
+      'poisonvign',
+      'flash',
+      'ultflash',
+      'whiteout',
+      'speedlines',
+      'move',
+      'movestate',
+      'speedfill',
+      'banner',
+      'mkbanner',
+      'mklabel',
+      'mkpips',
+      'radio',
+      'radiospeaker',
+      'radiotext',
+      'medalstack',
+      'badgestack',
       // 武器/弾/ウルト
-      'weapon', 'weaponslot', 'pappips', 'ammo', 'reserve', 'mode', 'ammopips',
-      'gname', 'gcount', 'reload', 'reloadfill', 'cook', 'cookfill',
-      'ult', 'ultring', 'ultpct', 'ultlabel',
+      'weapon',
+      'weaponslot',
+      'pappips',
+      'ammo',
+      'reserve',
+      'mode',
+      'ammopips',
+      'gname',
+      'gcount',
+      'reload',
+      'reloadfill',
+      'cook',
+      'cookfill',
+      'ult',
+      'ultring',
+      'ultpct',
+      'ultlabel',
       // HP/ミニマップ/ストリーク
-      'hp', 'hpmax', 'hpbarfill', 'minimap', 'mmsize', 'mmuav', 'radar', 'radarblips',
-      'bo2ssnext', 'bo2cauav', 'bo2cauavt', 'rcxdoverlay', 'rcxdtimer',
+      'hp',
+      'hpmax',
+      'hpbarfill',
+      'minimap',
+      'mmsize',
+      'mmuav',
+      'radar',
+      'radarblips',
+      'bo2ssnext',
+      'bo2cauav',
+      'bo2cauavt',
+      'rcxdoverlay',
+      'rcxdtimer',
       // スコープ/キルカム/死亡/スコアボード/GG
-      'scope', 'scopeglint', 'scoperange', 'scopezoom', 'scopebreath',
-      'death', 'respawn', 'kcveil', 'kcflash', 'kcvign', 'kccard', 'kcname', 'kcweapon',
-      'kcdist', 'kctimer', 'scoreboard', 'scoremode', 'scoregoal', 'scorerows',
-      'gg', 'ggrank', 'ggweapon', 'ggtop3',
+      'scope',
+      'scopeglint',
+      'scoperange',
+      'scopezoom',
+      'scopebreath',
+      'death',
+      'respawn',
+      'kcveil',
+      'kcflash',
+      'kcvign',
+      'kccard',
+      'kcname',
+      'kcweapon',
+      'kcdist',
+      'kctimer',
+      'scoreboard',
+      'scoremode',
+      'scoregoal',
+      'scorerows',
+      'gg',
+      'ggrank',
+      'ggweapon',
+      'ggtop3',
     ];
     const missing = ids.filter((id) => !src.includes(`data-id="${id}"`));
     expect(missing).toEqual([]);

@@ -12,12 +12,7 @@ import {
 } from '../core/gamepad';
 import type { Input, UiNav } from '../core/input';
 import { exportProfile, importProfile, saveProfile } from '../core/profile';
-import {
-  dailiesFor,
-  dateStringFromSeed,
-  refreshDailiesDate,
-  todayDateSeed,
-} from '../game/dailies';
+import { dailiesFor, dateStringFromSeed, refreshDailiesDate, todayDateSeed } from '../game/dailies';
 import {
   DEFAULT_SETTINGS,
   GRAPHICS_QUALITIES,
@@ -339,7 +334,17 @@ const CLASS_SHAPE: Record<WeaponClass, ViewModelShape> = {
 };
 
 interface SilSpec {
-  arch: 'ar' | 'bullpup' | 'smg' | 'dmr' | 'sniper' | 'shotgun' | 'lmg' | 'pistol' | 'revolver' | 'fists';
+  arch:
+    | 'ar'
+    | 'bullpup'
+    | 'smg'
+    | 'dmr'
+    | 'sniper'
+    | 'shotgun'
+    | 'lmg'
+    | 'pistol'
+    | 'revolver'
+    | 'fists';
   barrel?: number; // 銃口X(viewBox 0..128)
   mag?: 'curved' | 'straight' | 'box' | 'drum' | 'tube' | 'twin' | 'none';
   optic?: 'iron' | 'red' | 'scope' | 'long';
@@ -473,7 +478,10 @@ function silInner(spec: SilSpec, tracer: string): string {
       pg('48,26 60,26 55,42 45,40'),
       pg('46,15 52,14 52,18 46,18'),
     );
-    a.push(`<rect x="89" y="19" width="3.5" height="3.4" fill="${tracer}"/>`, `<circle cx="58" cy="24" r="2.4" fill="${tracer}"/>`);
+    a.push(
+      `<rect x="89" y="19" width="3.5" height="3.4" fill="${tracer}"/>`,
+      `<circle cx="58" cy="24" r="2.4" fill="${tracer}"/>`,
+    );
   } else {
     // ── 長物: 受け / 銃身 / ハンドガード / ストック / グリップ / 弾倉 / 光学 ──
     const bull = spec.arch === 'bullpup' || spec.stock === 'bull';
@@ -484,7 +492,8 @@ function silInner(spec: SilSpec, tracer: string): string {
     // ストック
     if (!bull) {
       if (spec.stock === 'full') b.push(pg('8,17 22,15 34,16 34,27 8,28'));
-      else if (spec.stock === 'skel') b.push(pg('10,16 34,16 34,18.5 16,19 16,24 34,24 34,27 10,27'));
+      else if (spec.stock === 'skel')
+        b.push(pg('10,16 34,16 34,18.5 16,19 16,24 34,24 34,27 10,27'));
     }
     // グリップ+トリガーガード
     b.push(pg('42,27 51,27 48,41 40,41'), rc(50, 27.5, 11, 3));
@@ -736,6 +745,7 @@ export class Menu {
   private capturingAction: PadAction | null = null; // リバインド捕捉中のアクション
   private bindNote = ''; // 競合解消などの通知文(リバインド表の下に表示)
   private captureCleanup: (() => void) | null = null; // 捕捉中の keydown リスナ等の後始末
+  private holdLaunchCleanup: (() => void) | null = null; // 長押し出撃のwindow/documentリスナ後始末
   private bg: SpaceBg | null = null; // メニュー背景の宇宙(ページ連動カメラ)。attachBgで注入
   private wipeTimer = 0; // 画面遷移ワイプのフォールバックタイマ(animationend不発でも畳む)
   private mfdWiped = false; // 初回マウントはワイプ抑止(ベゼル入場と二重演出にしない)
@@ -786,7 +796,10 @@ export class Menu {
       }
       // V27修正: 保存はされるが復元されていなかった(往復の非対称)。クランプして復元
       if (typeof saved.zombieStartRound === 'number') {
-        this.selection.zombieStartRound = Math.max(1, Math.min(999, Math.round(saved.zombieStartRound)));
+        this.selection.zombieStartRound = Math.max(
+          1,
+          Math.min(999, Math.round(saved.zombieStartRound)),
+        );
       }
       if (typeof saved.hellMode === 'boolean') this.selection.hellMode = saved.hellMode;
       if (typeof saved.allGiantMode === 'boolean') this.selection.allGiantMode = saved.allGiantMode;
@@ -832,6 +845,8 @@ export class Menu {
     // メニューを隠す瞬間に必ずリバインド捕捉を畳む。捕捉中のまま試合へ復帰すると
     // 最初のパッド入力がリバインドに食われ、設定が静かに書き換わるのを防ぐ
     this.endCapture();
+    this.holdLaunchCleanup?.();
+    this.holdLaunchCleanup = null;
     this.teardownPreview();
     this.clearBgTransition();
     this.root.hidden = true;
@@ -1152,6 +1167,7 @@ export class Menu {
   // detail===0 のclick(キーボードEnter/Space・ゲームパッドの el.click())は即時発火を維持する。
   // ポインタ由来のclick(detail>0)は hold 完了側で発火済みのため握りつぶす(二重発火防止)。
   private wireHoldToLaunch(btn: HTMLElement, fire: () => void): void {
+    this.holdLaunchCleanup?.();
     let timer = 0;
     const clear = (): void => {
       if (timer) {
@@ -1174,16 +1190,22 @@ export class Menu {
     btn.addEventListener('pointercancel', clear);
     // ★V-D修正: 押下保持中に alt-tab / タブ非表示になっても300msタイマーが発火しないよう
     // フォーカス喪失系でもキャンセルする(意図しない出撃の防止)
-    window.addEventListener('blur', clear);
-    document.addEventListener('visibilitychange', () => {
+    const onVisibilityChange = (): void => {
       if (document.visibilityState !== 'visible') clear();
-    });
+    };
+    window.addEventListener('blur', clear);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     btn.addEventListener('click', (e) => {
       if (e.detail === 0) {
         clear();
         fire();
       }
     });
+    this.holdLaunchCleanup = () => {
+      clear();
+      window.removeEventListener('blur', clear);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }
 
   // R53 MK.III: DEPLOYヒーローの2層視差(hero-limb=遅layer / hero-grid=速layer)。
@@ -1390,7 +1412,11 @@ export class Menu {
     };
     renderMissionDiff();
     this.query('deploy-mission').addEventListener('click', () => {
-      this.callbacks.onStartMission(mission.id, weaponSelect.value, this.selection.missionDifficulty);
+      this.callbacks.onStartMission(
+        mission.id,
+        weaponSelect.value,
+        this.selection.missionDifficulty,
+      );
     });
     this.query('brief-back').addEventListener('click', () => {
       this.showMain();
@@ -1952,7 +1978,6 @@ export class Menu {
     this.markSelected(grid, 'stage', this.selection.stageId);
   }
 
-
   private renderWeapons(): void {
     const list = this.query('weapons');
     const tabsHost = this.query('wclass-tabs');
@@ -2189,7 +2214,8 @@ export class Menu {
     masteryGrid.appendChild(this.camoChip(def, 'diamond', equipped, true));
     masteryGrid.appendChild(this.camoChip(def, 'dark-matter', equipped, true));
     // R53-W2: 報酬カモ(ストーリー章クリア報酬)。マスタリー枠に追加表示する
-    for (const id of REWARD_CAMO_IDS) masteryGrid.appendChild(this.camoChip(def, id, equipped, true));
+    for (const id of REWARD_CAMO_IDS)
+      masteryGrid.appendChild(this.camoChip(def, id, equipped, true));
   }
 
   // クナイ(fists)専用カモセクション: 9段+常闇
@@ -2208,7 +2234,8 @@ export class Menu {
     if (!grid || !masteryGrid) return;
     const equipped = this.profile.selectedCamos[def.id] ?? null;
     grid.appendChild(this.camoChip(def, null, equipped));
-    for (const tier of CAMO_TIERS) grid.appendChild(this.camoChip(def, tier.id, equipped, false, true));
+    for (const tier of CAMO_TIERS)
+      grid.appendChild(this.camoChip(def, tier.id, equipped, false, true));
     masteryGrid.appendChild(this.camoChip(def, TOKOYAMI_CAMO.id, equipped, true, true));
   }
 
@@ -2237,8 +2264,7 @@ export class Menu {
       : isCamoUnlocked(camoId, def.id, this.profile.weaponStats, this.profile.unlockedRewardCamos);
     const on = unlocked && equipped === camoId;
     const swatch = `background:linear-gradient(135deg, ${tracerHex(v.colorA)} 0%, ${tracerHex(v.colorB)} 55%, ${tracerHex(v.colorC)} 100%)`;
-    btn.className =
-      `camo-chip${mastery ? ' mastery' : ''}${on ? ' selected' : ''}${unlocked ? '' : ' locked'}`;
+    btn.className = `camo-chip${mastery ? ' mastery' : ''}${on ? ' selected' : ''}${unlocked ? '' : ' locked'}`;
     btn.setAttribute('aria-pressed', String(on));
     if (unlocked) {
       btn.innerHTML =
@@ -2306,7 +2332,9 @@ export class Menu {
         : '';
     // R53-W2: 称号(profile.titles)があれば階級表示の隣に最新のものを小さく出す
     const profileTitle = latestTitle(this.profile.titles);
-    const titleHtml = profileTitle ? `<span class="profile-title-badge">${profileTitle}</span>` : '';
+    const titleHtml = profileTitle
+      ? `<span class="profile-title-badge">${profileTitle}</span>`
+      : '';
     panel.innerHTML = `
       <div class="profile-top">
         <span class="profile-rank">LV.${level.level} ${rankNameFor(level.level).name}</span>
@@ -2380,9 +2408,7 @@ export class Menu {
       const checkHtml = claimed
         ? `<span class="daily-check" aria-label="達成済み">✓</span>`
         : `<span class="daily-xp">${ch.rewardXp.toLocaleString()} XP</span>`;
-      const progressText = claimed
-        ? `${ch.target}/${ch.target}`
-        : `${prog}/${ch.target}`;
+      const progressText = claimed ? `${ch.target}/${ch.target}` : `${prog}/${ch.target}`;
       return `
         <div class="daily-row${claimed ? ' daily-row--done' : ''}">
           <span class="daily-diff ${diffClass}">${diffLabel}</span>
@@ -2460,8 +2486,7 @@ export class Menu {
       const selected = this.attachmentBySlot[slot];
       if (
         selected &&
-        (!isUnlocked('attachment', selected, level) ||
-          (slot === 'sight' && !opticFits(selected)))
+        (!isUnlocked('attachment', selected, level) || (slot === 'sight' && !opticFits(selected)))
       ) {
         this.attachmentBySlot[slot] = null;
       }
@@ -2601,7 +2626,9 @@ export class Menu {
       if (input) input.disabled = locked;
     }
     for (const wrapId of ['zombie-round-wrap', 'charm-wrap']) {
-      this.root.querySelector<HTMLElement>(`[data-id="${wrapId}"]`)?.classList.toggle('rogue-locked', locked);
+      this.root
+        .querySelector<HTMLElement>(`[data-id="${wrapId}"]`)
+        ?.classList.toggle('rogue-locked', locked);
     }
   }
 
@@ -2641,10 +2668,16 @@ export class Menu {
       if (refocus) sel.querySelector<HTMLElement>(refocus)?.focus();
     };
 
-    sel.querySelector<HTMLElement>('[data-id="zr-dec"]')?.addEventListener('click', () => setRound(cur - 1, '[data-id="zr-dec"]'));
-    sel.querySelector<HTMLElement>('[data-id="zr-inc"]')?.addEventListener('click', () => setRound(cur + 1, '[data-id="zr-inc"]'));
+    sel
+      .querySelector<HTMLElement>('[data-id="zr-dec"]')
+      ?.addEventListener('click', () => setRound(cur - 1, '[data-id="zr-dec"]'));
+    sel
+      .querySelector<HTMLElement>('[data-id="zr-inc"]')
+      ?.addEventListener('click', () => setRound(cur + 1, '[data-id="zr-inc"]'));
     sel.querySelectorAll<HTMLElement>('[data-zr]').forEach((btn) => {
-      btn.addEventListener('click', () => setRound(Number(btn.dataset.zr), `[data-zr="${btn.dataset.zr}"]`));
+      btn.addEventListener('click', () =>
+        setRound(Number(btn.dataset.zr), `[data-zr="${btn.dataset.zr}"]`),
+      );
     });
   }
 
@@ -2727,8 +2760,7 @@ export class Menu {
     const zombieRoundRow = this.root.querySelector<HTMLElement>('[data-id="brief-zombie-round"]');
     if (zombieRoundRow) {
       zombieRoundRow.hidden = this.selection.mode !== 'zombie';
-      this.query('brief-zombie-round-val').textContent =
-        `R${this.selection.zombieStartRound ?? 1}`;
+      this.query('brief-zombie-round-val').textContent = `R${this.selection.zombieStartRound ?? 1}`;
     }
   }
 
@@ -2748,7 +2780,8 @@ export class Menu {
       if (keys === '') {
         const hdr = document.createElement('span');
         hdr.className = 'control-section-header';
-        hdr.style.cssText = 'grid-column:1/-1;font-size:0.7em;letter-spacing:0.12em;color:#ffc04b;text-transform:uppercase;padding:0.6em 0 0.1em;opacity:0.85;';
+        hdr.style.cssText =
+          'grid-column:1/-1;font-size:0.7em;letter-spacing:0.12em;color:#ffc04b;text-transform:uppercase;padding:0.6em 0 0.1em;opacity:0.85;';
         hdr.textContent = label;
         grid.append(hdr);
         continue;

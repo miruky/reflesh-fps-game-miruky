@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { buildGunBody, CamoStandardMaterial, resolveSightY, sightYOverride, ViewModel, weaponHasIntegralSuppressor } from './viewmodel';
+import { buildGunBody, CamoStandardMaterial, resolveMuzzleFlashProfile, resolveSightY, sightYOverride, ViewModel, weaponHasIntegralSuppressor } from './viewmodel';
 import { WEAPON_DEFS, type ModelKey, type ViewModelShape, type WeaponDef } from '../game/weapons';
 import { classDefault, fitsMagnified, OPTIC_SPECS, resolveOpticId } from '../game/optics';
 import { SHAPE_SPECS, SHAPE_PAINTERS } from './weapon-shapes';
@@ -344,6 +344,88 @@ describe('武器カモ(buildGunBody)', () => {
     const mats = camoMats(buildGunBody(ar, 'pap2').gun);
     expect(mats.length).toBeGreaterThan(0);
     for (const m of mats) expect(m.camoVisualId).toBe('pap2');
+  });
+});
+
+describe('ダイヤ迷彩の発砲グレア抑制', () => {
+  it('標準プロファイルは従来値を維持し、ダイヤだけ光量・面積・残光を抑える', () => {
+    const standard = resolveMuzzleFlashProfile(null);
+    const diamond = resolveMuzzleFlashProfile('diamond');
+
+    expect(standard).toEqual({
+      hipDurationS: 0.045,
+      scopedDurationS: 0.03,
+      lightIntensity: 8,
+      meshOpacity: 0.9,
+      meshScale: 1,
+    });
+    expect(diamond.lightIntensity).toBeLessThan(standard.lightIntensity * 0.1);
+    expect(diamond.meshOpacity).toBeLessThan(standard.meshOpacity * 0.5);
+    expect(diamond.meshScale).toBeLessThan(standard.meshScale);
+    expect(diamond.hipDurationS).toBeLessThan(standard.hipDurationS);
+    expect(diamond.scopedDurationS).toBeLessThan(standard.scopedDurationS);
+  });
+
+  it('ViewModelの実発砲経路へダイヤ専用値が反映される', () => {
+    const originalStorage = (globalThis as { localStorage?: Storage }).localStorage;
+    const weaponStats = Object.fromEntries(
+      Object.values(WEAPON_DEFS)
+        .filter((def) => def.class === 'ar')
+        .map((def) => [def.id, { kills: 500, headshots: 100 }]),
+    );
+    const profile = JSON.stringify({
+      weaponStats,
+      selectedCamos: { 'kaede-ar': 'diamond' },
+    });
+    (globalThis as { localStorage?: Storage }).localStorage = {
+      getItem: (key: string) => (key === 'hibana.profile.v1' ? profile : null),
+    } as Storage;
+
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    const ar = WEAPON_DEFS['kaede-ar'];
+    if (!ar) throw new Error('kaede-ar missing');
+
+    try {
+      vm.setWeapon(ar);
+      vm.fire(false, true);
+
+      const internals = vm as unknown as {
+        flashTimer: number;
+        flashMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+        flashLight: THREE.PointLight;
+      };
+      expect(internals.flashTimer).toBe(resolveMuzzleFlashProfile('diamond').hipDurationS);
+      expect(internals.flashMesh.material.opacity).toBe(resolveMuzzleFlashProfile('diamond').meshOpacity);
+
+      vm.update(0.001, {
+        adsProgress: 0,
+        mouseDX: 0,
+        mouseDY: 0,
+        moveFactor: 0,
+        grounded: true,
+        reloadRatio: null,
+        raiseRatio: 0,
+        motionScale: 1,
+        alive: true,
+        scopeReveal01: 0,
+      });
+      expect(internals.flashMesh.visible).toBe(true);
+      expect(internals.flashLight.intensity).toBe(resolveMuzzleFlashProfile('diamond').lightIntensity);
+
+      // 発砲直後に持ち替えても、旧銃口の残光が新しい銃口へワープしない。
+      vm.setWeapon(WEAPON_DEFS['tsubaki-smg']!);
+      expect(internals.flashTimer).toBe(0);
+      expect(internals.flashMesh.visible).toBe(false);
+      expect(internals.flashLight.intensity).toBe(0);
+    } finally {
+      vm.dispose();
+      if (originalStorage === undefined) {
+        delete (globalThis as { localStorage?: Storage }).localStorage;
+      } else {
+        (globalThis as { localStorage?: Storage }).localStorage = originalStorage;
+      }
+    }
   });
 });
 

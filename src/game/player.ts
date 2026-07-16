@@ -1,6 +1,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { SoundKit } from '../core/audio';
+import { MOVE_SPEEDS } from './player-speeds';
+export { MOVE_SPEEDS } from './player-speeds';
 
 export const CAPSULE_RADIUS = 0.35;
 export const CAPSULE_HALF = 0.6; // 円柱部の半分。全高 2*(0.6+0.35)=1.9m
@@ -9,15 +11,15 @@ const EYE_STAND = 1.62;
 const EYE_CROUCH = 1.08;
 const EYE_SLIDE = 0.88;
 
-const WALK_SPEED = 9.2;
-const SPRINT_SPEED = 12.8;
+const WALK_SPEED = MOVE_SPEEDS.walk;
+const SPRINT_SPEED = MOVE_SPEEDS.sprint;
 const CROUCH_SPEED = 4.8;
 const ADS_SPEED_FACTOR = 0.6;
 const GROUND_ACCEL = 40;
 // 空中はQuake系の射影加速で運動量を保ちつつ強い空中制御を効かせる(BO3風)
 const AIR_ACCEL = 16;
 const AIR_WISH_SPEED = SPRINT_SPEED; // 見ている方向への加速の頭打ち(SPRINT連動で自動2倍)
-const AIR_MAX_SPEED = 40; // 水平速度のソフト上限(スライドジャンプの運動量を空中で長く維持)
+const AIR_MAX_SPEED = MOVE_SPEEDS.airMax; // 水平速度のソフト上限(スライドジャンプの運動量を空中で長く維持)
 // 上限超過分の減衰率。ストレイフの加速(near-cap で ~3.4m/s/フレーム)を上回る強さにして、
 // 空中加速が上限の2倍(80m/s)まで暴走しないようにする。
 // 比例調整: 旧(AIR_DRAG=24, cap=13)→新(cap=40)で同比率 ≈ 8。
@@ -40,7 +42,7 @@ const FALL_DAMAGE_MULT = 4;
 const REGEN_DELAY = 4;
 const REGEN_PER_SECOND = 25;
 
-const SLIDE_BOOST = 92; // パワースライド開始時の加速(×10: マップ5倍対応)
+const SLIDE_BOOST = MOVE_SPEEDS.slide; // パワースライド開始時の加速(×10: マップ5倍対応)
 const SLIDE_MIN_SPEED = 3.0; // スライド終端速度
 const SLIDE_DURATION = 0.85;
 const SLIDE_STEER = 6;
@@ -79,14 +81,6 @@ const MANTLE_DURATION = 0.34;
 // moved.x/z を実移動適用の直前で必ず 0 に破棄し、床抜け防止に必要な moved.y のみ通す。よって
 // 正味ドリフトは実測0mm。実移動入力があるフレームは一切触らない)。
 export const KCC_IDLE_JITTER_M = 1e-4;
-
-// match / HUD から参照する移動速度の代表値
-export const MOVE_SPEEDS = {
-  walk: WALK_SPEED,
-  sprint: SPRINT_SPEED,
-  slide: SLIDE_BOOST,
-  airMax: AIR_MAX_SPEED,
-} as const;
 
 export interface MoveInput {
   x: number; // 右が正

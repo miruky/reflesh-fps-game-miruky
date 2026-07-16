@@ -42,6 +42,7 @@ import { Weapon } from './weapons';
 import type { TeamPalette } from './teamcolors';
 import type { MatchConfig, FeedEntry } from './match-types';
 import type { DarkSlashWave } from './match-contracts';
+export { motifWeightForMission } from './story-audio';
 
 // 帝王編ボスのフェーズ挙動定数(match.ts から移設 — 使用者は本エンジンのみ)
 const BOSS_BLINK_OFFSET_M = 6;
@@ -49,19 +50,6 @@ const BOSS_PILLAR_DAMAGE = 60;
 const BOSS_PILLAR_RADIUS_M = 2.2;
 // R54-F6: resupply波(chB歴戦の間)の小休止秒数 — 全滅確認→補給→この秒数後に次波
 const WAVE_INTERMISSION_S = 8;
-
-// R54 音響2: ストーリー章番号(chapterId='ch<N>')から「帝王の指紋」動機の重みを決める。
-// ch1-3=0(訓練/序盤は素の曲)/ch4-6=0.4/ch7以降=0.8(終盤ほど動機が濃くなる)。
-// 非ストーリー(mission未注入)・数値化できない特別章(chB等)は0=従来と同一。
-// main.ts の launch() から sounds.setMusicProfile の第2引数として配線される
-// (main.tsはWebGL/DOM依存でテスト不可のため、ここに純関数として置いてテストする)
-export function motifWeightForMission(mission: MissionDef | null | undefined): number {
-  const m = /^ch(\d+)/.exec(mission?.chapterId ?? '');
-  const num = m ? Number(m[1]) : 0;
-  if (num >= 7) return 0.8;
-  if (num >= 4) return 0.4;
-  return 0;
-}
 
 export interface StoryHost {
   readonly player: Player;

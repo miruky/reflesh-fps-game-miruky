@@ -84,6 +84,39 @@ const CARRY_HANDLE_SIGHT_Y = 0.116;
 // 加算(reflexDot)材だが小径・低エネルギーなので bloom閾値0.9 を超えない(むしろ縮小で減少)。
 const OPTIC_DOT_SIZE = 0.0046;
 
+// マズルフラッシュは銃口のごく近くに置くため、高金属度・低粗さのダイヤ迷彩へ
+// PointLight が直撃すると、鏡面反射 + 加算フラッシュ + Bloom が同時に増幅される。
+// 迷彩本体の質感を落とさず「発砲している瞬間」だけ光量を制御する単一真実源。
+// 標準値は従来と完全同値。ダイヤだけ光エネルギーを大幅に下げつつ、短く小さい
+// フラッシュを残して射撃フィードバック自体は失わない。
+export interface MuzzleFlashProfile {
+  readonly hipDurationS: number;
+  readonly scopedDurationS: number;
+  readonly lightIntensity: number;
+  readonly meshOpacity: number;
+  readonly meshScale: number;
+}
+
+const STANDARD_MUZZLE_FLASH: MuzzleFlashProfile = Object.freeze({
+  hipDurationS: 0.045,
+  scopedDurationS: 0.03,
+  lightIntensity: 8.0,
+  meshOpacity: 0.9,
+  meshScale: 1.0,
+});
+
+const DIAMOND_MUZZLE_FLASH: MuzzleFlashProfile = Object.freeze({
+  hipDurationS: 0.026,
+  scopedDurationS: 0.018,
+  lightIntensity: 0.45,
+  meshOpacity: 0.32,
+  meshScale: 0.68,
+});
+
+export function resolveMuzzleFlashProfile(camo: CamoId | null): MuzzleFlashProfile {
+  return camo === 'diamond' ? DIAMOND_MUZZLE_FLASH : STANDARD_MUZZLE_FLASH;
+}
+
 // classDefault は optics.ts の単一真実源から import(shape 解決を viewmodel/match/optics で共有)。
 
 // R58: 3Dモデリング用の細粒度キー解決。modelKey(実在武器ごと)優先→shape(粗粒度)→クラス既定。
@@ -2676,6 +2709,7 @@ export class ViewModel {
   private muzzle = new THREE.Object3D();
   private flashMesh: THREE.Mesh;
   private flashLight: THREE.PointLight;
+  private flashProfile = STANDARD_MUZZLE_FLASH;
   private readonly cache = new Map<string, { gun: THREE.Group; muzzle: THREE.Object3D }>();
 
   // ADS 収束オフセット。setWeapon で adsY=-resolveSightY(def) をキャッシュし、
@@ -2923,6 +2957,13 @@ export class ViewModel {
     // camo.ts の通常解放ラダーとは無関係のシステム付与カモ)。camo変数へ折り込むだけで
     // キャッシュキーも自動分離される(R33教訓通り、キー変更=見た目変更)。
     const camo = def.papCamo ?? resolveEquippedCamo(def.id);
+    this.flashProfile = resolveMuzzleFlashProfile(camo);
+    (this.flashMesh.material as THREE.MeshBasicMaterial).opacity = this.flashProfile.meshOpacity;
+    // 直前の武器で発生した数十msの残光を、新しい銃口へ付け替えて表示しない。
+    // 光量プロファイルも同時に切り替わるため、ここで視覚・光源・タイマーを原子的に消灯する。
+    this.flashTimer = 0;
+    this.flashMesh.visible = false;
+    this.flashLight.intensity = 0;
     const key = `${def.id}:${(def.attachmentIds ?? []).join(',')}:${camo ?? ''}`;
     let entry = this.cache.get(key);
     if (!entry) {
@@ -3097,7 +3138,11 @@ export class ViewModel {
     this.kickZ = Math.min(scoped ? 0.2 : 0.08, this.kickZ + (scoped ? 0.18 : 0.045));
     this.kickRot = Math.min(scoped ? 0.34 : 0.18, this.kickRot + (scoped ? 0.22 : 0.09));
     // flash=false は素手パンチ等の非発砲キック(マズルフラッシュを出さない)
-    if (flash) this.flashTimer = scoped ? 0.03 : 0.045;
+    if (flash) {
+      this.flashTimer = scoped
+        ? this.flashProfile.scopedDurationS
+        : this.flashProfile.hipDurationS;
+    }
     // スコープ武器のみ、約180ms後にボルト閉鎖の小さな揺り戻しを入れる
     if (scoped) this.counterKickTimer = 0.18;
     // メカニカル・サイクル: slide/bolt/charging/forend の後退→復帰。シリンダは1発分回す。
@@ -3214,11 +3259,16 @@ export class ViewModel {
     this.flashMesh.visible = this.flashTimer > 0;
     // サプレッサー付きは intensity/scale を 1/4 に抑えて炎を消す
     const flashSuppFactor = this.isSuppressed ? 0.25 : 1.0;
-    this.flashLight.intensity = this.flashTimer > 0 ? 8.0 * flashSuppFactor : 0;
+    this.flashLight.intensity = this.flashTimer > 0
+      ? this.flashProfile.lightIntensity * flashSuppFactor
+      : 0;
     if (this.flashTimer > 0) {
       this.flashMesh.rotation.z = Math.random() * Math.PI;
       // 毎発シード違いのスケールで連射のちらつきを自然に
-      const fs = this.isSuppressed ? 0.3 + Math.random() * 0.35 : 0.7 + Math.random() * 0.85;
+      const randomScale = this.isSuppressed
+        ? 0.3 + Math.random() * 0.35
+        : 0.7 + Math.random() * 0.85;
+      const fs = randomScale * this.flashProfile.meshScale;
       this.flashMesh.scale.setScalar(fs);
     }
 

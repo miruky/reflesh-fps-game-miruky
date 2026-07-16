@@ -41,15 +41,15 @@ export type ViewModelShape =
   | 'lmg-drum'
   | 'pistol'
   | 'revolver'
-  | 'launcher'    // ロケットランチャー(肩担ぎ発射筒)
-  | 'sniper-semi'     // SVD系セミオートスナイパー(ボルトハンドルなし/ストレートマグ/スコープ)
-  | 'antimateriel'    // Barrett系対物ライフル(特大/ventSlots6/スケルトンストック)
-  | 'shuriken-hand'   // 手のひら手裏剣ホルダー+十字スタック(早期分岐)
-  | 'bow-japanese'    // 縦長和弓+光の弦 accent emissive(早期分岐)
-  | 'war-fan'         // 扇骨9本の鉄扇(早期分岐)
-  | 'musket'          // 超長銃身+木製火縄銃
+  | 'launcher' // ロケットランチャー(肩担ぎ発射筒)
+  | 'sniper-semi' // SVD系セミオートスナイパー(ボルトハンドルなし/ストレートマグ/スコープ)
+  | 'antimateriel' // Barrett系対物ライフル(特大/ventSlots6/スケルトンストック)
+  | 'shuriken-hand' // 手のひら手裏剣ホルダー+十字スタック(早期分岐)
+  | 'bow-japanese' // 縦長和弓+光の弦 accent emissive(早期分岐)
+  | 'war-fan' // 扇骨9本の鉄扇(早期分岐)
+  | 'musket' // 超長銃身+木製火縄銃
   | 'lightning-staff' // 細杖+先端発光クリスタル(早期分岐)
-  | 'minigun';        // 6バレル感の太胴ミニガン(早期分岐)
+  | 'minigun'; // 6バレル感の太胴ミニガン(早期分岐)
 
 // R58: 3Dモデリング用の細粒度キー。ViewModelShape(粗粒度)は 2D SVG シルエット(menu/armory)や
 // optics(SCOPED_SHAPES/resolveOpticId/classDefault)が使う「クラス相当」の集合で、これは不変。
@@ -59,19 +59,35 @@ export type ViewModelShape =
 export type ModelKey =
   | ViewModelShape
   // AR系(rifle×4 / carbine×4 の共有解消)
-  | 'ar-famas' | 'ar-fal' | 'ar-scar-h' | 'ar-hk416'
-  | 'ar-mcx' | 'ar-arx' | 'ar-sg550' | 'ar-scar-l'
+  | 'ar-famas'
+  | 'ar-fal'
+  | 'ar-scar-h'
+  | 'ar-hk416'
+  | 'ar-mcx'
+  | 'ar-arx'
+  | 'ar-sg550'
+  | 'ar-scar-l'
   // SMG系(smg×4 の共有解消)
-  | 'smg-pm12' | 'smg-tmp' | 'smg-mp5sd' | 'smg-uzi'
+  | 'smg-pm12'
+  | 'smg-tmp'
+  | 'smg-mp5sd'
+  | 'smg-uzi'
   // 狙撃/DMR系(dmr×2 / sniper-bolt×3=蜃気楼ビーム分離 の共有解消)
-  | 'dmr-svd' | 'dmr-wa2000'
-  | 'sniper-awm' | 'sniper-trg' | 'sniper-beam'
+  | 'dmr-svd'
+  | 'dmr-wa2000'
+  | 'sniper-awm'
+  | 'sniper-trg'
+  | 'sniper-beam'
   // 散弾系(shotgun-pump×2 の共有解消)
-  | 'sg-870' | 'sg-ithaca'
+  | 'sg-870'
+  | 'sg-ithaca'
   // LMG系(lmg-belt×2 の共有解消)
-  | 'lmg-m249' | 'lmg-rpk'
+  | 'lmg-m249'
+  | 'lmg-rpk'
   // 拳銃系(pistol×3 の共有解消)
-  | 'pistol-glock' | 'pistol-cz75' | 'pistol-93r';
+  | 'pistol-glock'
+  | 'pistol-cz75'
+  | 'pistol-93r';
 
 // 兵装画面のステータスバー(6軸・0..10)。computeWeaponBars で WeaponDef から導出する
 export interface WeaponBars {
@@ -121,7 +137,7 @@ export interface WeaponDef {
   attachmentIds?: string[];
   // スナイパー用フルスクリーンスコープを出す武器(ヤマセミDMRのみ)
   scope?: boolean;
-  // 特殊挙動フック。match側が発砲イベントを差し替える(今回は定義のみ。暫定はhitscanのまま)
+  // 特殊挙動フック。match側が専用の弾体・扇射・ビーム・スピンアップへ差し替える。
   special?: 'bow' | 'fan' | 'staff' | 'beam' | 'minigun' | 'shuriken';
   // エイムアシストの対象武器(スコープ覗き込み時に微吸着)
   aimAssist?: boolean;
@@ -310,7 +326,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 2.0,
     bloomRecoveryDegPerS: 1.8,
     movementSpreadDeg: 0.7,
-    falloff: { start: 11, end: 20, minFactor: 0.50 },
+    falloff: { start: 11, end: 20, minFactor: 0.5 },
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.82,
@@ -938,7 +954,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 2.0,
     bloomRecoveryDegPerS: 2.0,
     movementSpreadDeg: 0.8,
-    falloff: { start: 11, end: 20, minFactor: 0.50 },
+    falloff: { start: 11, end: 20, minFactor: 0.5 },
     mode: 'auto',
     burstCount: 1,
     adsFovScale: 0.82,
@@ -974,7 +990,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     bloomMaxDeg: 2.0,
     bloomRecoveryDegPerS: 1.8,
     movementSpreadDeg: 0.7,
-    falloff: { start: 15, end: 24, minFactor: 0.50 },
+    falloff: { start: 15, end: 24, minFactor: 0.5 },
     mode: 'semi',
     burstCount: 1,
     adsFovScale: 0.8,
@@ -1298,7 +1314,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
   },
   // ── R33 Sランク12種(データ+シルエット+音の定義層) ────────────────────────
   // 挙動(match側のspecial分岐・発砲弾体・エフェクト)は後続担当が実装する。
-  // 現時点はhitscanのまま暫定動作。special フィールドはmatch側の分岐フックのみ。
+  // match側の専用分岐で雷撃弾体として処理する。
   'sigi-sniper': {
     id: 'sigi-sniper',
     name: 'SR-27', // R57-④: 元ネタ Knight's Armament SR-25(数字ちょいずらし、非実在)
@@ -1489,7 +1505,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     id: 'banjin-smg',
     name: '万刃',
     slot: 'secondary',
-    // 手裏剣連射。special:'shuriken'でmatch側が弾体差し替え予定(現在はhitscan暫定)
+    // 手裏剣連射。special:'shuriken'でmatch側が専用弾体へ差し替える。
     damage: 45,
     headshotMultiplier: 1.3,
     rpm: 720,
@@ -1527,7 +1543,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     id: 'gekkou-bow',
     name: '月光弓',
     slot: 'primary',
-    // 弓矢。special:'bow'でmatch側がprojectile弾体実装予定(現在はhitscan暫定)
+    // 弓矢。special:'bow'でmatch側が速度・重力を持つ専用弾体へ差し替える。
     damage: 200,
     headshotMultiplier: 1.9,
     rpm: 50,
@@ -1566,7 +1582,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     id: 'fujin-fan',
     name: '風神扇',
     slot: 'primary',
-    // 水平扇散弾。pellets=10(A2: 7→10)。special:'fan'でmatch側が水平扇形弾道実装予定
+    // 水平扇散弾。pellets=10(A2: 7→10)。special:'fan'でmatch側が水平扇形弾道を生成する。
     damage: 35,
     headshotMultiplier: 1.2,
     rpm: 130,
@@ -1642,7 +1658,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     id: 'tenrai-staff',
     name: '天雷杖',
     slot: 'primary',
-    // 雷球launcher。special:'staff'でmatch側が雷球弾体実装予定(現在はhitscan暫定)
+    // 雷球launcher。special:'staff'でmatch側が雷球弾体を生成する。
     damage: 160,
     headshotMultiplier: 1.0,
     rpm: 60,
@@ -1681,7 +1697,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     modelKey: 'sniper-beam',
     name: '蜃気楼',
     slot: 'primary',
-    // ビーム貫通スナイパー。special:'beam'でmatch側が3tick×50dmgビーム実装予定
+    // ビーム貫通スナイパー。special:'beam'でmatch側が3tick×50dmgビームを生成する。
     damage: 90,
     headshotMultiplier: 1.9,
     rpm: 40,
@@ -1720,7 +1736,7 @@ export const WEAPON_DEFS: Record<string, WeaponDef> = {
     id: 'shura-lmg',
     name: '修羅',
     slot: 'primary',
-    // ミニガン。special:'minigun'でmatch側がスピンアップ実装予定
+    // ミニガン。special:'minigun'でmatch側がスピンアップ状態を制御する。
     damage: 28,
     headshotMultiplier: 1.4,
     rpm: 1800,

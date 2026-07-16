@@ -1,9 +1,9 @@
 name: Deploy
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 permissions:
   contents: read
@@ -16,12 +16,19 @@ concurrency:
 
 jobs:
   deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # workflow_runの正確な検証済みSHAを配信し、後続pushとの取り違えを防ぐ。
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -30,9 +37,30 @@ jobs:
       - run: npm run build
         env:
           HIBANA_BASE: /reflesh-fps-game-miruky/
+      - name: Stamp verified commit
+        env:
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: printf '%s\n' "$DEPLOY_SHA" > dist/build-sha.txt
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
       - id: deployment
         uses: actions/deploy-pages@v5
+      - name: Verify exact commit is public
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          for attempt in {1..12}; do
+            deployed_sha="$(curl --fail --silent --show-error --location \
+              "${PAGE_URL%/}/build-sha.txt?verify=${DEPLOY_SHA}" || true)"
+            if [ "$deployed_sha" = "$DEPLOY_SHA" ]; then
+              echo "Verified deployed commit: $DEPLOY_SHA"
+              exit 0
+            fi
+            echo "Waiting for Pages propagation ($attempt/12)"
+            sleep 10
+          done
+          echo "Expected $DEPLOY_SHA but the public site returned ${deployed_sha:-nothing}" >&2
+          exit 1
