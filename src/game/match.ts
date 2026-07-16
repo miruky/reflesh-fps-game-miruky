@@ -79,6 +79,7 @@ import {
   tuningFor,
   ZOMBIE_KCC_LOD_NEAR_M,
   type BotKind,
+  type BotContext,
   type BotTier,
   type BotTuning,
   type HumanoidCrowdPose,
@@ -608,6 +609,8 @@ interface BreakableProp {
 export class Match {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
+  private readonly viewProjectionScratch = new THREE.Matrix4();
+  private readonly viewFrustumScratch = new THREE.Frustum();
 
   over = false;
   timeLeft: number;
@@ -618,6 +621,23 @@ export class Match {
   private readonly bots: Bot[] = [];
   // R54-F2: ゾンビ系サブシステム(状態+進行はZombieDirectorが単独所有)
   private zombie!: ZombieDirector;
+  // R100: updateBotsの個体ごとのContext/コールバック生成を廃止。Bot.updateは同期的に
+  // コールバックを消費するため、現在個体だけ差し替える1組のスクラッチで安全に再利用できる。
+  private botUpdateBot: Bot | null = null;
+  private readonly botUpdateOnShoot = (origin: THREE.Vector3, dir: THREE.Vector3): void => {
+    if (this.botUpdateBot) this.botShoot(this.botUpdateBot, origin, dir);
+  };
+  private readonly botUpdateOnMelee = (bot: Bot): void => {
+    this.zombie.zombieMelee(bot);
+  };
+  private readonly botUpdateContext: BotContext = {
+    targetEye: null,
+    objective: null,
+    tuning: tuningFor('normal', 'normal'),
+    rand: () => this.rand(),
+    onShoot: this.botUpdateOnShoot,
+    onMelee: this.botUpdateOnMelee,
+  };
   private readonly weapons: [Weapon, Weapon];
   private activeIndex = 0;
   private readonly effects: Effects;
@@ -1419,7 +1439,13 @@ export class Match {
       }
     };
     // 通常描画を先に準備し、初フレームのヒッチを防止する。
-    await compileVariant();
+    // ゾンビ群は平常時count=0で開始するため、compile中だけ1体分を有効化する。
+    this.zombie.setZombieCrowdPrewarm(true);
+    try {
+      await compileVariant();
+    } finally {
+      this.zombie.setZombieCrowdPrewarm(false);
+    }
     // 撃破ディゾルブ変種も表示前にキャッシュ。終了時は例外の有無にかかわらず通常へ戻す。
     for (const bot of this.bots) bot.prewarmDissolve(true);
     try {
@@ -3277,7 +3303,7 @@ export class Match {
     this.uiHeat = Math.min(1, heat); // R53-W3 M3: MK.III Adaptive HUDへ露出(snapshot.uiHeat)
     this.sounds.setCombatHeat(this.uiHeat);
     // R53-W3 M3: ゾンビ群InstancedMeshへ姿勢を反映(tick末尾=全bot更新後に1回)
-    this.zombie.feedZombieCrowd();
+    this.zombie.feedZombieCrowd(this.camera);
     // R54-W1 F4: humanoid群InstancedMeshも同タイミングで自己修復+姿勢反映
     this.feedHumanoidCrowd();
     // 瀕死の聴覚こもり(差分ガードはSoundKit側。死亡中は解除して観戦を明瞭に)
@@ -5913,19 +5939,23 @@ export class Match {
     // 歩き/しゃがみは無音なので、静かに近づけば背後を取れる
     const noisy = this.player.alive && (this.player.sprinting || this.player.sliding);
     const playerPos = this.player.position;
+    const playerEye = this.player.alive ? this.player.eyePosition : null;
     this.botFrameIdx = (this.botFrameIdx + 1) % 8; // 今フレームにLOSを走らせる観測者バケット(36bot増員対応)
     for (const bot of this.bots) {
-      // ★5 プレイヤー距離を1回だけ算出(スクラッチ再利用)。足音判定/敵足音の双方で使う
-      const botDistToPlayer = bot.getPositionInto(BOT_POS_SCRATCH).distanceTo(playerPos);
+      // ★5/R100 プレイヤー距離二乗を1回だけ算出。比較だけの経路でsqrtを行わない。
+      const botDistToPlayerSq = bot.getPositionInto(BOT_POS_SCRATCH).distanceToSquared(playerPos);
       // ★8 遠距離(>50m)アニメLOD: syncMeshのsway/呼吸sin群をスキップ(位置/向きのみ同期)
-      bot.animLod = botDistToPlayer > ANIM_LOD_DIST_M;
+      bot.animLod = botDistToPlayerSq > ANIM_LOD_DIST_M * ANIM_LOD_DIST_M;
       // ★ ゾンビアニメ半減LOD: 25-50mはuid%2バケットで更新を間引く
-      bot.animHalfLod = bot.kind === 'zombie' && !bot.animLod && botDistToPlayer > ZOMBIE_KCC_LOD_NEAR_M;
+      bot.animHalfLod =
+        bot.kind === 'zombie' &&
+        !bot.animLod &&
+        botDistToPlayerSq > ZOMBIE_KCC_LOD_NEAR_M * ZOMBIE_KCC_LOD_NEAR_M;
       if (
         noisy &&
         bot.alive &&
         bot.team !== PLAYER_TEAM &&
-        botDistToPlayer < FOOTSTEP_HEAR_DIST
+        botDistToPlayerSq < FOOTSTEP_HEAR_DIST * FOOTSTEP_HEAR_DIST
       ) {
         bot.alert = Math.max(bot.alert, 1.5);
         bot.alertPos = reuseVec3(bot.alertPos, playerPos);
@@ -5934,7 +5964,7 @@ export class Match {
       if (bot.alive) {
         if (bot.kind === 'zombie' || bot.kind === 'giant') {
           // 近接群れ: LOSレイを一切撃たず、生存プレイヤーを直接ターゲット(0 rays / spot-time無し)
-          targetEye = this.player.alive ? this.player.eyePosition : null;
+          targetEye = playerEye;
         } else if (bot.blind <= 0) {
           targetEye = this.perceive(bot, dt); // spot-time知覚FSMで積分してから供給
         }
@@ -5960,14 +5990,12 @@ export class Match {
       }
       // R33 虚像世界: 発動中は敵全体の時間を×0.1へスロー(移動・射撃とも減速)
       const kyozouSlowMul = this.shinkirouKyozouTimer > 0 && bot.team !== PLAYER_TEAM ? 0.1 : 1;
-      bot.update(dt * kyozouSlowMul, {
-        targetEye,
-        objective: bot.alive ? this.objectiveFor(bot) : null,
-        tuning: effectiveTuning,
-        rand: this.rand,
-        onShoot: (origin, dir) => this.botShoot(bot, origin, dir),
-        onMelee: (b) => this.zombie.zombieMelee(b),
-      });
+      this.botUpdateBot = bot;
+      this.botUpdateContext.targetEye = targetEye;
+      this.botUpdateContext.objective =
+        bot.alive && bot.kind !== 'zombie' ? this.objectiveFor(bot) : null;
+      this.botUpdateContext.tuning = effectiveTuning;
+      bot.update(dt * kyozouSlowMul, this.botUpdateContext);
       // 死亡ボットの足音フェーズを即解放(生存ボットのみが足音を持つ)
       if (!bot.alive) {
         this.botStepPhase.delete(bot.uid);
@@ -5977,8 +6005,7 @@ export class Match {
       // ── 敵足音 ── (生存ボットのみ。遠距離25m超/歩行ゼロはスキップ)
       if (bot.alive && this.player.alive) {
         // ★5 ループ先頭の距離を再利用(bot.updateは物理stepまで translation を変えない)
-        const botDist = botDistToPlayer;
-        if (botDist < 25 && bot.horizSpeedMps > 0.1) {
+        if (botDistToPlayerSq < 25 * 25 && bot.horizSpeedMps > 0.1) {
           const prev = this.botStepPhase.get(bot.uid) ?? 0;
           const next = prev + bot.horizSpeedMps * dt * kyozouSlowMul; // V37: 虚像世界スロー中は足音ケイデンスも同期
           this.botStepPhase.set(bot.uid, next % 2.2);
@@ -6010,6 +6037,7 @@ export class Match {
         }
       }
     }
+    this.botUpdateBot = null;
   }
 
   // spot-time 知覚FSM。生の可視性(距離+コーン+LOS)をゲートに calcSpotRate(raycast無し)で
@@ -8596,11 +8624,13 @@ export class Match {
   // 同時生存上限をtierへ連動させる(多数描画/物理予算を守る主レバー)
   // tier別パフォーマンスクランプ: low上限40/medium上限84/high=設定値のまま(Math.minで保護)
   private isInView(pos: THREE.Vector3): boolean {
-    const m = new THREE.Matrix4().multiplyMatrices(
+    this.viewProjectionScratch.multiplyMatrices(
       this.camera.projectionMatrix,
       this.camera.matrixWorldInverse,
     );
-    return new THREE.Frustum().setFromProjectionMatrix(m).containsPoint(pos);
+    return this.viewFrustumScratch
+      .setFromProjectionMatrix(this.viewProjectionScratch)
+      .containsPoint(pos);
   }
 
   // ゾンビ近接: 何体密着していても、グローバル間隔 + プレイヤーi-frameで律速し、

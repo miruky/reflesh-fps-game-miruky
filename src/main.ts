@@ -580,6 +580,7 @@ const perfhudBuf = PERFHUD_ON ? new Float32Array(PERFHUD_BUF_SIZE) : null;
 let perfhudIdx = 0;
 let perfhudFilled = 0;
 let perfhudAcc = 0;
+let perfhudLastNow = PERFHUD_ON ? performance.now() : 0;
 // ゾンビ戦の参考値: レーダー可視(radarEnabled設定+射程+LOS)な敵数の概算。
 // 真の総alive数はmatch.tsに専用アクセサが無いため未提供(-1=非対象/非表示)。
 let perfhudZombieRound = -1;
@@ -615,7 +616,13 @@ const loop = new GameLoop(
     if (mode === 'playing' && match) match.update(dt);
   },
   (dt) => {
-    if (PERFHUD_ON) perfhudSample(dt);
+    if (PERFHUD_ON) {
+      // GameLoopのdtは復帰スパイク対策で250msにクランプされるため、計測HUDだけは
+      // performance.now()の非クランプ実時間を使う。R100の長いGPU stallも過小表示しない。
+      const now = performance.now();
+      perfhudSample((now - perfhudLastNow) / 1000);
+      perfhudLastNow = now;
+    }
     // Options(ゲームパッド)で一時停止/再開。pointer lock のジェスチャ制約で
     // 再開はベストエフォート(失敗時はクリックで再開できる)
     // finalkillcam 中は pause ボタンをスキップとして下のブロックで使うため、ここでは消費しない

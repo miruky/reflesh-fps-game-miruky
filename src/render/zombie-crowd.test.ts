@@ -5,11 +5,14 @@ import {
   Bot,
   DIFFICULTY,
   buildZombieCrowdGeometries,
+  buildZombieCrowdLodGeometries,
   type BotContext,
   type ZombieCrowdPose,
 } from '../game/bot';
 import {
   ZOMBIE_CROWD_CAPACITY,
+  ZOMBIE_CROWD_FAR_ENTER_RANK,
+  ZOMBIE_CROWD_FAR_EXIT_RANK,
   ZombieCrowdRenderer,
   composeZombieCrowdMatrices,
   crowdGeometries,
@@ -234,6 +237,48 @@ describe('buildZombieCrowdGeometries(正準ジオメトリ)', () => {
   });
 });
 
+describe('buildZombieCrowdLodGeometries(R100後方LOD)', () => {
+  const families = (g: ReturnType<typeof buildZombieCrowdGeometries>) => [
+    g.bodyArmor,
+    g.bodyDark,
+    g.bodyGlow,
+    g.armArmor,
+    g.armDark,
+    g.thigh,
+    g.shin,
+  ];
+  const renderedVertexCount = (g: ReturnType<typeof buildZombieCrowdGeometries>): number => {
+    const count = (geo: THREE.BufferGeometry): number => geo.getAttribute('position').count;
+    return (
+      count(g.bodyArmor) +
+      count(g.bodyDark) +
+      count(g.bodyGlow) +
+      count(g.armArmor) +
+      count(g.armDark) +
+      count(g.thigh) * 2 +
+      count(g.shin) * 2
+    );
+  };
+
+  it('7家族・頂点属性・眼光を保ったまま描画頂点数を完全形状の35%未満へ削減する', () => {
+    const full = buildZombieCrowdGeometries();
+    const lod = buildZombieCrowdLodGeometries();
+    for (const geo of families(lod)) {
+      expect(geo.getAttribute('position').count).toBeGreaterThan(0);
+      expect(geo.getAttribute('normal')).toBeDefined();
+      expect(geo.getAttribute('uv')).toBeDefined();
+      expect((geo.getAttribute('color') as THREE.BufferAttribute).itemSize).toBe(3);
+    }
+    expect(lod.bodyGlow.getAttribute('position').count).toBeGreaterThan(0);
+    expect(renderedVertexCount(lod)).toBeLessThan(renderedVertexCount(full) * 0.35);
+  });
+
+  it('完全形状↔後方形状の切替は十分なヒステリシスを持つ', () => {
+    expect(ZOMBIE_CROWD_FAR_ENTER_RANK).toBeGreaterThan(ZOMBIE_CROWD_FAR_EXIT_RANK);
+    expect(ZOMBIE_CROWD_FAR_EXIT_RANK).toBeGreaterThan(8);
+  });
+});
+
 describe('行列等価性(Object3D syncMesh/updateDying vs composeZombieCrowdMatrices)', () => {
   const dt = 1 / 60;
 
@@ -346,42 +391,49 @@ describe('ZombieCrowdRenderer(スロット管理とGPUバッファ)', () => {
     crowd.pose(slot, p);
     crowd.commit();
     const internal = crowd as unknown as {
-      bodyArmor: THREE.InstancedMesh;
-      thigh: THREE.InstancedMesh;
+      full: { bodyArmor: THREE.InstancedMesh; thigh: THREE.InstancedMesh };
     };
     const m = new THREE.Matrix4();
-    internal.bodyArmor.getMatrixAt(slot, m);
+    internal.full.bodyArmor.getMatrixAt(slot, m);
     // 位置成分(elements[12..14])がgroup位置+rig(ボブ0で rigY≈0)に一致
     expect(m.elements[12]).toBeCloseTo(3, 5);
     expect(m.elements[14]).toBeCloseTo(-2, 5);
-    expect(internal.bodyArmor.count).toBe(slot + 1);
-    expect(internal.thigh.count).toBe((slot + 1) * 2);
+    expect(internal.full.bodyArmor.count).toBe(slot + 1);
+    expect(internal.full.thigh.count).toBe((slot + 1) * 2);
     // needsUpdate は書き込み専用セッター(versionをインクリメント)— version>0 で転送予約を確認
-    expect(internal.bodyArmor.instanceMatrix.version).toBeGreaterThan(0);
+    expect(internal.full.bodyArmor.instanceMatrix.version).toBeGreaterThan(0);
     crowd.dispose(scene);
   });
 
-  it('release/非visibleでスケール0行列になる(描画されない)', () => {
+  it('release/非visible個体はcompact後のdraw countへ含まれない', () => {
     const scene = new THREE.Scene();
     const crowd = new ZombieCrowdRenderer(scene);
     const slot = crowd.acquire();
     const p = emptyPose();
     crowd.pose(slot, p);
+    crowd.commit();
+    const internal = crowd as unknown as {
+      full: { bodyArmor: THREE.InstancedMesh };
+    };
+    expect(internal.full.bodyArmor.count).toBe(1);
+
+    crowd.beginFrame();
     p.visible = false;
     crowd.pose(slot, p);
-    const internal = crowd as unknown as { bodyArmor: THREE.InstancedMesh };
-    const m = new THREE.Matrix4();
-    internal.bodyArmor.getMatrixAt(slot, m);
-    expect(m.elements[0]).toBe(0);
-    expect(m.elements[5]).toBe(0);
-    expect(m.elements[10]).toBe(0);
+    crowd.commit();
+    expect(internal.full.bodyArmor.count).toBe(0);
+
+    crowd.beginFrame();
     p.visible = true;
     crowd.pose(slot, p);
-    internal.bodyArmor.getMatrixAt(slot, m);
-    expect(m.elements[0]).not.toBe(0);
+    crowd.commit();
+    expect(internal.full.bodyArmor.count).toBe(1);
+
     crowd.release(slot);
-    internal.bodyArmor.getMatrixAt(slot, m);
-    expect(m.elements[0]).toBe(0);
+    crowd.beginFrame();
+    crowd.pose(slot, p);
+    crowd.commit();
+    expect(internal.full.bodyArmor.count).toBe(0);
     crowd.dispose(scene);
   });
 
@@ -395,21 +447,86 @@ describe('ZombieCrowdRenderer(スロット管理とGPUバッファ)', () => {
     pe.elite = true;
     crowd.pose(a, pn);
     crowd.pose(b, pe);
-    const internal = crowd as unknown as { bodyArmor: THREE.InstancedMesh };
+    const internal = crowd as unknown as {
+      full: { bodyArmor: THREE.InstancedMesh };
+    };
     const cn = new THREE.Color();
     const ce = new THREE.Color();
-    internal.bodyArmor.getColorAt(a, cn);
-    internal.bodyArmor.getColorAt(b, ce);
+    internal.full.bodyArmor.getColorAt(a, cn);
+    internal.full.bodyArmor.getColorAt(b, ce);
     expect(cn.getHex()).toBe(0x39d465);
     expect(ce.getHex()).toBe(0x5cffa8);
     crowd.dispose(scene);
   });
 
-  it('disposeでシーンから7本すべて外れる', () => {
+  it('後方LODスロットはencoded IDで完全形状と衝突せず、専用GPUバンクへ書く', () => {
+    const scene = new THREE.Scene();
+    const crowd = new ZombieCrowdRenderer(scene);
+    const fullSlot = crowd.acquire();
+    const farSlot = crowd.acquire(true);
+    expect(crowd.isFarSlot(fullSlot)).toBe(false);
+    expect(crowd.isFarSlot(farSlot)).toBe(true);
+    expect(farSlot).toBeGreaterThanOrEqual(ZOMBIE_CROWD_CAPACITY);
+    const pose = emptyPose();
+    pose.x = 9;
+    pose.z = -4;
+    crowd.pose(farSlot, pose);
+    crowd.commit();
+    const internal = crowd as unknown as {
+      full: { bodyArmor: THREE.InstancedMesh };
+      far: { bodyArmor: THREE.InstancedMesh };
+    };
+    const farMatrix = new THREE.Matrix4();
+    const fullMatrix = new THREE.Matrix4();
+    internal.far.bodyArmor.getMatrixAt(0, farMatrix);
+    internal.full.bodyArmor.getMatrixAt(fullSlot, fullMatrix);
+    expect(farMatrix.elements[12]).toBeCloseTo(9, 5);
+    expect(farMatrix.elements[14]).toBeCloseTo(-4, 5);
+    expect(fullMatrix.elements[0]).toBe(0);
+    expect(internal.far.bodyArmor.count).toBe(1);
+    crowd.release(fullSlot);
+    crowd.release(farSlot);
+    expect(crowd.activeCount()).toBe(0);
+    crowd.dispose(scene);
+  });
+
+  it('カメラ外個体を除外し、可視個体だけを連続instanceへcompactする', () => {
+    const scene = new THREE.Scene();
+    const crowd = new ZombieCrowdRenderer(scene);
+    const camera = new THREE.PerspectiveCamera(70, 16 / 9, 0.1, 100);
+    camera.position.set(0, 1.6, 0);
+    camera.lookAt(0, 1.2, -10);
+    const hiddenSlot = crowd.acquire(true);
+    const visibleSlot = crowd.acquire(true);
+    const hidden = emptyPose();
+    hidden.x = 0;
+    hidden.z = 12;
+    const visible = emptyPose();
+    visible.x = 2;
+    visible.z = -12;
+
+    crowd.beginFrame(camera);
+    crowd.pose(hiddenSlot, hidden);
+    crowd.pose(visibleSlot, visible);
+    crowd.commit();
+
+    const internal = crowd as unknown as {
+      far: { bodyArmor: THREE.InstancedMesh; thigh: THREE.InstancedMesh };
+    };
+    expect(internal.far.bodyArmor.count).toBe(1);
+    expect(internal.far.thigh.count).toBe(2);
+    const matrix = new THREE.Matrix4();
+    internal.far.bodyArmor.getMatrixAt(0, matrix);
+    expect(matrix.elements[12]).toBeCloseTo(2, 5);
+    expect(matrix.elements[14]).toBeCloseTo(-12, 5);
+    crowd.dispose(scene);
+  });
+
+  it('完全形状7本+後方LOD7本をdisposeでシーンからすべて外す', () => {
     const scene = new THREE.Scene();
     const before = scene.children.length;
     const crowd = new ZombieCrowdRenderer(scene);
-    expect(scene.children.length).toBe(before + 7);
+    expect(scene.children.length).toBe(before + 14);
     crowd.dispose(scene);
     expect(scene.children.length).toBe(before);
   });
@@ -440,4 +557,3 @@ describe('シャンブルポーズの前方性(HF回帰)', () => {
     expect(e.x).toBeLessThan(-0.15); // -(0.26±0.045)域
   });
 });
-

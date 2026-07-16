@@ -32,6 +32,8 @@ type ReadyCallback = (dataURL: string) => void;
 const pendingCallbacks = new Map<string, ReadyCallback[]>();
 const pendingQueue: StageDef[] = [];
 let idleScheduled = false;
+let scheduledHandle: number | null = null;
+let scheduledKind: 'idle' | 'raf' | null = null;
 
 // ── WebGLRenderer シングルトン(遅延生成・以降ずっと保持) ──
 let _renderer: THREE.WebGLRenderer | null = null;
@@ -44,7 +46,9 @@ function getRenderer(): THREE.WebGLRenderer | null {
     canvas.height = THUMB_H;
     _renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      // 320×184をCSS縮小表示するためMSAA差はほぼ見えない。低速GPUでの生成時間と
+      // 一時RTメモリを抑え、本編へGPU待ちを持ち込まない。
+      antialias: false,
       powerPreference: 'high-performance',
       // toDataURL は描画バッファ保持が必須
       preserveDrawingBuffer: true,
@@ -140,7 +144,9 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
   sun.shadow.camera.bottom = -shadowExtent;
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = def.size * 2.5;
-  sun.shadow.mapSize.set(1024, 1024);
+  // サムネ実解像度の約3倍で十分。1024²は最終320px画像に対して過剰で、
+  // ソフトウェアWebGL/統合GPUではメニュー生成の主ボトルネックになる。
+  sun.shadow.mapSize.set(512, 512);
   sun.shadow.bias = -0.00035;
   sun.shadow.normalBias = 0.025;
   scene.add(sun);
@@ -283,6 +289,8 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
     if (node instanceof THREE.InstancedMesh) node.dispose();
   });
   scene.clear();
+  // renderer内部のscene/object参照も画像ごとに切り、31面生成時の蓄積を防ぐ。
+  (r.renderLists as { dispose?: () => void } | undefined)?.dispose?.();
 
   // ─ キャッシュ登録 ─────────────────────────────────────────────
   if (dataURL.length > 0) {
@@ -302,6 +310,8 @@ function flushCallbacks(stageId: string, dataURL: string): void {
 
 function processNext(): void {
   idleScheduled = false;
+  scheduledHandle = null;
+  scheduledKind = null;
   const def = pendingQueue.shift();
   if (def === undefined) return;
 
@@ -324,9 +334,11 @@ function scheduleNext(): void {
 
   // requestIdleCallback があれば使う(timeout=1500ms でフレーム欠損でも最終的に完了)
   if (typeof requestIdleCallback !== 'undefined') {
-    requestIdleCallback(() => { processNext(); }, { timeout: 1500 });
+    scheduledKind = 'idle';
+    scheduledHandle = requestIdleCallback(() => { processNext(); }, { timeout: 1500 });
   } else {
-    requestAnimationFrame(() => { processNext(); });
+    scheduledKind = 'raf';
+    scheduledHandle = requestAnimationFrame(() => { processNext(); });
   }
 }
 
@@ -373,6 +385,23 @@ export function requestStageThumb(def: StageDef, cb: ReadyCallback): void {
 // V32: 出撃時に未生成キューを破棄する(試合中のトリクル生成ヒッチ防止)。
 // メニューへ戻って再表示された時に requestStageThumb が再キューするので安全。
 export function cancelPendingThumbs(): void {
+  if (scheduledHandle !== null) {
+    if (scheduledKind === 'idle' && typeof cancelIdleCallback !== 'undefined') {
+      cancelIdleCallback(scheduledHandle);
+    } else if (scheduledKind === 'raf') {
+      cancelAnimationFrame(scheduledHandle);
+    }
+  }
+  scheduledHandle = null;
+  scheduledKind = null;
+  idleScheduled = false;
   pendingQueue.length = 0;
   pendingCallbacks.clear();
+  // サムネ用WebGLコンテキスト/影RT/プログラムを出撃前に完全解放する。
+  // dataURLキャッシュは残るため生成済みカードの画質・再表示速度は変わらない。
+  if (_renderer) {
+    _renderer.dispose();
+    _renderer.forceContextLoss();
+    _renderer = null;
+  }
 }

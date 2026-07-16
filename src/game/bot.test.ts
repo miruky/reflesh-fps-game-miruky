@@ -318,7 +318,7 @@ describe('Bot ゾンビ 群衆分離KCC(R54-W1 B1)', () => {
     expect(mover.position.z).toBeLessThan(-1.5);
   });
 
-  it('対ゾンビKCC除外はcollisionGroupsを変更しないため、被弾ヘッドショット判定は非回帰', () => {
+  it('密集接触group/KCC除外後も通常レイの被弾ヘッドショット判定は非回帰', () => {
     const world = makeZombieWorld();
     const tuning = { ...DIFFICULTY.normal };
     const thinned = new Bot(
@@ -327,8 +327,8 @@ describe('Bot ゾンビ 群衆分離KCC(R54-W1 B1)', () => {
     thinned.hordeRank = ZOMBIE_HORDE_THIN_RANK;
     world.step();
 
-    // filterPredicateはKCCのcomputeColliderMovement呼び出しに限定されるため、通常のcastRay
-    // (被弾判定と同じ経路)は従来どおりheadColliderへ命中する
+    // Interaction groupはゾンビ同士の接触ペアだけを除外し、filterPredicateもKCC限定。
+    // filterGroups未指定の通常castRay(被弾判定と同じ経路)は従来どおり頭へ命中する。
     const headY = thinned.headPosition().y;
     const ray = new RAPIER.Ray({ x: 0, y: headY, z: -10 }, { x: 0, y: 0, z: 1 });
     const hit = world.castRay(ray, 100, true);

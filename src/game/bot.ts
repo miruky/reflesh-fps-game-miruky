@@ -368,20 +368,15 @@ export function zombieKccSkipFactor(distToPlayerM: number, hordeRank = 0): numbe
   return 4;
 }
 
-// ── R54-W1(B1) 密集ゾンビの物理ライト化: 対ゾンビKCC除外 ──────────────────────
+// ── R54-W1(B1)/R100 密集ゾンビの物理ライト化 ────────────────────────────────
 // hordeRank>=ZOMBIE_HORDE_THIN_RANK(群衆後方)の個体は、updateZombieのcomputeColliderMovement
 // へfilterPredicateを渡し「他ゾンビのbodyCollider」だけを衝突解決の対象から除外する
 // (被弾レイ/爆風/近接判定・obstacleAhead等の他クエリは一切変更しない=非干渉)。
 //
-// 手段の選定(collision groups vs filterPredicate): このコードベースはどのコライダーも
-// collisionGroupsを一度も設定しておらず(既定=全グループ所属・全グループと衝突)、
-// computeColliderMovementのfilterGroups引数はクエリ側の値ではなく相手colliderの実際の
-// collisionGroups(setCollisionGroups)と比較される。よってzombieのbodyColliderに
-// setCollisionGroupsで新規ビットを振る必要があるが、これはRapierの衝突判定パイプライン
-// 全体(接触/交差イベント生成等、明示的にfilterGroupsを指定しない他クエリも含む)に
-// 波及し得る広域変更であり、「被弾レイ/爆風/近接判定に影響しないことが絶対条件」に反する
-// リスクがある。対してfilterPredicateはこの1回のcomputeColliderMovement呼び出しにのみ
-// 効くクロージャで、collider自体の状態を一切変更しない。よって述語方式を採用する。
+// R100ではさらにゾンビ同士だけが通常physics.stepで接触ペアを生成しないinteraction groupを
+// body/headへ設定する。これはKCCの明示shape queryとは独立で、前衛のKCC衝突は既存テストで
+// 維持される。他オブジェクトは既定ALL groupなので地形・プレイヤー・弾レイとの相互作用は
+// そのまま。後方だけをKCC queryから除外する役割は引き続きfilterPredicateが担う。
 //
 // 識別方法: Bot生成時にkind==='zombie'ならWorld単位のSet<collider.handle>へ登録し、
 // dispose()で解除する(WeakMap<World, Set<number>>でWorldをまたぐhandle番号の再利用に
@@ -780,7 +775,14 @@ export interface ZombieCrowdGeometries {
   shin: THREE.BufferGeometry;
 }
 
+let sharedZombieCrowdGeometries: ZombieCrowdGeometries | null = null;
+let sharedZombieCrowdLodGeometries: ZombieCrowdGeometries | null = null;
+
 export function buildZombieCrowdGeometries(): ZombieCrowdGeometries {
+  // R100: 以前はBot生成のたびに同じ9部位をプリミティブからmerge+AO焼込みしていた。
+  // 形状はtier/個体で不変なのでモジュール寿命で1組だけ生成し、個体Object3D経路と
+  // InstancedMesh経路の双方で共有する。108体初回湧きの巨大な同期スパイクを除去する。
+  if (sharedZombieCrowdGeometries) return sharedZombieCrowdGeometries;
   // マーカー材(家族识别のためだけの使い捨て。ジオメトリ確定後にdispose)
   const armor = new THREE.MeshBasicMaterial();
   const dark = new THREE.MeshBasicMaterial();
@@ -811,7 +813,7 @@ export function buildZombieCrowdGeometries(): ZombieCrowdGeometries {
     if (!g) throw new Error(`buildZombieCrowdGeometries: ${label} 家族が空`);
     return g;
   };
-  return {
+  const result: ZombieCrowdGeometries = {
     bodyArmor: need(body, armor, 'bodyArmor'),
     bodyDark: need(body, dark, 'bodyDark'),
     bodyGlow: need(body, glow, 'bodyGlow'),
@@ -820,6 +822,110 @@ export function buildZombieCrowdGeometries(): ZombieCrowdGeometries {
     thigh: need(thigh, armor, 'thigh'),
     shin: need(shin, dark, 'shin'),
   };
+  // Bot#disposeで個体と一緒に破棄しないための共有資産契約。
+  for (const geo of Object.values(result)) geo.userData.shared = true;
+  sharedZombieCrowdGeometries = result;
+  return result;
+}
+
+/**
+ * 群後方用の遠距離形状。骨格ノード、寸法、眼光、歩行行列は完全版と同一で、
+ * 曲面分割と面取りだけを省く。最接近36体には使わないため近接品質は不変。
+ */
+export function buildZombieCrowdLodGeometries(): ZombieCrowdGeometries {
+  if (sharedZombieCrowdLodGeometries) return sharedZombieCrowdLodGeometries;
+  const armor = new THREE.MeshBasicMaterial();
+  const dark = new THREE.MeshBasicMaterial();
+  const glow = new THREE.MeshBasicMaterial();
+  const mats: ZombiePartMats = { armor, dark, glow };
+
+  const bodyRoot = (): THREE.Group => {
+    const root = new THREE.Group();
+    zPart(root, new THREE.BoxGeometry(0.4, 0.58, 0.28), mats.armor, 0, 0.16, 0, true);
+    zPart(root, new THREE.BoxGeometry(0.34, 0.24, 0.13), mats.armor, 0, 0.31, -0.05, true);
+    zPart(root, new THREE.BoxGeometry(0.32, 0.18, 0.24), mats.dark, 0, -0.2, 0, false);
+    zPart(
+      root,
+      new THREE.CylinderGeometry(0.055, 0.07, 0.14, 6),
+      mats.dark,
+      0.02,
+      0.56,
+      -0.02,
+      false,
+      -0.18,
+      0,
+      0.12,
+    );
+    zPart(root, new THREE.SphereGeometry(0.16, 8, 6), mats.dark, 0.03, 0.72, -0.05, false);
+    zPart(root, new THREE.BoxGeometry(0.16, 0.05, 0.05), mats.dark, 0.03, 0.7, -0.18, false);
+    zPart(root, new THREE.BoxGeometry(0.052, 0.052, 0.026), mats.glow, -0.05, 0.74, -0.17, false);
+    zPart(root, new THREE.BoxGeometry(0.052, 0.052, 0.026), mats.glow, 0.1, 0.74, -0.17, false);
+    zPart(root, new THREE.BoxGeometry(0.16, 0.03, 0.02), mats.glow, 0.02, 0.22, -0.16, false);
+    return root;
+  };
+  const armRoot = (): THREE.Group => {
+    const root = new THREE.Group();
+    const buildArm = (sx: number, reach: number): void => {
+      const g = new THREE.Group();
+      g.position.set(sx * 0.26, 0.05, -0.02);
+      g.rotation.x = 1.35 + reach;
+      g.rotation.z = -sx * 0.12;
+      zPart(g, new THREE.BoxGeometry(0.09, 0.27, 0.09), mats.armor, 0, -0.13, 0, false);
+      zPart(g, new THREE.BoxGeometry(0.075, 0.27, 0.075), mats.dark, 0, -0.36, 0.01, false);
+      zPart(g, new THREE.BoxGeometry(0.07, 0.06, 0.11), mats.dark, 0, -0.5, 0.03, false);
+      root.add(g);
+    };
+    buildArm(-1, 0.18);
+    buildArm(1, 0.05);
+    return root;
+  };
+  const thighRoot = (): THREE.Group => {
+    const root = new THREE.Group();
+    zPart(root, new THREE.BoxGeometry(0.13, 0.32, 0.14), mats.armor, 0, -0.15, 0, true);
+    return root;
+  };
+  const shinRoot = (): THREE.Group => {
+    const root = new THREE.Group();
+    zPart(root, new THREE.BoxGeometry(0.11, 0.3, 0.12), mats.dark, 0, -0.15, 0, false);
+    zPart(root, new THREE.BoxGeometry(0.13, 0.08, 0.24), mats.dark, 0, -0.3, -0.04, false);
+    return root;
+  };
+  const pick = (root: THREE.Group, restY: number): Map<THREE.Material, THREE.BufferGeometry> => {
+    const out = new Map<THREE.Material, THREE.BufferGeometry>();
+    for (const mesh of mergeByMaterial(root)) {
+      applyAO(mesh.geometry, -0.85 - restY, 1.1 - restY, 0.55);
+      out.set(mesh.material as THREE.Material, mesh.geometry);
+    }
+    return out;
+  };
+  const body = pick(bodyRoot(), 0);
+  const arm = pick(armRoot(), ZOMBIE_NODE_REST.armRigY);
+  const thigh = pick(thighRoot(), ZOMBIE_NODE_REST.legY);
+  const shin = pick(shinRoot(), ZOMBIE_NODE_REST.legY + ZOMBIE_NODE_REST.kneeY);
+  const need = (
+    map: Map<THREE.Material, THREE.BufferGeometry>,
+    mat: THREE.Material,
+    label: string,
+  ): THREE.BufferGeometry => {
+    const geometry = map.get(mat);
+    if (!geometry) throw new Error(`buildZombieCrowdLodGeometries: ${label} 家族が空`);
+    return geometry;
+  };
+  const result: ZombieCrowdGeometries = {
+    bodyArmor: need(body, armor, 'bodyArmor'),
+    bodyDark: need(body, dark, 'bodyDark'),
+    bodyGlow: need(body, glow, 'bodyGlow'),
+    armArmor: need(arm, armor, 'armArmor'),
+    armDark: need(arm, dark, 'armDark'),
+    thigh: need(thigh, armor, 'thigh'),
+    shin: need(shin, dark, 'shin'),
+  };
+  armor.dispose();
+  dark.dispose();
+  glow.dispose();
+  for (const geo of Object.values(result)) geo.userData.shared = true;
+  sharedZombieCrowdLodGeometries = result;
+  return result;
 }
 
 // 群レンダラへ毎フレーム渡す姿勢パラメタ(Bot.getCrowdPoseが埋める)。
@@ -1211,6 +1317,7 @@ export class Bot {
   private kccFrame = 0;
   private readonly prevGiantMoved = { x: 0, y: 0, z: 0 };
   private readonly prevZombieMoved = { x: 0, y: 0, z: 0 };
+  private readonly zombieMovement = { x: 0, y: 0, z: 0 };
   private prevZombieGrounded = false;
 
   // 歩行アニメ用。胴体ボブと四肢スイングを駆動する
@@ -1370,9 +1477,18 @@ export class Bot {
         this.body,
       );
     }
+    if (kind === 'zombie') {
+      // R100密集物理: Rapierの通常physics.stepではゾンビ同士の接触ペアを生成しない。
+      // KCCの前衛24体はcomputeColliderMovementの形状クエリで従来どおり仲間を障害物として
+      // 扱い、後方群は既存の空間ハッシュ分離を使う。filterGroups未指定の被弾レイ/
+      // 爆風/頭判定には影響せず、密集時だけ増えるN²接触候補を除去できる。
+      const zombieNoSelfCollision = (0x0002 << 16) | 0xfffd;
+      this.bodyCollider.setCollisionGroups(zombieNoSelfCollision);
+      this.headCollider.setCollisionGroups(zombieNoSelfCollision);
+    }
     // R54-W1(B1): kind==='zombie'のbodyCollider/headCollider handleをWorld単位のSetへ登録し、
     // 「他ゾンビのコライダーか」をO(1)判定するfilterPredicateを1回だけ生成して保持する
-    // (毎フレームのクロージャ再生成を避ける)。collisionGroupsには一切触れない。
+    // (毎フレームのクロージャ再生成を避ける)。上のinteraction groupとは役割が異なる。
     // headColliderも必ず含める: bodyColliderだけ除外してもheadColliderの頭球(y≈0.88、
     // 半径0.22)がbodyカプセルの上端(y≈0.8)と垂直に重なるため、除外漏れがあると
     // すり抜けが成立しない(実測で発覚。単体テストで再発防止済み)。
@@ -1524,8 +1640,8 @@ export class Bot {
       roughness: 0.85,
       metalness: isBoss ? 0.1 : 0.05,
       vertexColors: true,
-      emissive: isBoss ? new THREE.Color(0x330800) : undefined,
       emissiveIntensity: isBoss ? 0.25 : 0,
+      ...(isBoss ? { emissive: new THREE.Color(0x330800) } : {}),
     });
     this.armorMat = armor;
     this.tierGlowBase = isBoss ? 0.25 : 0;
@@ -1543,33 +1659,38 @@ export class Bot {
     });
     this.glowMats.push({ mat: glow, base: eyeIntensity });
 
-    // 畳んで縦AOを焼き、no-cast片には noShadow を記録(setCastShadowのLODが尊重する)
-    const finalize = (root: THREE.Object3D, target: THREE.Object3D, restY: number): void => {
-      const meshes = mergeByMaterial(root);
-      for (const mesh of meshes) {
-        applyAO(mesh.geometry, -0.85 - restY, 1.1 - restY, 0.55);
-        if (!mesh.castShadow) mesh.userData.noShadow = true;
-        target.add(mesh);
-      }
+    // R100: 形状はbuildZombieCrowdGeometriesで1回だけmerge+AO済み。
+    // Mesh/骨ピボットと個体別マテリアルだけを作り、従来と同じ9メッシュ構造へ接続する。
+    const geos = buildZombieCrowdGeometries();
+    const addShared = (
+      target: THREE.Object3D,
+      geometry: THREE.BufferGeometry,
+      material: THREE.Material,
+      castShadow: boolean,
+    ): void => {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.castShadow = castShadow;
+      if (!castShadow) mesh.userData.noShadow = true;
+      target.add(mesh);
     };
-
-    // ── 部位構築(R53-W3: zombie*Root = 群InstancedMesh経路と共有の唯一定義点) ──
-    const partMats: ZombiePartMats = { armor, dark, glow };
-    finalize(zombieBodyRoot(partMats), this.rig, 0);
+    addShared(this.rig, geos.bodyArmor, armor, true);
+    addShared(this.rig, geos.bodyDark, dark, false);
+    addShared(this.rig, geos.bodyGlow, glow, false);
 
     // ── 前へ垂らした両腕(armRig。銃は持たない)──
     const armRig = new THREE.Group();
     armRig.position.set(0, ZOMBIE_NODE_REST.armRigY, 0);
     this.armRig = armRig;
-    finalize(zombieArmRoot(partMats), armRig, armRig.position.y);
+    addShared(armRig, geos.armArmor, armor, false);
+    addShared(armRig, geos.armDark, dark, false);
     this.rig.add(armRig);
 
     // ── 脚(股関節ピボット + 膝ピボット)。humanoidと同じ骨格でシャンブル歩容 ──
     const buildLeg = (pivot: THREE.Group, knee: THREE.Group, sx: number): void => {
       pivot.position.set(sx, ZOMBIE_NODE_REST.legY, 0);
       knee.position.set(0, ZOMBIE_NODE_REST.kneeY, 0);
-      finalize(zombieThighRoot(partMats), pivot, pivot.position.y);
-      finalize(zombieShinRoot(partMats), knee, pivot.position.y + knee.position.y);
+      addShared(pivot, geos.thigh, armor, true);
+      addShared(knee, geos.shin, dark, false);
       pivot.add(knee);
       this.rig.add(pivot);
     };
@@ -2075,7 +2196,16 @@ export class Bot {
     if (!this.alive) {
       this._horizSpeed = 0;
       this.respawnIn -= dt;
-      if (this.dyingTimer > 0) this.updateDying(dt);
+      if (this.dyingTimer > 0) {
+        if (this.kind === 'zombie' && this.crowdSlot >= 0) {
+          // 群描画中の死亡姿勢はZombieCrowdRendererが同じ式で合成する。
+          // 非表示のObject3D骨を毎フレーム動かさず、タイマー/可視状態だけ進める。
+          this.dyingTimer -= dt;
+          if (this.dyingTimer <= 0) this.group.visible = false;
+        } else {
+          this.updateDying(dt);
+        }
+      }
       return;
     }
     // R53 怯えの減衰(全kind共通。movement分岐が _fearS>0 を参照する)
@@ -2106,7 +2236,8 @@ export class Bot {
     if (this.kind === 'zombie') {
       this.anim += dt;
       this.updateZombie(dt, ctx);
-      this.syncMesh();
+      // InstancedMesh対象はgetCrowdPoseが描画同期を担う。非表示rigへの9部位更新を止める。
+      if (this.crowdSlot < 0) this.syncMesh();
       return;
     }
 
@@ -2689,13 +2820,19 @@ export class Bot {
     }
 
     // ── KCC距離LOD: 毎フレームの衝突解決をバケット化して高体数時の負荷を削減 ──
-    // 登坂中 or melee射程内は常時フル解決(登坂品質・近接判定の精度を維持)
+    // 登坂中と先頭24体のmelee射程内は常時フル解決。後方群は密集しても既存uid%2
+    // カデンスを維持する(近接通知自体は毎フレーム行われ、グローバルi-frameも不変)。
     this.kccFrame += 1;
-    const forcedFull = this.climbing || distToPlayer <= meleeRange;
+    const forcedFull =
+      this.climbing ||
+      (distToPlayer <= meleeRange && this.hordeRank < ZOMBIE_HORDE_THIN_RANK);
     const kccFull =
       forcedFull || zombieKccActive(this.uid, this.kccFrame, distToPlayer, this.hordeRank);
 
-    const movement = { x: wishX * dt, y: vertV * dt, z: wishZ * dt };
+    const movement = this.zombieMovement;
+    movement.x = wishX * dt;
+    movement.y = vertV * dt;
+    movement.z = wishZ * dt;
     let mvX: number;
     let mvY: number;
     let mvZ: number;
@@ -3167,7 +3304,13 @@ export class Bot {
   // 従来描画へ戻る(キルスイッチ/最近接高忠実度/variant化のフォールバック)。
   setCrowdSlot(slot: number): void {
     this.crowdSlot = slot;
-    this.rig.visible = slot < 0;
+    if (slot < 0) {
+      // 群経路中はsyncMeshを止めているため、Object3Dへ戻す瞬間に最新剛体姿勢を反映する。
+      this.syncMesh();
+      this.rig.visible = true;
+    } else {
+      this.rig.visible = false;
+    }
   }
 
   // 群レンダラへの姿勢書き出し(アロケゼロ。syncMesh/updateDyingの式の「入力」を
@@ -3525,7 +3668,7 @@ export class Bot {
     this.world.removeRigidBody(this.body);
     this.group.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
-        obj.geometry.dispose();
+        if (obj.geometry.userData.shared !== true) obj.geometry.dispose();
         const mat = obj.material;
         if (Array.isArray(mat)) {
           for (const m of mat) if (m.userData.shared !== true) m.dispose();

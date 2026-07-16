@@ -4,6 +4,8 @@
   例:
     AUDIT_SHOT_DIR=/tmp/hibana-audit \
       node e2e/visual-audit.mjs --weapon=kaede-ar --quality=high --viewport=1920x1080
+    AUDIT_SHOT_DIR=/tmp/hibana-r100 \
+      node e2e/visual-audit.mjs --stage=z01 --mode=zombie --round=100 --frames=30
 
   出力:
     - idle / fire / ADS / reload 3時点 / sprint のPNG
@@ -22,6 +24,12 @@ const weaponId = val('--weapon', 'kaede-ar');
 const quality = val('--quality', 'high');
 const stageId = val('--stage', 'kunren');
 const mode = val('--mode', 'training');
+const zombieStartRound = Number(val('--round', '1'));
+const sampleFrameCount = Number(val('--frames', '180'));
+const settleMs = Number(val('--settle-ms', '2500'));
+const perfOnly = val('--perf-only', '0') === '1';
+const safeZombie = val('--safe-zombie', '0') === '1';
+const softwareRenderer = val('--software', '0') === '1';
 const viewportName = val('--viewport', '1920x1080');
 const [width, height] = viewportName.split('x').map(Number);
 const port = Number(val('--port', '5229'));
@@ -37,6 +45,15 @@ const weaponIds = Array.from(
 if (!weaponIds.includes(weaponId)) throw new Error(`unknown weapon: ${weaponId}`);
 if (!['low', 'medium', 'high'].includes(quality)) throw new Error(`unknown quality: ${quality}`);
 if (!Number.isFinite(width) || !Number.isFinite(height)) throw new Error(`bad viewport: ${viewportName}`);
+if (!Number.isInteger(zombieStartRound) || zombieStartRound < 1 || zombieStartRound > 999) {
+  throw new Error(`bad zombie round: ${zombieStartRound}`);
+}
+if (!Number.isInteger(sampleFrameCount) || sampleFrameCount < 1 || sampleFrameCount > 1000) {
+  throw new Error(`bad frame count: ${sampleFrameCount}`);
+}
+if (!Number.isFinite(settleMs) || settleMs < 0 || settleMs > 60_000) {
+  throw new Error(`bad settle time: ${settleMs}`);
+}
 
 mkdirSync(shotDir, { recursive: true });
 
@@ -76,11 +93,20 @@ try {
       '--enable-unsafe-swiftshader',
       '--autoplay-policy=no-user-gesture-required',
       '--enable-precise-memory-info',
+      ...(softwareRenderer ? ['--use-angle=swiftshader', '--use-gl=angle'] : []),
     ],
   });
   const context = await browser.newContext({ viewport: { width, height } });
   await context.addInitScript(
-    ({ allWeaponIds, primaryId, graphicsQuality, selectedStageId, selectedMode }) => {
+    ({
+      allWeaponIds,
+      primaryId,
+      graphicsQuality,
+      selectedStageId,
+      selectedMode,
+      selectedZombieRound,
+      useSafeZombie,
+    }) => {
       let fakePointerLockElement = null;
       try {
         Object.defineProperty(document, 'pointerLockElement', {
@@ -109,6 +135,9 @@ try {
           xp: 99_999_999,
           weaponStats,
           selectedCamos: primaryId === 'kaede-ar' ? { 'kaede-ar': 'diamond' } : {},
+          ...(useSafeZombie
+            ? { charms: { unlocked: ['perkcarry'], equipped: 'perkcarry' } }
+            : {}),
         }),
       );
       localStorage.setItem(
@@ -125,8 +154,13 @@ try {
           hellMode: false,
           allGiantMode: false,
           rogueRun: false,
+          zombieStartRound: selectedZombieRound,
+          ...(useSafeZombie ? { charm: 'perkcarry' } : {}),
         }),
       );
+      if (useSafeZombie) {
+        localStorage.setItem('hibana.zombie.lastPerk.v1', JSON.stringify('juggernog'));
+      }
       localStorage.setItem(
         'hibana.settings.v1',
         JSON.stringify({
@@ -157,6 +191,8 @@ try {
       graphicsQuality: quality,
       selectedStageId: stageId,
       selectedMode: mode,
+      selectedZombieRound: zombieStartRound,
+      useSafeZombie: safeZombie,
     },
   );
 
@@ -177,13 +213,13 @@ try {
   await visible(page, '[data-id="scr-deploy"]');
   await page.locator('[data-id="start"]').evaluate((element) => element.click());
   await visible(page, '#hud:not([hidden])', 50_000);
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(settleMs);
 
   const shot = async (name) => {
     await page.screenshot({ path: path.join(shotDir, `${prefix}-${name}.png`) });
   };
 
-  const sampleFrames = async (count = 180) =>
+  const sampleFrames = async (count = sampleFrameCount) =>
     page.evaluate(
       (frameCount) =>
         new Promise((resolve) => {
@@ -203,42 +239,45 @@ try {
   await shot('idle');
   const idleFrames = await sampleFrames();
 
-  await page.mouse.down({ button: 'left' });
-  await page.waitForTimeout(55);
-  await shot('fire-055ms');
-  await page.waitForTimeout(95);
-  await shot('fire-150ms');
-  await page.mouse.up({ button: 'left' });
-  await page.waitForTimeout(250);
+  let activeFrames = [];
+  if (!perfOnly) {
+    await page.mouse.down({ button: 'left' });
+    await page.waitForTimeout(55);
+    await shot('fire-055ms');
+    await page.waitForTimeout(95);
+    await shot('fire-150ms');
+    await page.mouse.up({ button: 'left' });
+    await page.waitForTimeout(250);
 
-  await page.mouse.down({ button: 'right' });
-  await page.waitForTimeout(380);
-  await shot('ads');
-  await page.mouse.up({ button: 'right' });
-  await page.waitForTimeout(250);
+    await page.mouse.down({ button: 'right' });
+    await page.waitForTimeout(380);
+    await shot('ads');
+    await page.mouse.up({ button: 'right' });
+    await page.waitForTimeout(250);
 
-  if (weaponId !== 'fists') {
-    await page.keyboard.press('KeyR');
-    for (const [delay, name] of [
-      [220, 'reload-220ms'],
-      [380, 'reload-600ms'],
-      [420, 'reload-1020ms'],
-    ]) {
-      await page.waitForTimeout(delay);
-      await shot(name);
+    if (weaponId !== 'fists') {
+      await page.keyboard.press('KeyR');
+      for (const [delay, name] of [
+        [220, 'reload-220ms'],
+        [380, 'reload-600ms'],
+        [420, 'reload-1020ms'],
+      ]) {
+        await page.waitForTimeout(delay);
+        await shot(name);
+      }
+      await page.waitForTimeout(2400);
     }
-    await page.waitForTimeout(2400);
+
+    await page.keyboard.down('ShiftLeft');
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(500);
+    await shot('sprint');
+    await page.keyboard.up('KeyW');
+    await page.keyboard.up('ShiftLeft');
+    await page.waitForTimeout(300);
+
+    activeFrames = await sampleFrames();
   }
-
-  await page.keyboard.down('ShiftLeft');
-  await page.keyboard.down('KeyW');
-  await page.waitForTimeout(500);
-  await shot('sprint');
-  await page.keyboard.up('KeyW');
-  await page.keyboard.up('ShiftLeft');
-  await page.waitForTimeout(300);
-
-  const activeFrames = await sampleFrames();
   const telemetry = await page.evaluate(() => {
     const memory = performance.memory;
     const canvas = document.querySelector('#app canvas');
@@ -288,9 +327,14 @@ try {
     quality,
     stageId,
     mode,
+    zombieStartRound,
+    sampleFrameCount,
+    perfOnly,
+    safeZombie,
+    softwareRenderer,
     viewport: viewportName,
     idle: describe(idleFrames),
-    active: describe(activeFrames),
+    active: activeFrames.length > 0 ? describe(activeFrames) : null,
     ...telemetry,
     errors,
   };

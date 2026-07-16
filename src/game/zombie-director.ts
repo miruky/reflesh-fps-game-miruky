@@ -12,7 +12,12 @@ import type { Rand } from '../core/rng';
 import { resolveGraphicsTier, type Settings } from '../core/settings';
 import { Effects } from '../render/effects';
 import { ViewModel, buildGunBody } from '../render/viewmodel';
-import { ZombieCrowdRenderer, ZOMBIE_CROWD_INSTANCED } from '../render/zombie-crowd';
+import {
+  ZombieCrowdRenderer,
+  ZOMBIE_CROWD_FAR_ENTER_RANK,
+  ZOMBIE_CROWD_FAR_EXIT_RANK,
+  ZOMBIE_CROWD_INSTANCED,
+} from '../render/zombie-crowd';
 import { applyAttachments } from './attachments';
 import { Bot, tuningFor, KIND_TUNING, BOT_NAMES, type BotTuning, type ZombieCrowdPose } from './bot';
 import { Player } from './player';
@@ -31,8 +36,9 @@ import {
   MIASMA_RADIUS_M, MIASMA_DURATION_S, MIASMA_DPS, getCharmEffect, LAST_ZOMBIE_PERK_KEY,
   type ShopLayout, type ShopSlot, type ZombiePerkId, type PapTier, type PowerUpKind, type CharmEffect,
 } from './zombie-economy';
-import { papInteractSealed, papTierAfterWallBuy, isCrowdEligible, crowdSlotAction, EXT_MAG_EXCLUDED_IDS, PAP_CAMO_BY_TIER, applyHellTuning, zombieHordeRanks } from './match-helpers';
+import { papInteractSealed, papTierAfterWallBuy, isCrowdEligible, crowdSlotAction, EXT_MAG_EXCLUDED_IDS, PAP_CAMO_BY_TIER, applyHellTuning } from './match-helpers';
 import { zombieSeparationGrid } from './bot';
+import type { ZombieSeparationEntry } from './spatial-hash';
 import {
   emptyRogueMods, applyCardToMods, rollRogueOfferWithTier, rogueTierFor,
   readRogueMeta, writeRogueMeta, accumulateRogueMeta,
@@ -74,6 +80,10 @@ const CROWD_POSE_SCRATCH: ZombieCrowdPose = {
   visible: true, elite: false,
 };
 const BOT_POS_SCRATCH = new THREE.Vector3();
+const ZOMBIE_SPAWN_RAY_ORIGIN = new THREE.Vector3();
+const ZOMBIE_SPAWN_POINT = new THREE.Vector3();
+const ZOMBIE_SPAWN_DOWN = new THREE.Vector3(0, -1, 0);
+const ZOMBIE_SPAWN_ZERO = new THREE.Vector3();
 
 export interface ZombieHost {
   readonly player: Player;
@@ -138,6 +148,13 @@ export class ZombieDirector {
   playerDowns = 0;
   private hordeDensityTimer = 0; // R54 音響2: setHordeDensity() 間欠発火(0.5s周期)
   private zombieUnstuckScanTimer = 0; // R55 ⑧: 最終安全弁スキャン間欠発火(ZOMBIE_UNSTUCK_SCAN_S周期)
+  // R100: 0.25s/1s周期の大群走査で使う配列・位置を再利用し、108体時のGC波を止める。
+  private readonly hordeBots: Bot[] = [];
+  private readonly hordeDistancesSq: number[] = [];
+  private readonly hordeOrder: number[] = [];
+  private readonly hordeRanks: number[] = [];
+  private readonly separationEntries: ZombieSeparationEntry[] = [];
+  private readonly aliveZombiePositions: THREE.Vector3[] = [];
   // ── ゾンビ経済(R??) ──
   zombieShopLayout: ShopLayout | null = null;
   readonly zombieShopGroups: THREE.Group[] = [];
@@ -612,10 +629,28 @@ export class ZombieDirector {
     return n;
   }
 
+  private collectAliveZombiePositions(): THREE.Vector3[] {
+    let count = 0;
+    for (const b of this.h.bots) {
+      if (b.kind !== 'zombie' || !b.alive) continue;
+      let pos = this.aliveZombiePositions[count];
+      if (!pos) {
+        pos = new THREE.Vector3();
+        this.aliveZombiePositions[count] = pos;
+      }
+      b.getPositionInto(pos);
+      count += 1;
+    }
+    this.aliveZombiePositions.length = count;
+    return this.aliveZombiePositions;
+  }
+
   // R54 音響2: プレイヤー視点基準のpan/distance(match.ts panAndDistanceと同じ規約)。
   // カメラ実体を持たないためyawのみから水平右方向を導く(zombieVocalは定位のみ=ピッチ非依存で十分)
-  private zombiePanAndDist(source: THREE.Vector3): { pan: number; distance: number } {
-    const eye = this.h.player.eyePosition;
+  private zombiePanAndDist(
+    source: THREE.Vector3,
+    eye: THREE.Vector3 = this.h.player.eyePosition,
+  ): { pan: number; distance: number } {
     const dx = source.x - eye.x;
     const dz = source.z - eye.z;
     const distance = Math.hypot(dx, dz, source.y - eye.y);
@@ -705,10 +740,11 @@ export class ZombieDirector {
       this.hordeDensityTimer = 0.5;
       let sum = 0;
       let n = 0;
+      const playerPos = this.h.player.position;
       for (const b of this.h.bots) {
         if (b.kind !== 'zombie' || !b.alive) continue;
         n += 1;
-        sum += b.position.distanceTo(this.h.player.position);
+        sum += b.getPositionInto(BOT_POS_SCRATCH).distanceTo(playerPos);
       }
       this.h.sounds.setHordeDensity(Math.min(1, n / 36), n > 0 ? sum / n : 0);
     }
@@ -729,9 +765,7 @@ export class ZombieDirector {
       // 以下のzombieSpawnPoint呼び出し全てで共有する(旧実装はstuck個体ごとに
       // this.h.bots.filter(...)で全体を再構築 = O(stuck×全体)。spawnOneZombieのバッチ経路
       // と同じ「共有配列+採用点をpush」方式に揃える)。
-      const aliveZombiePos = this.h.bots
-        .filter((b) => b.kind === 'zombie' && b.alive)
-        .map((b) => b.position);
+      const aliveZombiePos = this.collectAliveZombiePositions();
       let relocated = 0;
       for (const b of this.h.bots) {
         if (relocated >= ZOMBIE_UNSTUCK_RELOCATE_MAX) break; // 1サイクルの再配置数に上限を設けスパイク平滑化
@@ -775,9 +809,7 @@ export class ZombieDirector {
       let batched = 0;
       // ★4c: 生存ゾンビ位置配列をバッチ開始時に1回だけ構築(毎spawnOneZombie呼び出しでの
       // bots.filter().map()再構築を排除。最大8回/フレームの重複走査を1回へ)
-      const aliveZombiePos = this.h.bots
-        .filter((b) => b.kind === 'zombie' && b.alive)
-        .map((b) => b.position);
+      const aliveZombiePos = this.collectAliveZombiePositions();
       while (this.zombieQueue > 0 && aliveZ + batched < this.zombieTierCap && batched < batchMax) {
         if (this.spawnOneZombie(aliveZombiePos)) {
           this.zombieQueue -= 1;
@@ -879,7 +911,11 @@ export class ZombieDirector {
   assignCrowdSlot(bot: Bot): void {
     if (!this.zombieCrowd) return;
     const eligible = isCrowdEligible(bot.tier, bot.zombieVariant, bot.hordeRank);
-    bot.setCrowdSlot(eligible ? this.zombieCrowd.acquire() : -1);
+    bot.setCrowdSlot(
+      eligible
+        ? this.zombieCrowd.acquire(bot.hordeRank >= ZOMBIE_CROWD_FAR_ENTER_RANK)
+        : -1,
+    );
   }
 
   // 地面Yを下向きレイで確定し、フラスタム外の湧き点を返す(目前でのポップインを避ける)。
@@ -890,8 +926,7 @@ export class ZombieDirector {
   zombieSpawnPoint(aliveZombiePos?: THREE.Vector3[]): THREE.Vector3 | null {
     const size = this.h.config.stage.size;
     const bound = size / 2 - 2;
-    const around = this.h.player.alive ? this.h.player.position : new THREE.Vector3();
-    const down = new THREE.Vector3(0, -1, 0);
+    const around = this.h.player.alive ? this.h.player.position : ZOMBIE_SPAWN_ZERO;
     // 生存中ゾンビの現在位置(近接スポーンで重なるのを防ぐ)
     const positions =
       aliveZombiePos ??
@@ -903,19 +938,29 @@ export class ZombieDirector {
         ZOMBIE_SPAWN_RING_MIN + this.h.rand() * (ZOMBIE_SPAWN_RING_MAX - ZOMBIE_SPAWN_RING_MIN);
       const x = THREE.MathUtils.clamp(around.x + Math.cos(ang) * rad, -bound, bound);
       const z = THREE.MathUtils.clamp(around.z + Math.sin(ang) * rad, -bound, bound);
-      const hit = this.h.castRay(new THREE.Vector3(x, 8, z), down, 20, null);
+      ZOMBIE_SPAWN_RAY_ORIGIN.set(x, 8, z);
+      const hit = this.h.castRay(ZOMBIE_SPAWN_RAY_ORIGIN, ZOMBIE_SPAWN_DOWN, 20, null);
       const groundY = hit ? 8 - hitToi(hit) : 0;
       // A1-F05: キャットウォーク/建物1Fヒットで上層(y>0.6)に湧くのを防ぐ
       if (groundY > 0.6) continue;
-      const p = new THREE.Vector3(x, groundY + 0.05, z);
+      ZOMBIE_SPAWN_POINT.set(x, groundY + 0.05, z);
       if (attempt < 10) {
         // フラスタム内(=プレイヤーの目前)はポップインになるので避ける
-        if (this.h.isInView(p)) continue;
+        if (this.h.isInView(ZOMBIE_SPAWN_POINT)) continue;
         // 直近スポーンゾンビとの重なりを避ける(最終2試行は妥協)
-        if (positions.some((zp) => zp.distanceTo(p) < MIN_ZOMBIE_GAP)) continue;
+        let overlaps = false;
+        for (const zp of positions) {
+          if (zp.distanceToSquared(ZOMBIE_SPAWN_POINT) < MIN_ZOMBIE_GAP * MIN_ZOMBIE_GAP) {
+            overlaps = true;
+            break;
+          }
+        }
+        if (overlaps) continue;
       }
-      positions.push(p); // 同一バッチ内の後続呼び出しへ即反映(呼び出し元が共有配列を渡した場合)
-      return p;
+      // 候補試行中はスクラッチを使い、採用点だけを永続Vector3へ確定する。
+      const accepted = ZOMBIE_SPAWN_POINT.clone();
+      positions.push(accepted); // 同一バッチ内の後続呼び出しへ即反映
+      return accepted;
     }
     return null;
   }
@@ -1007,8 +1052,11 @@ export class ZombieDirector {
   // aliveのみ再判定し、死亡演出中の個体は直近フラグを維持する(従来と同じ)
   updateZombieHordeRank(): void {
     const playerPos = this.h.player.position;
-    const zAlive: Bot[] = [];
-    const d2: number[] = [];
+    const playerEye = this.h.player.eyePosition;
+    const zAlive = this.hordeBots;
+    const d2 = this.hordeDistancesSq;
+    zAlive.length = 0;
+    d2.length = 0;
     for (const b of this.h.bots) {
       if (b.kind !== 'zombie' || !b.alive) {
         b.hordeRank = 99;
@@ -1017,38 +1065,71 @@ export class ZombieDirector {
       zAlive.push(b);
       d2.push(b.getPositionInto(BOT_POS_SCRATCH).distanceToSquared(playerPos)); // ★5 割り当てゼロ
     }
-    const ranks = zombieHordeRanks(d2);
+    const order = this.hordeOrder;
+    const ranks = this.hordeRanks;
+    order.length = d2.length;
+    ranks.length = d2.length;
+    for (let i = 0; i < d2.length; i += 1) order[i] = i;
+    order.sort((a, b) => d2[a]! - d2[b]! || a - b);
+    for (let rank = 0; rank < order.length; rank += 1) ranks[order[rank]!] = rank;
     // R54 音響2: 接近ボイス(2.5m以内)。距離二乗はhordeRank算出用に既に持っているので閾値比較のみ追加
     const CLOSE_D2 = 2.5 * 2.5;
     for (let i = 0; i < zAlive.length; i += 1) {
       const b = zAlive[i]!;
       b.hordeRank = ranks[i]!;
       if (d2[i]! < CLOSE_D2) {
-        const cv = this.zombiePanAndDist(b.position);
+        const cv = this.zombiePanAndDist(b.getPositionInto(BOT_POS_SCRATCH), playerEye);
         this.h.sounds.zombieVocal('close', cv.pan, cv.distance, b.uid % 3);
       }
     }
     // R54-B1: 群衆分離グリッドの再構築(0.25s周期=この関数の呼び出し周期)。
     // rank>=24の後方群はKCCから対ゾンビ衝突を除外(bot.ts filterPredicate)しており、
     // 重なり防止はこのグリッドのseparation(bot.ts updateZombie)が担う
-    zombieSeparationGrid.rebuild(
-      zAlive.map((b) => ({ uid: b.uid, x: b.position.x, z: b.position.z })),
-    );
+    this.separationEntries.length = zAlive.length;
+    for (let i = 0; i < zAlive.length; i += 1) {
+      const b = zAlive[i]!;
+      const pos = b.getPositionInto(BOT_POS_SCRATCH);
+      let entry = this.separationEntries[i];
+      if (!entry) {
+        entry = { uid: b.uid, x: pos.x, z: pos.z };
+        this.separationEntries[i] = entry;
+      } else {
+        entry.uid = b.uid;
+        entry.x = pos.x;
+        entry.z = pos.z;
+      }
+    }
+    zombieSeparationGrid.rebuild(this.separationEntries);
     // R53-W3 M3: 最近接8体⇔群の動的切替(両経路は式同一=ポップなし)。
     // rank<8はObject3D(実articulated影+個体忠実度)、rank>=8はInstancedMeshへ
     if (this.zombieCrowd) {
       for (const b of zAlive) {
+        const hasSlot = b.crowdSlot >= 0;
+        const eligible = isCrowdEligible(b.tier, b.zombieVariant, b.hordeRank);
         // R54-W1 Q8: ヒステリシス判定(rank7-9はデッドバンド=チャタリング防止)
         const action = crowdSlotAction(
           b.hordeRank,
-          b.crowdSlot >= 0,
-          isCrowdEligible(b.tier, b.zombieVariant, b.hordeRank),
+          hasSlot,
+          eligible,
         );
         if (action === 'release') {
           this.zombieCrowd.release(b.crowdSlot);
           b.setCrowdSlot(-1);
         } else if (action === 'acquire') {
-          b.setCrowdSlot(this.zombieCrowd.acquire());
+          b.setCrowdSlot(
+            this.zombieCrowd.acquire(b.hordeRank >= ZOMBIE_CROWD_FAR_ENTER_RANK),
+          );
+        } else if (hasSlot && eligible) {
+          // 完全形状↔後方LODも広いヒステリシスで移行。encoded slotを直接差し替えるため、
+          // 同一tick内にObject3Dを一瞬表示せずポップ/二重描画を起こさない。
+          const currentlyFar = this.zombieCrowd.isFarSlot(b.crowdSlot);
+          const wantsFar = currentlyFar
+            ? b.hordeRank >= ZOMBIE_CROWD_FAR_EXIT_RANK
+            : b.hordeRank >= ZOMBIE_CROWD_FAR_ENTER_RANK;
+          if (currentlyFar !== wantsFar) {
+            this.zombieCrowd.release(b.crowdSlot);
+            b.setCrowdSlot(this.zombieCrowd.acquire(wantsFar));
+          }
         }
       }
     }
@@ -1056,14 +1137,19 @@ export class ZombieDirector {
 
   // R53-W3 M3: ゾンビ群InstancedMeshの毎フレームfeed(updateBots後に1回)。
   // crowdSlot>=0の個体(生存+死亡演出中)の姿勢をpose→commit。スクラッチ使い回しでアロケゼロ
-  feedZombieCrowd(): void {
+  feedZombieCrowd(camera: THREE.PerspectiveCamera): void {
     if (!this.zombieCrowd) return;
+    this.zombieCrowd.beginFrame(camera);
     for (const b of this.h.bots) {
       if (b.crowdSlot < 0) continue;
       b.getCrowdPose(CROWD_POSE_SCRATCH);
       this.zombieCrowd.pose(b.crowdSlot, CROWD_POSE_SCRATCH);
     }
     this.zombieCrowd.commit();
+  }
+
+  setZombieCrowdPrewarm(enabled: boolean): void {
+    this.zombieCrowd?.setPrewarm(enabled);
   }
 
   // ミッション開始時の準備: 濃霧・脱出地点・第1波

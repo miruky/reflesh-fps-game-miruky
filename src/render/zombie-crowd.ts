@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   buildZombieCrowdGeometries,
+  buildZombieCrowdLodGeometries,
   ZOMBIE_CROWD_STYLE,
   ZOMBIE_NODE_REST,
   type ZombieCrowdGeometries,
@@ -10,7 +11,8 @@ import {
 // ═══ R53-W3: ゾンビ群InstancedMeshレンダラ ═══════════════════════════════════
 //
 // 目的: 通常/精鋭ゾンビ(最大108体)の描画を「1体9メッシュ×108=972ドローコール」から
-// 「InstancedMesh 7本」へ畳む(R51監査の支配項=描画CPUの根治)。見た目は
+// 「近距離完全形状7本 + 後方軽量形状7本」へ畳む(R51監査の支配項=描画CPU/GPUの根治)。
+// 後方形状も骨格・寸法・発光・アニメーションは同一で、曲面分割だけを削減する。見た目は
 // bot.ts の syncMesh/updateDying と同一の式を composeZombieCrowdMatrices が
 // CPU行列合成で再現する(等価性は zombie-crowd.test.ts が実Botとの行列比較で固定)。
 //
@@ -57,12 +59,19 @@ import {
 export const ZOMBIE_CROWD_INSTANCED = true;
 export const ZOMBIE_CROWD_CAPACITY = 128; // ZOMBIE_MAX_ALIVE.high(108)+マージン
 export const ZOMBIE_CROWD_NEAR_EXCLUDE = 8; // 推奨: この順位未満はObject3D経路(影と一致)
+export const ZOMBIE_CROWD_FAR_ENTER_RANK = 36;
+export const ZOMBIE_CROWD_FAR_EXIT_RANK = 28;
 
 // ── 正準ジオメトリ+共有マテリアル(モジュール1回) ──────────────────────────
 let canonical: ZombieCrowdGeometries | null = null;
 export function crowdGeometries(): ZombieCrowdGeometries {
   if (!canonical) canonical = buildZombieCrowdGeometries();
   return canonical;
+}
+let canonicalLod: ZombieCrowdGeometries | null = null;
+export function crowdLodGeometries(): ZombieCrowdGeometries {
+  if (!canonicalLod) canonicalLod = buildZombieCrowdLodGeometries();
+  return canonicalLod;
 }
 
 interface CrowdMats {
@@ -211,37 +220,50 @@ const ZERO_M4 = new THREE.Matrix4().makeScale(0, 0, 0);
 const _matScratch = makeCrowdMatrices();
 
 // ── 群レンダラ本体 ───────────────────────────────────────────────────────────
+interface CrowdMeshSet {
+  bodyArmor: THREE.InstancedMesh;
+  bodyDark: THREE.InstancedMesh;
+  bodyGlow: THREE.InstancedMesh;
+  armArmor: THREE.InstancedMesh;
+  armDark: THREE.InstancedMesh;
+  thigh: THREE.InstancedMesh;
+  shin: THREE.InstancedMesh;
+  all: THREE.InstancedMesh[];
+  matrixDirty: boolean;
+  colorDirty: boolean;
+  writeCount: number;
+  drawElite: Int8Array;
+}
+
 export class ZombieCrowdRenderer {
-  // 7本のInstancedMesh: body系3(スロット=そのまま)、arm系2(同)、thigh/shin(スロット×2+側)
-  private readonly bodyArmor: THREE.InstancedMesh;
-  private readonly bodyDark: THREE.InstancedMesh;
-  private readonly bodyGlow: THREE.InstancedMesh;
-  private readonly armArmor: THREE.InstancedMesh;
-  private readonly armDark: THREE.InstancedMesh;
-  private readonly thigh: THREE.InstancedMesh;
-  private readonly shin: THREE.InstancedMesh;
+  private readonly full: CrowdMeshSet;
+  private readonly far: CrowdMeshSet;
   private readonly all: THREE.InstancedMesh[];
   private readonly freeSlots: number[] = [];
+  private readonly farFreeSlots: number[] = [];
   private readonly usedSlots: boolean[] = [];
-  private maxUsed = -1;
+  private readonly farUsedSlots: boolean[] = [];
+  private activeSlots = 0;
+  private prewarmGroup: THREE.Group | null = null;
+  private readonly viewProjection = new THREE.Matrix4();
+  private readonly viewFrustum = new THREE.Frustum();
+  private readonly cullSphere = new THREE.Sphere();
+  private frustumReady = false;
 
-  constructor(scene: THREE.Scene) {
-    const geo = crowdGeometries();
+  constructor(private readonly scene: THREE.Scene) {
     const mats = sharedCrowdMats();
     const cap = ZOMBIE_CROWD_CAPACITY;
     const make = (
-      g: THREE.BufferGeometry,
-      m: THREE.Material,
+      geometry: THREE.BufferGeometry,
+      material: THREE.Material,
       count: number,
       colored: boolean,
     ): THREE.InstancedMesh => {
-      const mesh = new THREE.InstancedMesh(g, m, count);
+      const mesh = new THREE.InstancedMesh(geometry, material, count);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      // 群全体で1つの描画単位のため個別カリング不能 → frustumCulled必須OFF(消失バグの定番)
       mesh.frustumCulled = false;
-      mesh.castShadow = false; // 影は最近接8体のObject3D経路が担う(冒頭の協定参照)
-      mesh.receiveShadow = false; // 個体経路(mergeByMaterial)と同じ
-      // 全スロットをスケール0で初期化(未使用スロットは描画されない)
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
       for (let i = 0; i < count; i += 1) mesh.setMatrixAt(i, ZERO_M4);
       if (colored) {
         for (let i = 0; i < count; i += 1) mesh.setColorAt(i, SKIN_NORMAL);
@@ -250,120 +272,203 @@ export class ZombieCrowdRenderer {
       scene.add(mesh);
       return mesh;
     };
-    this.bodyArmor = make(geo.bodyArmor, mats.armor, cap, true);
-    this.bodyDark = make(geo.bodyDark, mats.dark, cap, true);
-    this.bodyGlow = make(geo.bodyGlow, mats.glow, cap, false); // 眼は固定emissive(色乗算なし)
-    this.armArmor = make(geo.armArmor, mats.armor, cap, true);
-    this.armDark = make(geo.armDark, mats.dark, cap, true);
-    this.thigh = make(geo.thigh, mats.armor, cap * 2, true);
-    this.shin = make(geo.shin, mats.dark, cap * 2, true);
-    this.all = [
-      this.bodyArmor,
-      this.bodyDark,
-      this.bodyGlow,
-      this.armArmor,
-      this.armDark,
-      this.thigh,
-      this.shin,
-    ];
-    for (let i = cap - 1; i >= 0; i -= 1) this.freeSlots.push(i);
+    const makeSet = (geo: ZombieCrowdGeometries): CrowdMeshSet => {
+      const bodyArmor = make(geo.bodyArmor, mats.armor, cap, true);
+      const bodyDark = make(geo.bodyDark, mats.dark, cap, true);
+      const bodyGlow = make(geo.bodyGlow, mats.glow, cap, false);
+      const armArmor = make(geo.armArmor, mats.armor, cap, true);
+      const armDark = make(geo.armDark, mats.dark, cap, true);
+      const thigh = make(geo.thigh, mats.armor, cap * 2, true);
+      const shin = make(geo.shin, mats.dark, cap * 2, true);
+      return {
+        bodyArmor,
+        bodyDark,
+        bodyGlow,
+        armArmor,
+        armDark,
+        thigh,
+        shin,
+        all: [bodyArmor, bodyDark, bodyGlow, armArmor, armDark, thigh, shin],
+        matrixDirty: false,
+        colorDirty: true,
+        writeCount: 0,
+        drawElite: new Int8Array(cap).fill(-1),
+      };
+    };
+    this.full = makeSet(crowdGeometries());
+    this.far = makeSet(crowdLodGeometries());
+    this.all = [...this.full.all, ...this.far.all];
+    for (let i = cap - 1; i >= 0; i -= 1) {
+      this.freeSlots.push(i);
+      this.farFreeSlots.push(i);
+    }
     this.usedSlots.length = cap;
     this.usedSlots.fill(false);
+    this.farUsedSlots.length = cap;
+    this.farUsedSlots.fill(false);
   }
 
-  /** 空きスロットを割り当てる(満杯なら-1 → 呼び出し側は従来Object3D経路のままにする) */
-  acquire(): number {
-    const slot = this.freeSlots.pop();
-    if (slot === undefined) return -1;
-    this.usedSlots[slot] = true;
-    if (slot > this.maxUsed) this.maxUsed = slot;
-    return slot;
+  /** far=trueは後方LODバンク。返値は一意なencoded slot。 */
+  acquire(far = false): number {
+    const free = far ? this.farFreeSlots : this.freeSlots;
+    const used = far ? this.farUsedSlots : this.usedSlots;
+    const raw = free.pop();
+    if (raw === undefined) return -1;
+    used[raw] = true;
+    const encoded = far ? raw + ZOMBIE_CROWD_CAPACITY : raw;
+    this.activeSlots += 1;
+    return encoded;
   }
 
-  /** スロットを解放し、即座に非表示(スケール0)にする */
+  isFarSlot(slot: number): boolean {
+    return slot >= ZOMBIE_CROWD_CAPACITY;
+  }
+
   release(slot: number): void {
-    if (slot < 0 || slot >= ZOMBIE_CROWD_CAPACITY || !this.usedSlots[slot]) return;
-    this.usedSlots[slot] = false;
-    this.freeSlots.push(slot);
-    this.writeZero(slot);
-    if (slot === this.maxUsed) {
-      let m = this.maxUsed - 1;
-      while (m >= 0 && !this.usedSlots[m]) m -= 1;
-      this.maxUsed = m;
-    }
+    if (slot < 0) return;
+    const far = this.isFarSlot(slot);
+    const raw = far ? slot - ZOMBIE_CROWD_CAPACITY : slot;
+    const used = far ? this.farUsedSlots : this.usedSlots;
+    if (raw < 0 || raw >= ZOMBIE_CROWD_CAPACITY || !used[raw]) return;
+    used[raw] = false;
+    this.activeSlots -= 1;
+    (far ? this.farFreeSlots : this.freeSlots).push(raw);
   }
 
-  /** 1体分の姿勢を書き込む(毎フレーム、生存+死亡演出中の個体について呼ぶ) */
-  pose(slot: number, p: ZombieCrowdPose): void {
-    if (slot < 0 || !this.usedSlots[slot]) return;
-    if (!p.visible) {
-      this.writeZero(slot);
+  /**
+   * 1描画フレームの開始。可視個体だけを0番から詰め直すため、論理slotの穴や
+   * カメラ背面の個体はGPUのinstance countへ含まれない。
+   */
+  beginFrame(camera?: THREE.PerspectiveCamera): void {
+    this.full.writeCount = 0;
+    this.far.writeCount = 0;
+    if (!camera) {
+      this.frustumReady = false;
       return;
     }
-    composeZombieCrowdMatrices(p, _matScratch);
-    this.bodyArmor.setMatrixAt(slot, _matScratch.body);
-    this.bodyDark.setMatrixAt(slot, _matScratch.body);
-    // 眼光: Object3D経路は死亡フレームでglowMatsのemissiveを0に消灯する(takeDamage)。
-    // 共有マテリアルでは個体別に消せないため、死亡演出中はglowインスタンスを
-    // スケール0で非表示にする(0.6sの倒れ距離では消灯と視覚等価)
-    this.bodyGlow.setMatrixAt(slot, p.dying01 > 0 ? ZERO_M4 : _matScratch.body);
-    this.armArmor.setMatrixAt(slot, _matScratch.arm);
-    this.armDark.setMatrixAt(slot, _matScratch.arm);
-    const s2 = slot * 2;
-    this.thigh.setMatrixAt(s2, _matScratch.thighL);
-    this.thigh.setMatrixAt(s2 + 1, _matScratch.thighR);
-    this.shin.setMatrixAt(s2, _matScratch.shinL);
-    this.shin.setMatrixAt(s2 + 1, _matScratch.shinR);
-    // tier色(diffuse乗算)。毎フレーム書いても単なる配列書込(≦7×108)で安価・常に正しい
-    const skin = p.elite ? SKIN_ELITE : SKIN_NORMAL;
-    const darkC = p.elite ? DARK_ELITE : DARK_NORMAL;
-    this.bodyArmor.setColorAt(slot, skin);
-    this.armArmor.setColorAt(slot, skin);
-    this.thigh.setColorAt(s2, skin);
-    this.thigh.setColorAt(s2 + 1, skin);
-    this.bodyDark.setColorAt(slot, darkC);
-    this.armDark.setColorAt(slot, darkC);
-    this.shin.setColorAt(s2, darkC);
-    this.shin.setColorAt(s2 + 1, darkC);
+    camera.updateMatrixWorld();
+    this.viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.viewFrustum.setFromProjectionMatrix(this.viewProjection);
+    this.frustumReady = true;
   }
 
-  /** フレーム末に1回: GPU転送フラグ+描画カウント更新 */
-  commit(): void {
-    const n = this.maxUsed + 1;
-    for (const mesh of this.all) {
-      mesh.count = mesh === this.thigh || mesh === this.shin ? n * 2 : n;
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  pose(slot: number, p: ZombieCrowdPose): void {
+    if (slot < 0) return;
+    const far = this.isFarSlot(slot);
+    const raw = far ? slot - ZOMBIE_CROWD_CAPACITY : slot;
+    const used = far ? this.farUsedSlots : this.usedSlots;
+    if (!used[raw]) return;
+    if (!p.visible) return;
+    if (this.frustumReady) {
+      // 足元基準のposeを全身中心へ上げ、倒れ/腕/全巨体scaleまで入る余白半径で判定する。
+      // 球が画面端へ少しでも交差する間は描画するため、部位だけが急に消えることはない。
+      this.cullSphere.center.set(p.x, p.y + 0.75 * p.scale, p.z);
+      this.cullSphere.radius = 2.1 * p.scale;
+      if (!this.viewFrustum.intersectsSphere(this.cullSphere)) return;
+    }
+    const meshes = far ? this.far : this.full;
+    const drawIndex = meshes.writeCount;
+    meshes.writeCount += 1;
+    composeZombieCrowdMatrices(p, _matScratch);
+    meshes.bodyArmor.setMatrixAt(drawIndex, _matScratch.body);
+    meshes.bodyDark.setMatrixAt(drawIndex, _matScratch.body);
+    meshes.bodyGlow.setMatrixAt(drawIndex, p.dying01 > 0 ? ZERO_M4 : _matScratch.body);
+    meshes.armArmor.setMatrixAt(drawIndex, _matScratch.arm);
+    meshes.armDark.setMatrixAt(drawIndex, _matScratch.arm);
+    const s2 = drawIndex * 2;
+    meshes.thigh.setMatrixAt(s2, _matScratch.thighL);
+    meshes.thigh.setMatrixAt(s2 + 1, _matScratch.thighR);
+    meshes.shin.setMatrixAt(s2, _matScratch.shinL);
+    meshes.shin.setMatrixAt(s2 + 1, _matScratch.shinR);
+    meshes.matrixDirty = true;
+    const elite = p.elite ? 1 : 0;
+    if (meshes.drawElite[drawIndex] !== elite) {
+      meshes.drawElite[drawIndex] = elite;
+      const skin = p.elite ? SKIN_ELITE : SKIN_NORMAL;
+      const darkC = p.elite ? DARK_ELITE : DARK_NORMAL;
+      meshes.bodyArmor.setColorAt(drawIndex, skin);
+      meshes.armArmor.setColorAt(drawIndex, skin);
+      meshes.thigh.setColorAt(s2, skin);
+      meshes.thigh.setColorAt(s2 + 1, skin);
+      meshes.bodyDark.setColorAt(drawIndex, darkC);
+      meshes.armDark.setColorAt(drawIndex, darkC);
+      meshes.shin.setColorAt(s2, darkC);
+      meshes.shin.setColorAt(s2 + 1, darkC);
+      meshes.colorDirty = true;
     }
   }
 
-  /** 使用中スロット数(デバッグ/perfhud用) */
-  activeCount(): number {
-    let c = 0;
-    for (const used of this.usedSlots) if (used) c += 1;
-    return c;
+  commit(): void {
+    this.setDrawCount(this.full, this.full.writeCount);
+    this.setDrawCount(this.far, this.far.writeCount);
+    this.commitSet(this.full);
+    this.commitSet(this.far);
+    // 次の固定tickまでにbeginFrameが呼ばれない診断/テスト経路でも、同じ個体を
+    // 末尾へ積み続けないようcommitをフレーム境界として扱う。
+    this.full.writeCount = 0;
+    this.far.writeCount = 0;
+    this.frustumReady = false;
   }
 
-  /** 試合dispose: シーンから外しインスタンス属性を解放する。
-   * 正準ジオメトリ/共有マテリアルはモジュール寿命(有界)なので解放しない
-   * (getSharedZombieDarkMat等の既存の共有資産と同じ流儀)。 */
+  activeCount(): number {
+    return this.activeSlots;
+  }
+
+  setPrewarm(enabled: boolean): void {
+    if (enabled) {
+      if (!this.prewarmGroup) {
+        const geo = crowdGeometries();
+        const mats = sharedCrowdMats();
+        const group = new THREE.Group();
+        const add = (geometry: THREE.BufferGeometry, material: THREE.Material): void => {
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.frustumCulled = false;
+          group.add(mesh);
+        };
+        add(geo.bodyArmor, mats.armor);
+        add(geo.bodyDark, mats.dark);
+        add(geo.bodyGlow, mats.glow);
+        add(geo.armArmor, mats.armor);
+        add(geo.armDark, mats.dark);
+        add(geo.thigh, mats.armor);
+        add(geo.shin, mats.dark);
+        group.scale.setScalar(0);
+        this.scene.add(group);
+        this.prewarmGroup = group;
+      }
+      this.setDrawCount(this.full, 1);
+      this.setDrawCount(this.far, 1);
+      return;
+    }
+    if (this.prewarmGroup) {
+      this.scene.remove(this.prewarmGroup);
+      this.prewarmGroup = null;
+    }
+    this.setDrawCount(this.full, this.full.writeCount);
+    this.setDrawCount(this.far, this.far.writeCount);
+  }
+
   dispose(scene: THREE.Scene): void {
+    this.setPrewarm(false);
     for (const mesh of this.all) {
       scene.remove(mesh);
-      mesh.dispose(); // InstancedMesh.dispose = instanceMatrix/instanceColorの解放のみ
+      mesh.dispose();
     }
   }
 
-  private writeZero(slot: number): void {
-    this.bodyArmor.setMatrixAt(slot, ZERO_M4);
-    this.bodyDark.setMatrixAt(slot, ZERO_M4);
-    this.bodyGlow.setMatrixAt(slot, ZERO_M4);
-    this.armArmor.setMatrixAt(slot, ZERO_M4);
-    this.armDark.setMatrixAt(slot, ZERO_M4);
-    const s2 = slot * 2;
-    this.thigh.setMatrixAt(s2, ZERO_M4);
-    this.thigh.setMatrixAt(s2 + 1, ZERO_M4);
-    this.shin.setMatrixAt(s2, ZERO_M4);
-    this.shin.setMatrixAt(s2 + 1, ZERO_M4);
+  private setDrawCount(meshes: CrowdMeshSet, count: number): void {
+    for (const mesh of meshes.all) {
+      mesh.count = mesh === meshes.thigh || mesh === meshes.shin ? count * 2 : count;
+    }
   }
+
+  private commitSet(meshes: CrowdMeshSet): void {
+    for (const mesh of meshes.all) {
+      if (meshes.matrixDirty) mesh.instanceMatrix.needsUpdate = true;
+      if (meshes.colorDirty && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+    meshes.matrixDirty = false;
+    meshes.colorDirty = false;
+  }
+
 }
