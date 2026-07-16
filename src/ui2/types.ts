@@ -5,10 +5,10 @@ import type { Settings } from '../core/settings';
 import type { Difficulty } from '../game/bot';
 import type { GrenadeKind } from '../game/grenades';
 import type { MissionDef } from '../game/campaign';
-import type { MatchResult } from '../game/match';
+import type { MatchResult } from '../game/match-types';
 import type { GameMode } from '../game/modes';
 import type { CampaignProgress, MatchProgress, Profile } from '../game/progression';
-import type { MenuCallbacks, MenuSelection } from '../ui/menu';
+import type { MenuCallbacks, MenuSelection } from '../ui/menu-contracts';
 import type { SpaceBg } from '../ui/menu-bg';
 
 export type Screen2Id =
@@ -79,7 +79,7 @@ export interface MenuApi {
 }
 
 // 既知の負債(旧UI退役時に移設必須):
-// - deploy/armoryが readLastZombiePerk/resolveCarriedPerk を ../ui/menu からruntime importしている
+// - deploy/armoryの継承パーク解決は軽量な menu-contracts から読む
 // - 1920×1080ステージfitユーティリティが画面ごとに重複実装(共有化候補)
 // 再エクスポート(画面オーナーがtypes.tsだけをimportすれば足りるように)
 export type {

@@ -356,7 +356,7 @@ function camoPatternGLSL(v: CamoVisual): string {
         camoEmissiveMul = band;`;
     case 'facet':
       // 結晶(jingai のひび割れ): セル状ファセット+氷白の稜線。面ごとに明度が割れる。
-      // ※ダイヤは反復タイルに見えるため 'crystal' へ移行済み。facet は jingai 専用に残す。
+      // ※ダイヤは銀色スタッド専用パターンへ移行済み。facet は jingai 専用に残す。
       return `
         vec3 cell = floor(vCamoPos * ${S});
         float f = camoHash(cell);
@@ -365,32 +365,24 @@ function camoPatternGLSL(v: CamoVisual): string {
                    * smoothstep(0.0, 0.12, min(min(1.0 - fr.x, 1.0 - fr.y), 1.0 - fr.z));
         vec3 camoCol = mix(${C}, mix(${A}, ${B}, f), edge);
         camoEmissiveMul = 1.0 - 0.5 * edge;`;
-    case 'crystal':
-      // R57-⑤ ダイヤ「継ぎ目のない一枚ダイヤ」: floor格子/hard edge を使わず、低周波ノイズで
-      // 座標を歪めた(ドメインワープ)うえで3オクターブの値ノイズを重ね、氷青(A)→白(C)の濃淡を
-      // 非反復に敷く。ワープで格子の反復周期を視認不能に崩すのがタイル除去の要。稜線(ノイズの
-      // 尾根)だけを白く締めて内部反射のきらめきを出す。camoEmissiveMul は ≤1.0(base emissive を
-      // 底上げしない=白飛び根治済みエネルギー包絡を維持)。金属F0=albedo なので base は氷青平均に
-      // 寄せ(純白は稜線のみ)、鏡面反射が過度に白飛びしないよう抑える。
+    case 'diamond-stud':
+      // 参考画像の「金属下地へ極小のダイヤを敷き詰める」造形。3軸投影の
+      // 半トーングリッドで曲面や細いバレルでも密度を落とさず、白金の中心、暗い
+      // 銀の外周、金/オリーブ下地の順に層を作る。マスクは後段の粗さ/金属/凹凸にも共有する。
       return `
-        vec3 cwp = vCamoPos * ${S};
-        vec3 cwarp = vec3(
-          camoNoise(cwp * 0.5 + 4.1),
-          camoNoise(cwp * 0.5 + 19.7),
-          camoNoise(cwp * 0.5 + 33.3)) - 0.5;
-        vec3 cwp2 = cwp + cwarp * 3.0;
-        float co1 = camoNoise(cwp2);
-        float co2 = camoNoise(cwp2 * 2.13 + 11.3);
-        float co3 = camoNoise(cwp2 * 4.29 + 27.9);
-        float crys = co1 * 0.55 + co2 * 0.30 + co3 * 0.15;
-        // 基調は氷青(A)に濃青(B)の内部濃淡でコントラスト(=深み)を持たせる。純白(C)は
-        // ノイズの尾根だけを細く締める「fire(閃光線)」に限定し、面全体を白く飛ばさない。
-        // 平均を氷青へ寄せることで金属F0の鏡面反射に余白(白飛び回避)を残しつつ、白い稜線と
-        // 高密度スパークルが青いクリスタルに対して強くギラつくコントラストを作る。
-        vec3 camoCol = mix(${A}, ${B}, smoothstep(0.42, 0.86, co2) * 0.6);
-        float cridge = 1.0 - smoothstep(0.0, 0.045, abs(crys - 0.5));
-        camoCol = mix(camoCol, ${C}, cridge * 0.9);
-        camoEmissiveMul = 0.72 + 0.28 * cridge;`;
+        vec3 studPos = vCamoPos * ${S};
+        float studXY = camoStud(studPos.xy);
+        float studYZ = camoStud(studPos.yz + vec2(0.31, 0.17));
+        float studZX = camoStud(studPos.zx + vec2(0.63, 0.41));
+        camoStudHeight = max(studXY, max(studYZ, studZX));
+        camoStudMask = smoothstep(0.12, 0.68, camoStudHeight);
+        float studCrown = smoothstep(0.68, 0.96, camoStudHeight);
+        float goldGrain = camoNoise(vCamoPos * 23.0 + 7.3);
+        vec3 camoCol = mix(${A}, ${B}, 0.36 + goldGrain * 0.44);
+        vec3 studSilver = mix(vec3(0.34, 0.36, 0.38), ${C}, pow(camoStudHeight, 0.58));
+        camoCol = mix(camoCol, studSilver, camoStudMask);
+        camoCol = mix(camoCol, vec3(1.0, 0.97, 0.86), studCrown * 0.26);
+        camoEmissiveMul = 0.08 + 0.92 * studCrown;`;
     case 'pulse':
       // 脈動(溶岩/ダークマター): 流動するノイズ脈+時間で明滅する発光(uCamoTime)
       return `
@@ -422,68 +414,31 @@ function camoPatternGLSL(v: CamoVisual): string {
   }
 }
 
-// R55: ダイヤ迷彩「超ギラギラ」強化(sparkle>0のカモのみ。他カモは分岐ごと省略されコスト0)。
-// R55確証finding[8]根治: 旧実装は面ごとの疑似法線擾乱を実シェーディングnormal(BRDFの鏡面
-// ローブが直接読む変数)へ書き戻していたため、near-mirror(metalness0.95/roughness0.05)×
-// 実DirectionalLight(sun1.1-1.8)の直接/間接スペキュラへ高周波法線が素通しになり、
-// envMapIntensity低減(既存のR55-WC根治)だけでは防げない白飛びリスクを抱えていた。
-// 今回: geometry/normal-mapの実normalは一切変更せず、ファセット煌めき用の疑似法線擾乱は
-// このブロック内のローカル変数(camoFacetN)にのみ閉じ込め、(1)視野角フレネル項の虹色
-// (iridescence風)加算 + (2)疎らな高輝度グリッター点、の2つとも totalEmissiveRadiance への
-// 加算(乗算diffuseへは触れない・実BRDFのnormalにも触れない)だけで表現する。
-// emissiveIntensity(≤0.5の白飛び鉄則)とは別枠 — 加算量はfresnel/step/sparkleで絞り込み、
-// bloom閾値0.9を超えないよう控えめな係数に留める。
-// R56④「更にギラギラ」: (a)グリッターは高周波・小径の2層(fine 1700³ + coarse 620³、閾値も
-// 締めて1点あたりの面積を縮小)へ再設計し、密度・鋭さの体感を強めつつ加算量(glitAmt)は
-// 0.30→0.20へ絞ることで合計エネルギーはむしろ減らす(「密度は上げるが1点の白さは絞る」)。
-// (b)虹色フレネルは位相係数1.4→2.1で視野角に対する色相バンドを増やし、camoIridRawを自乗
-// (camoIrid=raw²)してコントラスト/彩度を上げつつ平均輝度は下げる方向へ寄せる(iridAmtは
-// 0.30→0.32とほぼ据え置き)。normal自体は従来通りローカルcamoFacetNのみで完結し実BRDFへは
-// 一切書き戻さない(白飛び根治済み方式を維持)。実WebGL(SwiftShader)で飽和ピクセル比率=0を
-// 実測確認済み(検証スクリプトは確認後に削除)。
-// R57-⑤「一面ダイヤ・最強ギラギラ」: (a)グリッターを3層化(ultra-fine 2600³ + fine 1700³ +
-// coarse 620³)+閾値を緩めて密度を最大化。合成 camoGlit を clamp(0,1) するので per-pixel の
-// 加算天井(glitAmt)は不変=白飛びは増えず「光る点の数」だけ増える。(b)ジッタセル参照を低周波
-// ノイズでドメインワープし 340³グリッド由来の格子見えを崩す。iridAmt/glitAmt係数は R56 の
-// 実測安全値を据え置き(振幅は上げず密度だけ上げる)。base の反復タイルは pattern を 'crystal'
-// (格子非使用のドメインワープ・ノイズ表面)へ移したことで根絶。実WebGL再検証で飽和0を確認。
+// ダイヤスタッドの微細な白金反射。発光で全面を白くせず、小さい粒のみを
+// 時間差で光らせる。合成値はclampし、Bloomの飽和とチラつきを抑える。
 function camoSparkleEmissiveGLSL(sparkle: number): string {
-  const jitter = (sparkle * 0.35).toFixed(3);
-  const iridAmt = (sparkle * 0.32).toFixed(3);
-  const glitAmt = (sparkle * 0.20).toFixed(3);
+  const jitter = (sparkle * 0.16).toFixed(3);
+  const rimAmt = (sparkle * 0.11).toFixed(3);
+  const glitAmt = (sparkle * 0.14).toFixed(3);
   return `
 {
-  // 煌めき用ローカル法線(camoFacetN)。実BRDFのnormalは不変。ジッタセル参照を低周波ノイズで
-  // ドメインワープして「340³グリッド由来の反復」を崩す(タイル/格子の再発防止=R57-⑤)。
-  vec3 camoFnp = vCamoPos * 340.0;
-  camoFnp += (vec3(camoNoise(vCamoPos * 70.0 + 2.1),
-                   camoNoise(vCamoPos * 70.0 + 9.3),
-                   camoNoise(vCamoPos * 70.0 + 21.7)) - 0.5) * 60.0;
+  vec3 camoFnp = vCamoPos * 720.0;
   vec3 camoCell = floor(camoFnp);
   vec3 camoJit = vec3(camoHash(camoCell), camoHash(camoCell + 91.7), camoHash(camoCell + 183.1)) - 0.5;
   vec3 camoFacetN = normalize(normal + camoJit * ${jitter});
   vec3 camoViewDir = normalize(vViewPosition);
   float camoNdv = clamp(dot(camoFacetN, camoViewDir), 0.0, 1.0);
   float camoFres = pow(1.0 - camoNdv, 3.0);
-  // 虹色フレネル: 位相係数を上げ視野角に対する色相バンドを増やし、raw²でコントラスト(彩度)を
-  // 強調しつつ平均エネルギーは上げない(pow>1は平均を下げる方向)。
-  vec3 camoIridRaw = 0.5 + 0.5 * cos(6.2832 * (vec3(0.0, 0.33, 0.67) + camoFres * 2.1 + uCamoTime * 0.07));
-  vec3 camoIrid = camoIridRaw * camoIridRaw;
-  // グリッター3層(ultra-fine 2600³ / fine 1700³ / coarse 620³): 密度を最大化して「無数の
-  // 細かい光がギラつく」体感を出す。合成後に clamp(…,0,1) で1ピクセルの上限を固定するため、
-  // 層を増やし閾値を緩めても per-pixel の加算天井(glitAmt)は不変=白飛びは増えない(増えるのは
-  // 光る点の数だけ)。各層は個別の明滅速度でチラつく。
-  vec3 camoGlitCellF = floor(vCamoPos * 2600.0 + 5.7);
-  float camoGlitF = step(0.990, camoHash(camoGlitCellF + 61.0));
-  camoGlitF *= 0.5 + 0.5 * sin(uCamoTime * 6.1 + camoHash(camoGlitCellF) * 6.2832);
-  vec3 camoGlitCellA = floor(vCamoPos * 1700.0);
-  float camoGlitA = step(0.986, camoHash(camoGlitCellA + 7.0));
-  camoGlitA *= 0.5 + 0.5 * sin(uCamoTime * 4.2 + camoHash(camoGlitCellA) * 6.2832);
-  vec3 camoGlitCellB = floor(vCamoPos * 620.0 + 12.3);
-  float camoGlitB = step(0.972, camoHash(camoGlitCellB + 41.0));
-  camoGlitB *= 0.5 + 0.5 * sin(uCamoTime * 1.8 + camoHash(camoGlitCellB + 3.0) * 6.2832);
-  float camoGlit = clamp(camoGlitF + camoGlitA * 0.8 + camoGlitB * 0.5, 0.0, 1.0);
-  totalEmissiveRadiance += camoIrid * camoFres * ${iridAmt} + vec3(1.0) * camoGlit * camoNdv * ${glitAmt};
+  vec3 camoGlitCellA = floor(vCamoPos * 1550.0);
+  float camoGlitA = step(0.987, camoHash(camoGlitCellA + 7.0));
+  camoGlitA *= 0.35 + 0.65 * (0.5 + 0.5 * sin(uCamoTime * 3.4 + camoHash(camoGlitCellA) * 6.2832));
+  vec3 camoGlitCellB = floor(vCamoPos * 610.0 + 12.3);
+  float camoGlitB = step(0.974, camoHash(camoGlitCellB + 41.0));
+  camoGlitB *= 0.5 + 0.5 * sin(uCamoTime * 1.7 + camoHash(camoGlitCellB + 3.0) * 6.2832);
+  float camoGlit = clamp(camoGlitA + camoGlitB * 0.55, 0.0, 1.0) * camoStudMask;
+  vec3 camoPlatinum = vec3(1.0, 0.95, 0.82);
+  totalEmissiveRadiance += camoPlatinum * camoFres * camoStudMask * ${rimAmt}
+                         + vec3(1.0) * camoGlit * camoNdv * ${glitAmt};
 }`;
 }
 
@@ -495,6 +450,7 @@ function camoShaderPatch(
 ): void {
   shader.uniforms.uCamoTime = CAMO_TIME;
   const sparkle = v.sparkle ?? 0;
+  const studSurface = v.pattern === 'diamond-stud';
   shader.vertexShader = shader.vertexShader
     .replace('#include <common>', '#include <common>\nvarying vec3 vCamoPos;')
     .replace('#include <begin_vertex>', '#include <begin_vertex>\nvCamoPos = position;');
@@ -505,6 +461,25 @@ function camoShaderPatch(
 varying vec3 vCamoPos;
 uniform float uCamoTime;
 float camoEmissiveMul = 1.0;
+${studSurface ? `float camoStudMask = 0.0;
+float camoStudHeight = 0.0;
+float camoStud(vec2 p) {
+  // 行ごとに半セルずらした高密度ハーフトーン。内側ほど高いドーム形。
+  p.y *= 1.1547005;
+  float row = floor(p.y);
+  p.x += mod(row, 2.0) * 0.5;
+  float d = length(fract(p) - 0.5);
+  return 1.0 - smoothstep(0.13, 0.35, d);
+}
+vec3 camoBumpNormal(vec3 surfPos, vec3 surfNormal, float height) {
+  vec3 sigmaX = dFdx(surfPos);
+  vec3 sigmaY = dFdy(surfPos);
+  vec3 r1 = cross(sigmaY, surfNormal);
+  vec3 r2 = cross(surfNormal, sigmaX);
+  float det = dot(sigmaX, r1);
+  vec2 grad = vec2(dFdx(height), dFdy(height));
+  return normalize(abs(det) * surfNormal - sign(det) * (grad.x * r1 + grad.y * r2));
+}` : ''}
 float camoHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 float camoNoise(vec3 p) {
   vec3 i = floor(p);
@@ -539,6 +514,23 @@ ${camoPatternGLSL(v)}
       `#include <emissivemap_fragment>
 totalEmissiveRadiance *= camoEmissiveMul;${sparkle > 0 ? camoSparkleEmissiveGLSL(sparkle) : ''}`,
     );
+  if (studSurface) {
+    // 色と同じスタッド高さから微細法線を作り、丸い銀粒が実際に浮いて見えるようにする。
+    // 金色下地はやや粗く、スタッドだけを鏡面寄りに分けて輪郭を保つ。
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <normal_fragment_maps>',
+        '#include <normal_fragment_maps>\nnormal = camoBumpNormal(-vViewPosition, normal, camoStudHeight * 0.028);',
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        '#include <roughnessmap_fragment>\nroughnessFactor = mix(0.28, 0.10, camoStudMask);',
+      )
+      .replace(
+        '#include <metalnessmap_fragment>',
+        '#include <metalnessmap_fragment>\nmetalnessFactor = mix(0.82, 0.985, camoStudMask);',
+      );
+  }
 }
 
 // clone しても柄が生き残るカモ材。WeaponPreview は setWeapon 時に material.clone() で

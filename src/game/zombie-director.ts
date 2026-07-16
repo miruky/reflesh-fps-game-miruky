@@ -40,7 +40,14 @@ import {
 } from './roguerun';
 import type { MatchConfig, FeedEntry, MomentEvent } from './match-types';
 import { ENEMY_TEAM } from './modes';
-import { PLAYER_FEET_OFFSET, PLAYER_NAME, ULT_ON_DAMAGE_PER_HP, hitToi, type ColliderTag, type RayHitLike } from './match';
+import { PLAYER_NAME } from './match-helpers';
+import {
+  PLAYER_FEET_OFFSET,
+  ULT_ON_DAMAGE_PER_HP,
+  hitToi,
+  type ColliderTag,
+  type RayHitLike,
+} from './match-contracts';
 
 const MIASMA_TICK_S = 0.5; // 毒雲DPSの離散ティック間隔(FIRE_TICK_Sと同じ流儀)
 // R55 ⑧: プロップに嵌まって動けないゾンビの最終安全弁スキャン間隔(秒)。bot.ts側の

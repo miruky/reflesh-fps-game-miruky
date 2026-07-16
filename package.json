@@ -4,12 +4,16 @@
   "version": "0.9.0",
   "type": "module",
   "description": "ブラウザで動く3D FPS",
+  "engines": {
+    "node": ">=22.12 <23"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "node scripts/ui2-smoke.mjs",
     "lint": "eslint .",
     "fmt": "prettier --write ."
   },

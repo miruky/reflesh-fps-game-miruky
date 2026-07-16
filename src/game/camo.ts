@@ -124,7 +124,7 @@ export function camoName(id: CamoId): string {
 }
 
 // ── 対象武器とクラス ──────────────────────────────────────────────────────
-// カモ対象 = 全プライマリから fists(クナイ)を除いた25本
+// カモ対象 = 全プライマリから fists(クナイ)を除いた35本
 export const CAMO_WEAPON_IDS: readonly string[] = PRIMARY_IDS.filter((id) => id !== 'fists');
 
 // カモ対象武器が属するクラス集合(出現順・重複なし)。ダークマター判定の分母になる
@@ -192,8 +192,8 @@ function statsOf(
 
 // 解除済みの段階数(0..9)。段階表は先頭からキル閾値が単調増加で、ゴールドのみHS条件が
 // 加わるため「先頭からの連続達成数 = 達成総数」が常に成り立つ。
-// R57-⑤: 任意の weaponId を渡すと、最終段(gold)の閾値を武器クラス依存の緩和条件
-// (goldConditionFor)で判定する。exoticクラスは HS100→50 に緩和される(キルは500のまま
+// 任意の weaponId を渡すと、最終段(gold)の閾値を武器クラス依存の緩和条件
+// (goldConditionFor)で判定する。exoticクラスはヘッドショット条件を持たない(キルは500のまま
 // =9段ラダーの単調性を保つ)。weaponId 未指定は従来通り CAMO_TIERS の標準閾値(500/100)で
 // 判定する(既存呼び出しは完全後方互換)。これにより「ゴールド解除通知(progression)/装備
 // ゲート(goldForWeapon)/進捗表示(camoProgress)」の3経路が同じ結論を出す(単一真実源)。
@@ -215,20 +215,15 @@ export function goldFor(stats: WeaponCamoStats | undefined): boolean {
   return camoTierFor(stats) >= CAMO_TIERS.length;
 }
 
-// exoticクラスのゴールド条件緩和定数。
-// R57-⑤: 緩和ポリシーを「HSのみ緩和(500kills / HS100→50)」に統一した。旧実装は
-// 250kills/50HS を意図していたが 250 は中間段(lava300/neon400)より小さく、9段ラダーの
-// 単調性(gold=最難関の最終段)が破綻し camoTierFor で表現できず、goldForWeapon の前段
-// ループが標準neon(400)を先に要求して緩和(250)へ到達不能になる死にコードだった。exotic7本は
-// ビーム/ミニガン/扇/弓などHSが非現実的な武器が多いため「HSだけ100→50に緩和・キルは500維持」
-// が最も自然(ラダー単調性を保ちつつ、金→ダイヤの解放順が逆転しない)。EXOTIC_GOLD_KILLS は
-// 標準goldと同じ500で、この定数は「緩和は kills では行わない」ことを明示する単一真実源。
+// exoticクラスのゴールド条件。ビーム/ミニガン/扇/弓など、命中の
+// 部位をプレイヤーが安定して選べない特殊兵装ではHSを必要条件にしない。
+// 9段ラダーの最終到達点は標準武器と同じ500キルに維持し、金→ダイヤの順序も保つ。
 export const EXOTIC_GOLD_KILLS = 500;
-export const EXOTIC_GOLD_HS = 50;
+export const EXOTIC_GOLD_HS = 0;
 
 /**
  * 武器クラスを考慮したゴールド解除条件を返す。
- * exotic クラスは 500kills+HS50(HSのみ緩和)、それ以外は標準(500kills+HS100)。
+ * exotic クラスは 500kills(ヘッドショット不要)、それ以外は標準(500kills+HS100)。
  * launcher は緩和しない(exotic 内でも shooter 系とは別枠)。
  */
 export function goldConditionFor(weaponId: string): { kills: number; headshots: number } {
@@ -242,7 +237,7 @@ export function goldConditionFor(weaponId: string): { kills: number; headshots: 
 
 /**
  * 武器クラスを考慮したゴールド到達判定。
- * exotic クラスは緩和条件(500kills+HS50)で判定する。
+ * exotic クラスは緩和条件(500kills、HS不要)で判定する。
  * R57-⑤: 前段8段の閾値は goldConditionFor(緩和後の gold 閾値)を上限にキャップして確認する。
  * こうすることで「緩和した gold 閾値が中間段の閾値を下回る」ポリシーに変えても、前段ループが
  * gold 到達を構造的にブロックしない(旧バグ=exotic緩和がneon400に阻まれ到達不能、の再発防止)。
@@ -336,7 +331,7 @@ export function camoProgress(
   const tier = CAMO_TIERS.find((t) => t.id === camoId);
   if (!tier) return { current: 0, target: 1, label: '' };
   const s = statsOf(allStats, weaponId);
-  // ゴールドは武器クラス依存条件(exotic は 250kills+HS50)
+  // ゴールドは武器クラス依存条件(exotic は500kills・HS不要)
   const effectiveKills = camoId === 'gold' ? goldConditionFor(weaponId).kills : tier.kills;
   const effectiveHs = camoId === 'gold' ? goldConditionFor(weaponId).headshots : tier.headshots;
   if (effectiveHs > 0 && s.kills >= effectiveKills) {
@@ -454,19 +449,29 @@ interface CamoStatBonus {
   moveSpread?: number; // 移動時拡散(度)。<1 で移動中の精度が上がる
   recoil?: number; // recoilPattern の pitch/yaw を一律スケール。<1 で反動減
   recoilRecovery?: number; // recoilRecoveryPerS を乗算。>1 で収束が速い
+  hipSpread?: number; // 腰だめの基礎拡散。<1 で集弾性が上がる
+  adsSpread?: number; // ADS時の基礎拡散。<1 で精密射撃が安定する
+  bloomPerShot?: number; // 連射ごとの拡散増加。<1 で持続射撃が安定する
+  bloomRecovery?: number; // 拡散収束速度。>1 で次のバーストへ早く戻る
 }
 
-// 段階ごとの控えめなハンドリング補正。gold=リロード/ADS/持ち替え -8%、diamond=それに加え
-// 移動精度/反動 -10% + 収束+10%、dark-matter=さらに上(-12% / -15% / +15%)。
+// 個性を重ねる高位カモ補正。Goldは装填・持ち替えのテンポ、Diamondは
+// ADS・集弾・反動制御に特化する。Dark Matterは最終報酬として全項目で
+// Diamondを上回り、Goldの最得意分野(装填/持ち替え)も超える。
 const CAMO_STAT_BONUS: Partial<Record<CamoId, CamoStatBonus>> = {
-  gold: { reload: 0.92, ads: 0.92, swap: 0.92 },
+  gold: {
+    reload: 0.84, ads: 0.9, swap: 0.84,
+    bloomRecovery: 1.12,
+  },
   diamond: {
-    reload: 0.92, ads: 0.92, swap: 0.92,
-    moveSpread: 0.9, recoil: 0.9, recoilRecovery: 1.1,
+    reload: 0.88, ads: 0.84, swap: 0.88,
+    moveSpread: 0.76, recoil: 0.76, recoilRecovery: 1.3,
+    hipSpread: 0.88, adsSpread: 0.78, bloomPerShot: 0.82, bloomRecovery: 1.28,
   },
   'dark-matter': {
-    reload: 0.88, ads: 0.88, swap: 0.88,
-    moveSpread: 0.85, recoil: 0.85, recoilRecovery: 1.15,
+    reload: 0.78, ads: 0.76, swap: 0.76,
+    moveSpread: 0.62, recoil: 0.62, recoilRecovery: 1.55,
+    hipSpread: 0.76, adsSpread: 0.65, bloomPerShot: 0.68, bloomRecovery: 1.5,
   },
 };
 
@@ -492,6 +497,10 @@ export function applyCamoStats(def: WeaponDef, camoId: string): WeaponDef {
     next.recoilPattern = def.recoilPattern.map((step) => ({ pitch: step.pitch * m, yaw: step.yaw * m }));
   }
   if (b.recoilRecovery !== undefined) next.recoilRecoveryPerS = def.recoilRecoveryPerS * b.recoilRecovery;
+  if (b.hipSpread !== undefined) next.spreadHipDeg = def.spreadHipDeg * b.hipSpread;
+  if (b.adsSpread !== undefined) next.spreadAdsDeg = def.spreadAdsDeg * b.adsSpread;
+  if (b.bloomPerShot !== undefined) next.bloomPerShotDeg = def.bloomPerShotDeg * b.bloomPerShot;
+  if (b.bloomRecovery !== undefined) next.bloomRecoveryDegPerS = def.bloomRecoveryDegPerS * b.bloomRecovery;
   return next;
 }
 
@@ -500,10 +509,16 @@ export function applyCamoStats(def: WeaponDef, camoId: string): WeaponDef {
 // スウォッチ(CSSグラデ)に使う。emissiveIntensity は Bloom 白飛び回避のため 0.5 以下
 // (CAMO_IDS対象=通常ラダー+報酬カモ)。pap1-3(CAMO_IDS非対象)は 0.55 以下が上限。
 // circuit = R53-W2 追加(PaP鍛神): 静的な二重ノイズ発光脈(viewmodel.camoPatternGLSL実装)。
-// R57-⑤: 'crystal' 追加 = ダイヤ専用の「継ぎ目のない一面クリスタル」。'facet'(セル格子)は
-// 反復タイルに見えたため diamond から切り離し、ドメインワープ+多オクターブノイズの非反復
-// 表面へ置換する(viewmodel.camoPatternGLSL の 'crystal' 実装)。'facet' は jingai 専用に残る。
-export type CamoPattern = 'blotch' | 'stripe' | 'facet' | 'pulse' | 'solid' | 'circuit' | 'crystal';
+// diamond-stud = ダイヤ専用。金/オリーブの金属下地へ極小の銀色スタッドを
+// 互い違いに高密度配置し、色・粗さ・擬似凹凸を同じマスクで駆動する。
+export type CamoPattern =
+  | 'blotch'
+  | 'stripe'
+  | 'facet'
+  | 'pulse'
+  | 'solid'
+  | 'circuit'
+  | 'diamond-stud';
 
 export interface CamoVisual {
   id: CamoId;
@@ -521,8 +536,8 @@ export interface CamoVisual {
   // envMapIntensity: IBL反射の強さ。未指定時は viewmodel 側の既定(近接Bloom回避の抑えめ値)
   // を継承する。diamond のような「鏡面ギラつき」を狙うカモだけ引き上げる想定
   envMapIntensity?: number;
-  // sparkle: 0-1。指定時のみ viewmodel が高周波の擬似法線擾乱(面ごとの微細ハイライト)+
-  // 視野角フレネルの虹色煌めき+疎らなグリッターを onBeforeCompile で焼き込む
+  // sparkle: 0-1。指定時のみ viewmodel が微細ハイライトと低エネルギーの
+  // 白金グリッターを onBeforeCompile で焼き込む
   // (法線マップ非使用・アセットレス。emissiveIntensity とは別枠の加算なので白飛び鉄則を
   // 破らない範囲でこの値だけ大きくできる)。0/未指定なら完全に無コスト(分岐ごと省略)。
   sparkle?: number;
@@ -575,25 +590,14 @@ export const CAMO_VISUALS: Record<CamoId, CamoVisual> = {
     pattern: 'solid', scale: 10, metalness: 1.0, roughness: 0.24,
     emissive: 0x8a5f14, emissiveIntensity: 0.22,
   },
-  // ダイヤ = 継ぎ目のない一面クリスタル + ほぼ鏡面(高metalness/低roughness) + 強反射
-  // (envMapIntensity)+ 高密度グリッター/虹色フレネル(sparkle)。
-  // R57-⑤ 再設計(ユーザー Image #11「タイルの感じをなくして、一面ダイヤで最強にギラギラ」):
-  // pattern を 'facet'(scale16 の floor格子=反復タイルの主因)から 'crystal' へ変更。crystal は
-  // floor格子/hard edge を一切使わず、ドメインワープ+多オクターブ値ノイズだけで氷青→白の
-  // 濃淡を非反復に敷く(viewmodel.camoPatternGLSL)。「タイル貼り」感を根絶し一枚の磨いた
-  // ダイヤ表面にする。scale はノイズの基準周波数として据え置き。
-  // 白飛び鉄則は R55-WC/R56 で根治済みの material レバーを不可侵で維持:
-  // envMapIntensity 0.7 / metalness 0.95 / roughness 0.04 / emissiveIntensity 0.3。indirectSpecular
-  // の底上げ(近接Bloom白飛びの主因)はしない。ギラつきの本体は viewmodel の
-  // camoSparkleEmissiveGLSL(グリッター3層・高密度/低振幅 + 虹色フレネル)= totalEmissiveRadiance
-  // への小径・低エネルギー加算で「量で魅せる」。sparkle は 0.62 据え置き(実WebGL SwiftShader・
-  // bloom0.9+Neutral で飽和ピクセル比率=0 を実測確認済み)。crystal の base色は平均を氷青寄りに
-  // 保ち(純白は稜線のみ)、金属F0=albedo の鏡面反射が過度に白くならないよう抑える。
+  // ダイヤ = 参考画像のカスタムライフルを規範にした、金/暗オリーブの金属下地+
+  // 高密度の銀色ダイヤスタッド。スタッド中心は白金、外周は暗い銀とし、同じマスクで
+  // roughness/metalness/擬似凹凸を切り替える。白発光で塗り潰さず、小さな鏡面が個別に光る。
   diamond: {
-    id: 'diamond', colorA: 0xd6f0ff, colorB: 0x4a90d9, colorC: 0xffffff,
-    pattern: 'crystal', scale: 13, metalness: 0.95, roughness: 0.04,
-    emissive: 0xbfe4ff, emissiveIntensity: 0.3,
-    envMapIntensity: 0.7, sparkle: 0.62,
+    id: 'diamond', colorA: 0x51461e, colorB: 0xc09237, colorC: 0xe4e9eb,
+    pattern: 'diamond-stud', scale: 132, metalness: 0.9, roughness: 0.2,
+    emissive: 0xe7edf0, emissiveIntensity: 0.045,
+    envMapIntensity: 0.58, sparkle: 0.42,
   },
   // ダークマター = 暗紫の脈動ノイズ(uTimeアニメ)
   'dark-matter': {

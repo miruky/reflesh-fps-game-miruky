@@ -41,8 +41,8 @@ import {
 import { OPTIC_SPECS, fitsMagnified } from '../game/optics';
 import type { Difficulty } from '../game/bot';
 import { GRENADE_KINDS, GRENADE_SPECS, type GrenadeKind } from '../game/grenades';
-import type { MatchResult } from '../game/match';
-import { MODE_DEFS, MODE_IDS, type GameMode } from '../game/modes';
+import type { MatchResult } from '../game/match-types';
+import { MODE_DEFS, MODE_IDS } from '../game/modes';
 import { CAMPAIGN, missionById, nextMissionId, type MissionDef } from '../game/campaign';
 import {
   CHALLENGES,
@@ -75,9 +75,8 @@ import {
   TOKOYAMI_CAMO,
   type CamoId,
 } from '../game/camo';
-// R53-W2: お守り(CHARMS)/ゾンビパーク(PERKS)は zombie-economy.ts が単一の真実。
-// メニューは「継承の守り札」用のcarriedPerk解決(PERKS存在チェックのみ)にZombiePerkIdを使う
-import { CHARMS, PERKS, type ZombiePerkId } from '../game/zombie-economy';
+// R53-W2: お守り定義は zombie-economy.ts が単一の真実。
+import { CHARMS } from '../game/zombie-economy';
 import { STAGES, stagesForMode } from '../game/stages';
 import { TEAM_PALETTES } from '../game/teamcolors';
 import type { SpaceBg } from './menu-bg';
@@ -92,42 +91,19 @@ import {
   type WeaponClass,
   type WeaponDef,
 } from '../game/weapons';
-
-export interface MenuSelection {
-  stageId: string;
-  mode: GameMode;
-  primaryId: string;
-  attachments: string[];
-  grenade: GrenadeKind;
-  difficulty: Difficulty;
-  secondaryId: string;
-  // ゾンビモード専用: 開始ラウンド(1-50)。他モードでは無視される
-  zombieStartRound?: number;
-  hellMode?: boolean;
-  allGiantMode?: boolean;
-  // R54-F5 ゾンビ・ローグラン「輪廻」。ゾンビ選択時のみ有効。
-  // 排他: charm/carriedPerk/zombieStartRound/hellMode/allGiantMode(純度優先v1)
-  rogueRun?: boolean;
-  // ── R53-W2: MatchConfigへ名前凍結で受け渡す拡張フィールド(match.ts側の消費はM2a/M2b) ──
-  // ストーリーミッションの難易度上書き(ブリーフィング画面で選択)。既定=normal
-  missionDifficulty?: Difficulty;
-  // ゾンビモード: 装備中のお守り(profile.charms.equippedと同期)
-  charm?: CharmId;
-  // ゾンビモード: 「継承の守り札」装備時のみ、前試合から引き継ぐパーク1種
-  carriedPerk?: ZombiePerkId;
-}
-
-export interface MenuCallbacks {
-  onStart: (selection: MenuSelection) => void;
-  // primaryId 省略時はミッションの支給武器で出撃する。missionDifficulty省略時はnormal相当
-  onStartMission: (missionId: string, primaryId?: string, missionDifficulty?: Difficulty) => void;
-  onResume: () => void;
-  onRestart: () => void;
-  onQuit: () => void;
-  onSettingsChanged: () => void;
-  // R54-F7 フォトモード(ポーズ画面から遷移。main.ts が mode='photo' へ切り替える)
-  onPhoto: () => void;
-}
+import {
+  readLastZombiePerk,
+  resolveCarriedPerk,
+  type MenuCallbacks,
+  type MenuSelection,
+} from './menu-contracts';
+export {
+  LAST_ZOMBIE_PERK_KEY,
+  readLastZombiePerk,
+  resolveCarriedPerk,
+  type MenuCallbacks,
+  type MenuSelection,
+} from './menu-contracts';
 
 // 6軸ステータスバーの表示順とラベル(値は computeWeaponBars で WeaponDef から導出)
 const BAR_AXES: ReadonlyArray<[keyof ReturnType<typeof computeWeaponBars>, string]> = [
@@ -218,31 +194,6 @@ export function charmChipStatus(
 // match.ts側(ゾンビ経済オーナー)の担当であり、本ラウンドのmenu.ts担当スコープ外のため
 // 未配線。キーが存在しない/不正値の間はcarriedPerkが常にundefinedになるだけで安全。
 // W4D-NIT: キーの単一の真実は zombie-economy.ts(match側の書き込みと共有)。再exportで互換維持
-export { LAST_ZOMBIE_PERK_KEY } from '../game/zombie-economy';
-import { LAST_ZOMBIE_PERK_KEY } from '../game/zombie-economy';
-export function readLastZombiePerk(
-  storage: Pick<Storage, 'getItem'> = localStorage,
-): ZombiePerkId | null {
-  try {
-    const raw = storage.getItem(LAST_ZOMBIE_PERK_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    return typeof parsed === 'string' && Object.prototype.hasOwnProperty.call(PERKS, parsed)
-      ? (parsed as ZombiePerkId)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-// charm==='perkcarry' のときのみ、直近の保存パークを carriedPerk として解決する純関数
-export function resolveCarriedPerk(
-  charm: CharmId | undefined,
-  stored: ZombiePerkId | null,
-): ZombiePerkId | undefined {
-  return charm === 'perkcarry' ? (stored ?? undefined) : undefined;
-}
-
 // ── R53-W2: 称号(profile.titles)。表示順=解放順のため、最新は配列末尾 ──────────
 export function latestTitle(titles: readonly string[] | undefined): string | null {
   return titles && titles.length > 0 ? (titles[titles.length - 1] ?? null) : null;

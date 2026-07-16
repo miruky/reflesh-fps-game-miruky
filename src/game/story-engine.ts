@@ -41,7 +41,7 @@ import { MedalTracker } from './medals';
 import { Weapon } from './weapons';
 import type { TeamPalette } from './teamcolors';
 import type { MatchConfig, FeedEntry } from './match-types';
-import type { DarkSlashWave } from './match';
+import type { DarkSlashWave } from './match-contracts';
 
 // 帝王編ボスのフェーズ挙動定数(match.ts から移設 — 使用者は本エンジンのみ)
 const BOSS_BLINK_OFFSET_M = 6;

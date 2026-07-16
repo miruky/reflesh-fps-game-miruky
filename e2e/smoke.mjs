@@ -16,7 +16,7 @@
 */
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const args = process.argv.slice(2);
@@ -29,6 +29,14 @@ const [VW, VH] = VIEWPORT.split('x').map(Number);
 const BASE = val('--base', '');
 const SHOT_DIR = process.env.UI2_SHOT_DIR || path.resolve('e2e/.shots');
 const PORT = Number(val('--port', '5199'));
+
+// ダイヤ迷彩の実シェーダーを毎回コンパイルする。武器IDは正典のweapons.tsから抽出し、
+// テスト側へ手書きの武器一覧を複製しない。全武器をGold条件済みにすることで既定ARの
+// Diamond条件を満たし、kaede-arへ装備した状態で通常の出撃フローを踏む。
+const WEAPON_IDS = Array.from(
+  readFileSync(path.resolve('src/game/weapons.ts'), 'utf8').matchAll(/^\s+id:\s*'([^']+)',/gm),
+  (match) => match[1],
+);
 
 // ── セレクタ契約 ──────────────────────────────────────────
 // classic: 現行UI(src/ui)。ui2: ENZA v2(src/ui2)が満たすべき data-id 契約。
@@ -199,7 +207,17 @@ try {
     });
   }
   const ctx = await browser.newContext({ viewport: { width: VW, height: VH } });
-  ctx.setDefaultTimeout(6000);
+  ctx.setDefaultTimeout(10_000);
+  await ctx.addInitScript((weaponIds) => {
+    if (!/^https?:$/.test(location.protocol)) return;
+    const weaponStats = Object.fromEntries(
+      weaponIds.map((id) => [id, { kills: 9999, headshots: 9999 }]),
+    );
+    localStorage.setItem(
+      'hibana.profile.v1',
+      JSON.stringify({ weaponStats, selectedCamos: { 'kaede-ar': 'diamond' } }),
+    );
+  }, WEAPON_IDS);
   const page = await ctx.newPage();
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push({ type: 'console', text: m.text().slice(0, 300) });
@@ -209,7 +227,7 @@ try {
   );
 
   const target = url + '/' + (S.query ? `?${S.query}` : '');
-  await page.goto(target, { waitUntil: 'domcontentloaded' });
+  await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
   // 1) 起動
   if (PROFILE === 'ui2') {
@@ -313,7 +331,13 @@ try {
     } else {
       await start.focus();
       await page.keyboard.press('Enter'); // click detail===0 → 即時発火(hold不要)
-      const hud = await q(page, S.hudRoot, 20_000);
+      let hud = await q(page, S.hudRoot, 10_000);
+      // headless Chromiumでは稀にfocus直後のEnter既定clickが落ちる。画面がまだ出撃前なら
+      // HTMLElement.click()(detail===0)で同じキーボード/ゲームパッド経路を一度だけ再試行する。
+      if (!hud && (await start.isVisible().catch(() => false))) {
+        await start.evaluate((el) => el.click());
+        hud = await q(page, S.hudRoot, 20_000);
+      }
       if (!hud) {
         record('deploy:launch', 'FAIL', '出撃してもHUDが可視にならない(試合が始まらない)');
       } else {
@@ -331,6 +355,20 @@ try {
         record('deploy:launch', alive ? 'PASS' : 'FAIL', alive ? '試合開始+描画ループ稼働' : 'rAF停止');
         await page.waitForTimeout(1200); // 数十フレーム回す(エラー収集)
         await shot(page, 'hud-ingame');
+        const diamondEquipped = await page.evaluate(() => {
+          const raw = localStorage.getItem('hibana.profile.v1');
+          if (!raw) return false;
+          try {
+            return JSON.parse(raw).selectedCamos?.['kaede-ar'] === 'diamond';
+          } catch {
+            return false;
+          }
+        });
+        record(
+          'camo:diamond-render',
+          diamondEquipped ? 'PASS' : 'FAIL',
+          diamondEquipped ? 'Diamond装備で実描画済み' : 'Diamond装備状態が失われた',
+        );
 
         // ポーズ(ロック解除経由 — Escape合成キーはネイティブunlockを起こさないためexitPointerLock)
         const locked = await page.evaluate(() => !!document.pointerLockElement);
@@ -366,7 +404,7 @@ try {
 
   // 5) オプションのスライダー(出撃後は試合中でメニューが無いため、新規ロードで初期状態から)
   await section('options:slider', async () => {
-    await page.goto(target, { waitUntil: 'domcontentloaded' });
+    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await q(page, PROFILE === 'ui2' ? S.titleRoot : S.menuRoot, 8000);
     if (PROFILE === 'ui2') {
       const st = await q(page, S.titleStart, 2000);

@@ -16,12 +16,11 @@ import { applyCampaignMission, applyMatch, applyScoreRecord, XP_MUL_NORMAL, XP_M
 import { stageDefFromId } from './game/biomes';
 import { stageById } from './game/stages';
 import { motifWeightForMission } from './game/story-engine';
-import { Hud } from './ui/hud';
-import { Hud2 } from './ui2/hud2';
-import { Menu, type MenuCallbacks, type MenuSelection } from './ui/menu';
-import { Menu2 } from './ui2/menu2';
+import type { Hud } from './ui/hud';
+import type { Hud2 } from './ui2/hud2';
+import type { MenuCallbacks, MenuSelection } from './ui/menu-contracts';
 import type { MenuApi } from './ui2/types';
-import { SpaceBg } from './ui/menu-bg';
+import type { SpaceBg } from './ui/menu-bg';
 
 const appRoot = document.getElementById('app');
 const hudRoot = document.getElementById('hud');
@@ -93,7 +92,18 @@ input.setGamepadBindings(settings.gamepadBindings);
 input.setVibration(settings.gamepadVibration);
 sounds.setMusicEnabled(settings.musicEnabled);
 
-const hud = USE_UI2 ? new Hud2(hudRoot) : new Hud(hudRoot); // W-ENZA2: 同時生成禁止(FKカム/data-emperor二重化防止)
+// UI実装は排他的に遅延読み込みする。既定のUI2起動でクラシックHUD/宇宙背景の
+// JS・CSS・Threeジオメトリを評価せず、?classic時だけ別チャンクを取得する。
+let hud: Hud | Hud2;
+let spaceBg: SpaceBg | null = null;
+if (USE_UI2) {
+  const { Hud2 } = await import('./ui2/hud2');
+  hud = new Hud2(hudRoot);
+} else {
+  const [{ Hud }, { SpaceBg }] = await Promise.all([import('./ui/hud'), import('./ui/menu-bg')]);
+  hud = new Hud(hudRoot);
+  spaceBg = spaceCanvas ? new SpaceBg(spaceCanvas) : null;
+}
 
 // シネマティックキルカム用レターボックス(canvas上・HUD下)
 const letterboxEl = document.createElement('div');
@@ -107,9 +117,6 @@ const lbTop = document.createElement('div'); lbTop.setAttribute('style', lbBarSt
 const lbBot = document.createElement('div'); lbBot.setAttribute('style', lbBarStyle + 'bottom:0');
 letterboxEl.appendChild(lbTop); letterboxEl.appendChild(lbBot);
 document.body.appendChild(letterboxEl);
-
-// メニュー背景の宇宙(独立レンダラ)。WebGLが使えない環境では生成しない
-const spaceBg = spaceCanvas && !USE_UI2 ? new SpaceBg(spaceCanvas) : null;
 
 // UIスケールはzoomで反映する。投影座標(ダメージ数値など)は
 // ズーム後の座標系で算出するため、HUDへ渡す画面サイズも同じ倍率で割る
@@ -334,8 +341,8 @@ const menuCallbacks: MenuCallbacks = {
   },
 };
 const menu: MenuApi = USE_UI2
-  ? new Menu2(menuRoot, settings, profile, menuCallbacks, input, sounds)
-  : new Menu(menuRoot, settings, profile, menuCallbacks, input);
+  ? new (await import('./ui2/menu2')).Menu2(menuRoot, settings, profile, menuCallbacks, input, sounds)
+  : new (await import('./ui/menu')).Menu(menuRoot, settings, profile, menuCallbacks, input);
 
 // 初回はメニュー表示なので宇宙背景を起動する(ui2ではspaceBg=nullのため自然に不使用)
 spaceBg?.start();
@@ -517,7 +524,9 @@ const loop = new GameLoop(
           // R55 ④: 一人称キルカム(killer=プレイヤー)かをHud2へ通知しクロスヘア表示を切替
           // (classic hud.ts は三人称固定のため対象外。既存の showFinalKillcam/updateFinalKillcam
           // 共有シグネチャは変更しない=Hud|Hud2ユニオン呼び出しの型互換を保つ)
-          if (hud instanceof Hud2) hud.setFinalKillcamFirstPerson(match.fkFirstPerson);
+          if ('setFinalKillcamFirstPerson' in hud) {
+            hud.setFinalKillcamFirstPerson(match.fkFirstPerson);
+          }
           letterboxEl.style.opacity = '1';
         } else {
           showResult();

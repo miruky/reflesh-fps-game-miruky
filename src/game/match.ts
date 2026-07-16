@@ -8,6 +8,25 @@ import { RADAR_RANGE_M, resolveGraphicsTier, type GraphicsQuality, type Settings
 import { Effects } from '../render/effects';
 import { ViewModel, CamoStandardMaterial } from '../render/viewmodel';
 import { ZombieDirector } from './zombie-director';
+import { TrainingRange } from './training-range';
+import {
+  PLAYER_FEET_OFFSET,
+  ULT_ON_DAMAGE_PER_HP,
+  hitToi,
+  type ColliderTag,
+  type DarkSlashWave,
+  type RayHitLike,
+  type TrainingTarget,
+} from './match-contracts';
+export {
+  PLAYER_FEET_OFFSET,
+  ULT_ON_DAMAGE_PER_HP,
+  hitToi,
+  type ColliderTag,
+  type DarkSlashWave,
+  type RayHitLike,
+  type TrainingTarget,
+} from './match-contracts';
 import {
   ACQUIRE_CONE_DEG,
   adsSensScale,
@@ -318,13 +337,11 @@ const SHAKE_ROLL = 0.07;
 const ULT_PASSIVE_PER_S = 1 / 110; // 何もしなくても約110秒で満タン
 const ULT_ON_KILL = 0.12;
 const ULT_ON_CAPTURE = 0.12;
-export const ULT_ON_DAMAGE_PER_HP = 0.0015; // 被弾で溜まる逆転要素
 const OVERDRIVE_DURATION = 6;
 const OVERDRIVE_SPEED_MUL = 1.35;
 const OVERDRIVE_RESIST = 0.5;
 const SLAM_RADIUS = 8;
 const SLAM_DAMAGE = 220;
-export const PLAYER_FEET_OFFSET = 0.95; // カプセル中心から足元まで(CAPSULE_HALF+CAPSULE_RADIUS)
 // 本体中心がこのYを下回ったら「床を抜けた」とみなし救済する。床下面は-2(厚化後)、
 // 正規地形は Y>=0 のみ。-8 は足元≈-9mで誤検出余地ゼロ(無限落下の構造的封じ込め)
 const VOID_Y = -8;
@@ -517,18 +534,8 @@ import type {
   MatchSnapshot,
 } from './match-types';
 
-export interface RayHitLike {
-  collider: RAPIER.Collider;
-  toi?: number;
-  timeOfImpact?: number;
-}
-
 interface RayNormalHitLike extends RayHitLike {
   normal?: { x: number; y: number; z: number };
-}
-
-export function hitToi(hit: RayHitLike): number {
-  return hit.toi ?? hit.timeOfImpact ?? 0;
 }
 
 // R54 音響2: 音源方位と視線の内積<0=背後。dirToSourceは符号だけを使うため正規化不要
@@ -536,13 +543,6 @@ export function hitToi(hit: RayHitLike): number {
 export function isBehindListener(forward: THREE.Vector3, dirToSource: THREE.Vector3): boolean {
   return forward.dot(dirToSource) < 0;
 }
-
-export type ColliderTag =
-  | { kind: 'world' }
-  | { kind: 'boundary' }   // ghost 壁専用(弾/視線/斬撃が素通り, ブリンク/KCCは止まる)
-  | { kind: 'player' }
-  | { kind: 'bot'; bot: Bot; part: HitPart }
-  | { kind: 'trainingTarget'; target: TrainingTarget; part: 'head' | 'body' };
 
 interface SmokeZone {
   pos: THREE.Vector3;
@@ -570,43 +570,6 @@ interface FirePatch {
 interface ThrownGrenade {
   projectile: GrenadeProjectile;
   mesh: THREE.Mesh;
-}
-
-export interface DarkSlashWave {
-  group: THREE.Group;
-  pos: THREE.Vector3;
-  dir: THREE.Vector3;
-  traveled: number;
-  hitSet: Set<number>; // 既ヒット bot.uid(多段ヒット防止)
-  smokeTimer: number;
-  chargeScale?: number; // 溜め比率(0-1)。未設定=通常斬撃
-  hitRadius: number;    // ヒット円柱の水平半径(m)。通常=DARK_SLASH_RADIUS、溜め=lenM/2(刃の横幅/2)
-  dmgOverride?: number; // ダメージ上書き(設定時 DARK_SLASH_DAMAGE の代わりに使用)
-  // R53-W2 M2b: 敵(帝王編ボス)起点の斬撃。true のとき bot ヒット判定を行わず、
-  // プレイヤーへの単発ヒット(hitPlayer ラッチ)だけを判定する
-  hostile?: boolean;
-  hitPlayer?: boolean;
-  hostileOwnerName?: string; // 死亡フィード用のボス名
-}
-
-// 訓練場ターゲット(bot非使用の軽量エンティティ)
-interface TrainingTarget {
-  group: THREE.Group;
-  body: RAPIER.RigidBody;
-  bodyCollider: RAPIER.Collider;
-  headCollider: RAPIER.Collider;
-  hp: number;
-  isDown: boolean;
-  downTimer: number;
-  kind: 'static' | 'moving' | 'popup';
-  moveDir: number;
-  moveSpeed: number;
-  moveRange: number;
-  moveOriginX: number;
-  moveOriginZ: number;
-  /** right軸方向ベクトル(XZ平面, 往復運動の軸) */
-  moveRightX: number;
-  moveRightZ: number;
 }
 
 // BF5簡易破壊可能プロップ: buildStageScene で個別メッシュ+コライダーを生成し登録。
@@ -1050,7 +1013,7 @@ export class Match {
   private readonly destroyedPropHandles = new Set<number>();
 
   // ── 訓練場 ──
-  private trainingTargets: TrainingTarget[] = [];
+  private readonly trainingRange: TrainingRange;
   private trainingStats: TrainingStats | null = null;
 
   // R54-W1 F4: humanoid群InstancedMesh(normal/elite humanoidの遠景描画を11DCへ畳む)。
@@ -1169,6 +1132,22 @@ export class Match {
     if (config.hellMode) playerOpts.regenPerS = 12.5;
     this.player = new Player(this.physics, spawn, playerOpts);
     this.tags.set(this.player.collider.handle, { kind: 'player' });
+    this.trainingRange = new TrainingRange({
+      scene: this.scene,
+      physics: this.physics,
+      tags: this.tags,
+      playerSpawns: this.playerSpawns,
+      onImpact: (damage, headshot, point) => {
+        this.damageNumbers.push({
+          amount: Math.round(damage),
+          world: point.clone(),
+          kind: headshot ? 'head' : 'body',
+        });
+        this.hits.push(headshot ? 'head' : 'hit');
+        if (headshot) this.sounds.headshot();
+        else this.sounds.hit(1 + THREE.MathUtils.clamp((damage - 12) / 90, 0, 0.45));
+      },
+    });
 
     // ガンゲーム: ラダー1段目の武器を強制使用(config.primaryId は無視)
     const primaryId = config.mode === 'gungame' ? (GG_LADDER[0] ?? 'kawasemi-pistol') : config.primaryId;
@@ -1265,7 +1244,7 @@ export class Match {
     } else if (config.mode === 'training') {
       // 訓練場: ボットなし。的エンティティを生成する
       this.trainingStats = new TrainingStats();
-      this.spawnTrainingTargets();
+      this.trainingRange.spawn();
       // 的方向へ初期yaw設定(spawn → マップ中心ベクトルをプレイヤー前方へ)
       // player.ts の forward = (-sin yaw, 0, -cos yaw) より yaw = atan2(-fwd.x, -fwd.z)
       {
@@ -3494,7 +3473,7 @@ export class Match {
       this.botShadowLodTimer = 0.25;
     }
     if (this.config.mode === 'zombie') this.zombie.updateZombieDirector(dt);
-    if (this.config.mode === 'training') this.updateTrainingTargets(dt);
+    if (this.config.mode === 'training') this.trainingRange.update(dt);
     if (this.config.mode === 'zombie') {
       this.zombie.updateZombieShopProximity();
       this.zombie.updateZombieBoxAnim(dt);
@@ -5123,7 +5102,7 @@ export class Match {
           this.trainingStats.headshots += 1;
         }
         this.trainingStats.addDamage(this.elapsed, result.damage);
-        this.applyTrainingTargetDamage(target, result.damage, result.headshot, result.point);
+        this.trainingRange.applyDamage(target, result.damage, result.headshot, result.point);
       }
       if (results.size === 0 && trainingResults.size === 0) {
         this.trainingStats.addMiss();
@@ -8855,167 +8834,6 @@ export class Match {
     return n;
   }
 
-  // ── 訓練場ターゲット ────────────────────────────────────────────────────────────
-  private spawnTrainingTargets(): void {
-    // F2: static的5基をright軸方向へ (i-2)*3 で横に散らして相互遮蔽を防ぐ
-    const staticDists = [5, 10, 20, 30, 50];
-    for (let i = 0; i < staticDists.length; i += 1) {
-      this.createTrainingTarget('static', (i - 2) * 3, staticDists[i]!, 0);
-    }
-    const movingSpeeds = [1, 2, 3];
-    for (let i = 0; i < 3; i += 1) {
-      this.createTrainingTarget('moving', (i - 1) * 4, 15, movingSpeeds[i] ?? 1);
-    }
-    for (let i = 0; i < 4; i += 1) {
-      this.createTrainingTarget('popup', (i - 1.5) * 2, 8, 0);
-    }
-  }
-
-  private createTrainingTarget(
-    kind: 'static' | 'moving' | 'popup',
-    offsetX: number,
-    dist: number,
-    speed: number,
-  ): void {
-    const spawn = this.playerSpawns[0] ?? new THREE.Vector3();
-    // F3: spawn → マップ中心(原点) 方向の水平単位ベクトル forward と直交 right を使って配置
-    // これにより隅スポーンでも全的が場内に収まり、境界外へのはみ出しがなくなる
-    const toCenter = new THREE.Vector3(-spawn.x, 0, -spawn.z);
-    const fwdLen = toCenter.length();
-    const fwd = fwdLen > 0.01 ? toCenter.clone().divideScalar(fwdLen) : new THREE.Vector3(0, 0, -1);
-    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-    const cx = spawn.x + fwd.x * dist + right.x * offsetX;
-    const cz = spawn.z + fwd.z * dist + right.z * offsetX;
-    const groundY = spawn.y;
-
-    const group = new THREE.Group();
-    const bodyGeo = new THREE.BoxGeometry(0.5, 1.3, 0.05);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x3a4a5a, roughness: 0.8 });
-    const bodyMesh = new THREE.Mesh(bodyGeo, mat);
-    bodyMesh.position.y = 0.65;
-    bodyMesh.castShadow = true;
-    group.add(bodyMesh);
-    const headGeo = new THREE.SphereGeometry(0.18, 8, 8);
-    const headMat = new THREE.MeshStandardMaterial({ color: 0x2a3a4a, roughness: 0.8 });
-    const headMesh = new THREE.Mesh(headGeo, headMat);
-    headMesh.position.y = 1.55;
-    headMesh.castShadow = true;
-    group.add(headMesh);
-    const baseGeo = new THREE.CylinderGeometry(0.25, 0.28, 0.06, 8);
-    const baseMat = new THREE.MeshStandardMaterial({ color: 0x5a6a7a, roughness: 0.9 });
-    const baseMesh = new THREE.Mesh(baseGeo, baseMat);
-    baseMesh.position.y = 0.03;
-    group.add(baseMesh);
-    group.position.set(cx, groundY, cz);
-    this.scene.add(group);
-
-    const body = this.physics.createRigidBody(
-      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(cx, groundY, cz),
-    );
-    const bodyCollider = this.physics.createCollider(
-      RAPIER.ColliderDesc.cuboid(0.25, 0.65, 0.025).setTranslation(0, 0.65, 0),
-      body,
-    );
-    const headCollider = this.physics.createCollider(
-      RAPIER.ColliderDesc.ball(0.18).setTranslation(0, 1.55, 0),
-      body,
-    );
-
-    const target: TrainingTarget = {
-      group,
-      body,
-      bodyCollider,
-      headCollider,
-      hp: 100,
-      isDown: false,
-      downTimer: 0,
-      kind,
-      moveDir: 1,
-      moveSpeed: speed,
-      moveRange: 3.5,
-      moveOriginX: cx,
-      moveOriginZ: cz,
-      // F3: 往復運動は right 軸方向へ(コーナースポーンでも場内で往復する)
-      moveRightX: right.x,
-      moveRightZ: right.z,
-    };
-    this.tags.set(bodyCollider.handle, { kind: 'trainingTarget', target, part: 'body' });
-    this.tags.set(headCollider.handle, { kind: 'trainingTarget', target, part: 'head' });
-    this.trainingTargets.push(target);
-  }
-
-  private updateTrainingTargets(dt: number): void {
-    for (const t of this.trainingTargets) {
-      if (t.isDown) {
-        const targetRot = Math.PI / 2;
-        if (t.group.rotation.z < targetRot) {
-          t.group.rotation.z = Math.min(targetRot, t.group.rotation.z + dt * 3);
-        }
-        // F1: static/moving も popup と同じ2秒自動復活で射場が劣化しない
-        t.downTimer -= dt;
-        if (t.downTimer <= 0) this.reviveTrainingTarget(t);
-      } else if (t.kind === 'moving' && t.moveSpeed > 0) {
-        const cur = t.body.translation();
-        // F3: 往復運動を right 軸方向に沿わせる
-        const step = t.moveDir * t.moveSpeed * dt;
-        const nextX = cur.x + step * t.moveRightX;
-        const nextZ = cur.z + step * t.moveRightZ;
-        // right 軸に投影した原点からの符号付き距離でrange判定
-        const proj = (nextX - t.moveOriginX) * t.moveRightX + (nextZ - t.moveOriginZ) * t.moveRightZ;
-        if (Math.abs(proj) >= t.moveRange) t.moveDir *= -1;
-        t.body.setNextKinematicTranslation({ x: nextX, y: cur.y, z: nextZ });
-        t.group.position.x = nextX;
-        t.group.position.z = nextZ;
-      }
-    }
-  }
-
-  private reviveTrainingTarget(t: TrainingTarget): void {
-    t.hp = 100;
-    t.isDown = false;
-    t.downTimer = 0;
-    t.group.rotation.z = 0;
-    // F1: bot.ts 死亡/復活イディオムと同型: 復活時にコライダーを再有効化
-    t.bodyCollider.setEnabled(true);
-    t.headCollider.setEnabled(true);
-  }
-
-  private applyTrainingTargetDamage(
-    target: TrainingTarget,
-    damage: number,
-    headshot: boolean,
-    point: THREE.Vector3,
-  ): void {
-    if (target.isDown) return;
-    target.hp -= damage;
-    this.damageNumbers.push({
-      amount: Math.round(damage),
-      world: point.clone(),
-      kind: headshot ? 'head' : 'body',
-    });
-    this.hits.push(headshot ? 'head' : 'hit');
-    if (headshot) this.sounds.headshot();
-    else this.sounds.hit(1 + THREE.MathUtils.clamp((damage - 12) / 90, 0, 0.45));
-    if (target.hp <= 0) {
-      target.hp = 0;
-      target.isDown = true;
-      // F1: static/moving も popup と同じ2秒で再出現(全的が2秒で復活=射場が劣化しない)
-      target.downTimer = 2;
-      // F1: bot.ts 死亡イディオムと同型: ダウン中は被弾しないようコライダーを無効化
-      target.bodyCollider.setEnabled(false);
-      target.headCollider.setEnabled(false);
-    }
-  }
-
-  private disposeTrainingTargets(): void {
-    for (const t of this.trainingTargets) {
-      this.tags.delete(t.bodyCollider.handle);
-      this.tags.delete(t.headCollider.handle);
-      this.scene.remove(t.group);
-    }
-    this.trainingTargets.length = 0;
-  }
-
   // ── R16 BO2式ラウンド制ゾンビディレクタ ─────────────────────────
   // 同時生存上限をtierへ連動させる(多数描画/物理予算を守る主レバー)
   // tier別パフォーマンスクランプ: low上限40/medium上限84/high=設定値のまま(Math.minで保護)
@@ -10007,7 +9825,7 @@ export class Match {
         light.shadow?.dispose?.();
       }
     });
-    this.disposeTrainingTargets();
+    this.trainingRange.dispose();
     // ★ ゾンビメッシュプールを解放(scene.traverseの外にいるため明示的に dispose が必要)
     for (const bot of this.zombie.zombiePool) {
       bot.dispose();

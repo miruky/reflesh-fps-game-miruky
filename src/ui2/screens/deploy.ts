@@ -16,7 +16,7 @@ import { MODE_DEFS, MODE_IDS } from '../../game/modes';
 import { STAGES, stagesForMode } from '../../game/stages';
 import { ZOMBIE_MAX_ALIVE, zombieTotal } from '../../game/zombie';
 import { requestStageThumb } from '../../render/stage-thumbs';
-import { readLastZombiePerk, resolveCarriedPerk } from '../../ui/menu';
+import { readLastZombiePerk, resolveCarriedPerk } from '../../ui/menu-contracts';
 import type { Difficulty, GameMode, ScreenMount, Ui2Host } from '../types';
 
 // R55 W-C4[6]: match.ts(renderer.capabilities.isWebGL2)が行う実効グラフィックスtier降格を

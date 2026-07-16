@@ -47,7 +47,7 @@ import {
 import type { Screen2Handle, Ui2Host, UiNav } from '../types';
 // 出撃発火体はhub/deployと同一手順(台帳§3): carriedPerk解決→onStart。
 // ヘルパは旧UIの公開export(読み取りのみ)。旧UI退役時はui2側の共有launch経路へ移設する(F1申し送り)
-import { readLastZombiePerk, resolveCarriedPerk } from '../../ui/menu';
+import { readLastZombiePerk, resolveCarriedPerk } from '../../ui/menu-contracts';
 
 // ── 武器シルエットSVG(src/ui/menu.ts から複製。旧UI退役時に一本化する) ──────
 const silCache = new Map<string, string>();
