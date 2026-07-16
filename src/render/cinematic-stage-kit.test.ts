@@ -59,15 +59,19 @@ describe('cinematic stage kit', () => {
     const stage = STAGES.find((entry) => entry.id === 'kunren')!;
     const root = buildCinematicStageKit({ stage, tier: 'high', boxes, propPlacements: [] });
     expect((root.getObjectByName('aaa:macro-routes') as THREE.InstancedMesh).count).toBe(7);
+    expect((root.getObjectByName('aaa:route-shoulders') as THREE.InstancedMesh).count).toBe(14);
     expect((root.getObjectByName('aaa:route-markings-and-drains') as THREE.InstancedMesh).count).toBe(56);
     expect((root.getObjectByName('aaa:ground-surface-patches') as THREE.InstancedMesh).count).toBe(36);
     expect((root.getObjectByName('aaa:macro-rubble-clusters') as THREE.InstancedMesh).count).toBe(120);
     expect((root.getObjectByName('aaa:distant-skyline') as THREE.InstancedMesh).count).toBe(42);
+    expect(root.getObjectByName('aaa:facade-base-grime')).toBeTruthy();
+    expect(root.getObjectByName('aaa:facade-downspouts')).toBeTruthy();
+    expect(root.getObjectByName('aaa:cinematic-environment')).toBeTruthy();
     let drawCalls = 0;
     root.traverse((node) => {
       if (node instanceof THREE.Mesh) drawCalls += 1;
     });
-    expect(drawCalls).toBeLessThanOrEqual(14);
+    expect(drawCalls).toBeLessThanOrEqual(24);
     dispose(root);
   });
 

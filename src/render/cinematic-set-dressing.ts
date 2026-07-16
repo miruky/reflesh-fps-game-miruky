@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32, type Rand } from '../core/rng';
 import type { GraphicsQuality } from '../core/settings';
 import type { BoxSpec, PropPlacement, StagePalette } from '../game/stage';
+import { markCinematicDetail } from './cinematic-detail';
 
 interface DressingBudget {
   readonly debris: number;
@@ -104,6 +105,7 @@ function buildDebris(
   const mesh = new THREE.InstancedMesh(geometry, material, budget);
   mesh.name = 'aaa:micro-debris';
   mesh.userData.cinematicSetDressing = true;
+  markCinematicDetail(mesh, 2);
   mesh.castShadow = false;
   mesh.receiveShadow = true;
   const matrix = new THREE.Matrix4();
@@ -145,6 +147,7 @@ function buildShards(
   const mesh = new THREE.InstancedMesh(geometry, material, budget);
   mesh.name = 'aaa:ground-shards';
   mesh.userData.cinematicSetDressing = true;
+  markCinematicDetail(mesh, 3);
   mesh.castShadow = false;
   mesh.receiveShadow = true;
   const matrix = new THREE.Matrix4();
@@ -191,6 +194,7 @@ function buildStains(
   const mesh = new THREE.InstancedMesh(geometry, material, budget);
   mesh.name = 'aaa:stains-and-puddles';
   mesh.userData.cinematicSetDressing = true;
+  markCinematicDetail(mesh, 2);
   mesh.renderOrder = 1;
   mesh.castShadow = false;
   mesh.receiveShadow = true;
@@ -249,6 +253,7 @@ function buildCables(
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = 'aaa:ground-cables';
   mesh.userData.cinematicSetDressing = true;
+  markCinematicDetail(mesh, 3);
   mesh.castShadow = false;
   mesh.receiveShadow = true;
   return mesh;

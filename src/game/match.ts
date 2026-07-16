@@ -97,9 +97,20 @@ import { patchPcss, unpatchPcss, isPcssPatched } from '../render/pcss';
 import { AutoExposure } from '../render/exposure';
 import { buildCinematicSetDressing } from '../render/cinematic-set-dressing';
 import { buildCinematicStageKit } from '../render/cinematic-stage-kit';
+import { applyCinematicDetailScale } from '../render/cinematic-detail';
+import {
+  cinematicLightingProfile,
+  cinematicVisualFogDensity,
+} from '../render/cinematic-lighting';
+import { installCinematicSky, type CinematicSkyHandle } from '../render/cinematic-sky';
 import { AaaStageAssetPipeline } from '../render/aaa-asset-pipeline';
 import type { PropMatFamily } from '../render/prop-visuals';
-import { cinematicFloorColor, floorDetailGlsl, floorDetailGlslCommon } from '../render/surface-kit';
+import {
+  cinematicFloorColor,
+  cinematicStructuralColor,
+  floorDetailGlsl,
+  floorDetailGlslCommon,
+} from '../render/surface-kit';
 import { KillcamController, FK_WIN_POST } from './killcam';
 import { selectHighlights } from './highlights';
 import type { MissionSummary } from './progression';
@@ -918,6 +929,8 @@ export class Match {
   // ── リアル化(描画) ──
   private composer: EffectComposer | null = null; // medium/high のみ(low は素のレンダラ)
   private envRT: THREE.WebGLRenderTarget | null = null; // 空から焼いたIBL(per-Matchで解放)
+  private cinematicSky: CinematicSkyHandle | null = null;
+  private readonly cinematicDetailRoots: THREE.Object3D[] = [];
   private readonly sunDir = new THREE.Vector3(); // 太陽方向の単一の真実(空/日光/影を駆動)
   // R29: プレイヤー追従シャドウ(巨大マップで影を常に鮮明に保つ)
   private sunLight: THREE.DirectionalLight | null = null;
@@ -1543,6 +1556,10 @@ export class Match {
     const pr = this.baseDpr * clamped;
     this.renderer.setPixelRatio(pr);
     this.composer?.setPixelRatio(pr);
+    // RT再確保と同じ低頻度イベントで視覚専用LODも同期。シェーダ再コンパイルや
+    // instance buffer再生成は行わず、微細物visibilityと雲uniformだけを切り替える。
+    applyCinematicDetailScale(this.cinematicDetailRoots, clamped);
+    this.cinematicSky?.setDetailScale(clamped);
   }
 
   get activeWeapon(): Weapon {
@@ -1567,9 +1584,14 @@ export class Match {
     );
     const palette = this.config.stage.palette;
     const size = this.config.stage.size;
+    const mood = resolveMood(palette);
+    const lighting = cinematicLightingProfile(mood);
     // Sky.js を可視背景にするため background は使わない
     this.scene.background = null;
-    this.scene.fog = new THREE.FogExp2(palette.fog, palette.fogDensity);
+    this.scene.fog = new THREE.FogExp2(
+      palette.fog,
+      cinematicVisualFogDensity(palette.fogDensity, mood),
+    );
     // R16: calcSpotRate(霧/暗所ほど発見が遅い)用にpaletteの霧密度・環境光を保持する
     // (Matchはpaletteを持たずthis.colorsのみ格納し、fog/ambientは適用後に破棄するため)
     this.stageFogDensity = palette.fogDensity;
@@ -1597,18 +1619,19 @@ export class Match {
     const hemi = new THREE.HemisphereLight(
       palette.sky,
       palette.floor,
-      palette.ambientIntensity * 0.5,
+      palette.ambientIntensity * lighting.hemiScale,
     );
     this.scene.add(hemi);
     this.hemiLight = hemi; // V30: 天候(濃霧)の環境光減衰をライトへ届かせるため保持
-    const sun = new THREE.DirectionalLight(palette.lightColor, palette.lightIntensity);
+    const sun = new THREE.DirectionalLight(
+      palette.lightColor,
+      palette.lightIntensity * lighting.sunScale,
+    );
     sun.position.copy(this.sunDir).multiplyScalar(size); // 見える太陽と影方向を一致させる
     sun.castShadow = true;
     // R12軽量化: mediumは1024²で影フラグメント1/4・VRAM 12MB→3MB。
-    // エリア×3拡大でステージsize比例のshadow camera境界も広がるため、
-    // highは2048²→4096²へ増強してテクセル密度を維持(midは1024²のまま)。
-    // R29仕様メモ: follow-box ±70m(140m)+ 4096px = 29px/m = 従来小マップ相当の密度。
-    //   VRAM 約64MB(4096×4096×4byte)= high tier のみ許容。medium は1024²(約4MB)のまま。
+    // highは追従範囲±70mを3072²で覆い、約22px/mを確保しながら4096²比で
+    // VRAM/塗りを44%削る。mediumは1024²のまま。
     // ★3 hell/全巨躯モードは巨躯54体で影パス負荷が最大化するため、highでも2048²へ抑える
     // (VRAM 64MB→16MB・影フラグメント1/4。±70m追従ボックスで14.6px/m=中距離でも輪郭維持)
     // R51-4b: ゾンビモードも同種の高密度群像(108体規模)のため heavyHorde 扱いに含める
@@ -1616,14 +1639,16 @@ export class Match {
       (this.config.hellMode ?? false) ||
       (this.config.allGiantMode ?? false) ||
       this.config.mode === 'zombie';
-    const shadowRes = tier === 'high' ? (heavyHorde ? 2048 : 4096) : 1024;
+    // 3072²は4096²比でVRAM/塗りを44%削減しつつ、±70m追従領域で約22px/mを維持する。
+    // 接地影レイヤとPCSSを併用するため、近景の輪郭品質を落とさず負荷余力を作れる。
+    const shadowRes = tier === 'high' ? (heavyHorde ? 2048 : 3072) : 1024;
     sun.shadow.mapSize.set(shadowRes, shadowRes);
     sun.shadow.bias = -0.0005; // シャドウアクネ除去
     sun.shadow.normalBias = 0.02; // ピーターパン(浮き影)防止
     sun.shadow.radius = 2; // PCFカーネル拡大(ほぼ0コストで柔らかく)
     // R29: エリア超拡大(280-360m)対応=ステージ全体を1枚で覆う方式をやめ、
     // プレイヤー追従シャドウボックス(±70m)へ。マップがどれだけ大きくても影の
-    // テクセル密度が一定(4096/140m≈29px/m=従来より鮮明)。中心はテクセルグリッドへ
+    // テクセル密度が一定(3072/140m≈22px/m)。中心はテクセルグリッドへ
     // スナップし、移動時のシャドウシマーを防ぐ(frame()で毎フレーム追従)。
     const half = SHADOW_FOLLOW_HALF;
     sun.shadow.camera.left = -half;
@@ -1639,7 +1664,7 @@ export class Match {
     // 逆光フィル(影を落とさない=追加コストほぼ0。シルエットの締まりを出す)
     const fill = new THREE.DirectionalLight(
       new THREE.Color(palette.floor),
-      palette.lightIntensity * 0.12,
+      palette.lightIntensity * lighting.fillScale,
     );
     fill.position
       .copy(this.sunDir)
@@ -1683,13 +1708,15 @@ export class Match {
       const isDecor = (spec as { decor?: boolean }).decor === true;
       const brkSpec = (spec as { breakable?: { hp: number } }).breakable;
       const isBreakable = !isGhost && brkSpec !== undefined;
+      const visualColor = cinematicStructuralColor(spec, palette);
+      const visualColorKey = `#${visualColor.getHexString()}`;
 
       // ── 破壊可能プロップ: 個別メッシュ+個別マテリアル+個別コライダーで生成 ──
       // マージ描画から除外し破壊時にそのメッシュだけ scene.remove できる。
       // draw call 増は +~35 個/ステージ(仕様許容範囲内)。
       if (isBreakable) {
         const mat = new THREE.MeshStandardMaterial({
-          color: spec.color,
+          color: visualColor,
           roughness: 0.72,
           metalness: 0.0,
           vertexColors: true,
@@ -1740,11 +1767,11 @@ export class Match {
         // 全経路)を丸ごとスキップする。コライダー/tags/breakable/minimapはこの if の外(または
         // 下の `!isDecor` 節)で従来どおり不変に処理される — 視覚メッシュの差し替えのみ。
         if (!(isProp && skipBoxes.has(spec))) {
-          const key = `${spec.color}:${spec.emissive}`;
+          const key = `${visualColorKey}:${spec.emissive}`;
           let material = materials.get(key);
           if (!material) {
             material = new THREE.MeshStandardMaterial({
-              color: spec.color,
+              color: visualColor,
               roughness: 0.72, // IBL投入で空の照り返しを拾えるよう少し滑らかに
               metalness: 0.0,
               vertexColors: true,
@@ -1838,23 +1865,27 @@ export class Match {
     );
     // AAA set dressing: 数百個の微細瓦礫・紙片・濡れ/焦げ染み・ケーブルを3〜4DCへ
     // インスタンス/マージし、巨大な単色床の「CG平面」感を解消する。物理は一切追加しない。
-    this.scene.add(buildCinematicSetDressing({
+    const setDressing = buildCinematicSetDressing({
       size,
       seed: this.config.stage.seed,
       tier,
       palette,
       boxes: visibleBoxes,
       propPlacements: v2Placements,
-    }));
+    });
+    this.scene.add(setDressing);
+    this.cinematicDetailRoots.push(setDressing);
     // 全固定／生成ステージへ、固有ヒーローランドマーク・中遠景・建物外装・屋上設備・
     // 主要動線の路面ディテールを追加する。全て視覚専用でコライダー／BOTナビ／弾道は不変。
     // tier別インスタンス予算により、高品質では最大密度、低品質では同じ美術方向を軽量維持する。
-    this.scene.add(buildCinematicStageKit({
+    const stageKit = buildCinematicStageKit({
       stage: this.config.stage,
       tier,
       boxes: visibleBoxes,
       propPlacements: v2Placements,
-    }));
+    });
+    this.scene.add(stageKit);
+    this.cinematicDetailRoots.push(stageKit);
     // 障害物のビジュアル装飾(当たり判定には一切触れない・純粋に飾り)
     buildStagePropDecor(this.scene, visibleBoxes, palette);
     this.buildAtmosphere(this.config.stage.palette, this.config.stage.size);
@@ -1952,7 +1983,12 @@ export class Match {
     const fogMul = this.weatherKind === 'fog' ? 2.2 : 1.3;
     const newDensity = palette.fogDensity * fogMul;
     this.stageFogDensity = newDensity;
-    if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = newDensity;
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.density = cinematicVisualFogDensity(
+        newDensity,
+        resolveMood(palette),
+      );
+    }
     if (this.weatherKind === 'fog') {
       this.stageAmbient *= 0.85;
       // V30修正: stageAmbientはAI索敵専用フィールドで照明に届かない。HemisphereLightへも適用
@@ -2175,8 +2211,26 @@ export class Match {
     // 明るさはシーンのライト(sun/Hemi/IBL)が担い、下のenvSky(IBLベイク)は据え置くので地面は暗くならない。
     const sky = new Sky();
     sky.scale.setScalar(Math.max(10000, size * 40));
-    // 可視空のuniformハンドルだけを保持(黒雷帝の黒転が動かす)。envSkyのハンドルは保持しない=不可侵
-    this.visibleSkyUniforms = applySky(sky, 0.16, 0.5);
+    // 可視空は大気散乱と同じ1パスへ雲を合成する。追加DCなし。
+    // envSky(IBLベイク)には雲を入れず、従来の明るさと金属反射を保持する。
+    const skyU = sky.material.uniforms as unknown as SkyUniforms;
+    skyU.turbidity.value = turbidity;
+    skyU.rayleigh.value = rayleigh;
+    skyU.mieCoefficient.value = mieCoefficient;
+    skyU.mieDirectionalG.value = mieDirectionalG;
+    skyU.sunPosition.value.copy(this.sunDir);
+    this.cinematicSky = installCinematicSky(sky, {
+      palette,
+      mood: resolveMood(palette),
+      tier: resolveGraphicsTier(this.settings.graphicsQuality, this.renderer.capabilities.isWebGL2),
+      reduceMotion: this.settings.reduceMotion,
+      skyScale: 0.16,
+      skyClamp: 0.5,
+    });
+    this.visibleSkyUniforms = {
+      uSkyScale: this.cinematicSky.uniforms.skyScale,
+      uSkyClamp: this.cinematicSky.uniforms.skyClamp,
+    };
     this.scene.add(sky);
 
     // ステージ別の露出(明暗の演出)
@@ -2194,11 +2248,12 @@ export class Match {
     this.envRT = pmrem.fromScene(envScene, 0, 0.1, 1000);
     this.scene.environment = this.envRT.texture;
     // 天球IBL(空の映り込み)の強さ=まさに「天井の光源」。値が高いと上面/明部が
-    // 空色で白飛びし全域が眩しくなる。0.72 を上限にクランプして眩しさを断つ。
+    // 空色で白飛びし全域が眩しくなる。ムード別上限へクランプして眩しさを断つ。
     // IBLは影を落とさないので sun.castShadow/影の落ち方には一切影響しない。
     const envIntensity = palette.environmentIntensity ?? (elevation < 6 ? 0.4 : 0.85);
     // R15: 白飛び完全解消のため天球IBLの上限を更に下げる(明るい空が金属/明部を洗い流すのを抑制)
-    this.scene.environmentIntensity = Math.min(envIntensity, 0.72);
+    const lighting = cinematicLightingProfile(resolveMood(palette));
+    this.scene.environmentIntensity = Math.min(envIntensity, lighting.environmentCap);
     envSky.geometry.dispose();
     (envSky.material as THREE.Material).dispose();
     pmrem.dispose();
@@ -2212,48 +2267,17 @@ export class Match {
       (this.scene.fog as THREE.FogExp2).color.lerp(new THREE.Color(palette.sky), skyLerp);
     }
 
-    // 床のグリッド(アクセント色の薄い線)で平坦さを解消する
-    const grid = new THREE.GridHelper(
-      size,
-      Math.max(8, Math.round(size / 4)),
-      new THREE.Color(palette.accent),
-      new THREE.Color(palette.wall),
-    );
-    const gridMat = grid.material as THREE.LineBasicMaterial;
-    gridMat.transparent = true;
-    gridMat.opacity = 0.22;
-    // 床に薄く重ねる線なので深度書き込みを切り、ポリゴンオフセットで遠距離の
-    // Zファイト(線のちらつき・欠落)を防ぐ。微小なY浮かせだけでは破綻する
-    gridMat.depthWrite = false;
-    gridMat.polygonOffset = true;
-    gridMat.polygonOffsetFactor = -1;
-    gridMat.polygonOffsetUnits = -1;
-    grid.position.y = 0.02;
-    this.scene.add(grid);
-
-    // 外周ライトバーと四隅ビーコン(発光マテリアルで光って見せる)
+    // 四隅の小型ビーコンだけを残す。旧外周ライトバーはステージ幅(310m級)を
+    // 1本の発光ジオメトリで結んでいたため、遠近投影で空を横断する巨大な赤い斜線に
+    // 見えていた。境界表現は建築・フォグ・遠景へ任せ、レーザー状の発光線を作らない。
     const accentGlow = new THREE.MeshStandardMaterial({
       color: palette.accent,
       emissive: new THREE.Color(palette.accent),
-      emissiveIntensity: 0.9, // Neutral+Bloom前提
-      roughness: 0.4,
+      emissiveIntensity: palette.emissiveAccent ? 0.48 : 0.2,
+      roughness: 0.55,
       envMapIntensity: 0.35,
     });
     const half = size / 2;
-    const barTop = Math.max(5, this.config.stage.maxHeight + 2.5) - 0.4;
-    const barGeo = new THREE.BoxGeometry(size, 0.16, 0.16);
-    const bars: Array<[number, number, number]> = [
-      [0, -half, 0],
-      [0, half, 0],
-      [-half, 0, Math.PI / 2],
-      [half, 0, Math.PI / 2],
-    ];
-    for (const [x, z, ry] of bars) {
-      const bar = new THREE.Mesh(barGeo, accentGlow);
-      bar.position.set(x, barTop, z);
-      bar.rotation.y = ry;
-      this.scene.add(bar);
-    }
     const beaconGeo = new THREE.CylinderGeometry(0.1, 0.13, 5, 8);
     for (const sx of [-1, 1] as const) {
       for (const sz of [-1, 1] as const) {
@@ -3516,6 +3540,7 @@ export class Match {
     this.effects.update(vmDt);
     // 映画的アトモスフィア(草の風/環境パーティクル/グラウンドフォグ/グレインの時間前進)
     this.atmosphere?.update(vmDt, this.camera.position);
+    this.cinematicSky?.update(vmDt);
     // ジュース: 被弾フラッシュのエンベロープ→PostFX(被弾/低HP/キル時のみ有効化=idleコストゼロ)
     if (this.tookDamage) this.hitFlashEnv = 1;
     this.hitFlashEnv = Math.max(0, this.hitFlashEnv - dt * 3.5);
@@ -3687,10 +3712,14 @@ export class Match {
             break;
           case 2:
             if (this._godRaysPass) this._godRaysPass.enabled = false;
+            applyCinematicDetailScale(this.cinematicDetailRoots, 0.8);
+            this.cinematicSky?.setDetailScale(0.8);
             console.info(`[watchdog] step2: GodRaysPass disabled (EMA ${emaMs}ms)`);
             break;
           case 3:
             this._n8aoPass?.setQualityMode('Low');
+            applyCinematicDetailScale(this.cinematicDetailRoots, 0.7);
+            this.cinematicSky?.setDetailScale(0.7);
             console.info(`[watchdog] step3: N8AO → Low quality (EMA ${emaMs}ms)`);
             break;
           default:
@@ -9412,6 +9441,10 @@ export class Match {
     this.viewModel.setKunaiLightningMode(false);
     this.aaaAssetPipeline?.dispose();
     this.aaaAssetPipeline = null;
+    this.cinematicSky?.dispose();
+    this.cinematicSky = null;
+    this.visibleSkyUniforms = null;
+    this.cinematicDetailRoots.length = 0;
     this.atmosphere?.dispose(); // 草/フォグ/粒子/遠景/リムライトを解放(scene.traverse前)
     this.atmosphere = null;
     // R30 雨パーティクル解放

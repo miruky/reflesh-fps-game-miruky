@@ -68,7 +68,12 @@ const profile = loadProfile();
 const hasWebGL2 = Boolean(document.createElement('canvas').getContext('webgl2'));
 const graphicsTier = resolveGraphicsTier(settings.graphicsQuality, hasWebGL2);
 
-const renderer = new THREE.WebGLRenderer({ antialias: graphicsTier === 'low' });
+const renderer = new THREE.WebGLRenderer({
+  antialias: graphicsTier === 'low',
+  alpha: false,
+  stencil: false,
+  powerPreference: 'high-performance',
+});
 renderer.setSize(window.innerWidth, window.innerHeight);
 // 適応DPRの基準pixelRatio。試合開始時にここへ戻すことで前試合の低下段を持ち越さない
 const BASE_DPR = Math.min(window.devicePixelRatio, graphicsTier === 'high' ? 2 : 1.5);

@@ -15,6 +15,22 @@ function makeEffects(): { fx: Effects; scene: THREE.Scene } {
 const ORIGIN = new THREE.Vector3(0, 0, 0);
 const DIR = new THREE.Vector3(0, 0, -1);
 
+describe('tracer realism', () => {
+  it('長距離弾道は発射側の短い火花セグメントへ制限する', () => {
+    const { fx, scene } = makeEffects();
+    fx.tracer(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 1, -120), 0xff5533);
+    const line = scene.children.find((child) => child instanceof THREE.Line) as THREE.Line;
+    const pos = line.geometry.getAttribute('position');
+    const a = new THREE.Vector3(pos.getX(0), pos.getY(0), pos.getZ(0));
+    const b = new THREE.Vector3(pos.getX(1), pos.getY(1), pos.getZ(1));
+    expect(a.distanceTo(b)).toBeCloseTo(0.45, 5);
+    expect(a.z).toBeCloseTo(-0.32, 5);
+    expect(b.z).toBeCloseTo(-0.77, 5);
+    expect((line.material as THREE.LineBasicMaterial).opacity).toBeLessThanOrEqual(0.18);
+    fx.dispose();
+  });
+});
+
 describe('R34 Effects – 溜め攻撃 VFX', () => {
   it('banjinStorm: 例外なし、シーンに子が追加される', () => {
     const { fx, scene } = makeEffects();

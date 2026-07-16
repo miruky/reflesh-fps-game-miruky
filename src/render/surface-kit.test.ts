@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import {
   applySurfaceKit,
   cinematicFloorColor,
+  cinematicStructuralColor,
   floorDetailGlsl,
   floorDetailGlslCommon,
   SURFACE_KIT_IDS,
@@ -26,13 +27,59 @@ describe('cinematicFloorColor', () => {
     const darkHsl = { h: 0, s: 0, l: 0 };
     const sourceBrightHsl = { h: 0, s: 0, l: 0 };
     const sourceDarkHsl = { h: 0, s: 0, l: 0 };
-    bright.getHSL(brightHsl);
-    dark.getHSL(darkHsl);
-    sourceBright.getHSL(sourceBrightHsl);
-    sourceDark.getHSL(sourceDarkHsl);
+    bright.clone().convertLinearToSRGB().getHSL(brightHsl);
+    dark.clone().convertLinearToSRGB().getHSL(darkHsl);
+    sourceBright.clone().convertLinearToSRGB().getHSL(sourceBrightHsl);
+    sourceDark.clone().convertLinearToSRGB().getHSL(sourceDarkHsl);
     expect(sourceBrightHsl.l - brightHsl.l).toBeGreaterThan(sourceDarkHsl.l - darkHsl.l);
     expect(brightHsl.h).toBeCloseTo(sourceBrightHsl.h, 6);
     expect(darkHsl.h).toBeCloseTo(sourceDarkHsl.h, 6);
+  });
+});
+
+describe('cinematicStructuralColor', () => {
+  const palette = { accent: '#ff5a3c', wall: '#8d939e' };
+
+  it('大型の非発光アクセント床・屋根を壁色へ強く寄せる', () => {
+    const result = cinematicStructuralColor(
+      { color: palette.accent, emissive: false, w: 40, h: 0.5, d: 8 },
+      palette,
+    );
+    const source = new THREE.Color(palette.accent);
+    const colorDistance = (a: THREE.Color, b: THREE.Color): number =>
+      Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
+    const resultHsl = { h: 0, s: 0, l: 0 };
+    const sourceHsl = { h: 0, s: 0, l: 0 };
+    result.clone().convertLinearToSRGB().getHSL(resultHsl);
+    source.clone().convertLinearToSRGB().getHSL(sourceHsl);
+    expect(colorDistance(result, source)).toBeGreaterThan(0.2);
+    expect(resultHsl.s).toBeLessThan(sourceHsl.s * 0.5);
+    expect(resultHsl.l).toBeLessThan(sourceHsl.l);
+  });
+
+  it('発光アクセントと小型の通常色は変更しない', () => {
+    const emissive = cinematicStructuralColor(
+      { color: palette.accent, emissive: true, w: 40, h: 0.5, d: 8 },
+      palette,
+    );
+    const ordinary = cinematicStructuralColor(
+      { color: '#445566', emissive: false, w: 2, h: 1, d: 2 },
+      palette,
+    );
+    expect(emissive.getHexString()).toBe('ff5a3c');
+    expect(ordinary.getHexString()).toBe('445566');
+  });
+
+  it('大型の中性色建築も小物より暗くして照明の飽和余地を作る', () => {
+    const small = cinematicStructuralColor(
+      { color: '#8d939e', emissive: false, w: 2, h: 1, d: 2 },
+      palette,
+    );
+    const large = cinematicStructuralColor(
+      { color: '#8d939e', emissive: false, w: 18, h: 8, d: 10 },
+      palette,
+    );
+    expect(large.getHSL({ h: 0, s: 0, l: 0 }).l).toBeLessThan(small.getHSL({ h: 0, s: 0, l: 0 }).l);
   });
 });
 

@@ -434,6 +434,13 @@ try {
           }
           await page.waitForTimeout(120);
           record('camo:diamond-fire', 'PASS', 'Diamondで実射撃・反射減光経路を通過');
+          // 数発消費済みなので実リロードを開始できる。中盤(支持手が弾倉を抜く段階)を
+          // キャプチャし、腕リグ／マガジン可動／描画ループの統合経路をCIでも通す。
+          await page.keyboard.press('KeyR');
+          await page.waitForTimeout(700);
+          await shot(page, 'hud-reload');
+          record('reload-animation', 'PASS', '支持手+弾倉の実リロード経路を通過');
+          await page.waitForTimeout(1200);
         } else {
           record(
             'camo:diamond-fire',

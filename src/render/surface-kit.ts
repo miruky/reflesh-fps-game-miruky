@@ -55,16 +55,64 @@ export const SURFACE_KIT_IDS: readonly SurfaceKitId[] = [
  * fog・足音・ゲームデータのpaletteは変更せず、床メッシュの表示色だけを返す。
  */
 export function cinematicFloorColor(hex: string): THREE.Color {
-  const color = new THREE.Color(hex);
+  // THREE.Color内部はlinear色空間。そこで直接HSLを操作すると、見た目75%の灰色が
+  // 約50%として判定され補正がほぼ効かない。表示色(sRGB)へ戻してから調整する。
+  const color = new THREE.Color(hex).convertLinearToSRGB();
   const hsl = { h: 0, s: 0, l: 0 };
   color.getHSL(hsl);
-  const reduction = hsl.l >= 0.72 ? 0.13 : hsl.l >= 0.55 ? 0.09 : 0.035;
+  // PBRの直射+Hemi+IBLを受けても中間調を残す。雪は白さを維持しつつ、
+  // 明色コンクリートはBO3系の露出余裕がある灰色へ落とす。
+  const reduction = hsl.l >= 0.72 ? 0.42 : hsl.l >= 0.55 ? 0.28 : 0.08;
   color.setHSL(
     hsl.h,
     THREE.MathUtils.clamp(hsl.s * 1.05 + 0.01, 0, 1),
-    THREE.MathUtils.clamp(hsl.l - reduction, 0.035, 0.82),
+    THREE.MathUtils.clamp(hsl.l - reduction, 0.035, 0.68),
   );
-  return color;
+  return color.convertSRGBToLinear();
+}
+
+interface StructuralColorSpec {
+  readonly color: string;
+  readonly emissive: boolean;
+  readonly w: number;
+  readonly h: number;
+  readonly d: number;
+}
+
+interface StructuralPalette {
+  readonly accent: string;
+  readonly wall: string;
+}
+
+/**
+ * 非発光アクセント箱を「蛍光色の巨大な建築材」ではなく塗装鋼／色付きコンクリートへ寄せる。
+ * ゲームデータ上の色・当たり判定は変えず、表示アルベドだけを落ち着かせる。
+ */
+export function cinematicStructuralColor(
+  spec: StructuralColorSpec,
+  palette: StructuralPalette,
+): THREE.Color {
+  const source = new THREE.Color(spec.color);
+  if (spec.emissive) return source;
+  const sourceSrgb = source.clone().convertLinearToSRGB();
+  const wallSrgb = new THREE.Color(palette.wall).convertLinearToSRGB();
+  const hsl = { h: 0, s: 0, l: 0 };
+  sourceSrgb.getHSL(hsl);
+  const paletteAccent = spec.color.toLowerCase() === palette.accent.toLowerCase();
+  const longThinStructure = Math.max(spec.w, spec.d) >= 10 && spec.h <= 0.8;
+  const largeStructure = Math.max(spec.w, spec.d) >= 8 || spec.h >= 5;
+  const saturatedStructure = largeStructure && hsl.s >= 0.42;
+  if (paletteAccent || saturatedStructure) {
+    const blend = longThinStructure ? 0.84 : largeStructure ? 0.68 : 0.45;
+    sourceSrgb.lerp(wallSrgb, blend);
+  } else if (!largeStructure) {
+    return source;
+  }
+  // 大型面は直射+Hemi+IBLで見た目が一段明るくなるため、表示色側に中間調を確保する。
+  // 小物は色識別を維持し、建築／壁／屋根だけを締める。
+  sourceSrgb.getHSL(hsl);
+  sourceSrgb.setHSL(hsl.h, hsl.s, THREE.MathUtils.clamp(hsl.l - (longThinStructure ? 0.14 : 0.1), 0.04, 0.78));
+  return sourceSrgb.convertSRGBToLinear();
 }
 
 interface KitBase {

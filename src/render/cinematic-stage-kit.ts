@@ -3,6 +3,11 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32, type Rand } from '../core/rng';
 import type { GraphicsQuality } from '../core/settings';
 import type { BoxSpec, PropPlacement, StageDef } from '../game/stage';
+import {
+  markCinematicDetail,
+  type CinematicDetailPriority,
+} from './cinematic-detail';
+import { buildCinematicEnvironment } from './cinematic-environment';
 
 /**
  * 全ステージへ適用する映画品質の環境アートレイヤ。
@@ -137,14 +142,26 @@ interface StageKitBudget {
   readonly facadePanels: number;
   readonly facadeFrames: number;
   readonly rooftopUnits: number;
+  readonly contactShadows: number;
+  readonly grimeBands: number;
+  readonly downspouts: number;
   readonly rubble: number;
   readonly skyline: number;
 }
 
 const BUDGETS: Readonly<Record<GraphicsQuality, StageKitBudget>> = {
-  low: { routes: 2, routeMarks: 8, groundPatches: 7, facadePanels: 24, facadeFrames: 18, rooftopUnits: 8, rubble: 18, skyline: 10 },
-  medium: { routes: 4, routeMarks: 24, groundPatches: 18, facadePanels: 90, facadeFrames: 60, rooftopUnits: 28, rubble: 56, skyline: 24 },
-  high: { routes: 7, routeMarks: 56, groundPatches: 36, facadePanels: 180, facadeFrames: 120, rooftopUnits: 64, rubble: 120, skyline: 42 },
+  low: {
+    routes: 2, routeMarks: 8, groundPatches: 7, facadePanels: 24, facadeFrames: 18,
+    rooftopUnits: 8, contactShadows: 16, grimeBands: 12, downspouts: 6, rubble: 18, skyline: 10,
+  },
+  medium: {
+    routes: 4, routeMarks: 24, groundPatches: 18, facadePanels: 90, facadeFrames: 60,
+    rooftopUnits: 28, contactShadows: 44, grimeBands: 36, downspouts: 18, rubble: 56, skyline: 24,
+  },
+  high: {
+    routes: 7, routeMarks: 56, groundPatches: 36, facadePanels: 180, facadeFrames: 120,
+    rooftopUnits: 64, contactShadows: 88, grimeBands: 72, downspouts: 36, rubble: 120, skyline: 42,
+  },
 };
 
 export interface CinematicStageKitOptions {
@@ -154,8 +171,12 @@ export interface CinematicStageKitOptions {
   readonly propPlacements: readonly PropPlacement[];
 }
 
-function markObject(object: THREE.Object3D): void {
+function markObject(
+  object: THREE.Object3D,
+  priority: CinematicDetailPriority = 0,
+): void {
   object.userData.cinematicStageKit = true;
+  markCinematicDetail(object, priority);
 }
 
 function shade(hex: string, lightnessDelta: number, saturationDelta = 0): THREE.Color {
@@ -170,12 +191,15 @@ function shade(hex: string, lightnessDelta: number, saturationDelta = 0): THREE.
   return color;
 }
 
-function configureInstances(mesh: THREE.InstancedMesh): THREE.InstancedMesh {
+function configureInstances(
+  mesh: THREE.InstancedMesh,
+  priority: CinematicDetailPriority = 0,
+): THREE.InstancedMesh {
   mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   mesh.computeBoundingSphere();
-  markObject(mesh);
+  markObject(mesh, priority);
   return mesh;
 }
 
@@ -197,21 +221,21 @@ function makeMatrix(
 function routeColors(family: StageVisualFamily, stage: StageDef): { surface: THREE.Color; mark: THREE.Color } {
   switch (family) {
     case 'heritage':
-      return { surface: shade(stage.palette.floor, -0.14, -0.05), mark: shade(stage.palette.wall, 0.16, -0.08) };
+      return { surface: shade(stage.palette.floor, -0.22, -0.05), mark: shade(stage.palette.wall, 0.16, -0.08) };
     case 'wilderness':
-      return { surface: shade(stage.palette.floor, -0.1, -0.08), mark: shade(stage.palette.floor, 0.14, -0.12) };
+      return { surface: shade(stage.palette.floor, -0.18, -0.08), mark: shade(stage.palette.floor, 0.14, -0.12) };
     case 'arctic':
-      return { surface: shade(stage.palette.floor, -0.11, 0.02), mark: new THREE.Color(0xaecbe0) };
+      return { surface: shade(stage.palette.floor, -0.16, 0.02), mark: new THREE.Color(0xaecbe0) };
     case 'geothermal':
       return { surface: new THREE.Color(0x171719), mark: shade(stage.palette.accent, -0.12, 0.08) };
     case 'urban':
     case 'airport':
-      return { surface: shade(stage.palette.floor, -0.22, -0.08), mark: shade(stage.palette.accent, 0.04, 0.05) };
+      return { surface: shade(stage.palette.floor, -0.34, -0.08), mark: shade(stage.palette.accent, 0.04, 0.05) };
     case 'industrial':
     case 'undead':
-      return { surface: shade(stage.palette.floor, -0.25, -0.12), mark: shade(stage.palette.accent, -0.04, 0.05) };
+      return { surface: shade(stage.palette.floor, -0.36, -0.12), mark: shade(stage.palette.accent, -0.04, 0.05) };
     default:
-      return { surface: shade(stage.palette.floor, -0.26, -0.1), mark: shade(stage.palette.wall, 0.25, -0.12) };
+      return { surface: shade(stage.palette.floor, -0.4, -0.1), mark: shade(stage.palette.wall, 0.25, -0.12) };
   }
 }
 
@@ -229,7 +253,8 @@ function buildGroundRoutes(
   const roadGeo = new THREE.PlaneGeometry(1, 1);
   roadGeo.rotateX(-Math.PI / 2);
   const roadMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
+    // instanceColorへニュートラルグレーを掛け、強い直射+IBL下でも道路を床から分離する。
+    color: 0x777c82,
     roughness: family === 'urban' || family === 'industrial' || family === 'undead' ? 0.68 : 0.9,
     metalness: family === 'geothermal' ? 0.16 : 0.02,
     polygonOffset: true,
@@ -255,7 +280,39 @@ function buildGroundRoutes(
     roads.setColorAt(i, colors.surface.clone().multiplyScalar(0.88 + rand() * 0.18));
     routeData.push({ x, z, yaw, width, length });
   }
-  root.add(configureInstances(roads));
+  root.add(configureInstances(roads, 0));
+
+  // 道路／主要動線の両端へ低い縁石・路肩を追加。高さ8cm以下の視覚専用形状なので
+  // KCCや弾道を変えず、遠近の収束線だけを強くして巨大平面の距離感を作る。
+  const shoulderGeo = new THREE.BoxGeometry(1, 1, 1);
+  const shoulderMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: family === 'urban' || family === 'industrial' || family === 'airport' ? 0.76 : 0.92,
+    metalness: 0.01,
+  });
+  const shoulders = new THREE.InstancedMesh(shoulderGeo, shoulderMat, routeData.length * 2);
+  shoulders.name = 'aaa:route-shoulders';
+  shoulders.receiveShadow = true;
+  const shoulderColor = family === 'arctic'
+    ? shade(stage.palette.wall, -0.12, -0.08)
+    : shade(stage.palette.wall, -0.2, -0.1);
+  for (let i = 0; i < routeData.length; i += 1) {
+    const route = routeData[i]!;
+    for (let sideIndex = 0; sideIndex < 2; sideIndex += 1) {
+      const side = sideIndex === 0 ? -1 : 1;
+      const lateral = side * (route.width / 2 + 0.16);
+      const x = route.x + Math.cos(route.yaw) * lateral;
+      const z = route.z - Math.sin(route.yaw) * lateral;
+      const shoulderWidth = family === 'wilderness' ? 0.42 : 0.24;
+      const shoulderHeight = family === 'wilderness' ? 0.035 : 0.075;
+      shoulders.setMatrixAt(
+        i * 2 + sideIndex,
+        makeMatrix(x, shoulderHeight / 2 + 0.014, z, shoulderWidth, shoulderHeight, route.length, route.yaw),
+      );
+      shoulders.setColorAt(i * 2 + sideIndex, shoulderColor);
+    }
+  }
+  root.add(configureInstances(shoulders, 1));
 
   const markGeo = new THREE.BoxGeometry(1, 1, 1);
   const markMat = new THREE.MeshStandardMaterial({
@@ -283,7 +340,7 @@ function buildGroundRoutes(
     marks.setMatrixAt(i, makeMatrix(x, 0.026 + i * 0.00002, z, width, 0.018, length, route.yaw));
     marks.setColorAt(i, isDrain ? shade(stage.palette.wall, -0.22, -0.1) : colors.mark);
   }
-  root.add(configureInstances(marks));
+  root.add(configureInstances(marks, 1));
 
   // 大面積の色調補修／濡れ／土埃パッチ。巨大床のどこから開始しても単色平面にならない密度で散布し、
   // 円周はフラグメントalphaで柔らかく消すため「貼った円盤」には見えない。
@@ -330,7 +387,7 @@ function buildGroundRoutes(
     patches.setMatrixAt(i, makeMatrix(x, 0.017 + i * 0.00002, z, rx, 1, rz, rand() * Math.PI));
     patches.setColorAt(i, patchBase.clone().multiplyScalar(0.72 + rand() * 0.42));
   }
-  root.add(configureInstances(patches));
+  root.add(configureInstances(patches, 2));
   return root;
 }
 
@@ -444,7 +501,9 @@ function buildFacadeLayer(
       mesh.setMatrixAt(i, entry.matrix);
       mesh.setColorAt(i, entry.color);
     }
-    root.add(configureInstances(mesh));
+    const priority: CinematicDetailPriority =
+      name === 'aaa:facade-frames' ? 0 : name === 'aaa:facade-panels' ? 1 : 2;
+    root.add(configureInstances(mesh, priority));
   };
 
   const night = stage.palette.mood === 'night' || family === 'undead';
@@ -458,6 +517,137 @@ function buildFacadeLayer(
   }), false);
   addInstanced('aaa:facade-frames', frames, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0.3 }), true);
   addInstanced('aaa:rooftop-mechanical', roofs, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62, metalness: 0.46 }), true);
+  return root;
+}
+
+function buildGroundingLayer(
+  stage: StageDef,
+  family: StageVisualFamily,
+  boxes: readonly BoxSpec[],
+  budget: StageKitBudget,
+  rand: Rand,
+): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'aaa:architectural-grounding';
+  markObject(root);
+
+  // 小〜中型遮蔽物の真下へ柔らかい接地影を1 InstancedMeshで敷く。
+  // medium tierでもSSAO無しで「床から浮く箱」を抑え、highのAOとは強度を重ねすぎない。
+  const contactCandidates = boxes
+    .filter((box) => {
+      if (box.ghost || box.decor || box.prop) return false;
+      const bottom = box.y - box.h / 2;
+      const footprint = box.w * box.d;
+      return bottom <= 0.22 && footprint >= 0.8 && footprint <= 150 && Math.max(box.w, box.d) <= 18;
+    })
+    .sort((a, b) => b.w * b.d - a.w * a.d)
+    .slice(0, budget.contactShadows);
+  if (contactCandidates.length > 0) {
+    const geo = new THREE.CircleGeometry(1, 24);
+    geo.rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x05070a,
+      transparent: true,
+      opacity: family === 'arctic' ? 0.2 : 0.31,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+    mat.customProgramCacheKey = () => 'hibana-contact-shadow-radial-v1';
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vContactUv;')
+        .replace('#include <uv_vertex>', '#include <uv_vertex>\nvContactUv = uv;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vContactUv;')
+        .replace(
+          '#include <alphamap_fragment>',
+          '#include <alphamap_fragment>\ndiffuseColor.a *= 1.0 - smoothstep(0.12, 0.5, length(vContactUv - 0.5));',
+        );
+    };
+    const mesh = new THREE.InstancedMesh(geo, mat, contactCandidates.length);
+    mesh.name = 'aaa:contact-shadows';
+    mesh.renderOrder = 0;
+    for (let i = 0; i < contactCandidates.length; i += 1) {
+      const box = contactCandidates[i]!;
+      mesh.setMatrixAt(i, makeMatrix(
+        box.x,
+        0.006 + i * 0.000002,
+        box.z,
+        box.w * (0.58 + rand() * 0.08),
+        1,
+        box.d * (0.58 + rand() * 0.08),
+        rand() * 0.08,
+      ));
+    }
+    root.add(configureInstances(mesh, 0));
+  }
+
+  const candidates = facadeCandidates(boxes);
+  const grimeEntries: FacadeMatrix[] = [];
+  const pipeEntries: FacadeMatrix[] = [];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const box = candidates[i]!;
+    const longX = box.w >= box.d;
+    const long = longX ? box.w : box.d;
+    const side = ((i + stage.seed) & 1) === 0 ? 1 : -1;
+    if (grimeEntries.length < budget.grimeBands) {
+      const height = 0.28 + Math.min(0.52, box.h * 0.035) + rand() * 0.14;
+      const bottom = box.y - box.h / 2;
+      grimeEntries.push({
+        matrix: longX
+          ? makeMatrix(box.x, bottom + height / 2 + 0.025, box.z + side * (box.d / 2 + 0.041), long * 0.96, height, 0.045)
+          : makeMatrix(box.x + side * (box.w / 2 + 0.041), bottom + height / 2 + 0.025, box.z, 0.045, height, long * 0.96),
+        color: shade(box.color, -0.24, -0.12).multiplyScalar(0.72 + rand() * 0.22),
+      });
+    }
+    if (pipeEntries.length < budget.downspouts && box.h >= 4.5 && long >= 6) {
+      const pipeH = Math.min(7.5, box.h * 0.74);
+      const offset = (rand() - 0.5) * long * 0.7;
+      pipeEntries.push({
+        matrix: longX
+          ? makeMatrix(box.x + offset, box.y - box.h / 2 + pipeH / 2 + 0.18, box.z + side * (box.d / 2 + 0.1), 0.12, pipeH, 0.12)
+          : makeMatrix(box.x + side * (box.w / 2 + 0.1), box.y - box.h / 2 + pipeH / 2 + 0.18, box.z + offset, 0.12, pipeH, 0.12),
+        color: shade(stage.palette.obstacle, -0.18, -0.08),
+      });
+    }
+    if (grimeEntries.length >= budget.grimeBands && pipeEntries.length >= budget.downspouts) break;
+  }
+
+  const addBoxes = (
+    name: string,
+    entries: readonly FacadeMatrix[],
+    material: THREE.MeshStandardMaterial,
+    priority: CinematicDetailPriority,
+  ): void => {
+    if (entries.length === 0) {
+      material.dispose();
+      return;
+    }
+    const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), material, entries.length);
+    mesh.name = name;
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]!;
+      mesh.setMatrixAt(i, entry.matrix);
+      mesh.setColorAt(i, entry.color);
+    }
+    root.add(configureInstances(mesh, priority));
+  };
+  addBoxes(
+    'aaa:facade-base-grime',
+    grimeEntries,
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0 }),
+    1,
+  );
+  addBoxes(
+    'aaa:facade-downspouts',
+    pipeEntries,
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.48, metalness: 0.58 }),
+    2,
+  );
   return root;
 }
 
@@ -505,7 +695,7 @@ function buildMacroRubble(
     mesh.setMatrixAt(i, makeMatrix(x, r * 0.38, z, r * (0.65 + rand()), r * (0.35 + rand() * 0.4), r * (0.7 + rand()), rand() * Math.PI, rand() * 0.4, rand() * 0.4));
     mesh.setColorAt(i, base.clone().multiplyScalar(0.64 + rand() * 0.48));
   }
-  return configureInstances(mesh);
+  return configureInstances(mesh, 2);
 }
 
 function buildDistantWorld(
@@ -547,7 +737,7 @@ function buildDistantWorld(
     }
     mesh.setColorAt(i, base.clone().multiplyScalar(0.64 + rand() * 0.35));
   }
-  root.add(configureInstances(mesh));
+  root.add(configureInstances(mesh, 0));
   return root;
 }
 
@@ -808,7 +998,7 @@ function buildHeroLandmark(stage: StageDef, identity: StageVisualIdentity): THRE
     mesh.name = `aaa:hero:${family}`;
     mesh.castShadow = false;
     mesh.receiveShadow = true;
-    markObject(mesh);
+    markObject(mesh, 0);
     root.add(mesh);
   }
   const angle = ((stage.seed * 0.61803398875) % 1) * Math.PI * 2;
@@ -829,8 +1019,15 @@ export function buildCinematicStageKit(options: CinematicStageKitOptions): THREE
   root.userData.stageVisualIdentity = identity;
   root.add(buildGroundRoutes(options.stage, identity.family, budget, options.boxes, rand));
   root.add(buildFacadeLayer(options.stage, identity.family, options.boxes, budget, rand));
+  root.add(buildGroundingLayer(options.stage, identity.family, options.boxes, budget, rand));
   root.add(buildMacroRubble(options.stage, identity.family, options.boxes, options.propPlacements, budget.rubble, rand));
   root.add(buildDistantWorld(options.stage, identity.family, budget.skyline, rand));
   root.add(buildHeroLandmark(options.stage, identity));
+  root.add(buildCinematicEnvironment({
+    stage: options.stage,
+    tier: options.tier,
+    family: identity.family,
+    boxes: options.boxes,
+  }));
   return root;
 }

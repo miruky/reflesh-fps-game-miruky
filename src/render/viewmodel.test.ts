@@ -1,6 +1,15 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { buildGunBody, CamoStandardMaterial, resolveMuzzleFlashProfile, resolveSightY, sightYOverride, ViewModel, weaponHasIntegralSuppressor } from './viewmodel';
+import {
+  buildGunBody,
+  CamoStandardMaterial,
+  reloadAnimationPose,
+  resolveMuzzleFlashProfile,
+  resolveSightY,
+  sightYOverride,
+  ViewModel,
+  weaponHasIntegralSuppressor,
+} from './viewmodel';
 import { WEAPON_DEFS, type ModelKey, type ViewModelShape, type WeaponDef } from '../game/weapons';
 import { classDefault, fitsMagnified, OPTIC_SPECS, resolveOpticId } from '../game/optics';
 import { SHAPE_SPECS, SHAPE_PAINTERS } from './weapon-shapes';
@@ -8,8 +17,61 @@ import { CAMO_IDS, CAMO_VISUALS } from '../game/camo';
 
 // 一人称腕は sleeve/glove の固有色で塗られる。銃本体にこれらが混ざっていなければ
 // 「腕なし」と判定できる(dark/darker/accent とは別色)。
-const SLEEVE_HEX = 0x2b2e34;
-const GLOVE_HEX = 0x161820;
+const SLEEVE_HEX = 0x536047;
+const GLOVE_HEX = 0x6f714f;
+
+describe('reloadAnimationPose', () => {
+  it('開始/終了は静止し、中盤だけマガジンと支持手を動かす', () => {
+    expect(reloadAnimationPose(0).magazineDrop).toBe(0);
+    expect(reloadAnimationPose(1).magazineDrop).toBe(0);
+    expect(reloadAnimationPose(0).supportReach).toBe(0);
+    expect(reloadAnimationPose(1).supportReach).toBe(0);
+    const middle = reloadAnimationPose(0.45);
+    expect(middle.magazineDrop).toBeGreaterThan(0.85);
+    expect(middle.supportReach).toBeGreaterThan(0.9);
+    expect(middle.supportPull).toBeGreaterThan(0.5);
+  });
+
+  it('範囲外ratioを安全にクランプする', () => {
+    expect(reloadAnimationPose(-1)).toEqual(reloadAnimationPose(0));
+    expect(reloadAnimationPose(2)).toEqual(reloadAnimationPose(1));
+  });
+
+  it('実ViewModelで支持手と弾倉が動き、完了後は正確に静止位置へ戻る', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    vm.setWeapon(WEAPON_DEFS['kaede-ar']!);
+    const leftHand = vm.root.getObjectByName('vm:leftHand');
+    const magazine = vm.root.getObjectByName('vm:magazine');
+    expect(leftHand).toBeTruthy();
+    expect(magazine).toBeTruthy();
+    const restPosition = leftHand!.position.clone();
+    const restRotation = leftHand!.rotation.clone();
+    const state = {
+      adsProgress: 0,
+      mouseDX: 0,
+      mouseDY: 0,
+      moveFactor: 0,
+      grounded: true,
+      raiseRatio: 0,
+      motionScale: 1,
+      alive: true,
+      scopeReveal01: 0,
+    };
+
+    vm.update(0, { ...state, reloadRatio: 0.45 });
+    expect(leftHand!.position.distanceTo(restPosition)).toBeGreaterThan(0.05);
+    expect(magazine!.position.y).toBeLessThan(-0.1);
+
+    vm.update(0, { ...state, reloadRatio: null });
+    expect(leftHand!.position.distanceTo(restPosition)).toBeLessThan(1e-7);
+    expect(leftHand!.rotation.x).toBeCloseTo(restRotation.x, 7);
+    expect(leftHand!.rotation.y).toBeCloseTo(restRotation.y, 7);
+    expect(leftHand!.rotation.z).toBeCloseTo(restRotation.z, 7);
+    expect(magazine!.position.length()).toBeLessThan(1e-7);
+    vm.dispose();
+  });
+});
 
 function meshCount(g: THREE.Object3D): number {
   let n = 0;

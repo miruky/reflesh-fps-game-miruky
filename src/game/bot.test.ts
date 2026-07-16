@@ -6,12 +6,52 @@ import {
   BOSS_TUNING,
   DIFFICULTY,
   fearAccuracyMul,
+  humanoidCombatMoveWeights,
   ZOMBIE_HORDE_THIN_RANK,
   zombieKccActive,
   zombieKccSkipFactor,
   zombieSeparationGrid,
   type BotContext,
 } from './bot';
+
+describe('humanoid combat movement', () => {
+  it('適正距離では前後移動が横移動を大きく上回る', () => {
+    for (const depthSign of [-1, 1] as const) {
+      const weights = humanoidCombatMoveWeights(14, depthSign, {
+        flee: false,
+        feared: false,
+        unstuck: false,
+        master: false,
+      });
+      expect(Math.abs(weights.longitudinal)).toBeGreaterThan(weights.lateral * 2);
+      expect(weights.lateral).toBeLessThanOrEqual(0.2);
+    }
+  });
+
+  it('遠距離は前進、近距離は後退し、横移動は補助に留まる', () => {
+    const far = humanoidCombatMoveWeights(30, 1, {
+      flee: false, feared: false, unstuck: false, master: false,
+    });
+    const near = humanoidCombatMoveWeights(5, 1, {
+      flee: false, feared: false, unstuck: false, master: false,
+    });
+    expect(far.longitudinal).toBeGreaterThan(0.8);
+    expect(near.longitudinal).toBeLessThan(-0.8);
+    expect(far.lateral).toBeLessThan(0.25);
+    expect(near.lateral).toBeLessThan(0.25);
+  });
+
+  it('アンスタック中だけ横ステアを一時的に強める', () => {
+    const normal = humanoidCombatMoveWeights(14, 1, {
+      flee: false, feared: false, unstuck: false, master: false,
+    });
+    const unstuck = humanoidCombatMoveWeights(14, 1, {
+      flee: false, feared: false, unstuck: true, master: false,
+    });
+    expect(unstuck.lateral).toBeGreaterThan(normal.lateral);
+    expect(unstuck.longitudinal).toBe(normal.longitudinal);
+  });
+});
 
 // 平坦な床(cuboid)だけを持つ最小worldを作る(makeFixture以外の個別テストでも使う共通部)
 function makeFlatWorld(): RAPIER.World {

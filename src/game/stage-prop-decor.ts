@@ -41,7 +41,6 @@ export function buildStagePropDecor(
   const metalParts: THREE.BufferGeometry[] = [];
   const accentParts: THREE.BufferGeometry[] = [];
   const shadowParts: THREE.BufferGeometry[] = [];
-  const edgeParts: THREE.BufferGeometry[] = [];
   const castingMatrices: THREE.Matrix4[] = [];
   const temps: THREE.BufferGeometry[] = [];
 
@@ -49,8 +48,6 @@ export function buildStagePropDecor(
   const slabTpl = new THREE.BoxGeometry(1, 1, 1);
   const capsuleTpl = new THREE.CapsuleGeometry(0.16, 0.34, 3, 6);
   const planeTpl = new THREE.PlaneGeometry(1, 1);
-  const boxForEdges = new THREE.BoxGeometry(1, 1, 1);
-  const edgesTpl = new THREE.EdgesGeometry(boxForEdges, 30);
 
   const m4 = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -109,20 +106,6 @@ export function buildStagePropDecor(
     const longX = spec.w >= spec.d; // 長手がX方向か
     const longLen = Math.max(spec.w, spec.d);
     const arche = classifyArchetype(spec, palette);
-
-    // 輪郭線(AABB稜線にほぼ一致)。線プリミティブにはpolygonOffsetが効かないため、
-    // ごく僅か(約1cm)外側へ広げて面とのZファイト/ちらつきを避ける
-    {
-      eul.set(0, 0, 0);
-      q.setFromEuler(eul);
-      vPos.set(cx, spec.y, cz);
-      vScale.set(spec.w + 0.02, spec.h + 0.02, spec.d + 0.02);
-      m4.compose(vPos, q, vScale);
-      const g = edgesTpl.clone();
-      g.applyMatrix4(m4);
-      edgeParts.push(g);
-      temps.push(g);
-    }
 
     // 床コンタクトシャドウ(周壁以外)
     if (arche !== 'wall') {
@@ -484,19 +467,6 @@ export function buildStagePropDecor(
     scene.add(inst);
   }
 
-  // 輪郭線(全箱を1本のLineSegmentsへ)
-  if (edgeParts.length > 0) {
-    const mergedEdges = mergeGeometries(edgeParts, false);
-    if (mergedEdges) {
-      const lineMat = new THREE.LineBasicMaterial({
-        color: derive(palette.wall, 0.18),
-        transparent: true,
-        opacity: palette.emissiveAccent ? 0.5 : 0.35,
-      });
-      scene.add(new THREE.LineSegments(mergedEdges, lineMat));
-    }
-  }
-
   // 床コンタクトシャドウ(全箱を1メッシュへ)
   if (shadowParts.length > 0) {
     const mergedShadow = mergeGeometries(shadowParts, false);
@@ -520,6 +490,4 @@ export function buildStagePropDecor(
   slabTpl.dispose();
   capsuleTpl.dispose();
   planeTpl.dispose();
-  boxForEdges.dispose();
-  edgesTpl.dispose();
 }

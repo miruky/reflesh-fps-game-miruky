@@ -113,11 +113,28 @@ export class Effects {
   constructor(private readonly scene: THREE.Scene) {}
 
   tracer(from: THREE.Vector3, to: THREE.Vector3, color: number): void {
-    const geometry = new THREE.BufferGeometry().setFromPoints([from, to]);
-    const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.85 });
+    const delta = to.clone().sub(from);
+    const distance = delta.length();
+    // 弾道全長や数mの線でも、射手がカメラ近傍にいると投影上は画面を横断する
+    // 「赤いレーザー」になる。通常弾は曳光弾の一瞬の火花だけを0.45m残し、
+    // 着弾位置・敵弾の方向はimpact/whizz/音で伝える。
+    const direction = distance > 0.001 ? delta.clone().multiplyScalar(1 / distance) : delta;
+    const startOffset = Math.min(0.32, distance * 0.04);
+    const segmentStart = from.clone().addScaledVector(direction, startOffset);
+    const segmentLength = Math.min(0.45, Math.max(0, distance - startOffset));
+    const segmentEnd = segmentStart.clone().addScaledVector(direction, segmentLength);
+    const tracerColor = new THREE.Color(color).multiplyScalar(0.28);
+    const geometry = new THREE.BufferGeometry().setFromPoints([segmentStart, segmentEnd]);
+    const material = new THREE.LineBasicMaterial({
+      color: tracerColor,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+    });
     const line = new THREE.Line(geometry, material);
+    line.userData.baseOpacity = 0.18;
     this.scene.add(line);
-    this.tracers.push({ obj: line, life: 0.09, maxLife: 0.09 });
+    this.tracers.push({ obj: line, life: 0.022, maxLife: 0.022 });
   }
 
   impact(point: THREE.Vector3, normal: THREE.Vector3): void {

@@ -353,12 +353,12 @@ function getShared(): SharedMats {
       reflexDot,
       // 銃の黒ポリマーと同化しない寒色の袖 + 暖色オリーブのタクティカルグローブ。
       // 金属度0・高roughnessで、ダイヤ／ゴールドの鏡面と視覚的に必ず分離する。
-      sleeve: clothMat(0x405169, 0.86),
-      glove: clothMat(0x887a62, 0.9),
-      glovePalm: clothMat(0xaa987b, 0.96),
-      gloveArmor: clothMat(0x24282d, 0.72),
-      gloveStitch: clothMat(0xd0a768, 0.88),
-      skin: clothMat(0xca8e69, 0.82),
+      sleeve: clothMat(0x536047, 0.9),
+      glove: clothMat(0x6f714f, 0.92),
+      glovePalm: clothMat(0x968b68, 0.97),
+      gloveArmor: clothMat(0x252a27, 0.78),
+      gloveStitch: clothMat(0xc5a86b, 0.9),
+      skin: clothMat(0x443f35, 0.88),
     };
   }
   return sharedMats;
@@ -2555,6 +2555,76 @@ interface MovableRig {
   // R53-W1 F3: 修羅(ミニガン)バレルクラスタ(スピンで回る)。setWeapon時に一度だけ捕捉し、
   // 毎フレームの gun.traverse 検索(旧実装)を廃す。
   barrel?: THREE.Object3D;
+  leftArm?: RigPoseNode;
+  leftHand?: RigPoseNode;
+  rightArm?: RigPoseNode;
+  rightHand?: RigPoseNode;
+}
+
+interface RigPoseNode {
+  readonly node: THREE.Object3D;
+  readonly position: THREE.Vector3;
+  readonly rotation: THREE.Euler;
+}
+
+export interface ReloadAnimationPose {
+  readonly magazineDrop: number;
+  readonly magazineForward: number;
+  readonly magazineTilt: number;
+  readonly supportReach: number;
+  readonly supportPull: number;
+  readonly weaponWave: number;
+}
+
+/** 段階式リロード: 掴む→抜く→交換→挿す→支持位置へ戻す。 */
+export function reloadAnimationPose(ratio: number): ReloadAnimationPose {
+  const t = THREE.MathUtils.clamp(ratio, 0, 1);
+  const reachIn = THREE.MathUtils.smoothstep(t, 0.04, 0.2);
+  const reachOut = 1 - THREE.MathUtils.smoothstep(t, 0.76, 0.97);
+  const supportReach = reachIn * reachOut;
+  const pullOut = THREE.MathUtils.smoothstep(t, 0.18, 0.36);
+  const insert = THREE.MathUtils.smoothstep(t, 0.56, 0.78);
+  const magazineDrop = pullOut * (1 - insert);
+  const supportPull =
+    THREE.MathUtils.smoothstep(t, 0.2, 0.38) *
+    (1 - THREE.MathUtils.smoothstep(t, 0.54, 0.74));
+  return {
+    magazineDrop,
+    magazineForward: magazineDrop * 0.035,
+    magazineTilt: magazineDrop * -0.24,
+    supportReach,
+    supportPull,
+    weaponWave: Math.sin(t * Math.PI),
+  };
+}
+
+function applyRigPoseDelta(
+  pose: RigPoseNode | undefined,
+  px: number,
+  py: number,
+  pz: number,
+  rx: number,
+  ry: number,
+  rz: number,
+  amount: number,
+): void {
+  if (!pose) return;
+  pose.node.position.set(
+    pose.position.x + px * amount,
+    pose.position.y + py * amount,
+    pose.position.z + pz * amount,
+  );
+  pose.node.rotation.set(
+    pose.rotation.x + rx * amount,
+    pose.rotation.y + ry * amount,
+    pose.rotation.z + rz * amount,
+  );
+}
+
+function resetRigPose(pose: RigPoseNode | undefined): void {
+  if (!pose) return;
+  pose.node.position.copy(pose.position);
+  pose.node.rotation.copy(pose.rotation);
 }
 
 // ── クナイ(素手)ADS 逆手ダガー構え ─────────────────────────────────────
@@ -3040,6 +3110,12 @@ export class ViewModel {
   // 再利用されるため、切替時に前回のslide後退/シリンダ角が残らないよう明示リセットする。
   private captureRig(): void {
     const g = this.gun;
+    const poseNode = (name: string): RigPoseNode | undefined => {
+      const node = g?.getObjectByName(name);
+      return node
+        ? { node, position: node.position.clone(), rotation: node.rotation.clone() }
+        : undefined;
+    };
     this.rig = g
       ? {
           slide: g.getObjectByName('vm:slide'),
@@ -3049,6 +3125,10 @@ export class ViewModel {
           cylinder: g.getObjectByName('vm:cylinder'),
           forend: g.getObjectByName('vm:forend'),
           barrel: g.getObjectByName('vm:barrel'),
+          leftArm: poseNode('vm:leftArm'),
+          leftHand: poseNode('vm:leftHand'),
+          rightArm: poseNode('vm:rightArm'),
+          rightHand: poseNode('vm:rightHand'),
         }
       : {};
     // R53: 帝王溜め段は武器切替で必ず解除(発光ブーストの復元も含む — キャッシュ越境防止)
@@ -3079,8 +3159,16 @@ export class ViewModel {
     if (this.rig.bolt) this.rig.bolt.position.z = 0;
     if (this.rig.charging) this.rig.charging.position.z = 0;
     if (this.rig.forend) this.rig.forend.position.z = 0;
-    if (this.rig.magazine) this.rig.magazine.position.y = 0;
+    if (this.rig.magazine) {
+      this.rig.magazine.position.set(0, 0, 0);
+      this.rig.magazine.rotation.set(0, 0, 0);
+    }
     if (this.rig.cylinder) this.rig.cylinder.rotation.z = 0;
+    for (const pose of [this.rig.leftArm, this.rig.leftHand, this.rig.rightArm, this.rig.rightHand]) {
+      if (!pose) continue;
+      pose.node.position.copy(pose.position);
+      pose.node.rotation.copy(pose.rotation);
+    }
   }
 
   // 銃本体(buildGunBody)に一人称腕を足す。腕は銃グループの子なので
@@ -3111,12 +3199,12 @@ export class ViewModel {
     // 武器グループのADS・スウェイ・反動・リロードへ従来どおり追従する。
     gun.add(buildFirstPersonArms(armMaterials, {
       right: {
-        arm: [0.03, -0.22, 0.3, 0.62, -0.1, 0],
-        hand: [0.038, -0.08, 0.095, 0.26, -0.08, -0.05],
+        arm: [0.145, -0.27, 0.235, 0.52, -0.2, -0.22],
+        hand: [0.052, -0.105, 0.088, 0.34, -0.13, -0.08],
       },
       left: {
-        arm: [-0.03, -0.13, -0.04, 0.5, 0.2, 0.12],
-        hand: [-0.04, -0.025, -0.16 * bs, 0.2, 0.08, 0.03],
+        arm: [-0.16, -0.23, 0.06, 0.58, 0.28, 0.32],
+        hand: [-0.055, -0.058, -0.17 * bs, 0.32, 0.14, 0.06],
       },
     }));
     return { gun, muzzle };
@@ -3345,9 +3433,67 @@ export class ViewModel {
       this.cylCur += (this.cylTarget - this.cylCur) * Math.min(1, dt * 12);
       this.rig.cylinder.rotation.z = this.cylCur;
     }
+    const reloadPose =
+      state.reloadRatio !== null ? reloadAnimationPose(state.reloadRatio) : null;
     if (this.rig.magazine) {
-      this.rig.magazine.position.y =
-        state.reloadRatio !== null ? -Math.sin(state.reloadRatio * Math.PI) * 0.05 : 0;
+      this.rig.magazine.position.y = reloadPose ? -reloadPose.magazineDrop * 0.12 : 0;
+      this.rig.magazine.position.z = reloadPose?.magazineForward ?? 0;
+      this.rig.magazine.rotation.z = reloadPose?.magazineTilt ?? 0;
+    }
+    if (reloadPose) {
+      // 着脱式弾倉は支持手が弾倉まで届き、抜く／挿す動きを追従する。
+      // ベルト・特殊武器は同じ大振りを使わず、支持位置を短く外す汎用動作に抑える。
+      const hasDetachableMagazine = this.rig.magazine !== undefined;
+      const handAmount = hasDetachableMagazine
+        ? reloadPose.supportReach
+        : reloadPose.weaponWave * 0.28;
+      const supportPull = hasDetachableMagazine ? reloadPose.supportPull : 0;
+      applyRigPoseDelta(
+        this.rig.leftHand,
+        0.055,
+        -0.04 - supportPull * 0.02,
+        0.045 + supportPull * 0.012,
+        -0.32,
+        0.18,
+        -0.16,
+        handAmount,
+      );
+      applyRigPoseDelta(
+        this.rig.leftArm,
+        0.03,
+        -0.02 - supportPull * 0.012,
+        0.035,
+        -0.12,
+        0.12,
+        -0.1,
+        handAmount,
+      );
+      // 射撃手はグリップを保持し、手首だけで銃のカントを受ける。
+      applyRigPoseDelta(
+        this.rig.rightHand,
+        0,
+        -0.006,
+        0.004,
+        -0.08,
+        0,
+        0.08,
+        reloadPose.weaponWave,
+      );
+      applyRigPoseDelta(
+        this.rig.rightArm,
+        0,
+        -0.01,
+        0,
+        -0.04,
+        0,
+        0.05,
+        reloadPose.weaponWave,
+      );
+    } else {
+      resetRigPose(this.rig.leftArm);
+      resetRigPose(this.rig.leftHand);
+      resetRigPose(this.rig.rightArm);
+      resetRigPose(this.rig.rightHand);
     }
 
     // 視覚ADSはeaseOutQuintで「素早く構えて最後に据わる」BO2の所作にする。
@@ -3481,10 +3627,10 @@ export class ViewModel {
     let rotZ = -0.16 * scopeSlide;
     const slideYaw = 0.1 * scopeSlide;
     if (state.reloadRatio !== null) {
-      const wave = Math.sin(state.reloadRatio * Math.PI);
-      rotX -= wave * 0.55;
-      rotZ = wave * 0.25;
-      this.root.position.y -= wave * 0.09;
+      const wave = reloadPose?.weaponWave ?? 0;
+      rotX -= wave * 0.2;
+      rotZ = wave * 0.1;
+      this.root.position.y -= wave * 0.04;
     }
     this.root.rotation.set(rotX, this.swayX * 2 + slideYaw, rotZ + this.kickSide * 0.7);
 

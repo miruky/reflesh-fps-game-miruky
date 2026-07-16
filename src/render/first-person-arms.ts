@@ -115,7 +115,7 @@ function buildHandGeometries(
     const lengthBias = edge ? 0.88 : 1;
     // 右人差し指だけ僅かに伸ばし、トリガーへ掛かる輪郭を作る。支持手は4指を均等に巻く。
     const triggerFinger = !supportHand && i === 0;
-    const curl = triggerFinger ? 0.72 : supportHand ? 0.98 : 1.08;
+    const curl = triggerFinger ? 0.66 : supportHand ? 1.08 : 1.02;
     const spread = side * (i - 1.5) * 0.035;
 
     const proximal = new THREE.CapsuleGeometry(0.0083, 0.025 * lengthBias, 4, 7);
@@ -132,7 +132,8 @@ function buildHandGeometries(
       new THREE.Vector3(x, triggerFinger ? -0.022 : -0.030, triggerFinger ? -0.059 : -0.055),
       new THREE.Euler(curl + (triggerFinger ? 0.18 : 0.34), 0, spread * 1.15),
     );
-    buckets.skin.push(middle);
+    // フルフィンガー軍用手袋。掌側の別素材で節を読み分け、肌色の棒には見せない。
+    buckets.palm.push(middle);
 
     const tip = new THREE.CapsuleGeometry(0.0069, 0.013 * lengthBias, 4, 7);
     transformGeometry(
@@ -140,7 +141,7 @@ function buildHandGeometries(
       new THREE.Vector3(x, triggerFinger ? -0.031 : -0.044, triggerFinger ? -0.080 : -0.066),
       new THREE.Euler(curl + (triggerFinger ? 0.28 : 0.58), 0, spread * 1.25),
     );
-    buckets.skin.push(tip);
+    buckets.glove.push(tip);
 
     // 独立した4つのナックル。大きな一枚板を廃止し、指の始点を目で追えるようにする。
     const knuckle = new THREE.SphereGeometry(1, 9, 6);
@@ -153,7 +154,7 @@ function buildHandGeometries(
     buckets.armor.push(knuckle);
   }
 
-  // 親指は掌の横から斜めに生える2節構造。先端を肌色に分け、5本指を明確にする。
+  // 親指は掌の横から斜めに生える2節構造。フルフィンガー手袋として材質を統一する。
   const thumb0 = new THREE.CapsuleGeometry(0.0102, 0.027, 4, 8);
   transformGeometry(
     thumb0,
@@ -167,7 +168,12 @@ function buildHandGeometries(
     new THREE.Vector3(0.047 * side, -0.019, -0.023),
     new THREE.Euler(0.92, 0.2 * side, -0.62 * side),
   );
-  buckets.skin.push(thumb1);
+  buckets.palm.push(thumb1);
+
+  // 手袋と袖口の間に見える細いインナー。露出指のような強い暖色面積を作らない。
+  const innerCuff = new THREE.TorusGeometry(0.0285, 0.0018, 5, 18);
+  innerCuff.translate(0, 0, 0.071);
+  buckets.skin.push(innerCuff);
 
   // 分割型ナックルプレート、手首ストラップ、掌の縫製線。小さな陰影が距離感を作る。
   const backPlate = new THREE.SphereGeometry(1, 12, 7);
@@ -226,8 +232,8 @@ function addSkinAttributes(geometry: THREE.BufferGeometry, length: number): void
 
 function buildSleeve(materials: FirstPersonArmMaterials, side: -1 | 1): THREE.Group {
   const group = new THREE.Group();
-  const length = 0.29;
-  const geometry = new THREE.CylinderGeometry(0.036, 0.046, length, 12, 6, false);
+  const length = 0.255;
+  const geometry = new THREE.CylinderGeometry(0.032, 0.043, length, 14, 7, false);
   addSkinAttributes(geometry, length);
 
   const shoulder = new THREE.Bone();
@@ -254,25 +260,45 @@ function buildSleeve(materials: FirstPersonArmMaterials, side: -1 | 1): THREE.Gr
   markFirstPersonMesh(sleeve);
   group.add(sleeve);
 
-  // 袖口・補強パッドは非スキンだが、同じ腕ルートに追従する。1メッシュへ結合。
-  const cuff = new THREE.CylinderGeometry(0.043, 0.041, 0.021, 12);
+  // 袖口と布の皺を同素材でまとめ、滑らかな円柱ではなく布製前腕として読ませる。
+  const cuff = new THREE.CylinderGeometry(0.038, 0.036, 0.022, 14);
   transformGeometry(cuff, new THREE.Vector3(0, 0, -length / 2), new THREE.Euler(Math.PI / 2, 0, 0));
+  const clothParts: THREE.BufferGeometry[] = [cuff];
+  for (const [z, radius, squash] of [
+    [-length * 0.24, 0.034, 0.68],
+    [length * 0.04, 0.038, 0.74],
+    [length * 0.28, 0.041, 0.7],
+  ] as const) {
+    const fold = new THREE.TorusGeometry(radius, 0.0021, 5, 18);
+    transformGeometry(
+      fold,
+      new THREE.Vector3(0, 0, z),
+      new THREE.Euler(Math.PI / 2 + side * 0.035, 0, 0),
+      new THREE.Vector3(1, squash, 1),
+    );
+    clothParts.push(fold);
+  }
+  const clothGeo = mergeGeometries(clothParts, false);
+  for (const part of clothParts) part.dispose();
+  if (clothGeo) {
+    const cloth = new THREE.Mesh(clothGeo, materials.sleeve);
+    cloth.name = side < 0 ? 'vm:leftSleeveFolds' : 'vm:rightSleeveFolds';
+    markFirstPersonMesh(cloth);
+    group.add(cloth);
+  }
+
+  // 肘側の薄い補強パッド。旧形状より小さくし、銃床のような黒い塊を作らない。
   const pad = new THREE.SphereGeometry(1, 10, 6);
   transformGeometry(
     pad,
-    new THREE.Vector3(0, 0.035, length * 0.08),
+    new THREE.Vector3(0, 0.032, length * 0.15),
     new THREE.Euler(0, 0, side * 0.08),
-    new THREE.Vector3(0.041, 0.012, 0.064),
+    new THREE.Vector3(0.034, 0.008, 0.05),
   );
-  const armorGeo = mergeGeometries([cuff, pad], false);
-  cuff.dispose();
-  pad.dispose();
-  if (armorGeo) {
-    const armor = new THREE.Mesh(armorGeo, materials.gloveArmor);
-    armor.name = side < 0 ? 'vm:leftSleeveArmor' : 'vm:rightSleeveArmor';
-    markFirstPersonMesh(armor);
-    group.add(armor);
-  }
+  const armor = new THREE.Mesh(pad, materials.gloveArmor);
+  armor.name = side < 0 ? 'vm:leftSleeveArmor' : 'vm:rightSleeveArmor';
+  markFirstPersonMesh(armor);
+  group.add(armor);
   return group;
 }
 
