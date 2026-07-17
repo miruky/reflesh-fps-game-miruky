@@ -154,6 +154,7 @@ export function parseProfile(raw: string): Profile {
   base.bestZombieRound = num(source.bestZombieRound, 0);
   base.zombieKills = num(source.zombieKills, 0);
   base.zombieBossKills = num(source.zombieBossKills, 0);
+  base.zombiePerkSetCompleted = source.zombiePerkSetCompleted === true;
   // ★V-D HIGH修正(R53): 黒雷帝キル生涯累計(刀身雷脈=100キル判定)。旧セーブは0で開始
   base.kokuraiKillsTotal = num(source.kokuraiKillsTotal, 0);
 

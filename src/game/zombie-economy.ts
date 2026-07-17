@@ -509,6 +509,19 @@ const ALL_PERK_IDS: ZombiePerkId[] = [
   'ext-mag',
 ];
 
+// 「継承の守り札」解放に必要な同一試合内パーク。
+// quick-revive はチャージ制で zombiePerkStacks に入らず、ダウン時に
+// 消費されるため「終了時に全6種を所持」は達成不能。永続所持できる5種だけを対象にする。
+export const PERK_CARRY_REQUIRED_PERK_IDS: readonly ZombiePerkId[] = Object.freeze(
+  ALL_PERK_IDS.filter((id) => id !== 'quick-revive'),
+);
+
+/** 継承の守り札の同一試合内パーク条件を満たすか。余分なパークは許容する。 */
+export function hasPerkCarryUnlockSet(perks: Iterable<ZombiePerkId>): boolean {
+  const held = new Set(perks);
+  return PERK_CARRY_REQUIRED_PERK_IDS.every((id) => held.has(id));
+}
+
 /**
  * seed から決定論的にゾンビステージのショップ配置を生成する。
  *
@@ -634,14 +647,14 @@ export const CHARMS: Record<CharmId, CharmDef> = {
     id: 'startpt',
     name: '始まりの守り札',
     description: '開幕時に+1000ポイントを獲得する',
-    unlockCondition: 'ゾンビモードを1試合クリアする',
+    unlockCondition: 'ラウンド10に到達する',
     effect: { bonusStartPoints: 1000 },
   },
   revive: {
     id: 'revive',
     name: '不屈の守り札',
     description: '初回ダウン時に自動で復活する(1回のみ、所持消費)',
-    unlockCondition: 'ラウンド20に到達する',
+    unlockCondition: 'ゾンビを累計500体撃破する',
     effect: { autoReviveCharges: 1 },
   },
   bossdmg: {
@@ -655,7 +668,7 @@ export const CHARMS: Record<CharmId, CharmDef> = {
     id: 'perkcarry',
     name: '継承の守り札',
     description: '前回の試合で所持していたパークを1種引き継ぐ',
-    unlockCondition: '1試合で全パーク種を所持する',
+    unlockCondition: '1試合でクイックリバイブ以外の全5パーク種を所持する',
     effect: { perkCarryCount: 1 },
   },
 };

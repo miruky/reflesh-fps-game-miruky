@@ -9386,6 +9386,16 @@ export class Match {
     return this.story.missionOutcome === 'won';
   }
 
+  /**
+   * `?realbench` 専用の計測安定化。R100計測中にプレイヤー死亡→リザルトUIへ遷移すると、
+   * ゾンビ群負荷ではなく画面構築時間を測ってしまう。main.ts がクエリを確認した固定更新直前
+   * にだけ呼び、通常プレイからは到達不能にする。各tickでHPを戻すだけなのでAI/物理/描画/
+   * 発砲/被弾演出/敵密度はそのまま維持される。
+   */
+  debugBenchmarkKeepPlayerAlive(): void {
+    if (this.config.mode === 'zombie' && this.player.alive) this.player.hp = this.player.maxHp;
+  }
+
   // ストーリー時のミッション要約(applyCampaignMission へ渡す)。非ストーリーは null。
   missionSummary(): MissionSummary | null {
     if (!this.mission) return null;
@@ -9434,6 +9444,12 @@ export class Match {
         // progression.accumulateMatch がこれらを profile へ積算する(未供給時は0扱いだった)
         zombieRound: this.config.mode === 'zombie' ? this.zombie.zombieRound : undefined,
         zombieBossKills: this.config.mode === 'zombie' ? this.zombie.zombieBossKillCount : undefined,
+        zombiePerksHeld:
+          this.config.mode === 'zombie'
+            ? Array.from(this.zombie.zombiePerkStacks.entries())
+                .filter(([, stacks]) => stacks > 0)
+                .map(([id]) => id)
+            : undefined,
         kokuraiKills: this.tracker.kokuraiKillCount > 0 ? this.tracker.kokuraiKillCount : undefined,
       },
       // R45a: ゾンビモード結果

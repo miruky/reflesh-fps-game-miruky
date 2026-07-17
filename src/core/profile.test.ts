@@ -132,6 +132,7 @@ describe('parseProfile', () => {
     expect(restored.bestZombieRound).toBe(0);
     expect(restored.zombieKills).toBe(0);
     expect(restored.zombieBossKills).toBe(0);
+    expect(restored.zombiePerkSetCompleted).toBe(false);
     // charms/titles/unlockedRewardCamosはoptionalなTS型だが、emptyProfile()由来の
     // 具体的な既定値(空)で埋まる(メニュー側が`?.`無しで安全に読める設計)
     expect(restored.charms).toEqual({ unlocked: [], equipped: null });
@@ -145,6 +146,7 @@ describe('parseProfile', () => {
     profile.bestZombieRound = 42;
     profile.zombieKills = 1234;
     profile.zombieBossKills = 7;
+    profile.zombiePerkSetCompleted = true;
     profile.charms = { unlocked: ['startpt', 'revive'], equipped: 'startpt' };
     profile.titles = ['雷帝の後継'];
     profile.unlockedRewardCamos = ['jingai', 'shinrai'];
@@ -196,6 +198,18 @@ describe('parseProfile', () => {
     expect(restored.bestZombieRound).toBe(0);
     expect(restored.zombieKills).toBe(0);
     expect(restored.zombieBossKills).toBe(0);
+  });
+
+  it('perkcarry同一試合実績はbooleanのtrueだけを採用する', () => {
+    expect(parseProfile(JSON.stringify({ zombiePerkSetCompleted: true })).zombiePerkSetCompleted).toBe(
+      true,
+    );
+    expect(parseProfile(JSON.stringify({ zombiePerkSetCompleted: 'true' })).zombiePerkSetCompleted).toBe(
+      false,
+    );
+    expect(parseProfile(JSON.stringify({ zombiePerkSetCompleted: 1 })).zombiePerkSetCompleted).toBe(
+      false,
+    );
   });
 });
 

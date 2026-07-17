@@ -2,4 +2,4 @@
 // これまで menu.ts に 'BUILD R34' が固定文言でハードコードされ、出荷ラウンドが
 // 進むたびに表記が実態から遅れていた。以後はRラウンド出荷のたびにこの1箇所だけ
 // 更新すればよい。
-export const BUILD_LABEL = 'R62';
+export const BUILD_LABEL = 'R63';

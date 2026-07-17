@@ -26,7 +26,7 @@ while (Date.now() < dl) {
 
 const browser = await chromium.launch({
   channel: 'chromium', headless: true,
-  args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'],
+  args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', '--mute-audio'],
 });
 const page = await browser.newPage({ viewport: { width: VW, height: VH } });
 const errs = [];

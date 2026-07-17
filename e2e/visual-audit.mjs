@@ -101,6 +101,7 @@ try {
     args: [
       '--enable-unsafe-swiftshader',
       '--autoplay-policy=no-user-gesture-required',
+      '--mute-audio',
       '--enable-precise-memory-info',
       ...(softwareRenderer ? ['--use-angle=swiftshader', '--use-gl=angle'] : []),
     ],

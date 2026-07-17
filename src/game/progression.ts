@@ -67,7 +67,11 @@ export interface CampaignState {
 // ── R53-W2: お守り(charm)。CharmId の単一の真実は zombie-economy.ts(B-ECON)。
 // 再exportで既存の `import { CharmId } from './progression'` 消費側との互換を維持する。
 export type { CharmId } from './zombie-economy';
-import type { CharmId } from './zombie-economy';
+import {
+  hasPerkCarryUnlockSet,
+  type CharmId,
+  type ZombiePerkId,
+} from './zombie-economy';
 
 export const CHARM_IDS: readonly CharmId[] = ['startpt', 'revive', 'bossdmg', 'perkcarry'];
 
@@ -108,6 +112,9 @@ export interface Profile {
   bestZombieRound?: number;
   zombieKills?: number;
   zombieBossKills?: number;
+  // 同一試合内で継承の守り札必要パーク5種(quick-revive除外)を所持した実績。
+  // 一度成立したら永続保存し、結果処理後の再起動でも解放状態を復元できる。
+  zombiePerkSetCompleted?: boolean;
   // お守り(charm)の解放/装備状態。メニューの「お守りピッカー」はこのフィールドを読む
   charms?: CharmState;
   // 称号(rankNameForの階位ランクとは独立した、実績由来の呼称)。表示順=解放順
@@ -151,6 +158,8 @@ export interface MatchSummary {
   // (ゾンビモードの撃破対象は実質全てゾンビのため)。
   zombieRound?: number;
   zombieBossKills?: number;
+  // 試合終了時に所持しているパーク種。継承の守り札解放判定用。
+  zombiePerksHeld?: readonly ZombiePerkId[];
   // ★V-D HIGH修正(R53): この試合の黒雷帝キル実数(tracker.kokuraiKillCount)。
   // profile.kokuraiKillsTotal(刀身雷脈=100キル判定)へ積算する。省略可=旧経路互換
   kokuraiKills?: number;
@@ -161,7 +170,7 @@ const CHARM_UNLOCK_CONDITIONS: Record<CharmId, (profile: Profile) => boolean> = 
   startpt: (profile) => (profile.bestZombieRound ?? 0) >= 10,
   revive: (profile) => (profile.zombieKills ?? 0) >= 500,
   bossdmg: (profile) => (profile.zombieBossKills ?? 0) >= 10,
-  perkcarry: (profile) => (profile.bestZombieRound ?? 0) >= 30,
+  perkcarry: (profile) => profile.zombiePerkSetCompleted === true,
 };
 
 // 未解放のcharmのうち条件を満たしたものをprofile.charmsへ積む。新規解放したIDを返す
@@ -213,6 +222,7 @@ export function emptyProfile(): Profile {
     bestZombieRound: 0,
     zombieKills: 0,
     zombieBossKills: 0,
+    zombiePerkSetCompleted: false,
     charms: { unlocked: [], equipped: null },
     titles: [],
     unlockedRewardCamos: [],
@@ -757,6 +767,9 @@ function accumulateMatch(
     profile.zombieKills = (profile.zombieKills ?? 0) + Math.max(0, summary.kills);
     profile.zombieBossKills =
       (profile.zombieBossKills ?? 0) + Math.max(0, summary.zombieBossKills ?? 0);
+    if (hasPerkCarryUnlockSet(summary.zombiePerksHeld ?? [])) {
+      profile.zombiePerkSetCompleted = true;
+    }
     refreshCharmUnlocks(profile);
   }
   // ★V-D HIGH修正(R53): 黒雷帝キル実数の生涯積算(刀身雷脈=100キル判定)。帝王システムは

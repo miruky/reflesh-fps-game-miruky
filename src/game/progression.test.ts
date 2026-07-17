@@ -3,6 +3,7 @@ import { CAMPAIGN, allMissions, type MissionChallengeDef } from './campaign';
 import { SECONDARY_IDS, WEAPON_DEFS } from './weapons';
 import { ATTACHMENT_DEFS } from './attachments';
 import { CAMO_WEAPON_IDS } from './camo';
+import { PERK_CARRY_REQUIRED_PERK_IDS } from './zombie-economy';
 import {
   addTitle,
   applyCampaignMission,
@@ -1232,20 +1233,54 @@ describe('charm(お守り)解放', () => {
     expect(refreshCharmUnlocks(profile)).toContain('bossdmg');
   });
 
-  it('perkcarry: R30到達で解放', () => {
+  it('perkcarry: クイックリバイブ以外の全5種を同一ゾンビ試合で所持すると解放', () => {
     const profile = emptyProfile();
-    profile.bestZombieRound = 0;
-    expect(refreshCharmUnlocks(profile)).not.toContain('perkcarry');
-    profile.bestZombieRound = 30;
-    const newly = refreshCharmUnlocks(profile);
-    expect(newly).toContain('perkcarry');
-    // R30はstartptの条件(R10)も満たすため同時に解放される
-    expect(newly).toContain('startpt');
+    applyMatch(
+      profile,
+      summary({ zombiePerksHeld: PERK_CARRY_REQUIRED_PERK_IDS }),
+      1,
+      'zombie',
+    );
+    expect(profile.zombiePerkSetCompleted).toBe(true);
+    expect(profile.charms?.unlocked).toContain('perkcarry');
+  });
+
+  it('perkcarry: Rが高いだけでは解放せず、必要5種のうち1種不足ならquick-revive所持でも解放しない', () => {
+    const highRound = emptyProfile();
+    highRound.bestZombieRound = 999;
+    expect(refreshCharmUnlocks(highRound)).not.toContain('perkcarry');
+
+    const missingExtMag = emptyProfile();
+    applyMatch(
+      missingExtMag,
+      summary({
+        zombieRound: 999,
+        zombiePerksHeld: [
+          'juggernog',
+          'speed-cola',
+          'double-tap',
+          'stamin-up',
+          'quick-revive',
+        ],
+      }),
+      1,
+      'zombie',
+    );
+    expect(missingExtMag.zombiePerkSetCompleted).toBe(false);
+    expect(missingExtMag.charms?.unlocked).not.toContain('perkcarry');
+  });
+
+  it('perkcarry: 非ゾンビ試合の入力では実績を成立させない', () => {
+    const profile = emptyProfile();
+    applyMatch(profile, summary({ zombiePerksHeld: PERK_CARRY_REQUIRED_PERK_IDS }), 1, 'tdm');
+    expect(profile.zombiePerkSetCompleted).toBe(false);
+    expect(profile.charms?.unlocked).not.toContain('perkcarry');
   });
 
   it('冪等: 一度解放したcharmを再度refreshしても重複追加されない', () => {
     const profile = emptyProfile();
-    profile.bestZombieRound = 30;
+    profile.bestZombieRound = 10;
+    profile.zombiePerkSetCompleted = true;
     const first = refreshCharmUnlocks(profile);
     expect(first.sort()).toEqual(['perkcarry', 'startpt']);
     const second = refreshCharmUnlocks(profile);

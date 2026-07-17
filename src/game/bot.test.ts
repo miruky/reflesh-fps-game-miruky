@@ -8,6 +8,7 @@ import {
   fearAccuracyMul,
   humanoidCombatMoveWeights,
   ZOMBIE_HORDE_THIN_RANK,
+  ZOMBIE_KCC_NEAR_FULL_RANK,
   zombieKccActive,
   zombieKccSkipFactor,
   zombieSeparationGrid,
@@ -207,22 +208,21 @@ describe('Bot resetForZombieReuse(ゾンビプール再利用)', () => {
   });
 });
 
-describe('zombieKccActive(★5 群衆ランクKCC LOD)', () => {
-  it('先頭集団(hordeRank<ZOMBIE_HORDE_THIN_RANK)は25m以内で常時フル解決', () => {
-    for (let frame = 0; frame < 4; frame += 1) {
+describe('zombieKccActive(R100 群衆ランクKCC時間LOD)', () => {
+  it('最近接8体(hordeRank<8)は25m以内で常時フル解決', () => {
+    for (let frame = 0; frame < 8; frame += 1) {
       expect(zombieKccActive(0, frame, 10, 0)).toBe(true);
-      expect(zombieKccActive(7, frame, 10, ZOMBIE_HORDE_THIN_RANK - 1)).toBe(true);
+      expect(zombieKccActive(7, frame, 10, ZOMBIE_KCC_NEAR_FULL_RANK - 1)).toBe(true);
     }
   });
 
-  it('先頭集団外(hordeRank>=ZOMBIE_HORDE_THIN_RANK)は25m以内でもuid%2バケットへ間引かれる', () => {
-    // uid偶数: 偶数フレームのみ担当
-    expect(zombieKccActive(4, 0, 10, ZOMBIE_HORDE_THIN_RANK)).toBe(true);
-    expect(zombieKccActive(4, 1, 10, ZOMBIE_HORDE_THIN_RANK)).toBe(false);
-    expect(zombieKccActive(4, 2, 10, ZOMBIE_HORDE_THIN_RANK)).toBe(true);
-    // uid奇数: 奇数フレームのみ担当
-    expect(zombieKccActive(3, 0, 10, 99)).toBe(false);
-    expect(zombieKccActive(3, 1, 10, 99)).toBe(true);
+  it('近距離の中列(rank8..23)はuid%4、後列(rank24+)はuid%8へ分散', () => {
+    expect(Array.from({ length: 8 }, (_, frame) =>
+      zombieKccActive(5, frame, 10, ZOMBIE_KCC_NEAR_FULL_RANK),
+    )).toEqual([false, true, false, false, false, true, false, false]);
+    expect(Array.from({ length: 16 }, (_, frame) =>
+      zombieKccActive(11, frame, 10, ZOMBIE_HORDE_THIN_RANK),
+    ).filter(Boolean)).toHaveLength(2);
   });
 
   it('hordeRank省略時は既存呼び出し(3引数)と同じ挙動を保つ(後方互換)', () => {
@@ -234,26 +234,32 @@ describe('zombieKccActive(★5 群衆ランクKCC LOD)', () => {
     expect(zombieKccActive(4, 1, 40)).toBe(false);
   });
 
-  it('25m超はhordeRankに関わらず距離バケットのまま(既存挙動を維持)', () => {
+  it('25m超も順位と距離に応じ2/4/8フレームへ分散する', () => {
     expect(zombieKccActive(4, 0, 40, 0)).toBe(true);
     expect(zombieKccActive(4, 1, 40, 0)).toBe(false);
     expect(zombieKccActive(0, 0, 80, 0)).toBe(true);
     expect(zombieKccActive(0, 1, 80, 0)).toBe(false);
+    expect(zombieKccActive(0, 4, 80, 0)).toBe(false);
+    expect(zombieKccActive(0, 8, 80, 0)).toBe(true);
   });
 });
 
 describe('zombieKccSkipFactor(★1/★5 stuckTimer実時間補正用)', () => {
-  it('先頭集団(hordeRank<24)の25m以内は係数1(毎フレーム)', () => {
+  it('最近接8体の25m以内は係数1(毎フレーム)', () => {
     expect(zombieKccSkipFactor(10, 0)).toBe(1);
   });
 
-  it('先頭集団外の25m以内・25-60mは係数2', () => {
-    expect(zombieKccSkipFactor(10, ZOMBIE_HORDE_THIN_RANK)).toBe(2);
+  it('近距離の中列は係数4、後列は係数8', () => {
+    expect(zombieKccSkipFactor(10, ZOMBIE_KCC_NEAR_FULL_RANK)).toBe(4);
+    expect(zombieKccSkipFactor(10, ZOMBIE_HORDE_THIN_RANK)).toBe(8);
+  });
+
+  it('25-60mの最近接8体は係数2', () => {
     expect(zombieKccSkipFactor(40, 0)).toBe(2);
   });
 
-  it('60m超は係数4', () => {
-    expect(zombieKccSkipFactor(80, 0)).toBe(4);
+  it('60m超は係数8', () => {
+    expect(zombieKccSkipFactor(80, 0)).toBe(8);
   });
 });
 
@@ -355,7 +361,8 @@ describe('Bot ゾンビ 群衆分離KCC(R54-W1 B1)', () => {
 
     try {
       const ctx = makeCtx(new THREE.Vector3(50, 1.5, 0), tuning); // +x方向へ直進(z成分ゼロ)
-      for (let i = 0; i < 5; i += 1) {
+      // R100時間LODの後列はuid%8。16tickあればuidに依存せず最低2回はKCCが動く。
+      for (let i = 0; i < 16; i += 1) {
         mover.update(1 / 60, ctx);
         world.step();
       }

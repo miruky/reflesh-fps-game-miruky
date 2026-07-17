@@ -221,12 +221,12 @@ try {
     browser = await chromium.launch({
       channel: 'chromium', // new headless(WebGL/pointer lock対応)
       headless: true,
-      args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'],
+      args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', '--mute-audio'],
     });
   } catch {
     browser = await chromium.launch({
       headless: true,
-      args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'],
+      args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', '--mute-audio'],
     });
   }
   const ctx = await browser.newContext({ viewport: { width: VW, height: VH } });

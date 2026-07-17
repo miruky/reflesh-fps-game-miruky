@@ -575,6 +575,8 @@ function showResult(): void {
 // クエリが無ければ PERFHUD_ON=false のままで、リングバッファ書き込み含め
 // 以下のperfhud関連コードは一切実行されない(DOM生成もされない)。
 const PERFHUD_ON = new URLSearchParams(window.location.search).get('perfhud') === '1';
+// 専用実測ハーネスだけが付けるクエリ。通常URLではfalseで、ゲームバランスへ影響しない。
+const REALBENCH_ON = new URLSearchParams(window.location.search).has('realbench');
 const PERFHUD_BUF_SIZE = 256;
 const perfhudBuf = PERFHUD_ON ? new Float32Array(PERFHUD_BUF_SIZE) : null;
 let perfhudIdx = 0;
@@ -613,7 +615,12 @@ function perfhudSample(realDtS: number): void {
 
 const loop = new GameLoop(
   (dt) => {
-    if (mode === 'playing' && match) match.update(dt);
+    if (mode === 'playing' && match) {
+      // R100ベンチが死亡→リザルト遷移を測定しないよう、固定更新ごとに生存を保証する。
+      // Match側でもゾンビ限定。クエリなしの製品プレイは分岐1回だけで完全に従来挙動。
+      if (REALBENCH_ON) match.debugBenchmarkKeepPlayerAlive();
+      match.update(dt);
+    }
   },
   (dt) => {
     if (PERFHUD_ON) {

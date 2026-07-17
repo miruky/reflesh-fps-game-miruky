@@ -33,6 +33,8 @@ import {
   CARPENTER_BONUS_PT,
   DOOR_COST,
   CHARMS,
+  PERK_CARRY_REQUIRED_PERK_IDS,
+  hasPerkCarryUnlockSet,
   getCharmEffect,
   rollZombieVariant,
   BLAST_RADIUS_M,
@@ -797,6 +799,42 @@ describe('CHARMS', () => {
 
   it('perkcarry: 前試合のパーク1種引継ぎ', () => {
     expect(CHARMS.perkcarry.effect.perkCarryCount).toBe(1);
+  });
+
+  it('解放条件の表示は実判定と一致し、継承はquick-reviveを明示的に除外する', () => {
+    expect(CHARMS.startpt.unlockCondition).toBe('ラウンド10に到達する');
+    expect(CHARMS.revive.unlockCondition).toBe('ゾンビを累計500体撃破する');
+    expect(CHARMS.bossdmg.unlockCondition).toBe('ボスを10体撃破する');
+    expect(CHARMS.perkcarry.unlockCondition).toBe(
+      '1試合でクイックリバイブ以外の全5パーク種を所持する',
+    );
+  });
+
+  it('perkcarry必要セットは永続所持できる5種だけで、quick-reviveを含まない', () => {
+    expect(PERK_CARRY_REQUIRED_PERK_IDS).toEqual([
+      'juggernog',
+      'speed-cola',
+      'double-tap',
+      'stamin-up',
+      'ext-mag',
+    ]);
+    expect(PERK_CARRY_REQUIRED_PERK_IDS).not.toContain('quick-revive');
+  });
+
+  it('perkcarryは必要5種が揃った場合だけ成立し、quick-reviveは成否に影響しない', () => {
+    expect(hasPerkCarryUnlockSet(PERK_CARRY_REQUIRED_PERK_IDS)).toBe(true);
+    expect(
+      hasPerkCarryUnlockSet([...PERK_CARRY_REQUIRED_PERK_IDS, 'quick-revive']),
+    ).toBe(true);
+    for (const missing of PERK_CARRY_REQUIRED_PERK_IDS) {
+      expect(
+        hasPerkCarryUnlockSet(
+          PERK_CARRY_REQUIRED_PERK_IDS.filter((id) => id !== missing),
+        ),
+        `missing ${missing}`,
+      ).toBe(false);
+    }
+    expect(hasPerkCarryUnlockSet(['quick-revive'])).toBe(false);
   });
 
   it('全charmがname/description/unlockConditionを持つ', () => {
