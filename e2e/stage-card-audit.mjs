@@ -2,6 +2,7 @@
 import { chromium } from 'playwright';
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { installSilentAudio, SILENT_BROWSER_ARGS } from './silence-audio.mjs';
 
 const args = process.argv.slice(2);
 const val = (key, fallback) =>
@@ -19,10 +20,11 @@ const errors = [];
 const browser = await chromium.launch({
   channel: 'chromium',
   headless: true,
-  args: ['--mute-audio', '--enable-unsafe-swiftshader'],
+  args: [...SILENT_BROWSER_ARGS, '--enable-unsafe-swiftshader'],
 });
 try {
   const context = await browser.newContext({ viewport: { width: 1600, height: 900 } });
+  await context.addInitScript(installSilentAudio);
   const page = await context.newPage();
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(`console: ${message.text()}`);

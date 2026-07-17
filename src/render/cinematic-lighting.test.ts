@@ -15,4 +15,12 @@ describe('cinematic lighting profile', () => {
       expect(profile.environmentCap).toBeLessThanOrEqual(0.6);
     }
   });
+
+  it('ゾンビ可読プロファイルはライト数を増やさず暗部と霧だけを改善する', () => {
+    const profile = cinematicLightingProfile('night', true);
+    expect(profile.hemiScale).toBeGreaterThan(0.6);
+    expect(profile.fillScale).toBeGreaterThan(0.15);
+    expect(profile.environmentCap).toBeGreaterThanOrEqual(0.68);
+    expect(cinematicVisualFogDensity(0.0072, 'night', true)).toBeLessThan(0.0043);
+  });
 });

@@ -55,8 +55,14 @@ export interface StagePalette {
 }
 
 // ── 建造物アーキタイプ(R21 エリア超拡大) ──
-/** stage.ts 内の buildXxx 関数が対応する 5 種のメガ建造物 */
-export type BuildingKind = 'arena' | 'hangar' | 'tower' | 'warehouse' | 'cathedral';
+/**
+ * 衝突・内部動線・登坂経路まで持つプレイアブル建造物。
+ * 後半9種はR65で追加したテーマ固有地区で、遠景のハリボテではない。
+ */
+export type BuildingKind =
+  | 'arena' | 'hangar' | 'tower' | 'warehouse' | 'cathedral'
+  | 'bunker' | 'terminal' | 'refinery' | 'villa' | 'pagoda'
+  | 'fortress' | 'station' | 'checkpoint' | 'metro';
 
 // ── 環境オブジェクト36種 ──────────────────────────────────────────────────
 export type PropKind =
@@ -148,6 +154,8 @@ export interface BoxSpec {
   legacyHorizon?: boolean;
   /** h > 3 の大型プロップに自動付与。シャドウキャスター対象フラグ */
   shadowCaster?: boolean;
+  /** 実際に内部を戦えるテーマ建築の所属。描画最適化と全ステージ監査に使う。 */
+  district?: BuildingKind;
 }
 
 export type SpawnPoint = [number, number, number];
@@ -214,7 +222,9 @@ function aabbOf(x: number, z: number, w: number, d: number): Aabb {
 
 const SPAWN_CLEARANCE = 6;
 /** 建造物センターからスポーンまでの最低距離 */
-const BUILD_SPAWN_CLEAR = 14;
+// 建物外壁からスポーンまでの実距離。10mあれば開始直後の衝突を防ぎつつ、
+// 300m級マップへ3つ以上の地区を分散配置できる。
+const BUILD_SPAWN_CLEAR = 10;
 const GRID = 2;
 /** 不可視境界壁の高さ(m)。ジャンプ/ウォールランでも越えられない */
 const GHOST_WALL_H = 24;
@@ -272,6 +282,16 @@ function getBuildingFootprint(kind: BuildingKind, rot: number): [number, number]
     tower: [22, 22],
     warehouse: [56, 14],
     cathedral: [36, 22],
+    // 南側の屋上階段（外縁 z=±15.1m）まで含む。
+    bunker: [40, 32],
+    terminal: [60, 26],
+    refinery: [48, 36],
+    villa: [46, 34],
+    pagoda: [38, 38],
+    fortress: [56, 38],
+    station: [60, 30],
+    checkpoint: [50, 28],
+    metro: [54, 32],
   };
   const [lw, ld] = dims[kind];
   return rot & 1 ? [ld, lw] : [lw, ld];
@@ -401,10 +421,10 @@ function buildTower(cx: number, cz: number, rot: number, p: StagePalette): BoxSp
     pb(cx, cz, rot, 0, +7.5, 6.5, 12, 1, 1, c),
     // ── 登坂階段 A: 東外周, G→1F (y=0→6.5m, 21段×0.3m蹴上) ──
     // 上面y=6.3m で 1F 上面 y=6.5m まで autostep 0.2m の1ステップ
-    ...buildStair(cx, cz, rot, +9, +6.6, 0, -0.8, 0, 2, 0.8, 21, c),
+    ...buildStair(cx, cz, rot, +8.8, +6.6, 0, -0.72, 0, 2, 0.8, 21, c),
     // ── 登坂階段 B: 西外周, 1F→2F (y=6.2→12.5m, 21段×0.3m蹴上) ──
     // yBotStart=6.2 → step0 上面=6.5m(1F床面合わせ), step20 上面=12.5m(2F床面ちょうど)
-    ...buildStair(cx, cz, rot, -9, +6.6, 0, -0.8, 6.2, 2, 0.8, 21, c),
+    ...buildStair(cx, cz, rot, -8.8, +6.6, 0, -0.72, 6.2, 2, 0.8, 21, c),
   ];
 }
 
@@ -474,6 +494,217 @@ function buildCathedral(cx: number, cz: number, rot: number, p: StagePalette): B
   ];
 }
 
+/** 低層軍用バンカー。内部2ルートと実際に登れる屋上射点を持つ。 */
+function buildBunker(cx: number, cz: number, rot: number, p: StagePalette): BoxSpec[] {
+  const c = p.obstacle;
+  const ac = p.accent;
+  return [
+    pb(cx, cz, rot, 0, 0, -0.2, 38, 0.4, 26, c),
+    pb(cx, cz, rot, 0, -12.5, 0, 38, 5.8, 1, c),
+    pb(cx, cz, rot, 0, 12.5, 0, 38, 5.8, 1, c),
+    pb(cx, cz, rot, 18.5, -8.5, 0, 1, 5.8, 8, c),
+    pb(cx, cz, rot, 18.5, 8.5, 0, 1, 5.8, 8, c),
+    pb(cx, cz, rot, 18.5, 0, 4.2, 1, 1.6, 9, ac, p.emissiveAccent),
+    pb(cx, cz, rot, -18.5, -8.5, 0, 1, 5.8, 8, c),
+    pb(cx, cz, rot, -18.5, 8.5, 0, 1, 5.8, 8, c),
+    pb(cx, cz, rot, -18.5, 0, 4.2, 1, 1.6, 9, ac, p.emissiveAccent),
+    pb(cx, cz, rot, 0, 0, 5.8, 38, 0.6, 26, c),
+    // 中央壁は左右に4mの抜けを残し、近距離の回り込みを成立させる。
+    pb(cx, cz, rot, -8, 0, 0, 12, 3.2, 0.8, c),
+    pb(cx, cz, rot, 8, 0, 0, 12, 3.2, 0.8, c),
+    pb(cx, cz, rot, 0, -6, 0, 4.2, 1.2, 2.2, ac),
+    pb(cx, cz, rot, 0, 6, 0, 4.2, 1.2, 2.2, ac),
+    // 外階段から屋上へ連続アクセス。
+    ...buildStair(cx, cz, rot, -15, 14, 0.85, 0, 0, 0.85, 2.2, 21, c),
+    pb(cx, cz, rot, 0, -11.6, 6.1, 18, 1.0, 0.6, ac),
+    pb(cx, cz, rot, 0, 11.6, 6.1, 18, 1.0, 0.6, ac),
+  ].map((box) => ({ ...box, structural: true }));
+}
+
+/** 空港・港・都市で使う横長ターミナル。大ホール、庇、外周デッキの3射線。 */
+function buildTerminal(cx: number, cz: number, rot: number, p: StagePalette): BoxSpec[] {
+  const c = p.obstacle;
+  const ac = p.accent;
+  const boxes: BoxSpec[] = [
+    pb(cx, cz, rot, 0, 0, -0.2, 58, 0.4, 24, c),
+    pb(cx, cz, rot, 0, -11.5, 0, 58, 8, 1, c),
+    pb(cx, cz, rot, 0, 11.5, 0, 58, 2.1, 1, c),
+    pb(cx, cz, rot, 0, 0, 8, 58, 0.5, 24, c),
+    // 両端は中央入口を残したサービス棟。
+    pb(cx, cz, rot, -28.5, -8, 0, 1, 8, 7, c),
+    pb(cx, cz, rot, -28.5, 8, 0, 1, 8, 7, c),
+    pb(cx, cz, rot, 28.5, -8, 0, 1, 8, 7, c),
+    pb(cx, cz, rot, 28.5, 8, 0, 1, 8, 7, c),
+    pb(cx, cz, rot, -28.5, 0, 5.5, 1, 2.5, 9, ac, p.emissiveAccent),
+    pb(cx, cz, rot, 28.5, 0, 5.5, 1, 2.5, 9, ac, p.emissiveAccent),
+    // ホール内のカウンター列は腰高で、射線とスライドルートを両立。
+    pb(cx, cz, rot, -15, -4, 0, 9, 1.1, 1.4, ac),
+    pb(cx, cz, rot, 0, 3.5, 0, 10, 1.1, 1.4, ac),
+    pb(cx, cz, rot, 15, -4, 0, 9, 1.1, 1.4, ac),
+    // 南側の屋外プラットフォームと庇。
+    pb(cx, cz, rot, 0, 15, 0, 54, 0.35, 6, c),
+    pb(cx, cz, rot, 0, 14.5, 5.5, 50, 0.35, 5, ac),
+  ];
+  for (const x of [-22, -11, 0, 11, 22]) boxes.push(pb(cx, cz, rot, x, 13.2, 0, 0.7, 5.5, 0.7, c));
+  return boxes.map((box) => ({ ...box, structural: true }));
+}
+
+/** 製油・採掘地区。地上3レーンと登れる配管キャットウォーク。 */
+function buildRefinery(cx: number, cz: number, rot: number, p: StagePalette): BoxSpec[] {
+  const c = p.obstacle;
+  const ac = p.accent;
+  const boxes: BoxSpec[] = [
+    pb(cx, cz, rot, -13, -8, 0, 10, 4.8, 10, c),
+    pb(cx, cz, rot, 13, 8, 0, 10, 6.5, 10, c),
+    pb(cx, cz, rot, 0, 0, 6, 42, 0.55, 5, ac, p.emissiveAccent),
+    pb(cx, cz, rot, -20, 0, 0, 1.2, 6, 5, c),
+    pb(cx, cz, rot, 20, 0, 0, 1.2, 6, 5, c),
+    pb(cx, cz, rot, 0, -15, 0, 42, 1.2, 1.2, ac),
+    pb(cx, cz, rot, 0, 15, 0, 42, 1.2, 1.2, ac),
+    pb(cx, cz, rot, 0, -7.5, 2.8, 38, 0.55, 0.8, ac, p.emissiveAccent),
+    pb(cx, cz, rot, 0, 7.5, 3.8, 38, 0.55, 0.8, ac, p.emissiveAccent),
+    pb(cx, cz, rot, -8, 0, 0, 2, 1.2, 7, c),
+    pb(cx, cz, rot, 8, 0, 0, 2, 1.2, 7, c),
+    ...buildStair(cx, cz, rot, -18, 3.4, 0.85, 0, 0, 0.85, 2, 21, c),
+  ];
+  for (const x of [-16, -8, 0, 8, 16]) boxes.push(pb(cx, cz, rot, x, 0, 0, 0.7, 6, 0.7, c));
+  return boxes.map((box) => ({ ...box, structural: true }));
+}
+
+/** 近未来邸宅。L字棟、開放中庭、二階バルコニーを実プレイ可能にする。 */
+function buildVilla(cx: number, cz: number, rot: number, p: StagePalette): BoxSpec[] {
+  const c = p.obstacle;
+  const ac = p.accent;
+  return [
+    pb(cx, cz, rot, -8, -7, -0.2, 28, 0.4, 18, c),
+    pb(cx, cz, rot, 13, 7, -0.2, 14, 0.4, 16, c),
+    pb(cx, cz, rot, -8, -15.5, 0, 28, 8, 1, c),
+    pb(cx, cz, rot, -21.5, -7, 0, 1, 8, 18, c),
+    pb(cx, cz, rot, 5.5, -11, 0, 1, 8, 9, c),
+    pb(cx, cz, rot, 5.5, 2, 0, 1, 3.2, 7, c),
+    pb(cx, cz, rot, 13, 14.5, 0, 14, 6, 1, c),
+    pb(cx, cz, rot, 19.5, 7, 0, 1, 6, 16, c),
+    pb(cx, cz, rot, -8, -7, 8, 28, 0.5, 18, c),
+    pb(cx, cz, rot, 13, 7, 6, 14, 0.5, 16, c),
+    pb(cx, cz, rot, -2, 7, 4.2, 20, 0.5, 5, ac, p.emissiveAccent),
+    pb(cx, cz, rot, -1, 10, 0, 8, 1.1, 1.2, ac),
+    pb(cx, cz, rot, 8, 4, 0, 1.2, 1.2, 7, ac),
+    ...buildStair(cx, cz, rot, -12, 4.2, 0.8, 0, 0, 0.8, 2.2, 15, c),
+  ].map((box) => ({ ...box, structural: true }));
+}
+
+/** 寺社・温泉用の開放楼閣。回廊と二層の射点を持つ。 */
+function buildPagoda(cx: number, cz: number, rot: number, p: StagePalette): BoxSpec[] {
+  const c = p.obstacle;
+  const ac = p.accent;
+  const boxes: BoxSpec[] = [
+    pb(cx, cz, rot, 0, 0, -0.15, 34, 0.3, 34, c),
+    pb(cx, cz, rot, 0, 0, 4.5, 30, 0.45, 30, ac),
+    pb(cx, cz, rot, 0, 0, 9, 22, 0.5, 22, c),
+    pb(cx, cz, rot, 0, 0, 12.2, 27, 0.35, 27, ac, p.emissiveAccent),
+    pb(cx, cz, rot, 0, -8.5, 0, 16, 3.2, 1, c),
+    pb(cx, cz, rot, 0, 8.5, 0, 16, 3.2, 1, c),
+    pb(cx, cz, rot, -8.5, 0, 0, 1, 3.2, 16, c),
+    pb(cx, cz, rot, 8.5, 0, 0, 1, 3.2, 16, c),
+    ...buildStair(cx, cz, rot, -14, 14.5, 0.85, 0, 0, 0.85, 2.1, 16, c),
+    ...buildStair(cx, cz, rot, 14, -7.8, -0.85, 0, 4.4, 0.85, 2.1, 17, c),
+  ];
+  for (const x of [-13, -5, 5, 13]) {
+    for (const z of [-13, 13]) boxes.push(pb(cx, cz, rot, x, z, 0, 0.8, 12, 0.8, c));
+  }
+  return boxes.map((box) => ({ ...box, structural: true }));
+}
+
+/** 丘陵・峡谷・火口用の要塞。二つの門、城壁上、中央広場が循環する。 */
+function buildFortress(cx: number, cz: number, rot: number, p: StagePalette): BoxSpec[] {
+  const c = p.obstacle;
+  const ac = p.accent;
+  const boxes: BoxSpec[] = [
+    pb(cx, cz, rot, 0, -18, 0, 20, 6, 1.4, c),
+    pb(cx, cz, rot, -21, -18, 0, 12, 6, 1.4, c),
+    pb(cx, cz, rot, 21, -18, 0, 12, 6, 1.4, c),
+    pb(cx, cz, rot, 0, 18, 0, 20, 6, 1.4, c),
+    pb(cx, cz, rot, -21, 18, 0, 12, 6, 1.4, c),
+    pb(cx, cz, rot, 21, 18, 0, 12, 6, 1.4, c),
+    pb(cx, cz, rot, -27, 0, 0, 1.4, 6, 36, c),
+    pb(cx, cz, rot, 27, 0, 0, 1.4, 6, 36, c),
+    pb(cx, cz, rot, 0, -17, 5.7, 54, 0.55, 3.5, ac),
+    pb(cx, cz, rot, 0, 17, 5.7, 54, 0.55, 3.5, ac),
+    pb(cx, cz, rot, -25.5, 0, 5.7, 3.5, 0.55, 30, ac),
+    pb(cx, cz, rot, 25.5, 0, 5.7, 3.5, 0.55, 30, ac),
+    pb(cx, cz, rot, 0, 0, 0, 12, 1.2, 6, ac, p.emissiveAccent),
+    ...buildStair(cx, cz, rot, -22, 14.1, 0.85, 0, 0, 0.85, 2.4, 21, c),
+    ...buildStair(cx, cz, rot, 22, -14.1, -0.85, 0, 0, 0.85, 2.4, 21, c),
+  ];
+  for (const x of [-24, 24]) for (const z of [-15, 15]) boxes.push(pb(cx, cz, rot, x, z, 0, 5, 10, 5, c));
+  return boxes.map((box) => ({ ...box, structural: true }));
+}
+
+/** 駅・廃駅。二面ホーム、線路帯、実際に渡れる跨線橋。 */
+function buildStation(cx: number, cz: number, rot: number, p: StagePalette): BoxSpec[] {
+  const c = p.obstacle;
+  const ac = p.accent;
+  const boxes: BoxSpec[] = [
+    pb(cx, cz, rot, 0, -10, 0, 58, 0.35, 6, c),
+    pb(cx, cz, rot, 0, 10, 0, 58, 0.35, 6, c),
+    pb(cx, cz, rot, 0, -10, 5.2, 52, 0.35, 5, ac),
+    pb(cx, cz, rot, 0, 10, 5.2, 52, 0.35, 5, ac),
+    pb(cx, cz, rot, 0, 0, 6.4, 5, 0.55, 25, c),
+    pb(cx, cz, rot, -25, -10, 0, 7, 3.5, 5, c),
+    pb(cx, cz, rot, 25, 10, 0, 7, 3.5, 5, c),
+    ...buildStair(cx, cz, rot, -3, -9.2, 0, 0.8, 0, 2.2, 0.8, 23, c),
+    ...buildStair(cx, cz, rot, 3, 9.2, 0, -0.8, 0, 2.2, 0.8, 23, c),
+  ];
+  for (const x of [-22, -11, 0, 11, 22]) {
+    boxes.push(pb(cx, cz, rot, x, -10, 0, 0.7, 5.2, 0.7, c));
+    boxes.push(pb(cx, cz, rot, x, 10, 0, 0.7, 5.2, 0.7, c));
+  }
+  return boxes.map((box) => ({ ...box, structural: true }));
+}
+
+/** 車線が読みやすい封鎖検問。ゲート下3レーンと左右監視所。 */
+function buildCheckpoint(cx: number, cz: number, rot: number, p: StagePalette): BoxSpec[] {
+  const c = p.obstacle;
+  const ac = p.accent;
+  const boxes: BoxSpec[] = [
+    pb(cx, cz, rot, 0, 0, 6.2, 48, 0.7, 3, ac, p.emissiveAccent),
+    pb(cx, cz, rot, -23, 0, 0, 2, 11, 4, c),
+    pb(cx, cz, rot, 23, 0, 0, 2, 11, 4, c),
+    pb(cx, cz, rot, -13, -5, 0, 5, 3.2, 7, c),
+    pb(cx, cz, rot, 13, 5, 0, 5, 3.2, 7, c),
+    pb(cx, cz, rot, 0, -9, 0, 15, 1.1, 1.2, ac),
+    pb(cx, cz, rot, 0, 9, 0, 15, 1.1, 1.2, ac),
+    pb(cx, cz, rot, -17, 9, 4.5, 10, 0.5, 7, c),
+    pb(cx, cz, rot, 17, -9, 4.5, 10, 0.5, 7, c),
+    ...buildStair(cx, cz, rot, -8, 11.5, -0.8, 0, 0, 0.8, 2, 17, c),
+  ];
+  for (const x of [-7, 7]) boxes.push(pb(cx, cz, rot, x, 0, 0, 0.8, 6.2, 0.8, c));
+  return boxes.map((box) => ({ ...box, structural: true }));
+}
+
+/** 地下街・地下鉄風の長大ヴォールト。開放ホームと中央メザニンを持つ。 */
+function buildMetro(cx: number, cz: number, rot: number, p: StagePalette): BoxSpec[] {
+  const c = p.obstacle;
+  const ac = p.accent;
+  const boxes: BoxSpec[] = [
+    pb(cx, cz, rot, 0, 0, -0.2, 52, 0.4, 30, c),
+    pb(cx, cz, rot, 0, -14.5, 0, 52, 8.5, 1, c),
+    pb(cx, cz, rot, 0, 14.5, 0, 52, 8.5, 1, c),
+    pb(cx, cz, rot, -25.5, -10, 0, 1, 8.5, 9, c),
+    pb(cx, cz, rot, -25.5, 10, 0, 1, 8.5, 9, c),
+    pb(cx, cz, rot, 25.5, -10, 0, 1, 8.5, 9, c),
+    pb(cx, cz, rot, 25.5, 10, 0, 1, 8.5, 9, c),
+    pb(cx, cz, rot, 0, -9, 0, 48, 0.45, 5, ac),
+    pb(cx, cz, rot, 0, 9, 0, 48, 0.45, 5, ac),
+    pb(cx, cz, rot, 0, 0, 5.4, 18, 0.5, 8, c),
+    pb(cx, cz, rot, 0, 0, 8.5, 52, 0.5, 30, c),
+    ...buildStair(cx, cz, rot, -8, -4.5, 0.8, 0, 0, 0.8, 2, 20, c),
+    ...buildStair(cx, cz, rot, 8, 4.5, -0.8, 0, 0, 0.8, 2, 20, c),
+  ];
+  for (const x of [-18, -9, 0, 9, 18]) boxes.push(pb(cx, cz, rot, x, 0, 0, 0.8, 5.4, 0.8, c));
+  return boxes.map((box) => ({ ...box, structural: true }));
+}
+
 /** 建造物の BoxSpec 配列を生成するディスパッチャー */
 function generateBuilding(
   kind: BuildingKind,
@@ -493,6 +724,24 @@ function generateBuilding(
       return buildWarehouse(cx, cz, rot, p);
     case 'cathedral':
       return buildCathedral(cx, cz, rot, p);
+    case 'bunker':
+      return buildBunker(cx, cz, rot, p);
+    case 'terminal':
+      return buildTerminal(cx, cz, rot, p);
+    case 'refinery':
+      return buildRefinery(cx, cz, rot, p);
+    case 'villa':
+      return buildVilla(cx, cz, rot, p);
+    case 'pagoda':
+      return buildPagoda(cx, cz, rot, p);
+    case 'fortress':
+      return buildFortress(cx, cz, rot, p);
+    case 'station':
+      return buildStation(cx, cz, rot, p);
+    case 'checkpoint':
+      return buildCheckpoint(cx, cz, rot, p);
+    case 'metro':
+      return buildMetro(cx, cz, rot, p);
   }
 }
 
@@ -1261,39 +1510,50 @@ export function generateStage(def: StageDef): StageLayout {
   let numPlaced = 0; // 障害物の配置数カウント(建造物は含まない)
 
   if (def.recipe) {
-    for (const bk of def.recipe.buildings) {
-      const [bfpW, bfpD] = getBuildingFootprint(bk, 0); // worst case for clearance
-      const maxFootprintHalf = Math.max(bfpW, bfpD) / 2 + 4;
-
+    for (const [buildingIndex, bk] of def.recipe.buildings.entries()) {
       let placed_ok = false;
-      for (let attempt = 0; attempt < 30; attempt++) {
-        const bx = Math.round(((rand() * 2 - 1) * half * 0.48) / GRID) * GRID;
-        const bz = Math.round(((rand() * 2 - 1) * half * 0.48) / GRID) * GRID;
-        const rot = Math.floor(rand() * 4);
+      for (let attempt = 0; attempt < 80; attempt++) {
+        // 巨大な固定マップでは中心48%だけに建物を詰めると同じ箱庭に見える。
+        // 62%まで地区を広げ、外周スポーンとの距離は下のAABB実距離で厳密に守る。
+        // 各面の先頭地区は中心の実体ランドマークとする。常に開始視線の先にテーマ建築があり、
+        // 遠景画像だけで場所を表すことを避ける。衝突・階段・屋上・AI導線は通常建築と同じ。
+        const centralLandmark = buildingIndex === 0 && attempt === 0;
+        // 中央固定時もRNGを3回消費し、後続地区/遮蔽の決定論ストリームをずらさない。
+        const randomBx = Math.round(((rand() * 2 - 1) * half * 0.62) / GRID) * GRID;
+        const randomBz = Math.round(((rand() * 2 - 1) * half * 0.62) / GRID) * GRID;
+        const randomRot = Math.floor(rand() * 4);
+        const bx = centralLandmark ? 0 : randomBx;
+        const bz = centralLandmark ? 0 : randomBz;
+        const rot = centralLandmark ? (def.seed & 3) : randomRot;
         const [fpW, fpD] = getBuildingFootprint(bk, rot);
 
         // 境界内チェック (フットプリント全体が half-3 以内)
         if (Math.abs(bx) + fpW / 2 > half - 3 || Math.abs(bz) + fpD / 2 > half - 3) continue;
 
-        const bAabb = aabbOf(bx, bz, fpW + 6, fpD + 6);
+        const bAabb = aabbOf(bx, bz, fpW + 3, fpD + 3);
 
         // スポーン近接チェック
-        const nearSpawn = spawnGuards.some(
-          ([sx, , sz]) => Math.hypot(bx - sx, bz - sz) < BUILD_SPAWN_CLEAR + maxFootprintHalf,
-        );
+        const nearSpawn = spawnGuards.some(([sx, , sz]) => {
+          const dx = Math.max(0, Math.abs(bx - sx) - fpW / 2);
+          const dz = Math.max(0, Math.abs(bz - sz) - fpD / 2);
+          return Math.hypot(dx, dz) < BUILD_SPAWN_CLEAR;
+        });
         if (nearSpawn) continue;
 
         // 他建造物との重複チェック
         if (placed.some((p) => overlaps(p, bAabb, 0))) continue;
 
         // 配置成功
-        const buildBoxes = generateBuilding(bk, bx, bz, rot, def.palette);
+        const buildBoxes = generateBuilding(bk, bx, bz, rot, def.palette).map((box) => ({
+          ...box,
+          district: bk,
+        }));
         boxes.push(...buildBoxes);
         placed.push(aabbOf(bx, bz, fpW, fpD));
         placed_ok = true;
         break;
       }
-      // 配置失敗時はスキップ(30回試行で見つからなければ建造物なし)
+      // 配置失敗時はスキップ(80回試行で安全な地区アンカーが見つからない場合のみ)
       void placed_ok;
     }
   }
@@ -1315,8 +1575,13 @@ export function generateStage(def: StageDef): StageLayout {
     const z = Math.round(((rand() * 2 - 1) * (half - 5)) / GRID) * GRID;
     const w = Math.round(2 + rand() * 6);
     const d = Math.round(2 + rand() * 6);
-    const low = rand() < 0.3;
-    const h = low ? 1 + rand() * 0.3 : 1.8 + rand() * (def.maxHeight - 1.8);
+    // ランダム遮蔽は背の低い実用カバー中心にする。高さの主役は建築地区が担う。
+    const heightRoll = rand();
+    const h = heightRoll < 0.58
+      ? 1 + rand() * 0.35
+      : heightRoll < 0.92
+        ? 1.8 + rand() * Math.max(0.2, Math.min(3.2, def.maxHeight) - 1.8)
+        : 3.5 + rand() * Math.max(0.2, Math.min(6.5, def.maxHeight) - 3.5);
 
     const nearSpawn = spawnGuards.some(
       ([sx, , sz]) => Math.hypot(x - sx, z - sz) < SPAWN_CLEARANCE,

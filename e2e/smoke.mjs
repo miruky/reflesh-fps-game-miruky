@@ -15,6 +15,7 @@
   スクショ: <shotdir>/<profile>-<viewport>-<screen>.png
 */
 import { chromium } from 'playwright';
+import { installSilentAudio, SILENT_BROWSER_ARGS } from './silence-audio.mjs';
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -221,16 +222,17 @@ try {
     browser = await chromium.launch({
       channel: 'chromium', // new headless(WebGL/pointer lock対応)
       headless: true,
-      args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', '--mute-audio'],
+      args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', ...SILENT_BROWSER_ARGS],
     });
   } catch {
     browser = await chromium.launch({
       headless: true,
-      args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', '--mute-audio'],
+      args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', ...SILENT_BROWSER_ARGS],
     });
   }
   const ctx = await browser.newContext({ viewport: { width: VW, height: VH } });
   ctx.setDefaultTimeout(10_000);
+  await ctx.addInitScript(installSilentAudio);
   await ctx.addInitScript((weaponIds) => {
     if (!/^https?:$/.test(location.protocol)) return;
     // Headless Chromium はユーザー操作から呼んでも Pointer Lock を拒否する環境がある。

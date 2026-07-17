@@ -70,6 +70,21 @@ describe('generateStage', () => {
     }
   });
 
+  it('ゾンビ全10面は暗部を潰さない共通の可読性基準を満たす', () => {
+    const zombieStages = STAGES.filter((stage) => /^z\d\d$/.test(stage.id));
+    expect(zombieStages).toHaveLength(10);
+    for (const def of zombieStages) {
+      const p = def.palette;
+      expect(p.lightIntensity, `${def.id}: key light`).toBeGreaterThanOrEqual(1.02);
+      expect(p.ambientIntensity, `${def.id}: ambient`).toBeGreaterThanOrEqual(0.78);
+      expect(p.environmentIntensity, `${def.id}: environment`).toBeGreaterThanOrEqual(0.68);
+      expect(p.exposure, `${def.id}: exposure`).toBeGreaterThanOrEqual(1.14);
+      expect(p.fogDensity, `${def.id}: fog`).toBeLessThanOrEqual(0.0072);
+      expect(p.groundFog, `${def.id}: ground fog`).toBeLessThanOrEqual(0.36);
+      expect(p.grade?.vignette, `${def.id}: vignette`).toBeLessThanOrEqual(0.3);
+    }
+  });
+
   it('size は 280〜360 の範囲(R21 エリア超拡大。訓練場専用ステージを除く)', () => {
     const SMALL_STAGES = new Set(['renshujo']); // 訓練場専用は小サイズ
     for (const def of STAGES) {
@@ -101,6 +116,69 @@ describe('generateStage', () => {
       expect(typeof def.recipe.theme).toBe('string');
       expect(def.recipe.buildings.length).toBeGreaterThanOrEqual(0);
       expect(def.recipe.buildings.length).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it('全固定ステージに最大3種の衝突付きプレイアブル地区が実配置される', () => {
+    for (const def of STAGES) {
+      const districts = new Set(
+        generateStage(def).boxes.flatMap((box) => box.district ? [box.district] : []),
+      );
+      const required = Math.min(3, def.recipe?.buildings.length ?? 0);
+      expect(districts.size, `${def.id}: ${[...districts].join(',')}`).toBeGreaterThanOrEqual(required);
+    }
+  });
+
+  it('全固定ステージの先頭地区は中心ランドマークとして実配置される', () => {
+    for (const def of STAGES) {
+      const first = def.recipe?.buildings[0];
+      if (!first) continue;
+      const boxes = generateStage(def).boxes.filter((box) => box.district === first);
+      expect(boxes.length, `${def.id}: ${first}`).toBeGreaterThan(0);
+      const xMin = Math.min(...boxes.map((box) => box.x - box.w / 2));
+      const xMax = Math.max(...boxes.map((box) => box.x + box.w / 2));
+      const zMin = Math.min(...boxes.map((box) => box.z - box.d / 2));
+      const zMax = Math.max(...boxes.map((box) => box.z + box.d / 2));
+      // 外階段/デッキが片側に張り出す建築も、地区全体の中心は原点から4m以内。
+      expect(Math.abs((xMin + xMax) / 2), `${def.id}: ${first} center x`).toBeLessThanOrEqual(4);
+      expect(Math.abs((zMin + zMax) / 2), `${def.id}: ${first} center z`).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it('全プレイアブル地区の階段終端は屋上・歩廊へオートステップ範囲内で接続する', () => {
+    const horizontalGap = (
+      a: { x: number; z: number; w: number; d: number },
+      b: { x: number; z: number; w: number; d: number },
+    ): number => {
+      const dx = Math.max(0, Math.abs(a.x - b.x) - (a.w + b.w) / 2);
+      const dz = Math.max(0, Math.abs(a.z - b.z) - (a.d + b.d) / 2);
+      return Math.hypot(dx, dz);
+    };
+
+    for (const def of STAGES) {
+      const districtBoxes = generateStage(def).boxes.filter((box) => box.district);
+      const stairs = districtBoxes.filter((box) =>
+        Math.abs(box.h - 0.3) < 1e-6 && box.w <= 2.4 && box.d <= 2.4,
+      );
+      for (const stair of stairs) {
+        const top = stair.y + stair.h / 2;
+        const hasNextStep = stairs.some((candidate) => {
+          const rise = candidate.y + candidate.h / 2 - top;
+          return candidate.district === stair.district
+            && rise > 0.29 && rise < 0.31
+            && horizontalGap(stair, candidate) <= 0.05;
+        });
+        if (hasNextStep) continue;
+
+        const connected = districtBoxes.some((target) => {
+          if (target === stair || Math.abs(target.h - 0.3) < 1e-6) return false;
+          const rise = target.y + target.h / 2 - top;
+          return target.district === stair.district
+            && rise >= -0.15 && rise <= 0.4
+            && horizontalGap(stair, target) <= 0.45;
+        });
+        expect(connected, `${def.id}:${stair.district} stair top @ ${stair.x},${stair.z},y${top}`).toBe(true);
+      }
     }
   });
 

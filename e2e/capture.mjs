@@ -7,6 +7,7 @@ import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { installSilentAudio, SILENT_BROWSER_ARGS } from './silence-audio.mjs';
 
 const args = process.argv.slice(2);
 const val = (k, d) => (args.find((a) => a.startsWith(k + '=')) ?? '').split('=')[1] || d;
@@ -26,9 +27,11 @@ while (Date.now() < dl) {
 
 const browser = await chromium.launch({
   channel: 'chromium', headless: true,
-  args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', '--mute-audio'],
+  args: ['--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', ...SILENT_BROWSER_ARGS],
 });
-const page = await browser.newPage({ viewport: { width: VW, height: VH } });
+const context = await browser.newContext({ viewport: { width: VW, height: VH } });
+await context.addInitScript(installSilentAudio);
+const page = await context.newPage();
 const errs = [];
 page.on('pageerror', (e) => errs.push('PAGEERR ' + String(e).slice(0, 140)));
 page.on('console', (m) => { if (m.type() === 'error') errs.push('CON ' + m.text().slice(0, 140)); });

@@ -159,7 +159,7 @@ const BUDGETS: Readonly<Record<GraphicsQuality, StageKitBudget>> = {
     rooftopUnits: 28, contactShadows: 44, grimeBands: 36, downspouts: 18, rubble: 56, skyline: 24,
   },
   high: {
-    routes: 7, routeMarks: 56, groundPatches: 36, facadePanels: 180, facadeFrames: 120,
+    routes: 7, routeMarks: 56, groundPatches: 36, facadePanels: 260, facadeFrames: 180,
     rooftopUnits: 64, contactShadows: 88, grimeBands: 72, downspouts: 36, rubble: 120, skyline: 42,
   },
 };
@@ -399,7 +399,8 @@ interface FacadeMatrix {
 function facadeCandidates(boxes: readonly BoxSpec[]): BoxSpec[] {
   return boxes
     .filter((box) => !box.ghost && !box.decor && !box.prop && !box.breakable && box.h >= 3.2 && Math.max(box.w, box.d) >= 4)
-    .sort((a, b) => b.h * Math.max(b.w, b.d) - a.h * Math.max(a.w, a.d));
+    .sort((a, b) => Number(Boolean(b.district)) - Number(Boolean(a.district))
+      || b.h * Math.max(b.w, b.d) - a.h * Math.max(a.w, a.d));
 }
 
 function buildFacadeLayer(
@@ -424,45 +425,54 @@ function buildFacadeLayer(
     const long = longX ? box.w : box.d;
     const columns = THREE.MathUtils.clamp(Math.floor(long / 2.8), 2, 8);
     const rows = THREE.MathUtils.clamp(Math.floor(box.h / 3.1), 1, 5);
-    const sideSign = ((ci + stage.seed) & 1) === 0 ? 1 : -1;
+    const primarySide = ((ci + stage.seed) & 1) === 0 ? 1 : -1;
+    // 建築地区は中を通過でき、両方向から見えるため長辺の両面を仕上げる。
+    // 全パネルは同じInstancedMeshなので、建物の情報量を増やしてもdraw callは増えない。
+    const sideSigns: readonly number[] = box.district ? [-1, 1] : [primarySide];
     const panelBase = family === 'heritage'
       ? shade(stage.palette.wall, -0.2, -0.08)
       : family === 'arctic'
-        ? new THREE.Color(0x7f9bad)
-        : shade(stage.palette.sky, -0.36, 0.02);
+        ? new THREE.Color(0x71838c)
+        : family === 'undead' || family === 'geothermal'
+          ? shade(stage.palette.wall, 0.02, -0.14)
+          : shade(stage.palette.wall, -0.08, -0.14);
 
-    for (let row = 0; row < rows && panels.length < budget.facadePanels; row += 1) {
-      for (let col = 0; col < columns && panels.length < budget.facadePanels; col += 1) {
-        const u = (col + 0.5) / columns - 0.5;
-        const y = box.y - box.h / 2 + 1.35 + row * Math.min(2.8, (box.h - 1.4) / Math.max(1, rows));
-        const panelW = Math.min(1.65, long / columns * 0.62);
-        const panelH = family === 'heritage' ? 1.45 : 1.15;
-        let matrix: THREE.Matrix4;
-        if (longX) {
-          matrix = makeMatrix(box.x + u * long * 0.86, y, box.z + sideSign * (box.d / 2 + 0.035), panelW, panelH, 0.055);
-        } else {
-          matrix = makeMatrix(box.x + sideSign * (box.w / 2 + 0.035), y, box.z + u * long * 0.86, 0.055, panelH, panelW);
+    for (const sideSign of sideSigns) {
+      for (let row = 0; row < rows && panels.length < budget.facadePanels; row += 1) {
+        for (let col = 0; col < columns && panels.length < budget.facadePanels; col += 1) {
+          const u = (col + 0.5) / columns - 0.5;
+          const y = box.y - box.h / 2 + 1.35 + row * Math.min(2.8, (box.h - 1.4) / Math.max(1, rows));
+          const panelW = Math.min(1.65, long / columns * 0.62);
+          const panelH = family === 'heritage' ? 1.45 : 1.15;
+          let matrix: THREE.Matrix4;
+          if (longX) {
+            matrix = makeMatrix(box.x + u * long * 0.86, y, box.z + sideSign * (box.d / 2 + 0.035), panelW, panelH, 0.055);
+          } else {
+            matrix = makeMatrix(box.x + sideSign * (box.w / 2 + 0.035), y, box.z + u * long * 0.86, 0.055, panelH, panelW);
+          }
+          panels.push({ matrix, color: panelBase.clone().multiplyScalar(0.8 + rand() * 0.28) });
         }
-        panels.push({ matrix, color: panelBase.clone().multiplyScalar(0.8 + rand() * 0.28) });
       }
     }
 
     // 水平帯・垂直ピラスター。面の大きさを読み取れる反復モジュールを作る。
     if (frames.length < budget.facadeFrames) {
       const trim = shade(box.color, 0.1, -0.04);
-      for (let row = 1; row < rows && frames.length < budget.facadeFrames; row += 1) {
-        const y = box.y - box.h / 2 + row * (box.h / rows);
-        const matrix = longX
-          ? makeMatrix(box.x, y, box.z + sideSign * (box.d / 2 + 0.065), long * 0.94, 0.09, 0.08)
-          : makeMatrix(box.x + sideSign * (box.w / 2 + 0.065), y, box.z, 0.08, 0.09, long * 0.94);
-        frames.push({ matrix, color: trim });
-      }
-      for (let col = 0; col <= columns && frames.length < budget.facadeFrames; col += 2) {
-        const u = col / columns - 0.5;
-        const matrix = longX
-          ? makeMatrix(box.x + u * long * 0.9, box.y, box.z + sideSign * (box.d / 2 + 0.07), 0.09, box.h * 0.92, 0.09)
-          : makeMatrix(box.x + sideSign * (box.w / 2 + 0.07), box.y, box.z + u * long * 0.9, 0.09, box.h * 0.92, 0.09);
-        frames.push({ matrix, color: trim });
+      for (const sideSign of sideSigns) {
+        for (let row = 1; row < rows && frames.length < budget.facadeFrames; row += 1) {
+          const y = box.y - box.h / 2 + row * (box.h / rows);
+          const matrix = longX
+            ? makeMatrix(box.x, y, box.z + sideSign * (box.d / 2 + 0.065), long * 0.94, 0.09, 0.08)
+            : makeMatrix(box.x + sideSign * (box.w / 2 + 0.065), y, box.z, 0.08, 0.09, long * 0.94);
+          frames.push({ matrix, color: trim });
+        }
+        for (let col = 0; col <= columns && frames.length < budget.facadeFrames; col += 2) {
+          const u = col / columns - 0.5;
+          const matrix = longX
+            ? makeMatrix(box.x + u * long * 0.9, box.y, box.z + sideSign * (box.d / 2 + 0.07), 0.09, box.h * 0.92, 0.09)
+            : makeMatrix(box.x + sideSign * (box.w / 2 + 0.07), box.y, box.z + u * long * 0.9, 0.09, box.h * 0.92, 0.09);
+          frames.push({ matrix, color: trim });
+        }
       }
     }
 
@@ -509,11 +519,11 @@ function buildFacadeLayer(
   const night = stage.palette.mood === 'night' || family === 'undead';
   addInstanced('aaa:facade-panels', panels, new THREE.MeshStandardMaterial({
     color: 0xffffff,
-    roughness: 0.3,
-    metalness: 0.24,
+    roughness: 0.42,
+    metalness: 0.12,
     emissive: night ? shade(stage.palette.accent, -0.3) : new THREE.Color(0x000000),
     emissiveIntensity: night ? 0.12 : 0,
-    envMapIntensity: 0.4,
+    envMapIntensity: 0.26,
   }), false);
   addInstanced('aaa:facade-frames', frames, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0.3 }), true);
   addInstanced('aaa:rooftop-mechanical', roofs, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62, metalness: 0.46 }), true);
@@ -845,6 +855,96 @@ function buildDistantWorld(
   return root;
 }
 
+/**
+ * ステージ別生成アートを、プレイ境界よりも外側の遠景だけに合成する。
+ *
+ * サムネイルを床や衝突物の代わりに貼る「ハリボテ」ではなく、上で生成した
+ * 実体建築・連続地形・ヒーローランドマークのさらに奥でのみ使う matte painting。
+ * 640x368 WebP 1枚、1 draw call、ステージ交換時にテクスチャをdisposeする。lowでは読み込まない。
+ */
+function buildDistantStageMatte(stage: StageDef, tier: GraphicsQuality): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'aaa:distant-stage-matte-root';
+  markObject(root, 1);
+  if (tier === 'low' || !FIXED_IDENTITIES[stage.id]) return root;
+
+  const base = import.meta.env.BASE_URL.endsWith('/')
+    ? import.meta.env.BASE_URL
+    : `${import.meta.env.BASE_URL}/`;
+  const url = `${base}assets/stage-thumbs/${stage.id}.webp`;
+  const canLoadImage = typeof document !== 'undefined' && typeof document.createElementNS === 'function';
+  const texture = !canLoadImage
+    ? new THREE.DataTexture(new Uint8Array([96, 104, 112, 255]), 1, 1)
+    : new THREE.TextureLoader().load(url);
+  texture.name = `stage-matte:${stage.id}`;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  // 左右端を鏡面反復し、環境マット間の縦シームを消す。
+  texture.wrapS = THREE.MirroredRepeatWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.repeat.set(4, 1);
+  texture.offset.x = ((stage.seed * 37) % 100) / 100;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+
+  const radius = stage.size * 0.92;
+  // 1リピート分の物理アスペクトを元画像(640/368)に合わせ、横伸びを防ぐ。
+  const sourceAspect = 640 / 368;
+  const imageHeightAtCorrectAspect = (Math.PI * 2 * radius / 4) / sourceAspect;
+  // シリンダ上下端が画角に入ると曲線状の「背景紙」に見える。幾何を上下に延長し、
+  // 中央の正しい縦横比にだけ画像を置き、外側はClampした空/地表色で自然に接続する。
+  const height = radius * 2.4;
+  const verticalRepeat = height / imageHeightAtCorrectAspect;
+  texture.repeat.y = verticalRepeat;
+  texture.offset.y = -(verticalRepeat - 1) / 2;
+  // 実画像領域の上下12%を透明にフェード。画像外はClampでアルフ0に留まり、
+  // 巨大シリンダの上下は完全に手続き的な空/床へ溶ける。
+  const alphaBytes = new Uint8Array(64 * 4);
+  for (let i = 0; i < 64; i += 1) {
+    const t = i / 63;
+    const edge = Math.min(t, 1 - t);
+    const x = THREE.MathUtils.clamp(edge / 0.12, 0, 1);
+    const smooth = x * x * (3 - 2 * x);
+    const value = Math.round(smooth * 255);
+    alphaBytes[i * 4] = value;
+    alphaBytes[i * 4 + 1] = value;
+    alphaBytes[i * 4 + 2] = value;
+    alphaBytes[i * 4 + 3] = 255;
+  }
+  const alphaMap = new THREE.DataTexture(alphaBytes, 1, 64, THREE.RGBAFormat);
+  alphaMap.name = `stage-matte-alpha:${stage.id}`;
+  alphaMap.wrapS = THREE.ClampToEdgeWrapping;
+  alphaMap.wrapT = THREE.ClampToEdgeWrapping;
+  alphaMap.repeat.set(1, verticalRepeat);
+  alphaMap.offset.y = -(verticalRepeat - 1) / 2;
+  alphaMap.minFilter = THREE.LinearFilter;
+  alphaMap.magFilter = THREE.LinearFilter;
+  alphaMap.needsUpdate = true;
+  const geometry = new THREE.CylinderGeometry(radius, radius, height, tier === 'high' ? 72 : 48, 1, true);
+  const undead = /^z\d\d$/.test(stage.id);
+  const material = new THREE.MeshBasicMaterial({
+    color: undead ? new THREE.Color(1.28, 1.28, 1.28) : new THREE.Color(0xffffff),
+    map: texture,
+    alphaMap,
+    side: THREE.BackSide,
+    transparent: true,
+    opacity: undead ? 0.54 : 0.36,
+    depthWrite: false,
+    fog: true,
+    toneMapped: false,
+  });
+  material.userData.ownedMaps = [texture, alphaMap];
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'aaa:distant-stage-matte';
+  mesh.position.y = 1.7;
+  mesh.rotation.y = ((stage.seed * 0.61803398875) % 1) * Math.PI * 2;
+  mesh.renderOrder = -3;
+  mesh.frustumCulled = false;
+  markObject(mesh, 1);
+  root.add(mesh);
+  return root;
+}
+
 type HeroFamily = 'structure' | 'metal' | 'glass' | 'accent';
 
 interface HeroBuilder {
@@ -1126,6 +1226,7 @@ export function buildCinematicStageKit(options: CinematicStageKitOptions): THREE
   root.add(buildGroundingLayer(options.stage, identity.family, options.boxes, budget, rand));
   root.add(buildMacroRubble(options.stage, identity.family, options.boxes, options.propPlacements, budget.rubble, rand));
   root.add(buildDistantWorld(options.stage, identity.family, budget.skyline, rand));
+  root.add(buildDistantStageMatte(options.stage, options.tier));
   root.add(buildHeroLandmark(options.stage, identity));
   root.add(buildCinematicEnvironment({
     stage: options.stage,

@@ -97,7 +97,7 @@ function mockShader(): {
       'void main() {',
       '  vec3 transformed = vec3(position);',
       '  #include <begin_vertex>',
-      '  gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);',
+      '  #include <project_vertex>',
       '}',
     ].join('\n'),
     fragmentShader: [
@@ -209,13 +209,14 @@ describe('applySurfaceKit — onBeforeCompile が例外なく完走する', () =
       mat.dispose();
     });
 
-    it(`${kit}: 頂点シェーダへ vSkWorldPos が挿入される`, () => {
+    it(`${kit}: インスタンス変換後の vSkWorldPos が挿入される`, () => {
       const mat = new THREE.MeshStandardMaterial();
       applySurfaceKit(mat, kit);
       const shader = mockShader();
       runOnBeforeCompile(mat, shader);
       expect(shader.vertexShader).toContain('varying vec3 vSkWorldPos;');
-      expect(shader.vertexShader).toContain('vSkWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      expect(shader.vertexShader).toContain('skWorldPosition = instanceMatrix * skWorldPosition;');
+      expect(shader.vertexShader).toContain('vSkWorldPos = (modelMatrix * skWorldPosition).xyz;');
       mat.dispose();
     });
 
@@ -295,6 +296,7 @@ describe('applySurfaceKit — onBeforeCompile が例外なく完走する', () =
     expect(() => runOnBeforeCompile(mat, shader2)).not.toThrow();
     mat.dispose();
   });
+
 });
 
 describe('floorDetailGlsl', () => {

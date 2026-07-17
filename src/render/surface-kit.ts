@@ -77,6 +77,7 @@ interface StructuralColorSpec {
   readonly w: number;
   readonly h: number;
   readonly d: number;
+  readonly district?: string;
 }
 
 interface StructuralPalette {
@@ -98,6 +99,15 @@ export function cinematicStructuralColor(
   const wallSrgb = new THREE.Color(palette.wall).convertLinearToSRGB();
   const hsl = { h: 0, s: 0, l: 0 };
   sourceSrgb.getHSL(hsl);
+  if (spec.district) {
+    // 大型建築は識別用パレットをそのまま全面へ塗らず、色相だけを残した塗装鋼/石材に寄せる。
+    sourceSrgb.setHSL(
+      hsl.h,
+      THREE.MathUtils.clamp(hsl.s * 0.42, 0, 0.28),
+      THREE.MathUtils.clamp(hsl.l - 0.07, 0.045, 0.72),
+    );
+    sourceSrgb.getHSL(hsl);
+  }
   const paletteAccent = spec.color.toLowerCase() === palette.accent.toLowerCase();
   const longThinStructure = Math.max(spec.w, spec.d) >= 10 && spec.h <= 0.8;
   const largeStructure = Math.max(spec.w, spec.d) >= 8 || spec.h >= 5;
@@ -164,6 +174,20 @@ const SK_NOISE_GLSL = /* glsl */ `
     }
     return s / tot;
   }
+  float sk_worldFbm(vec3 p, float scale, float seed) {
+    // 面の画面微分から支配軸を選ぶ一面投影。床はXZ、X向き壁はYZ、Z向き壁はXYを
+    // 使うため縦縞を防ぎ、三面平均よりfbm演算を1/3に抑える。
+    vec3 face = abs(cross(dFdx(p), dFdy(p)));
+    if (face.x > face.y && face.x > face.z) return sk_fbm(p.yz * scale - seed * 0.73);
+    if (face.y > face.z) return sk_fbm(p.xz * scale + seed * 1.37);
+    return sk_fbm(p.xy * scale + seed);
+  }
+  float sk_worldVnoise(vec3 p, float scale, float seed) {
+    vec3 face = abs(cross(dFdx(p), dFdy(p)));
+    if (face.x > face.y && face.x > face.z) return sk_vnoise(p.yz * scale - seed * 0.73);
+    if (face.y > face.z) return sk_vnoise(p.xz * scale + seed * 1.37);
+    return sk_vnoise(p.xy * scale + seed);
+  }
 `;
 
 // color_fragment 直後に挿す本体。5キット全ての分岐を1本のテンプレートに持ち、
@@ -176,11 +200,29 @@ const SK_COLOR_GLSL = /* glsl */ `
     vec2 skXZ = vSkWorldPos.xz;
     float skY = vSkWorldPos.y;
 
+    // 色・粗さ・法線で同じ3オクターブfbmを重複計算しない。材質ごとの基礎ノイズを
+    // 1回だけ求め、後段へ共有する（物理的にも凹凸と粗さの位置が揃う）。
+    #ifdef SK_METAL
+      sk_surfaceNoise = sk_worldFbm(vSkWorldPos, 0.32, 3.0);
+    #endif
+    #ifdef SK_WOOD
+      sk_surfaceNoise = sk_worldFbm(vSkWorldPos, 2.2, 5.0);
+    #endif
+    #ifdef SK_STONE
+      sk_surfaceNoise = sk_worldFbm(vSkWorldPos, 0.4, 9.0);
+    #endif
+    #ifdef SK_PAINT
+      sk_surfaceNoise = sk_worldFbm(vSkWorldPos, 0.55, 13.0);
+    #endif
+    #ifdef SK_FOLIAGE
+      sk_surfaceNoise = sk_worldFbm(vSkWorldPos, 0.7, 21.0);
+    #endif
+
     #ifdef SK_METAL
       // 錆: 大きめのfbmで斑を作り、閾値超で暖色寄り(赤UP/青DOWN)へ帯域内シフト
       // (0x6a3a22 系の錆色を「乗算比率」で近似)。同じ量を sk_rustAmt に保持し、
       // roughnessmap_fragment 側で錆部分だけラフネスを 0.9 へ寄せる。
-      float skRustMask = sk_fbm(skXZ * 0.32 + 3.0);
+      float skRustMask = sk_surfaceNoise;
       sk_rustAmt = smoothstep(0.56, 0.8, skRustMask);
       vec3 skRustTint = vec3(1.05, 0.90, 0.82);
       diffuseColor.rgb *= mix(vec3(1.0), skRustTint, sk_rustAmt);
@@ -196,7 +238,7 @@ const SK_COLOR_GLSL = /* glsl */ `
 
     #ifdef SK_STONE
       // 苔: worldY<0.6 の低所ほど緑寄りへ帯域内シフト(苔むしは地表付近に限定)。
-      float skMossMask = sk_fbm(skXZ * 0.4 + 9.0);
+      float skMossMask = sk_surfaceNoise;
       float skMossLow = 1.0 - smoothstep(-0.4, 0.6, skY);
       float skMossAmt = smoothstep(0.5, 0.75, skMossMask) * skMossLow;
       vec3 skMossTint = vec3(0.88, 1.05, 0.90);
@@ -207,7 +249,7 @@ const SK_COLOR_GLSL = /* glsl */ `
       // エッジ摩耗: 頂点color.aが「エッジ距離」(1=中央健全, 0=エッジ)として焼かれている
       // 前提を USE_COLOR_ALPHA で検出して使う。焼き込みが無いジオメトリでは無効化し、
       // fbmベースの欠け表現(斑状の摩耗)へフォールバックすることで単体でも成立させる。
-      float skWearFbm = sk_fbm(skXZ * 0.55 + 13.0);
+      float skWearFbm = sk_surfaceNoise;
       #ifdef USE_COLOR_ALPHA
         float skWear = (1.0 - clamp(vColor.a, 0.0, 1.0)) * smoothstep(0.35, 0.75, skWearFbm);
       #else
@@ -220,14 +262,13 @@ const SK_COLOR_GLSL = /* glsl */ `
     #ifdef SK_FOLIAGE
       // 彩度ジッタのみ: 色相/明度は変えず、局所的に彩度を ±15% 程度揺らす。
       float skLum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-      float skJit = sk_fbm(skXZ * 0.7 + 21.0) - 0.5;
+      float skJit = sk_surfaceNoise - 0.5;
       diffuseColor.rgb = mix(vec3(skLum), diffuseColor.rgb, 1.0 + skJit * 0.3);
     #endif
 
-    // 全キット共通: 雨だれ縦筋。列位置(XZ)はY非依存のfbm(3オクターブ)で決め、流れの
-    // 途切れは軽量な単オクターブ値ノイズ(sk_vnoise)で足す(ALU節約: フル3オクターブを
-    // 2回重ねない)。地面に近いほど(skYGrad)濃く、上方ほど乾いて薄い。
-    float skStreakCol = sk_fbm(skXZ * 2.6 + 31.0);
+    // 全キット共通: 雨だれ。列の大きな濃淡は共有fbm、縦方向の途切れだけを軽量な
+    // 単オクターブ値ノイズで足す。地面に近いほど濃く、上方ほど乾いて薄い。
+    float skStreakCol = sk_surfaceNoise;
     float skStreakFlow = sk_vnoise(vec2(skXZ.x * 0.5, skY * 0.6) + 41.0);
     float skYGrad = 1.0 - smoothstep(-0.4, 2.6, skY);
     float skStreak = smoothstep(0.58, 0.8, skStreakCol) * smoothstep(0.4, 0.85, skStreakFlow) * skYGrad;
@@ -245,13 +286,13 @@ const SK_ROUGHNESS_GLSL = /* glsl */ `
     roughnessFactor = mix(roughnessFactor, 0.9, sk_rustAmt);
   #endif
   #ifdef SK_WOOD
-    roughnessFactor = clamp(roughnessFactor + (sk_fbm(vSkWorldPos.xz * 3.4) - 0.5) * 0.16, 0.46, 0.92);
+    roughnessFactor = clamp(roughnessFactor + (sk_surfaceNoise - 0.5) * 0.16, 0.46, 0.92);
   #endif
   #ifdef SK_STONE
-    roughnessFactor = clamp(roughnessFactor + (sk_fbm(vSkWorldPos.xz * 7.0) - 0.5) * 0.12, 0.72, 1.0);
+    roughnessFactor = clamp(roughnessFactor + (sk_surfaceNoise - 0.5) * 0.12, 0.72, 1.0);
   #endif
   #ifdef SK_PAINT
-    roughnessFactor = clamp(roughnessFactor + (sk_fbm(vSkWorldPos.xz * 10.0) - 0.5) * 0.1, 0.38, 0.82);
+    roughnessFactor = clamp(roughnessFactor + (sk_surfaceNoise - 0.5) * 0.1, 0.38, 0.82);
   #endif
 `;
 
@@ -275,24 +316,23 @@ const SK_NORMAL_GLSL = /* glsl */ `
     float skHeight = 0.5;
     float skNormalStrength = 0.0;
     #ifdef SK_METAL
-      skHeight = sk_fbm(vSkWorldPos.xz * 18.0 + 71.0);
+      skHeight = sk_worldVnoise(vSkWorldPos, 18.0, 71.0);
       skNormalStrength = 0.055;
     #endif
     #ifdef SK_WOOD
-      float skWoodBase = sk_fbm(vec2(vSkWorldPos.x * 0.55, vSkWorldPos.z * 18.0) + 19.0);
-      skHeight = skWoodBase * 0.72 + sk_fbm(vSkWorldPos.xz * 5.0) * 0.28;
+      skHeight = sk_worldVnoise(vSkWorldPos, 5.0, 37.0);
       skNormalStrength = 0.085;
     #endif
     #ifdef SK_STONE
-      skHeight = sk_fbm(vSkWorldPos.xz * 9.0 + 43.0);
+      skHeight = sk_worldVnoise(vSkWorldPos, 9.0, 43.0);
       skNormalStrength = 0.15;
     #endif
     #ifdef SK_PAINT
-      skHeight = sk_fbm(vSkWorldPos.xz * 22.0 + 17.0);
+      skHeight = sk_worldVnoise(vSkWorldPos, 22.0, 17.0);
       skNormalStrength = 0.045;
     #endif
     #ifdef SK_FOLIAGE
-      skHeight = sk_fbm(vSkWorldPos.xz * 14.0 + 29.0);
+      skHeight = sk_worldVnoise(vSkWorldPos, 14.0, 29.0);
       skNormalStrength = 0.035;
     #endif
     normal = sk_perturbNormal(vSkWorldPos, normal, skHeight, skNormalStrength);
@@ -321,13 +361,23 @@ export function applySurfaceKit(mat: THREE.MeshStandardMaterial, kit: SurfaceKit
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vSkWorldPos;')
       .replace(
-        '#include <begin_vertex>',
-        '#include <begin_vertex>\nvSkWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+        '#include <project_vertex>',
+        `#include <project_vertex>
+        {
+          vec4 skWorldPosition = vec4(transformed, 1.0);
+          #ifdef USE_BATCHING
+            skWorldPosition = batchingMatrix * skWorldPosition;
+          #endif
+          #ifdef USE_INSTANCING
+            skWorldPosition = instanceMatrix * skWorldPosition;
+          #endif
+          vSkWorldPos = (modelMatrix * skWorldPosition).xyz;
+        }`,
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        `#include <common>\n#define ${defineName}\nvarying vec3 vSkWorldPos;\nfloat sk_rustAmt = 0.0;\n${SK_NOISE_GLSL}\n${SK_NORMAL_COMMON_GLSL}`,
+        `#include <common>\n#define ${defineName}\nvarying vec3 vSkWorldPos;\nfloat sk_rustAmt = 0.0;\nfloat sk_surfaceNoise = 0.5;\n${SK_NOISE_GLSL}\n${SK_NORMAL_COMMON_GLSL}`,
       )
       .replace('#include <color_fragment>', `#include <color_fragment>\n${SK_COLOR_GLSL}`)
       .replace(

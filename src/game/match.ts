@@ -109,10 +109,12 @@ import { AaaStageAssetPipeline } from '../render/aaa-asset-pipeline';
 import { supportsAdvancedRendering, supportsN8aoRendering } from '../render/render-budget';
 import type { PropMatFamily } from '../render/prop-visuals';
 import {
+  applySurfaceKit,
   cinematicFloorColor,
   cinematicStructuralColor,
   floorDetailGlsl,
   floorDetailGlslCommon,
+  type SurfaceKitId,
 } from '../render/surface-kit';
 import { KillcamController, FK_WIN_POST } from './killcam';
 import { selectHighlights } from './highlights';
@@ -196,6 +198,7 @@ import {
 import { loadProfile } from '../core/profile';
 import {
   generateStage,
+  type BuildingKind,
   type StageDef,
   type MoodId,
   type PropPlacement,
@@ -339,6 +342,16 @@ const DEG = Math.PI / 180;
 // 矩形アイコンでミニマップが埋まる問題を解消する(中型建物/大型障害だけを残す)。
 // 6m² ≈ 2m×3m 程度の小屋/大型什器サイズが下限の目安(電柱1m×1m/街灯1m×1m/竹0.2m×0.2m等は除外)。
 const MINIMAP_MIN_AREA = 6;
+const METAL_DISTRICTS = new Set<BuildingKind>(['refinery', 'station', 'tower']);
+const PAINT_DISTRICTS = new Set<BuildingKind>([
+  'arena', 'hangar', 'warehouse', 'terminal', 'villa', 'checkpoint',
+]);
+
+function structuralSurfaceKit(district: BuildingKind | undefined): SurfaceKitId {
+  if (district && METAL_DISTRICTS.has(district)) return 'metal';
+  if (district && PAINT_DISTRICTS.has(district)) return 'paint';
+  return 'stone';
+}
 const EXOTIC_HOLD_FIRE_IDS = new Set(['banjin-smg', 'fujin-fan', 'gouen-musket', 'shinkirou-sniper']);
 const LOOK_BASE = 0.0022;
 // ゲームパッドのヒップファイア時アシストゲート(マウスはADS時のみ、パッドは常時BO3準拠)
@@ -1662,12 +1675,13 @@ export class Match {
     const palette = this.config.stage.palette;
     const size = this.config.stage.size;
     const mood = resolveMood(palette);
-    const lighting = cinematicLightingProfile(mood);
+    const readableUndead = /^z\d\d$/.test(this.config.stage.id);
+    const lighting = cinematicLightingProfile(mood, readableUndead);
     // Sky.js を可視背景にするため background は使わない
     this.scene.background = null;
     this.scene.fog = new THREE.FogExp2(
       palette.fog,
-      cinematicVisualFogDensity(palette.fogDensity, mood),
+      cinematicVisualFogDensity(palette.fogDensity, mood, readableUndead),
     );
     // R16: calcSpotRate(霧/暗所ほど発見が遅い)用にpaletteの霧密度・環境光を保持する
     // (Matchはpaletteを持たずthis.colorsのみ格納し、fog/ambientは適用後に破棄するため)
@@ -1759,7 +1773,12 @@ export class Match {
     // R20 rank3: ムード/床材質/バイオームから濡れ度を導き、床マテリアルへマクロ質感を挿す。
     // 追加DCゼロ・フラグメントALUのみで巨大床の「1色平面」読みを解消し、濡れパッチで減光した空IBLを拾う。
     const wetness = this.resolveWetness(palette);
-    const floorMat = new THREE.MeshStandardMaterial({ color: cinematicFloorColor(palette.floor), roughness: 0.95 });
+    const floorMat = new THREE.MeshStandardMaterial({
+      color: cinematicFloorColor(palette.floor),
+      roughness: 0.95,
+      // 床全面が空色に染まるのを抑え、コンクリート/土/雪のアルベドを残す。
+      envMapIntensity: 0.34,
+    });
     this.applyMacroFloor(floorMat, wetness);
     const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(size + 2, 1, size + 2), floorMat);
     floorMesh.position.y = -0.5;
@@ -1775,6 +1794,10 @@ export class Match {
     this.bakeVolumetricAO(unitBox);
     const materials = new Map<string, THREE.MeshStandardMaterial>();
     const propMerge = new Map<string, THREE.BufferGeometry[]>(); // R41a: prop合流バッファ
+    const staticInstances = new Map<string, {
+      material: THREE.MeshStandardMaterial;
+      specs: Array<(typeof boxes)[number]>;
+    }>();
 
     // R53-W2 M2c: プロップ超リアル化v2の適用判定。v2Placements は buildPropVisual で置換する
     // インスタンス一覧、skipBoxes は旧箱ビジュアル(マージ/個別/shadowCaster全経路)の生成を
@@ -1809,7 +1832,7 @@ export class Match {
           mat.emissiveIntensity = 0.45;
           mat.envMapIntensity = 0.35;
         }
-        this.applyMacroProp(mat);
+        applySurfaceKit(mat, structuralSurfaceKit(spec.district));
         const mesh = new THREE.Mesh(unitBox, mat);
         mesh.position.set(spec.x, spec.y, spec.z);
         mesh.scale.set(spec.w, spec.h, spec.d);
@@ -1850,7 +1873,8 @@ export class Match {
         // 全経路)を丸ごとスキップする。コライダー/tags/breakable/minimapはこの if の外(または
         // 下の `!isDecor` 節)で従来どおり不変に処理される — 視覚メッシュの差し替えのみ。
         if (!(isProp && skipBoxes.has(spec))) {
-          const key = `${visualColorKey}:${spec.emissive}`;
+          const surfaceKit = structuralSurfaceKit(spec.district);
+          const key = `${visualColorKey}:${spec.emissive}:${surfaceKit}`;
           let material = materials.get(key);
           if (!material) {
             material = new THREE.MeshStandardMaterial({
@@ -1867,8 +1891,8 @@ export class Match {
               material.emissiveIntensity = 0.45;
               material.envMapIntensity = 0.35; // 自発光体はIBLに打ち消されないよう抑制
             }
-            // R20 rank3: 焼込みAO(vertexColor)の上へ弱い汚れグラデを重ね、クローン箱の均一感を崩す
-            this.applyMacroProp(material);
+            // 実PBR風の材質差、雨だれ、微細凹凸を静的シェーダで付与。追加DC/texture uploadなし。
+            applySurfaceKit(material, surfaceKit);
             materials.set(key, material);
           }
           // R41a: prop:true の非破壊ボックスはマージ描画(DC削減)。shadowCaster のみ個別メッシュ。
@@ -1882,13 +1906,22 @@ export class Match {
             geo.applyMatrix4(m4);
             if (!propMerge.has(key)) propMerge.set(key, []);
             propMerge.get(key)!.push(geo);
-          } else {
+          } else if (isProp) {
             const mesh = new THREE.Mesh(unitBox, material);
             mesh.position.set(spec.x, spec.y, spec.z);
             mesh.scale.set(spec.w, spec.h, spec.d);
-            mesh.castShadow = !isProp || isShadowCaster; // R41a: 通常boxはcastShadow=true, prop非shadowCasterはfalse
+            mesh.castShadow = isShadowCaster;
             mesh.receiveShadow = true;
             this.scene.add(mesh);
+          } else {
+            // 破壊されない建築・遮蔽物は色/材質ごとのInstancedMeshへ畳む。
+            // 新地区を増やしてもコライダー数と見た目は維持したままdraw callを増やさない。
+            let batch = staticInstances.get(key);
+            if (!batch) {
+              batch = { material, specs: [] };
+              staticInstances.set(key, batch);
+            }
+            batch.specs.push(spec);
           }
         }
         if (!isDecor && spec.w * spec.d >= MINIMAP_MIN_AREA) {
@@ -1906,6 +1939,25 @@ export class Match {
       );
       // ghost 壁は 'boundary' タグ: KCC/ブリンクは物理で止まるが弾/斬撃/視線は素通りする
       this.tags.set(collider.handle, isGhost ? { kind: 'boundary' } : { kind: 'world' });
+    }
+
+    for (const [key, batch] of staticInstances) {
+      const mesh = new THREE.InstancedMesh(unitBox, batch.material, batch.specs.length);
+      mesh.name = `stage:static:${key}`;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      for (let i = 0; i < batch.specs.length; i += 1) {
+        const spec = batch.specs[i]!;
+        mesh.setMatrixAt(i, new THREE.Matrix4().compose(
+          new THREE.Vector3(spec.x, spec.y, spec.z),
+          new THREE.Quaternion(),
+          new THREE.Vector3(spec.w, spec.h, spec.d),
+        ));
+      }
+      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.computeBoundingSphere();
+      this.scene.add(mesh);
     }
 
     // R41a: prop合流バッファをマージしてシーンへ追加(色キーごとに1メッシュ)
@@ -2070,6 +2122,7 @@ export class Match {
       this.scene.fog.density = cinematicVisualFogDensity(
         newDensity,
         resolveMood(palette),
+        /^z\d\d$/.test(this.config.stage.id),
       );
     }
     if (this.weatherKind === 'fog') {
@@ -2224,35 +2277,6 @@ export class Match {
     };
   }
 
-  // R20 rank3: 共有障害物マテリアルへ onBeforeCompile で弱い汚れグラデを挿す。焼込みAO
-  // (vertexColor)の上に diffuseColor を ±数% 変調(0.93..1.03)。emissive/AOは非侵襲、
-  // bloom閾値(0.9)未満に据え置く。追加DC/ジオメトリはゼロ。
-  private applyMacroProp(mat: THREE.MeshStandardMaterial): void {
-    mat.customProgramCacheKey = () => 'hibana-macroprop';
-    mat.onBeforeCompile = (shader) => {
-      shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec2 vWorldXZ;')
-        .replace(
-          '#include <begin_vertex>',
-          '#include <begin_vertex>\nvWorldXZ = (modelMatrix * vec4(transformed, 1.0)).xz;',
-        );
-      shader.fragmentShader = shader.fragmentShader
-        .replace(
-          '#include <common>',
-          `#include <common>\nvarying vec2 vWorldXZ;\n${MACRO_NOISE_GLSL}`,
-        )
-        .replace(
-          '#include <color_fragment>',
-          `#include <color_fragment>
-          {
-            float macroGrime = macroFbm(vWorldXZ * 0.5 + 7.0);
-            diffuseColor.rgb *= mix(0.93, 1.03, macroGrime);
-          }`,
-        );
-    };
-  }
-
-
   // 当たり判定を持たない装飾。グラデ天球・床グリッド・外周ライトバー・
   // 四隅ビーコンでアリーナに空気感を足す。フェアネスには影響しない。
   private buildAtmosphere(palette: StageDef['palette'], size: number): void {
@@ -2335,7 +2359,10 @@ export class Match {
     // IBLは影を落とさないので sun.castShadow/影の落ち方には一切影響しない。
     const envIntensity = palette.environmentIntensity ?? (elevation < 6 ? 0.4 : 0.85);
     // R15: 白飛び完全解消のため天球IBLの上限を更に下げる(明るい空が金属/明部を洗い流すのを抑制)
-    const lighting = cinematicLightingProfile(resolveMood(palette));
+    const lighting = cinematicLightingProfile(
+      resolveMood(palette),
+      /^z\d\d$/.test(this.config.stage.id),
+    );
     this.scene.environmentIntensity = Math.min(envIntensity, lighting.environmentCap);
     envSky.geometry.dispose();
     (envSky.material as THREE.Material).dispose();
@@ -9697,8 +9724,14 @@ export class Match {
         if (obj.geometry.userData.shared !== true) obj.geometry.dispose();
         const material = obj.material;
         if (Array.isArray(material)) {
-          for (const m of material) if (m.userData.shared !== true) m.dispose();
+          for (const m of material) {
+            const ownedMaps = m.userData.ownedMaps as THREE.Texture[] | undefined;
+            for (const texture of ownedMaps ?? []) texture.dispose();
+            if (m.userData.shared !== true) m.dispose();
+          }
         } else {
+          const ownedMaps = material.userData.ownedMaps as THREE.Texture[] | undefined;
+          for (const texture of ownedMaps ?? []) texture.dispose();
           if (material.userData.shared !== true) material.dispose();
         }
         // InstancedMeshのinstanceMatrixはgeometry.dispose()では解放されないため明示的に

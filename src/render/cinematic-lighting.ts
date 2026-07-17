@@ -21,10 +21,27 @@ const PROFILES: Readonly<Record<MoodId, CinematicLightingProfile>> = {
   snow: { fogScale: 0.9, hemiScale: 0.42, fillScale: 0.08, sunScale: 0.86, environmentCap: 0.54 },
 };
 
-export function cinematicLightingProfile(mood: MoodId): CinematicLightingProfile {
-  return PROFILES[mood];
+// ゾンビ専用: 色調は夜のまま、敵・床・退路の中間調だけを持ち上げる。
+// ライト数は増やさず既存2灯とIBLの係数だけを変えるため、draw call/GPU負荷は不変。
+const READABLE_UNDEAD: CinematicLightingProfile = {
+  fogScale: 0.5,
+  hemiScale: 0.86,
+  fillScale: 0.24,
+  sunScale: 1,
+  environmentCap: 0.76,
+};
+
+export function cinematicLightingProfile(
+  mood: MoodId,
+  readableUndead = false,
+): CinematicLightingProfile {
+  return readableUndead ? READABLE_UNDEAD : PROFILES[mood];
 }
 
-export function cinematicVisualFogDensity(baseDensity: number, mood: MoodId): number {
-  return baseDensity * cinematicLightingProfile(mood).fogScale;
+export function cinematicVisualFogDensity(
+  baseDensity: number,
+  mood: MoodId,
+  readableUndead = false,
+): number {
+  return baseDensity * cinematicLightingProfile(mood, readableUndead).fogScale;
 }

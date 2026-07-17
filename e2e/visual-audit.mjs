@@ -15,6 +15,7 @@ import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { installSilentAudio, SILENT_BROWSER_ARGS } from './silence-audio.mjs';
 
 const args = process.argv.slice(2);
 const val = (key, fallback) =>
@@ -101,12 +102,13 @@ try {
     args: [
       '--enable-unsafe-swiftshader',
       '--autoplay-policy=no-user-gesture-required',
-      '--mute-audio',
+      ...SILENT_BROWSER_ARGS,
       '--enable-precise-memory-info',
       ...(softwareRenderer ? ['--use-angle=swiftshader', '--use-gl=angle'] : []),
     ],
   });
   const context = await browser.newContext({ viewport: { width, height } });
+  await context.addInitScript(installSilentAudio);
   await context.addInitScript(
     ({
       allWeaponIds,

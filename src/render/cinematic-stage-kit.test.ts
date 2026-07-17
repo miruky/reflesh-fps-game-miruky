@@ -67,11 +67,12 @@ describe('cinematic stage kit', () => {
     expect(root.getObjectByName('aaa:facade-base-grime')).toBeTruthy();
     expect(root.getObjectByName('aaa:facade-downspouts')).toBeTruthy();
     expect(root.getObjectByName('aaa:cinematic-environment')).toBeTruthy();
+    expect(root.getObjectByName('aaa:distant-stage-matte')).toBeTruthy();
     let drawCalls = 0;
     root.traverse((node) => {
       if (node instanceof THREE.Mesh) drawCalls += 1;
     });
-    expect(drawCalls).toBeLessThanOrEqual(24);
+    expect(drawCalls).toBeLessThanOrEqual(25);
     dispose(root);
   });
 
