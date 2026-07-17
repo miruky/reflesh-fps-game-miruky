@@ -64,6 +64,9 @@ const ZOMBIE_UNSTUCK_SCAN_S = 1.0;
 // zombieSpawnPoint()呼び出し(12試行×レイキャスト)がフレームスパイクしないよう平滑化する。
 // 上限に達した個体は queue のように減らないので、次周期(ZOMBIE_UNSTUCK_SCAN_S後)に再試行される。
 const ZOMBIE_UNSTUCK_RELOCATE_MAX = 4;
+// ステージ床は足元Y=0。数値誤差/短い段差を許容しつつ12cm以上床下へ沈んだ個体は、
+// hardStuckの5秒待ちをせず既存の1秒間欠スキャンで救済する。新規の毎フレーム走査は増やさない。
+const ZOMBIE_BURIED_FEET_Y = -0.12;
 // ── R16 ゾンビモード ──
 const ZOMBIE_MOVE_MUL = 1.44; // 基準速度に対するシャンブル倍率(走行個体は updateZombie で×1.6)
 const ZOMBIE_MELEE_GLOBAL_GAP = 0.35; // 何体いても近接ダメージはこの間隔以上(同フレーム多段一撃回避)
@@ -82,7 +85,9 @@ const CROWD_POSE_SCRATCH: ZombieCrowdPose = {
 const BOT_POS_SCRATCH = new THREE.Vector3();
 const ZOMBIE_SPAWN_RAY_ORIGIN = new THREE.Vector3();
 const ZOMBIE_SPAWN_POINT = new THREE.Vector3();
+const ZOMBIE_SPAWN_CLEAR_ORIGIN = new THREE.Vector3();
 const ZOMBIE_SPAWN_DOWN = new THREE.Vector3(0, -1, 0);
+const ZOMBIE_SPAWN_UP = new THREE.Vector3(0, 1, 0);
 const ZOMBIE_SPAWN_ZERO = new THREE.Vector3();
 
 export interface ZombieHost {
@@ -769,8 +774,11 @@ export class ZombieDirector {
       let relocated = 0;
       for (const b of this.h.bots) {
         if (relocated >= ZOMBIE_UNSTUCK_RELOCATE_MAX) break; // 1サイクルの再配置数に上限を設けスパイク平滑化
-        if (b.kind !== 'zombie' || !b.alive || !b.zombieHardStuck) continue;
-        if (!b.zombieHardStuckForce && this.h.isInView(b.position)) continue; // 視界内は先送り
+        if (b.kind !== 'zombie' || !b.alive) continue;
+        const buried = b.feetY < ZOMBIE_BURIED_FEET_Y;
+        if (!buried && !b.zombieHardStuck) continue;
+        // 埋没は見えていること自体が破綻なので即時救済。通常スタックのみ視界外を優先する。
+        if (!buried && !b.zombieHardStuckForce && this.h.isInView(b.position)) continue;
         const spawn = this.zombieSpawnPoint(aliveZombiePos);
         if (!spawn) continue; // 有効点が無ければ次周期に再試行
         b.blinkTo(spawn.x, spawn.y, spawn.z);
@@ -943,6 +951,20 @@ export class ZombieDirector {
       const groundY = hit ? 8 - hitToi(hit) : 0;
       // A1-F05: キャットウォーク/建物1Fヒットで上層(y>0.6)に湧くのを防ぐ
       if (groundY > 0.6) continue;
+      // 上方の必要高さにワールド形状がある点は、低い箱/階段/床下を地面と誤認した候補。
+      // スポーン時のみ最大12回の追加rayで、R100の毎フレーム負荷には影響しない。
+      ZOMBIE_SPAWN_CLEAR_ORIGIN.set(x, groundY + 0.08, z);
+      const ceiling = this.h.castRay(
+        ZOMBIE_SPAWN_CLEAR_ORIGIN,
+        ZOMBIE_SPAWN_UP,
+        1.75,
+        null,
+        (collider) => {
+          const kind = this.h.tags.get(collider.handle)?.kind;
+          return kind === 'world' || kind === 'boundary';
+        },
+      );
+      if (ceiling) continue;
       ZOMBIE_SPAWN_POINT.set(x, groundY + 0.05, z);
       if (attempt < 10) {
         // フラスタム内(=プレイヤーの目前)はポップインになるので避ける

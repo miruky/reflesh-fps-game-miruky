@@ -78,7 +78,7 @@ function makeZombieHost(overrides: Partial<ZombieHost> = {}): ZombieHost {
 function makeStuckZombieBot(
   uid: number,
   pos: THREE.Vector3,
-  opts: { hardStuck: boolean; force: boolean },
+  opts: { hardStuck: boolean; force: boolean; feetY?: number },
 ): Bot {
   return {
     uid,
@@ -86,6 +86,7 @@ function makeStuckZombieBot(
     alive: true,
     tier: 'normal',
     position: pos,
+    feetY: opts.feetY ?? 0,
     hordeRank: 99,
     crowdSlot: -1,
     zombieHardStuck: opts.hardStuck,
@@ -164,6 +165,21 @@ describe('zombie-director.ts ⑧ 最終安全弁(R55): hardStuck個体のテレ�
     director.updateZombieDirector(0.6);
 
     expect(okBot.blinkTo).not.toHaveBeenCalled();
+  });
+
+  it('床下に埋没した個体はhardStuck待ちや視界外待ちなしで救済する', () => {
+    const buriedBot = makeStuckZombieBot(6, new THREE.Vector3(5, 0.3, 5), {
+      hardStuck: false,
+      force: false,
+      feetY: -0.3,
+    });
+    const host = makeZombieHost({ bots: [buriedBot], isInView: vi.fn(() => true) });
+    const director = new ZombieDirector(host);
+    armDirector(director);
+
+    director.updateZombieDirector(1 / 60);
+
+    expect(buriedBot.blinkTo).toHaveBeenCalledTimes(1);
   });
 
   it('有効なスポーン点が見つからない場合は何もしない(次周期へ先送り。例外を投げない)', () => {

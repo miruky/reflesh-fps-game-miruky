@@ -26,6 +26,7 @@ import type { MedalEvent } from './medals';
 import type { MatchSummary, MissionSummary } from './progression';
 import {
   isWithinSndSite,
+  makeSndSpawnFormation,
   makeSndSites,
   SndMatch,
   SndRound,
@@ -197,23 +198,43 @@ export class StoryEngine {
     this.h.ultCharge = 0;
     this.h.ultReadyNotified = false;
     this.h.streakManager.resetAll();
-    if (!first) {
-      // 全員復活+再配置(kill/deathの数字は維持=S&Dの通算スタッツ)
-      const reserved: THREE.Vector3[] = [];
-      const sp = this.h.pickSpawn(this.h.playerSpawns, [], reserved);
-      this.h.player.respawnAt(sp);
-      reserved.push(sp);
-      for (const weapon of this.h.weapons) weapon.resupply();
-      this.h.activeWeapon.raise();
-      this.h.refillGrenades();
-      for (const bot of this.h.bots) {
-        const spawns = bot.team === PLAYER_TEAM ? this.h.playerSpawns : this.h.botSpawns;
-        const bsp = this.h.pickSpawn(spawns, [], reserved);
-        bot.respawnAt(bsp);
-        reserved.push(bsp);
+    // 全ラウンドをチーム隊形から開始する。旧方式はplayerSpawns=4点にプレイヤー+味方Botを
+    // 順番に詰め、5人目以降が0.8m未満のfallback jitterへ落ちるため、2R目以降にCapsuleが
+    // 重なっていた。攻守交替時は使用する陣地も交換し、各陣地内では2.4m間隔の隊形を作る。
+    const playerMembers = 1 + this.h.bots.filter((bot) => bot.team === PLAYER_TEAM).length;
+    const enemyMembers = this.h.bots.filter((bot) => bot.team !== PLAYER_TEAM).length;
+    const attackFromPlayerSide = attack === PLAYER_TEAM;
+    const playerCandidates = attackFromPlayerSide ? this.h.playerSpawns : this.h.botSpawns;
+    const enemyCandidates = attackFromPlayerSide ? this.h.botSpawns : this.h.playerSpawns;
+    const roundIndex = this.sndMatch.roundsPlayed;
+    const playerAnchor = playerCandidates[roundIndex % Math.max(1, playerCandidates.length)]
+      ?? new THREE.Vector3();
+    let enemyAnchor = enemyCandidates[0] ?? new THREE.Vector3();
+    let farthestSq = -1;
+    for (const candidate of enemyCandidates) {
+      const distanceSq = candidate.distanceToSquared(playerAnchor);
+      if (distanceSq > farthestSq) {
+        farthestSq = distanceSq;
+        enemyAnchor = candidate;
       }
-      this.h.deathVeil = Math.max(this.h.deathVeil, 0.5); // ラウンド替わりの短い暗転
     }
+    const playerFormation = makeSndSpawnFormation(playerAnchor, playerMembers)
+      .map((point) => new THREE.Vector3(point.x, point.y, point.z));
+    const enemyFormation = makeSndSpawnFormation(enemyAnchor, enemyMembers)
+      .map((point) => new THREE.Vector3(point.x, point.y, point.z));
+    this.h.player.respawnAt(playerFormation[0] ?? playerAnchor);
+    let allyCursor = 1;
+    let enemyCursor = 0;
+    for (const bot of this.h.bots) {
+      const spawn = bot.team === PLAYER_TEAM
+        ? playerFormation[allyCursor++] ?? playerAnchor
+        : enemyFormation[enemyCursor++] ?? enemyAnchor;
+      bot.respawnAt(spawn);
+    }
+    for (const weapon of this.h.weapons) weapon.resupply();
+    this.h.activeWeapon.raise();
+    this.h.refillGrenades();
+    if (!first) this.h.deathVeil = Math.max(this.h.deathVeil, 0.5); // ラウンド替わりの短い暗転
     this.h.announcements.push(
       attack === PLAYER_TEAM ? '攻撃側: 爆弾を設置せよ' : '防衛側: サイトを死守せよ',
     );

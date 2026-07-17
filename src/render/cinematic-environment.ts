@@ -262,13 +262,13 @@ diffuseColor.rgb *= 0.965 + scenicRipple * 0.035;`,
 
 function treeTrunkGeometry(dead: boolean): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
-  const trunk = new THREE.CylinderGeometry(0.22, 0.36, 4.8, 8, 3);
+  const trunk = new THREE.CylinderGeometry(0.22, 0.36, 4.8, 14, 4);
   trunk.translate(0, 2.4, 0);
   parts.push(trunk);
   const branchCount = dead ? 5 : 3;
   for (let i = 0; i < branchCount; i += 1) {
     const length = dead ? 2.4 - i * 0.18 : 1.35 - i * 0.12;
-    const branch = new THREE.CylinderGeometry(0.06, 0.14, length, 6, 1);
+    const branch = new THREE.CylinderGeometry(0.06, 0.14, length, 9, 2);
     branch.applyMatrix4(new THREE.Matrix4().compose(
       new THREE.Vector3((i % 2 === 0 ? -1 : 1) * 0.36, 3.1 + i * 0.28, (i % 3 - 1) * 0.24),
       new THREE.Quaternion().setFromEuler(new THREE.Euler(0.12 * i, i * 1.7, (i % 2 === 0 ? -1 : 1) * 0.92)),
@@ -284,13 +284,13 @@ function treeTrunkGeometry(dead: boolean): THREE.BufferGeometry {
 }
 
 function treeCrownGeometry(kind: Exclude<ScenicVegetation, 'none' | 'dead'>): THREE.BufferGeometry {
-  if (kind === 'conifer') return new THREE.ConeGeometry(1.9, 4.6, 9, 3);
+  if (kind === 'conifer') return new THREE.ConeGeometry(1.9, 4.6, 16, 5);
   const parts: THREE.BufferGeometry[] = [];
-  const clusterCount = kind === 'lush' ? 5 : 3;
+  const clusterCount = kind === 'lush' ? 7 : 5;
   for (let i = 0; i < clusterCount; i += 1) {
     const angle = (i / clusterCount) * Math.PI * 2;
     const radius = i === 0 ? 0 : kind === 'lush' ? 0.58 : 0.72;
-    const crown = new THREE.IcosahedronGeometry(1, 1);
+    const crown = new THREE.IcosahedronGeometry(1, 2);
     crown.applyMatrix4(matrix(
       Math.cos(angle) * radius,
       i === 0 ? 0.25 : (i & 1) === 0 ? 0.18 : -0.08,

@@ -29,6 +29,8 @@ export interface FirstPersonArmsOptions {
   readonly left: FirstPersonArmPose;
   /** クナイ用。既存の FIST_POSES が参照する名前を付ける。 */
   readonly fists?: boolean;
+  /** クナイの空いた左手だけは銃支持手ではなく、指を畳んだ近接ガードにする。 */
+  readonly leftGrip?: 'support' | 'guard';
 }
 
 function applyPose(group: THREE.Group, pose: FirstPersonArmPose['arm'] | FirstPersonArmPose['hand']): void {
@@ -105,11 +107,13 @@ function mergeHandParts(parts: THREE.BufferGeometry[], family: HandMaterialFamil
  */
 function buildHandGeometries(
   side: -1 | 1,
-  supportHand: boolean,
+  grip: 'trigger' | 'support' | 'guard',
 ): Record<HandMaterialFamily, THREE.BufferGeometry> {
   // 支持手は掌を銃側(+local Y)へ向ける。単純に左手を右手と同じ向きで置くと、
   // 手の甲がハンドガードへ貼り付き「銃の部品」に見える。いったん反対側の手型を作って
   // Z軸で180°返すことで、親指の左右は正しいまま掌・4指だけを銃へ巻き付ける。
+  const supportHand = grip !== 'trigger';
+  const guardHand = grip === 'guard';
   const geometrySide: -1 | 1 = supportHand ? (side === -1 ? 1 : -1) : side;
   const buckets: Record<HandMaterialFamily, THREE.BufferGeometry[]> = {
     glove: [],
@@ -137,9 +141,9 @@ function buildHandGeometries(
   buckets.palm.push(
     transformGeometry(
       new THREE.SphereGeometry(1, 12, 8),
-      new THREE.Vector3(0, -0.028, -0.002),
+      new THREE.Vector3(0, -0.027, guardHand ? 0.004 : -0.002),
       new THREE.Euler(0.08, 0, 0),
-      new THREE.Vector3(0.034, 0.006, 0.043),
+      new THREE.Vector3(0.032, 0.005, guardHand ? 0.036 : 0.043),
     ),
   );
 
@@ -150,13 +154,13 @@ function buildHandGeometries(
     const lengthBias = edge ? 0.88 : 1;
     // 右人差し指だけ僅かに伸ばし、トリガーへ掛かる輪郭を作る。支持手は4指を均等に巻く。
     const triggerFinger = !supportHand && i === 0;
-    const curl = triggerFinger ? 0.66 : supportHand ? 1.08 : 1.02;
+    const curl = triggerFinger ? 0.66 : guardHand ? 1.9 : supportHand ? 1.22 : 1.02;
     const spread = geometrySide * (i - 1.5) * 0.035;
 
     const proximal = new THREE.CapsuleGeometry(0.0083, 0.025 * lengthBias, 4, 7);
     transformGeometry(
       proximal,
-      new THREE.Vector3(x, -0.013, -0.033),
+      new THREE.Vector3(x, guardHand ? 0 : -0.013, guardHand ? -0.022 : -0.033),
       new THREE.Euler(curl, 0, spread),
     );
     buckets.glove.push(proximal);
@@ -164,7 +168,11 @@ function buildHandGeometries(
     const middle = new THREE.CapsuleGeometry(0.0075, (triggerFinger ? 0.028 : 0.021) * lengthBias, 4, 7);
     transformGeometry(
       middle,
-      new THREE.Vector3(x, triggerFinger ? -0.022 : -0.030, triggerFinger ? -0.059 : -0.055),
+      new THREE.Vector3(
+        x,
+        triggerFinger ? -0.022 : guardHand ? -0.01 : -0.030,
+        triggerFinger ? -0.059 : guardHand ? -0.034 : -0.055,
+      ),
       new THREE.Euler(curl + (triggerFinger ? 0.18 : 0.34), 0, spread * 1.15),
     );
     // フルフィンガー軍用手袋。掌側の別素材で節を読み分け、肌色の棒には見せない。
@@ -173,7 +181,11 @@ function buildHandGeometries(
     const tip = new THREE.CapsuleGeometry(0.0069, 0.013 * lengthBias, 4, 7);
     transformGeometry(
       tip,
-      new THREE.Vector3(x, triggerFinger ? -0.031 : -0.044, triggerFinger ? -0.080 : -0.066),
+      new THREE.Vector3(
+        x,
+        triggerFinger ? -0.031 : guardHand ? 0.004 : -0.044,
+        triggerFinger ? -0.080 : guardHand ? -0.025 : -0.066,
+      ),
       new THREE.Euler(curl + (triggerFinger ? 0.28 : 0.58), 0, spread * 1.25),
     );
     buckets.glove.push(tip);
@@ -193,14 +205,14 @@ function buildHandGeometries(
   const thumb0 = new THREE.CapsuleGeometry(0.0102, 0.027, 4, 8);
   transformGeometry(
     thumb0,
-    new THREE.Vector3(0.037 * geometrySide, -0.002, 0.001),
+    new THREE.Vector3((guardHand ? 0.033 : 0.037) * geometrySide, -0.002, guardHand ? 0.008 : 0.001),
     new THREE.Euler(0.52, 0.24 * geometrySide, -0.78 * geometrySide),
   );
   buckets.glove.push(thumb0);
   const thumb1 = new THREE.CapsuleGeometry(0.0086, 0.021, 4, 8);
   transformGeometry(
     thumb1,
-    new THREE.Vector3(0.047 * geometrySide, -0.019, -0.023),
+    new THREE.Vector3((guardHand ? 0.041 : 0.047) * geometrySide, guardHand ? -0.014 : -0.019, guardHand ? -0.012 : -0.023),
     new THREE.Euler(0.92, 0.2 * geometrySide, -0.62 * geometrySide),
   );
   buckets.palm.push(thumb1);
@@ -253,14 +265,17 @@ function buildHandGeometries(
 function buildConnectedSleeve(side: -1 | 1, material: THREE.MeshStandardMaterial): THREE.Mesh {
   // hand local +Z がプレイヤー側。袖口を手首(≈z0.079)へ重ね、二節で画面下へ自然に逃がす。
   const wrist = new THREE.Vector3(0, 0, 0.073);
-  const mid = new THREE.Vector3(0.015 * side, -0.014, 0.165);
-  const elbow = new THREE.Vector3(0.055 * side, -0.065, 0.295);
+  const fore = new THREE.Vector3(0.01 * side, -0.007, 0.145);
+  const mid = new THREE.Vector3(0.025 * side, -0.026, 0.235);
+  const elbow = new THREE.Vector3(0.052 * side, -0.074, 0.34);
   const parts: THREE.BufferGeometry[] = [
-    cylinderBetween(wrist, mid, 0.033, 0.039, 10),
-    cylinderBetween(mid, elbow, 0.039, 0.052, 10),
+    cylinderBetween(wrist, fore, 0.031, 0.036, 16),
+    cylinderBetween(fore, mid, 0.036, 0.044, 16),
+    cylinderBetween(mid, elbow, 0.044, 0.056, 16),
   ];
   tintGeometry(parts[0]!, 0.96);
-  tintGeometry(parts[1]!, 0.82);
+  tintGeometry(parts[1]!, 0.9);
+  tintGeometry(parts[2]!, 0.8);
 
   // 袖口と皺は同一ジオメトリへ結合。追加ドローコール無しで布らしい輪郭を残す。
   const cuff = new THREE.CylinderGeometry(0.037, 0.034, 0.026, 10, 1);
@@ -268,9 +283,9 @@ function buildConnectedSleeve(side: -1 | 1, material: THREE.MeshStandardMaterial
   tintGeometry(cuff, 0.7);
   parts.push(cuff);
   for (const [x, y, z, radius] of [
-    [0.007 * side, -0.006, 0.135, 0.037],
-    [0.026 * side, -0.028, 0.215, 0.043],
-    [0.047 * side, -0.052, 0.272, 0.049],
+    [0.006 * side, -0.005, 0.13, 0.035],
+    [0.022 * side, -0.021, 0.205, 0.041],
+    [0.043 * side, -0.054, 0.292, 0.05],
   ] as const) {
     const fold = new THREE.TorusGeometry(radius, 0.0019, 4, 14);
     transformGeometry(
@@ -298,6 +313,7 @@ function buildArmSide(
   pose: FirstPersonArmPose,
   materials: FirstPersonArmMaterials,
   fists: boolean,
+  grip: 'trigger' | 'support' | 'guard',
 ): { arm: THREE.Group; hand: THREE.Group } {
   // viewmodel の既存名/FIST_POSES互換を守る空制御ノード。表示物を持たせないことで
   // hand と別々に動かされても腕だけが浮く状態を構造的に排除する。
@@ -316,7 +332,7 @@ function buildArmSide(
   hand.userData.connectedLimb = true;
   hand.userData.palmFacesWeapon = side < 0;
   hand.add(buildConnectedSleeve(side, materials.sleeve));
-  const geometries = buildHandGeometries(side, side < 0);
+  const geometries = buildHandGeometries(side, grip);
   const handMeshes: Array<[HandMaterialFamily, THREE.MeshStandardMaterial]> = [
     ['glove', materials.glove],
     ['palm', materials.glovePalm],
@@ -342,8 +358,14 @@ export function buildFirstPersonArms(
   const rig = new THREE.Group();
   rig.name = 'vm:firstPersonArms';
   rig.userData.firstPersonArmsRig = true;
-  const right = buildArmSide(1, options.right, materials, options.fists === true);
-  const left = buildArmSide(-1, options.left, materials, options.fists === true);
+  const right = buildArmSide(1, options.right, materials, options.fists === true, 'trigger');
+  const left = buildArmSide(
+    -1,
+    options.left,
+    materials,
+    options.fists === true,
+    options.leftGrip ?? (options.fists === true ? 'guard' : 'support'),
+  );
   rig.add(right.arm, right.hand, left.arm, left.hand);
   return rig;
 }

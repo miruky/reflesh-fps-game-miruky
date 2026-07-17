@@ -1570,12 +1570,14 @@ export const STAGES: StageDef[] = [
       environmentIntensity: 1.0,
     },
     recipe: {
-      theme: '平坦な的当て訓練場',
-      buildings: [],
+      theme: '山岳軍事射撃基地+開放格納庫+訓練監視塔',
+      buildings: ['hangar', 'tower'],
       objects: [
         { kind: 'bench', count: 4, scatter: 'random' },
         { kind: 'concretebarrier', count: 2, scatter: 'random' },
         { kind: 'streetlight', count: 4, scatter: 'perimeter' },
+        { kind: 'antenna', count: 2, scatter: 'perimeter' },
+        { kind: 'supplycrate', count: 4, scatter: 'cluster', clusterRadius: 12 },
         // R53-S2 ミニシーン: 練習場の休憩所
         { kind: 'bench', count: 1, scatter: 'scene', sceneId: 'kyuukei' },
       ],

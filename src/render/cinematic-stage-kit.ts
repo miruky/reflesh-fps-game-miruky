@@ -708,7 +708,83 @@ function buildDistantWorld(
   root.name = 'aaa:distant-world';
   markObject(root);
   const isNatural = family === 'wilderness' || family === 'arctic' || family === 'geothermal';
-  const geometry = isNatural ? new THREE.IcosahedronGeometry(1, 1) : new THREE.BoxGeometry(1, 1, 1);
+
+  // プレイ領域の外側を一枚の滑らかな地形で繋ぐ。物理は不可視境界の内側だけなので、
+  // 「世界は先へ続いて見えるが進めない」通常のFPSマップ境界になる。旧4枚の拡張床だけでは
+  // 外周端が直線に切れ、箱庭/ジオラマ感が出ていた。
+  const lowBudget = count <= BUDGETS.low.skyline;
+  const highBudget = count >= BUDGETS.high.skyline;
+  const radialSegments = lowBudget ? 48 : highBudget ? 96 : 72;
+  const radialRings = lowBudget ? 4 : highBudget ? 8 : 6;
+  const innerRadius = stage.size * 0.67;
+  const outerRadius = stage.size * 1.9;
+  const terrainGeometry = new THREE.RingGeometry(
+    innerRadius,
+    outerRadius,
+    radialSegments,
+    radialRings,
+  );
+  const positions = terrainGeometry.getAttribute('position') as THREE.BufferAttribute;
+  const phase = (stage.seed % 997) * 0.017;
+  for (let i = 0; i < positions.count; i += 1) {
+    const x = positions.getX(i);
+    const z = positions.getY(i);
+    const radius = Math.hypot(x, z);
+    const t = THREE.MathUtils.clamp((radius - innerRadius) / (outerRadius - innerRadius), 0, 1);
+    const eased = t * t * (3 - 2 * t);
+    const angle = Math.atan2(z, x);
+    const macro = Math.sin(angle * 3 + phase) * 0.55 + Math.sin(angle * 7 - phase * 0.7) * 0.25;
+    const naturalLift = family === 'arctic'
+      ? 18
+      : family === 'geothermal'
+        ? 14
+        : family === 'wilderness'
+          ? 10
+          : 2.4;
+    const micro = Math.sin(x * 0.028 + phase) * Math.cos(z * 0.024 - phase) * (isNatural ? 2.2 : 0.45);
+    positions.setZ(i, -0.08 + eased * (naturalLift * (0.48 + macro * 0.44) + micro));
+  }
+  positions.needsUpdate = true;
+  terrainGeometry.computeVertexNormals();
+  terrainGeometry.rotateX(-Math.PI / 2);
+  const terrainMaterial = new THREE.MeshStandardMaterial({
+    color: shade(stage.palette.floor, isNatural ? -0.08 : -0.16, -0.05),
+    roughness: isNatural ? 0.96 : 0.86,
+    metalness: family === 'urban' || family === 'industrial' || family === 'airport' ? 0.03 : 0,
+    fog: true,
+  });
+  const terrain = new THREE.Mesh(terrainGeometry, terrainMaterial);
+  terrain.name = 'aaa:continuous-world-terrain';
+  terrain.receiveShadow = false;
+  terrain.castShadow = false;
+  markObject(terrain, 0);
+  root.add(terrain);
+
+  // 港・湖・岬は地形の下へ大水面を敷き、境界の先に実在する湾/湖として読ませる。
+  if (['kouwan', 'kohan', 'misaki', 'z03'].includes(stage.id)) {
+    const waterGeometry = new THREE.CircleGeometry(stage.size * 2.05, radialSegments);
+    waterGeometry.rotateX(-Math.PI / 2);
+    const water = new THREE.Mesh(
+      waterGeometry,
+      new THREE.MeshStandardMaterial({
+        color: shade(stage.palette.sky, -0.32, 0.1),
+        roughness: 0.18,
+        metalness: 0.28,
+        transparent: true,
+        opacity: 0.72,
+        depthWrite: false,
+      }),
+    );
+    water.name = 'aaa:world-water-horizon';
+    water.position.y = -0.42;
+    water.renderOrder = -1;
+    markObject(water, 0);
+    root.add(water);
+  }
+
+  const geometry = isNatural
+    ? new THREE.ConeGeometry(1, 1, highBudget ? 10 : 8, 3)
+    : new THREE.BoxGeometry(1, 1, 1, highBudget ? 2 : 1, highBudget ? 2 : 1, highBudget ? 2 : 1);
   const material = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     roughness: isNatural ? 0.98 : 0.84,
@@ -720,6 +796,7 @@ function buildDistantWorld(
   mesh.castShadow = false;
   mesh.receiveShadow = false;
   const base = shade(stage.palette.wall, -0.1, -0.08);
+  const artificialAnchors: Array<{ x: number; z: number; height: number; width: number }> = [];
   for (let i = 0; i < count; i += 1) {
     const angle = (i / count) * Math.PI * 2 + (rand() - 0.5) * 0.12;
     const radius = stage.size * (0.76 + rand() * 0.18);
@@ -728,16 +805,43 @@ function buildDistantWorld(
     if (isNatural) {
       const width = 8 + rand() * 18;
       const height = family === 'arctic' ? 13 + rand() * 24 : 7 + rand() * 17;
-      mesh.setMatrixAt(i, makeMatrix(x, height * 0.22 - 2, z, width, height * 0.55, width * (0.55 + rand() * 0.6), rand() * Math.PI, 0, (rand() - 0.5) * 0.28));
+      mesh.setMatrixAt(i, makeMatrix(x, height * 0.42 - 1, z, width, height, width * (0.55 + rand() * 0.6), rand() * Math.PI, 0, (rand() - 0.5) * 0.16));
     } else {
       const width = 3.5 + rand() * 8;
       const depth = 3.5 + rand() * 8;
       const height = 8 + rand() ** 1.5 * 24;
       mesh.setMatrixAt(i, makeMatrix(x, height / 2 - 1, z, width, height, depth, rand() * Math.PI));
+      artificialAnchors.push({ x, z, height, width });
     }
     mesh.setColorAt(i, base.clone().multiplyScalar(0.64 + rand() * 0.35));
   }
   root.add(configureInstances(mesh, 0));
+
+  // 人工景観は屋上設備を別シルエットとして載せ、単なる直方体列から都市/工業地区へ変える。
+  if (!isNatural && count > 0) {
+    const roofGeometry = new THREE.CylinderGeometry(1, 1.15, 1, 8);
+    const roofMaterial = new THREE.MeshStandardMaterial({
+      color: shade(stage.palette.wall, -0.18, -0.1),
+      roughness: 0.82,
+      metalness: 0.12,
+      fog: true,
+    });
+    const roofs = new THREE.InstancedMesh(roofGeometry, roofMaterial, Math.max(4, Math.floor(count * 0.55)));
+    roofs.name = 'aaa:distant-rooftop-equipment';
+    for (let i = 0; i < roofs.count; i += 1) {
+      const anchor = artificialAnchors[(i * 2 + 1) % artificialAnchors.length]!;
+      const width = Math.min(anchor.width * 0.24, 2.2) * (0.8 + (i % 3) * 0.12);
+      roofs.setMatrixAt(i, makeMatrix(
+        anchor.x,
+        anchor.height - 0.1,
+        anchor.z,
+        width,
+        1.8 + (i % 3) * 0.7,
+        width,
+      ));
+    }
+    root.add(configureInstances(roofs, 1));
+  }
   return root;
 }
 

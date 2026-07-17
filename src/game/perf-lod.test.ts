@@ -78,25 +78,27 @@ describe('zombieKccActive(★Z ゾンビKCC距離LOD)', () => {
     expect(zombieKccActive(3, 2, 40)).toBe(false);
   });
 
-  it('60m超は uid%8 バケット(8フレームに1回)', () => {
-    // uid=0: frame%8===0 のときだけ true
+  it('60m超は uid%16 バケット(16フレームに1回)', () => {
+    // uid=0: frame%16===0 のときだけ true
     expect(zombieKccActive(0, 0, 80)).toBe(true);
     expect(zombieKccActive(0, 1, 80)).toBe(false);
     expect(zombieKccActive(0, 2, 80)).toBe(false);
     expect(zombieKccActive(0, 3, 80)).toBe(false);
     expect(zombieKccActive(0, 4, 80)).toBe(false);
-    expect(zombieKccActive(0, 8, 80)).toBe(true);
-    // uid=1: frame%8===1 のときだけ true
+    expect(zombieKccActive(0, 8, 80)).toBe(false);
+    expect(zombieKccActive(0, 16, 80)).toBe(true);
+    // uid=1: frame%16===1 のときだけ true
     expect(zombieKccActive(1, 0, 80)).toBe(false);
     expect(zombieKccActive(1, 1, 80)).toBe(true);
     expect(zombieKccActive(1, 2, 80)).toBe(false);
   });
 
-  it('distToPlayer=Infinity は60m超扱いで uid%8 バケット', () => {
+  it('distToPlayer=Infinity は60m超扱いで uid%16 バケット', () => {
     expect(zombieKccActive(0, 0, Infinity)).toBe(true);
     expect(zombieKccActive(0, 1, Infinity)).toBe(false);
     expect(zombieKccActive(0, 4, Infinity)).toBe(false);
-    expect(zombieKccActive(0, 8, Infinity)).toBe(true);
+    expect(zombieKccActive(0, 8, Infinity)).toBe(false);
+    expect(zombieKccActive(0, 16, Infinity)).toBe(true);
   });
 });
 

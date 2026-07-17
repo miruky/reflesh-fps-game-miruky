@@ -5,6 +5,7 @@ import {
   SndMatch,
   isWithinSndSite,
   makeSndSites,
+  makeSndSpawnFormation,
   SND_BUY_S,
   SND_LIVE_S,
   SND_FUSE_S,
@@ -14,6 +15,26 @@ import {
   SND_ROUNDS_TO_WIN,
   SND_SIDE_SWAP_EVERY,
 } from './snd';
+
+describe('S&D round spawn formation', () => {
+  it('候補が1点でも6人を2.4m以上離して配置する', () => {
+    const formation = makeSndSpawnFormation({ x: 96, y: 0, z: 96 }, 6);
+    expect(formation).toHaveLength(6);
+    for (let i = 0; i < formation.length; i += 1) {
+      for (let j = i + 1; j < formation.length; j += 1) {
+        expect(Math.hypot(
+          formation[i]!.x - formation[j]!.x,
+          formation[i]!.z - formation[j]!.z,
+        )).toBeGreaterThanOrEqual(2.39);
+      }
+    }
+  });
+
+  it('隊形は境界アンカーからマップ中央側へ伸びる', () => {
+    const formation = makeSndSpawnFormation({ x: 100, y: 0, z: 100 }, 5);
+    expect(formation.every((point) => Math.hypot(point.x, point.z) < Math.hypot(100, 100))).toBe(true);
+  });
+});
 
 // 60Hz固定ロジック相当の刻みでNステップ進める
 function tick(round: SndRound, dt: number, steps: number): ReturnType<SndRound['update']> {

@@ -345,7 +345,7 @@ export const ZOMBIE_KCC_LOD_NEAR_M = 25;
 export const ZOMBIE_KCC_LOD_MID_M = 60;
 export const ZOMBIE_KCC_NEAR_FULL_RANK = 8;
 export const ZOMBIE_HORDE_THIN_RANK = 24;
-function zombieKccFactor(distToPlayerM: number, hordeRank: number): 1 | 2 | 4 | 8 {
+function zombieKccFactor(distToPlayerM: number, hordeRank: number): 1 | 2 | 4 | 8 | 16 {
   if (distToPlayerM <= ZOMBIE_KCC_LOD_NEAR_M) {
     if (hordeRank < ZOMBIE_KCC_NEAR_FULL_RANK) return 1;
     if (hordeRank < ZOMBIE_HORDE_THIN_RANK) return 4;
@@ -353,10 +353,12 @@ function zombieKccFactor(distToPlayerM: number, hordeRank: number): 1 | 2 | 4 | 
   }
   if (distToPlayerM <= ZOMBIE_KCC_LOD_MID_M) {
     if (hordeRank < ZOMBIE_KCC_NEAR_FULL_RANK) return 2;
-    if (hordeRank < ZOMBIE_HORDE_THIN_RANK) return 4;
-    return 8;
+    if (hordeRank < ZOMBIE_HORDE_THIN_RANK) return 8;
+    return 16;
   }
-  return 8;
+  // 60m超は1/16で十分。水平移動/アニメは前回の解決値を毎フレーム再利用し、
+  // 25m圏に入れば自動で1/8〜毎フレームへ戻るため、近接/壁際の忠実度は落とさない。
+  return 16;
 }
 export function zombieKccActive(
   uid: number,
@@ -1312,6 +1314,7 @@ export class Bot {
   // ★2 巨躯KCC距離LOD: フレームパリティと、非担当フレームで再利用する前回moved
   private kccFrame = 0;
   private readonly prevGiantMoved = { x: 0, y: 0, z: 0 };
+  private prevGiantGrounded = false;
   private readonly prevZombieMoved = { x: 0, y: 0, z: 0 };
   private readonly zombieMovement = { x: 0, y: 0, z: 0 };
   private prevZombieGrounded = false;
@@ -1845,6 +1848,7 @@ export class Bot {
     this.prevGiantMoved.x = 0;
     this.prevGiantMoved.y = 0;
     this.prevGiantMoved.z = 0;
+    this.prevGiantGrounded = false;
     this.climbing = false;
     this.climbBaseY = by;
     this.climbCooldownS = 0;
@@ -2146,6 +2150,11 @@ export class Bot {
   get position(): THREE.Vector3 {
     const t = this.body.translation();
     return new THREE.Vector3(t.x, t.y, t.z);
+  }
+
+  /** 剛体中心から体格別オフセットを除いた実足元Y。埋没監視はVector3を生成しない。 */
+  get feetY(): number {
+    return this.body.translation().y - this.feetOffset;
   }
 
   // ★5 割り当てゼロ版position。ホットパス(footstep距離/bearings/minimap/fk記録)は
@@ -2899,9 +2908,11 @@ export class Bot {
         }
       }
     } else {
-      // LODフレーム: 前回movedを再利用(最大7フレーム間も移動/アニメは60Hzで継続)
+      // LODフレーム: 水平は前回の解決済み移動を再利用して60Hzの滑らかさを保つ。
+      // 接地時の負のmoved.yを最大7フレーム再適用すると、KCCに未照会のまま床下へ沈む。
+      // 空中のYは落下の滑らかさのため再利用し、接地後だけ0に固定する。
       mvX = this.prevZombieMoved.x;
-      mvY = this.prevZombieMoved.y;
+      mvY = this.prevZombieGrounded ? 0 : this.prevZombieMoved.y;
       mvZ = this.prevZombieMoved.z;
       grounded = this.prevZombieGrounded;
       if (grounded && this.velY < 0) this.velY = -0.5;
@@ -3040,7 +3051,8 @@ export class Bot {
       const movement = { x: wishX * dt, y: this.velY * dt, z: wishZ * dt };
       this.controller.computeColliderMovement(this.bodyCollider, movement);
       const moved = this.controller.computedMovement();
-      if (this.controller.computedGrounded() && this.velY < 0) this.velY = -0.5;
+      this.prevGiantGrounded = this.controller.computedGrounded();
+      if (this.prevGiantGrounded && this.velY < 0) this.velY = -0.5;
       mvX = moved.x;
       mvY = moved.y;
       mvZ = moved.z;
@@ -3049,7 +3061,8 @@ export class Bot {
       this.prevGiantMoved.z = mvZ;
     } else {
       mvX = this.prevGiantMoved.x;
-      mvY = this.prevGiantMoved.y;
+      // 巨軀も同じ接地後Yゼロ契約で、遠距離LOD中の地中埋没を防ぐ。
+      mvY = this.prevGiantGrounded ? 0 : this.prevGiantMoved.y;
       mvZ = this.prevGiantMoved.z;
     }
     const t = this.body.translation();

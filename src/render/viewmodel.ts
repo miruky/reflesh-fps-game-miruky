@@ -357,7 +357,7 @@ function getShared(): SharedMats {
       // 黒い銃やダークマターにも埋没せず、肌ではなく兵士の装備として読める配色にする。
       sleeve,
       glove: clothMat(0x4a3525, 0.94),
-      glovePalm: clothMat(0x8a6848, 0.98),
+      glovePalm: clothMat(0x624833, 0.98),
       gloveArmor: clothMat(0x2b2119, 0.82),
       gloveStitch: clothMat(0xb79a73, 0.92),
       skin: clothMat(0x6e4b33, 0.9),
@@ -2583,7 +2583,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.1, -0.16, -0.02, 0.42, 0.24, 0.1],
-          hand: [-0.11, -0.09, -0.16, 0.25, 0.1, 0],
+          hand: [-0.15, -0.13, -0.15, 0.18, 0.24, -0.82],
         },
         reloadGesture: 'blade',
       };
@@ -2596,7 +2596,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.13, -0.2, 0.02, 0.48, 0.2, 0.2],
-          hand: [-0.025, -0.046, -0.245, 0.12, 0.08, -0.48],
+          hand: [-0.036, -0.052, -0.245, 0.18, 0.1, -0.82],
         },
         reloadGesture: 'staff',
       };
@@ -2608,7 +2608,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.16, -0.21, 0.03, 0.5, 0.22, 0.22],
-          hand: [-0.032, -0.034, -0.205, 0.08, 0.08, -0.44],
+          hand: [-0.04, -0.044, -0.205, 0.16, 0.1, -0.84],
         },
         reloadGesture: 'blade',
       };
@@ -2621,7 +2621,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.15, -0.22, 0.08, 0.5, 0.2, 0.24],
-          hand: [-0.085, -0.098, -0.08, 0.18, 0.12, -0.46],
+          hand: [-0.092, -0.102, -0.08, 0.22, 0.14, -0.84],
         },
         reloadGesture: 'blade',
       };
@@ -2636,7 +2636,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.17, -0.25, 0.05, 0.6, 0.28, 0.32],
-          hand: [-0.04, -0.066, -0.21 * bs, 0.32, 0.14, -0.43],
+          hand: [-0.045, -0.07, -0.21 * bs, 0.34, 0.16, -0.8],
         },
         reloadGesture: 'heavy',
       };
@@ -2650,7 +2650,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.13, -0.22, 0.11, 0.52, 0.2, 0.22],
-          hand: [-0.005, -0.076, 0.005, 0.28, 0.12, -0.68],
+          hand: [-0.012, -0.08, 0.005, 0.3, 0.16, -0.94],
         },
         reloadGesture: 'magazine',
       };
@@ -2662,7 +2662,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.16, -0.23, 0.06, 0.58, 0.28, 0.32],
-          hand: [-0.028, -0.048, -0.17 * bs, 0.32, 0.14, -0.48],
+          hand: [-0.034, -0.054, -0.17 * bs, 0.34, 0.17, -0.84],
         },
         reloadGesture: 'generic',
       };
@@ -2825,8 +2825,10 @@ const FIST_POSES: FistPose[] = [
   { name: 'vm:fistRArm', rest: { p: [0.08, -0.2, 0.12], r: [0.5, -0.12, 0] }, ads: { p: [0.08, -0.19, 0.11], r: [0.46, -0.04, -0.08] } },
   // 守り手は掌を正面へ晒さず、親指側を内へ向けた半握りの近接ガードにする。
   // yawを大きく付けることで「停止」のような平手シルエットを消し、中央視界も空ける。
-  { name: 'vm:fistLArm', rest: { p: [-0.1, -0.16, -0.02], r: [0.42, 0.24, 0.1] }, ads: { p: [-0.12, -0.18, -0.04], r: [0.44, 0.2, 0.08] } },
-  { name: 'vm:fistLHand', rest: { p: [-0.17, -0.145, -0.18], r: [0.08, 0.3, -0.6] }, ads: { p: [-0.18, -0.16, -0.16], r: [0.12, 0.34, -0.55] } },
+  { name: 'vm:fistLArm', rest: { p: [-0.16, -0.12, -0.02], r: [0.42, 0.3, 0.12] }, ads: { p: [-0.16, -0.14, -0.04], r: [0.44, 0.28, 0.1] } },
+  // 左ガードは右の柄手と完全に分離。掌をクナイ側へ向けた半握りを画面左に出し、
+  // 二重腕/一本の太い腕に見えるシルエットとHUD下への隠れを同時に防ぐ。
+  { name: 'vm:fistLHand', rest: { p: [-0.29, -0.09, -0.16], r: [0.2, 0.48, -1.04] }, ads: { p: [-0.28, -0.11, -0.15], r: [0.23, 0.5, -0.98] } },
 ];
 
 // 黒帝モード専用の腰だめ構え(darkHip)。右クリックは既存 FIST_POSES.ads へ収束する。
@@ -2841,8 +2843,8 @@ const DARK_POSES: DarkPose[] = [
   // 右腕: 右下から柄を支える
   { name: 'vm:fistRArm',     darkHip: { p: [0.09, -0.21, 0.12],  r: [0.42, 0.10, -0.06] } },
   // 左腕は刀身の下へ重ねず画面左で防御。左右の袖が一本に見える二重腕を防ぐ。
-  { name: 'vm:fistLArm',     darkHip: { p: [-0.16, -0.2, -0.03], r: [0.4, 0.24, 0.12] } },
-  { name: 'vm:fistLHand',    darkHip: { p: [-0.2, -0.17, -0.2], r: [0.1, 0.34, -0.58] } },
+  { name: 'vm:fistLArm',     darkHip: { p: [-0.18, -0.13, -0.03], r: [0.4, 0.3, 0.14] } },
+  { name: 'vm:fistLHand',    darkHip: { p: [-0.31, -0.1, -0.18], r: [0.21, 0.5, -1.02] } },
 ];
 // ノード名 → darkHip の高速引き(update ループで毎フレーム使う・モジュール初期化時に構築)
 const DARK_POSE_MAP = new Map<string, { p: [number, number, number]; r: [number, number, number] }>();
@@ -3361,6 +3363,7 @@ export class ViewModel {
       // vm:fist* として名付け、update が rest↔ガードを補間する(FIST_POSES の rest と一致)
       const arms = buildFirstPersonArms(armMaterials, {
         fists: true,
+        leftGrip: 'guard',
         right: grip.right,
         left: grip.left,
       });

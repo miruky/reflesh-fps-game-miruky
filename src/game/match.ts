@@ -65,6 +65,7 @@ import {
 } from './ballistics';
 import { breathStep, BREATH_MAX_S, lissajousSway, swayAmp, SWAY_AMP_DEG } from './scope';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -1765,7 +1766,10 @@ export class Match {
     floorMesh.receiveShadow = true;
     this.scene.add(floorMesh);
 
-    const unitBox = new THREE.BoxGeometry(1, 1, 1);
+    // 共有ジオメトリを軽い面取り箱へ変更。コライダーは従来の直方体のままなのでルート幅や
+    // 弾道は不変だが、全建築/遮蔽物の稜線が光を拾い「CGの豆腐箱」に見える主因を除く。
+    // 共有1個をscaleするためメモリ増は固定、2段bevelで三角形増も高品質予算内に収まる。
+    const unitBox = new RoundedBoxGeometry(1, 1, 1, 2, 0.018);
     // 体積AO(Tier0): 天面を明るく底面を暗くする乗算頂点カラーを一度だけ焼く。
     // 共有unitBoxに焼くので全障害物が無コストで「平面の豆腐」を脱する
     this.bakeVolumetricAO(unitBox);
@@ -1782,6 +1786,9 @@ export class Match {
     for (const spec of boxes) {
       const isGhost = (spec as { ghost?: boolean }).ghost === true;
       const isDecor = (spec as { decor?: boolean }).decor === true;
+      // 旧BoxSpec遠景は矩形の板/積み木に見えるうえ、到達不能なのにRapierコライダーまで
+      // 生成していた。R64の連続地形+固有遠景へ完全移行し、レイアウト互換のデータだけ残す。
+      if ((spec as { legacyHorizon?: boolean }).legacyHorizon === true) continue;
       const brkSpec = (spec as { breakable?: { hp: number } }).breakable;
       const isBreakable = !isGhost && brkSpec !== undefined;
       const visualColor = cinematicStructuralColor(spec, palette);
@@ -8737,12 +8744,27 @@ export class Match {
       }
     }
     if (best) return best;
-    // 全候補が近接占有 → 最高スコア地点に決定論的な小オフセットを加えてスタックを散らす
+    // 全候補が近接占有 → 最高スコア地点の周囲へ安全間隔の螺旋隊形を作る。
+    // 旧±0.4m jitterはCapsule直径より小さく、同時復帰時に手足/カメラが重なっていた。
     const base = fallback ?? candidates[0] ?? new THREE.Vector3();
+    const phase = this.rand() * Math.PI * 2;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const ring = Math.floor(attempt / 6) + 1;
+      const angle = phase + (attempt % 6) * (Math.PI / 3);
+      const radius = MIN_SPAWN_GAP * (1.35 + (ring - 1) * 0.9);
+      const candidate = new THREE.Vector3(
+        base.x + Math.cos(angle) * radius,
+        base.y,
+        base.z + Math.sin(angle) * radius,
+      );
+      const clear = occupants.every((occupant) => occupant.distanceTo(candidate) >= MIN_SPAWN_GAP);
+      if (clear) return candidate;
+    }
+    // 極端な人数でも必ず同一点には戻さず、最後の外周へ出す。
     return new THREE.Vector3(
-      base.x + (this.rand() - 0.5) * 0.8,
+      base.x + Math.cos(phase) * MIN_SPAWN_GAP * 4,
       base.y,
-      base.z + (this.rand() - 0.5) * 0.8,
+      base.z + Math.sin(phase) * MIN_SPAWN_GAP * 4,
     );
   }
 

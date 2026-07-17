@@ -144,6 +144,8 @@ export interface BoxSpec {
   structural?: boolean; // V31: 構造支持材(キャットウォーク支柱等)=絶対に破壊不可
   /** 環境オブジェクト由来のボックス。将来のマージ描画振り分け用マーカー */
   prop?: boolean;
+  /** R64以前の箱型遠景。新しい連続地形/遠景メッシュが描画を引き継ぐため物理・描画とも省略する。 */
+  legacyHorizon?: boolean;
   /** h > 3 の大型プロップに自動付与。シャドウキャスター対象フラグ */
   shadowCaster?: boolean;
 }
@@ -551,6 +553,7 @@ function generateSilhouette(
     }
   }
 
+  for (const box of boxes) box.legacyHorizon = true;
   return boxes;
 }
 
@@ -1089,7 +1092,9 @@ export function generateThemeObjects(
   const visRand = mulberry32(def.seed ^ 0x9e3779b9);
 
   // 固定スポーン座標を決定論的に再現(rand消費なし)
-  const edge = half - 4;
+  // 境界壁の4m手前は、開始直後から不可視壁へ触れやすく「箱の内側」感を強めていた。
+  // 22%内側へ入れ、背景世界を見渡せる余白と初動ルートを確保する。物理境界自体は従来位置。
+  const edge = Math.round((half * 0.78) / GRID) * GRID;
   const allSpawns: [number, number][] = [
     [edge, edge], [-edge, edge], [edge, -edge], [-edge, -edge],
     [0, edge], [0, -edge], [edge, 0], [-edge, 0],
@@ -1220,7 +1225,9 @@ export function generateStage(def: StageDef): StageLayout {
   }
 
   // ② スポーン配置
-  const edge = half - 4;
+  // 不可視境界の直前で開始する「箱の中」感と開始直後の壁接触を避ける。
+  // generateThemeObjectsと完全に同じ式にし、建物/プロップのスポーン離隔契約を一致させる。
+  const edge = Math.round((half * 0.78) / GRID) * GRID;
   const corners: SpawnPoint[] = [
     [edge, 0, edge],
     [-edge, 0, edge],

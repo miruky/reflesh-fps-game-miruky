@@ -123,10 +123,10 @@ describe('botSpawns の追加', () => {
     }
   });
 
-  it('botCount<=6 では従来の6点から変化しない', () => {
+  it('botCount<=6 でも6点を保ち、不可視境界から22%内側の安全圏へ配置する', () => {
     const def = { ...generateStageDef(123, 'urban'), botCount: 5 };
     const layout = generateStage(def);
-    const edge = def.size / 2 - 4;
+    const edge = Math.round(((def.size / 2) * 0.78) / 2) * 2;
     expect(layout.botSpawns).toEqual([
       [0, 0, edge],
       [0, 0, -edge],

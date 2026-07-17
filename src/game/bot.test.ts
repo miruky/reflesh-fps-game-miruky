@@ -234,13 +234,17 @@ describe('zombieKccActive(R100 群衆ランクKCC時間LOD)', () => {
     expect(zombieKccActive(4, 1, 40)).toBe(false);
   });
 
-  it('25m超も順位と距離に応じ2/4/8フレームへ分散する', () => {
+  it('25m超も順位と距離に応じ2/8/16フレームへ分散する', () => {
     expect(zombieKccActive(4, 0, 40, 0)).toBe(true);
     expect(zombieKccActive(4, 1, 40, 0)).toBe(false);
     expect(zombieKccActive(0, 0, 80, 0)).toBe(true);
     expect(zombieKccActive(0, 1, 80, 0)).toBe(false);
     expect(zombieKccActive(0, 4, 80, 0)).toBe(false);
-    expect(zombieKccActive(0, 8, 80, 0)).toBe(true);
+    expect(zombieKccActive(0, 8, 80, 0)).toBe(false);
+    expect(zombieKccActive(0, 16, 80, 0)).toBe(true);
+    expect(Array.from({ length: 16 }, (_, frame) =>
+      zombieKccActive(11, frame, 40, ZOMBIE_HORDE_THIN_RANK),
+    ).filter(Boolean)).toHaveLength(1);
   });
 });
 
@@ -258,8 +262,8 @@ describe('zombieKccSkipFactor(★1/★5 stuckTimer実時間補正用)', () => {
     expect(zombieKccSkipFactor(40, 0)).toBe(2);
   });
 
-  it('60m超は係数8', () => {
-    expect(zombieKccSkipFactor(80, 0)).toBe(8);
+  it('60m超は係数16', () => {
+    expect(zombieKccSkipFactor(80, 0)).toBe(16);
   });
 });
 
@@ -395,6 +399,48 @@ describe('Bot ゾンビ respawnAt(prevZombieMoved/prevZombieGroundedのリセッ
     expect(internal.prevZombieMoved.y).toBe(0);
     expect(internal.prevZombieMoved.z).toBe(0);
     expect(internal.prevZombieGrounded).toBe(false);
+  });
+});
+
+describe('Bot ゾンビ KCC時間LODの接地Y再利用', () => {
+  it('接地済みの負の前回Y移動をLODスキップtickで再適用せず、床下へ沈めない', () => {
+    const world = makeFlatWorld();
+    const zombie = new Bot(
+      world,
+      '埋没防止',
+      new THREE.Vector3(0, 0, 0),
+      0x39d465,
+      { ...DIFFICULTY.normal },
+      2,
+      'normal',
+      'zombie',
+    );
+    zombie.hordeRank = ZOMBIE_HORDE_THIN_RANK;
+    world.step();
+    const internal = zombie as unknown as {
+      uid: number;
+      kccFrame: number;
+      prevZombieMoved: { x: number; y: number; z: number };
+      prevZombieGrounded: boolean;
+    };
+    internal.prevZombieMoved.y = -0.18;
+    internal.prevZombieGrounded = true;
+    // update内で+1されたフレームがuid%8と一致しない=確実にLODスキップ。
+    internal.kccFrame = internal.uid;
+    const beforeFeetY = zombie.feetY;
+    const ctx: BotContext = {
+      targetEye: new THREE.Vector3(50, 1.5, 0),
+      objective: null,
+      tuning: { ...DIFFICULTY.normal },
+      rand: () => 0.5,
+      onShoot: () => {},
+      onMelee: () => {},
+    };
+
+    zombie.update(1 / 60, ctx);
+    world.step();
+
+    expect(zombie.feetY).toBeCloseTo(beforeFeetY, 5);
   });
 });
 

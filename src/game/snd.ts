@@ -357,3 +357,55 @@ export class SndMatch {
     return null;
   }
 }
+
+// ── ラウンド開始隊形 ──────────────────────────────────────────────────────
+
+export interface SndSpawnPoint {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+/**
+ * 1つの安全なチームアンカーから、互いに重ならない2列隊形を生成する。
+ *
+ * S&Dはノーリスポーンなので、通常モードの「空いているスポーン候補を1個ずつ選ぶ」方式を
+ * そのまま使うと、味方人数が候補数を超えた瞬間に同じ座標へフォールバックする。ここでは
+ * マップ中央方向へ列を伸ばし、横方向へ最大3人ずつ並べるため、候補が1点しかなくても
+ * Capsule同士の必要距離を保った状態で全員を復帰できる。
+ */
+export function makeSndSpawnFormation(
+  anchor: SndSpawnPoint,
+  count: number,
+  spacing = 2.4,
+  toward: Pick<SndSpawnPoint, 'x' | 'z'> = { x: 0, z: 0 },
+): SndSpawnPoint[] {
+  if (count <= 0) return [];
+  const dx = toward.x - anchor.x;
+  const dz = toward.z - anchor.z;
+  const length = Math.hypot(dx, dz);
+  const forwardX = length > 1e-5 ? dx / length : 0;
+  const forwardZ = length > 1e-5 ? dz / length : -1;
+  const rightX = -forwardZ;
+  const rightZ = forwardX;
+  const result: SndSpawnPoint[] = [];
+  let cursor = 0;
+  let row = 0;
+  while (cursor < count) {
+    const rowCount = Math.min(3, count - cursor);
+    const rowWidth = (rowCount - 1) * spacing;
+    // 境界ぴったりのStage spawnから1.5m内側へ入れ、後列ほどさらに中央へ伸ばす。
+    const inward = 1.5 + row * spacing;
+    for (let column = 0; column < rowCount; column += 1) {
+      const lateral = column * spacing - rowWidth / 2;
+      result.push({
+        x: anchor.x + forwardX * inward + rightX * lateral,
+        y: anchor.y,
+        z: anchor.z + forwardZ * inward + rightZ * lateral,
+      });
+      cursor += 1;
+    }
+    row += 1;
+  }
+  return result;
+}

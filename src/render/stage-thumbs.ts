@@ -20,6 +20,23 @@ import type { StageDef } from '../game/stage';
 import { generateStage } from '../game/stage';
 import { buildCinematicStageKit } from './cinematic-stage-kit';
 
+/** imagegenで制作し、実ステージIDへ固定対応させたR64シネマティックカード。 */
+export const STATIC_STAGE_THUMB_IDS = new Set([
+  'kunren', 'souko', 'nakaniwa', 'kairou', 'kouwan', 'takadai', 'sakyuu', 'setsugen',
+  'koushou', 'yoichi', 'okujou', 'saisekiba', 'chikurin', 'tanada', 'misaki', 'haieki',
+  'kyokoku', 'kohan', 'kuko', 'onsengai',
+  'z01', 'z02', 'z03', 'z04', 'z05', 'z06', 'z07', 'z08', 'z09', 'z10',
+  'renshujo',
+]);
+
+export function staticStageThumbUrl(stageId: string): string | null {
+  if (!STATIC_STAGE_THUMB_IDS.has(stageId)) return null;
+  const base = import.meta.env.BASE_URL.endsWith('/')
+    ? import.meta.env.BASE_URL
+    : `${import.meta.env.BASE_URL}/`;
+  return `${base}assets/stage-thumbs/${stageId}.webp`;
+}
+
 // ── サムネイル寸法: 既存の .stage-preview aspect-ratio 160/92 に合わせる ──
 const THUMB_W = 320;
 const THUMB_H = 184; // 320 * (92/160) = 184 で 160/92 比率を維持
@@ -185,7 +202,7 @@ export function renderStageThumb(def: StageDef, w = THUMB_W, h = THUMB_H): strin
   const matMap = new Map<string, THREE.MeshStandardMaterial>();
 
   for (const b of layout.boxes) {
-    if (b.ghost === true) continue;
+    if (b.ghost === true || b.legacyHorizon === true) continue;
 
     const colorKey = b.color + (b.emissive ? '_e' : '');
     let mat = matMap.get(colorKey);
@@ -345,7 +362,7 @@ function scheduleNext(): void {
 /**
  * requestStageThumb — 非同期遅延生成。
  *
- * キャッシュ済みなら cb を同期で即呼び出す。
+ * キャッシュ済みでも cb はDOMマウント後のマイクロタスクで呼び出す。
  * 未生成なら生成キューに追加し、空きフレームで1枚ずつ生成後に cb を呼ぶ。
  * 同じ stageId が複数回 request された場合は生成1回でまとめて解決する。
  */
@@ -366,6 +383,16 @@ export function requestStageThumb(def: StageDef, cb: ReadyCallback): void {
     queueMicrotask(() => {
       cb(cached);
     });
+    return;
+  }
+
+  // 固定31面はimagegen製のマップ固有カードを直接配信する。メニューで31回のWebGLシーン生成を
+  // 行わないため高速で、実ゲームの箱プリミティブを俯瞰した「ジオラマ」表示にも戻らない。
+  // 未知の生成キャンペーンだけは下のプロシージャルフォールバックへ流す。
+  const staticUrl = staticStageThumbUrl(def.id);
+  if (staticUrl !== null) {
+    thumbCache.set(def.id, staticUrl);
+    queueMicrotask(() => cb(staticUrl));
     return;
   }
 
