@@ -20,8 +20,8 @@ import { CAMO_IDS, CAMO_VISUALS } from '../game/camo';
 
 // 一人称腕は sleeve/glove の固有色で塗られる。銃本体にこれらが混ざっていなければ
 // 「腕なし」と判定できる(dark/darker/accent とは別色)。
-const SLEEVE_HEX = 0x58a8c7;
-const GLOVE_HEX = 0x2f718c;
+const SLEEVE_HEX = 0x765638;
+const GLOVE_HEX = 0x4a3525;
 
 describe('reloadAnimationPose', () => {
   it('開始/終了は静止し、中盤だけマガジンと支持手を動かす', () => {
@@ -38,6 +38,19 @@ describe('reloadAnimationPose', () => {
   it('範囲外ratioを安全にクランプする', () => {
     expect(reloadAnimationPose(-1)).toEqual(reloadAnimationPose(0));
     expect(reloadAnimationPose(2)).toEqual(reloadAnimationPose(1));
+  });
+
+  it('240fps相当の全区間で連続し、開始／終了時の速度がほぼ0になる', () => {
+    const frames = Array.from({ length: 241 }, (_, i) => reloadAnimationPose(i / 240));
+    for (let i = 1; i < frames.length; i += 1) {
+      const prev = frames[i - 1]!;
+      const next = frames[i]!;
+      for (const key of Object.keys(prev) as Array<keyof typeof prev>) {
+        expect(Math.abs(next[key] - prev[key]), `${key}@${i}`).toBeLessThan(0.08);
+      }
+    }
+    expect(frames[1]!.weaponWave).toBeLessThan(0.0001);
+    expect(frames.at(-2)!.weaponWave).toBeLessThan(0.0001);
   });
 
   it('実ViewModelで支持手と弾倉が動き、完了後は正確に静止位置へ戻る', () => {
@@ -89,6 +102,18 @@ describe('武器別の腕姿勢・ADS・視覚反動', () => {
         expect(values, def.id).toHaveLength(6);
         expect(values.every(Number.isFinite), def.id).toBe(true);
       }
+    }
+  });
+
+  it('全銃器の左支持手は手の甲でなく掌を銃中心へ向ける', () => {
+    for (const def of Object.values(WEAPON_DEFS)) {
+      if (def.shape === 'fists') continue;
+      const grip = resolveFirstPersonGripProfile(def);
+      expect(grip.left.hand[5], def.id).toBeLessThanOrEqual(-0.4);
+      const inward = new THREE.Vector3(0, 1, 0).applyEuler(
+        new THREE.Euler(grip.left.hand[3], grip.left.hand[4], grip.left.hand[5]),
+      );
+      expect(inward.x, def.id).toBeGreaterThan(0.25);
     }
   });
 

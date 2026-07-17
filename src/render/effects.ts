@@ -112,7 +112,7 @@ export class Effects {
 
   constructor(private readonly scene: THREE.Scene) {}
 
-  tracer(from: THREE.Vector3, to: THREE.Vector3, color: number): void {
+  tracer(from: THREE.Vector3, to: THREE.Vector3, color: number, darkMatter = false): void {
     const delta = to.clone().sub(from);
     const distance = delta.length();
     // 弾道全長や数mの線でも、射手がカメラ近傍にいると投影上は画面を横断する
@@ -123,16 +123,20 @@ export class Effects {
     const segmentStart = from.clone().addScaledVector(direction, startOffset);
     const segmentLength = Math.min(0.45, Math.max(0, distance - startOffset));
     const segmentEnd = segmentStart.clone().addScaledVector(direction, segmentLength);
-    const tracerColor = new THREE.Color(color).multiplyScalar(0.28);
+    // ダークマター弾は加算光ではなく黒い芯として描く。明所では漆黒の弾道、暗所では
+    // ごく僅かな紫黒の輪郭が残るエネルギーに抑え、黒帝系の視認性と眩しさ防止を両立する。
+    const tracerColor = darkMatter
+      ? new THREE.Color(0x09000d)
+      : new THREE.Color(color).multiplyScalar(0.28);
     const geometry = new THREE.BufferGeometry().setFromPoints([segmentStart, segmentEnd]);
     const material = new THREE.LineBasicMaterial({
       color: tracerColor,
       transparent: true,
-      opacity: 0.18,
+      opacity: darkMatter ? 0.82 : 0.18,
       depthWrite: false,
     });
     const line = new THREE.Line(geometry, material);
-    line.userData.baseOpacity = 0.18;
+    line.userData.baseOpacity = darkMatter ? 0.82 : 0.18;
     this.scene.add(line);
     this.tracers.push({ obj: line, life: 0.022, maxLife: 0.022 });
   }
@@ -2191,20 +2195,22 @@ export class Effects {
   }
 
   /** 蜃気楼 シアンビームライン */
-  beamLine(from: THREE.Vector3, to: THREE.Vector3): void {
+  beamLine(from: THREE.Vector3, to: THREE.Vector3, darkMatter = false): void {
     const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
     const mat = new THREE.LineBasicMaterial({
-      color: 0x00ffee, transparent: true, opacity: 0.85,
-      blending: THREE.AdditiveBlending,
+      color: darkMatter ? 0x09000d : 0x00ffee,
+      transparent: true,
+      opacity: darkMatter ? 0.9 : 0.85,
+      blending: darkMatter ? THREE.NormalBlending : THREE.AdditiveBlending,
     });
     const line = new THREE.Line(geo, mat);
-    line.userData.baseOpacity = 0.85;
+    line.userData.baseOpacity = darkMatter ? 0.9 : 0.85;
     this.scene.add(line);
     this.beamLines.push({ obj: line, life: 0.08, maxLife: 0.08 });
   }
 
   /** 万刃 手裏剣ディスク飛行グループを作成し scene に追加して返す */
-  shurikenDiscFly(origin: THREE.Vector3, dir: THREE.Vector3): THREE.Group {
+  shurikenDiscFly(origin: THREE.Vector3, dir: THREE.Vector3, darkMatter = false): THREE.Group {
     const group = new THREE.Group();
     // 4枚羽ディスク
     const pts: THREE.Vector3[] = [];
@@ -2213,9 +2219,14 @@ export class Effects {
       pts.push(new THREE.Vector3(Math.cos(rad) * 0.12, Math.sin(rad) * 0.12, 0));
     }
     const geo = new THREE.BufferGeometry().setFromPoints(pts);
-    const mat = new THREE.LineBasicMaterial({ color: 0xddeeff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+    const mat = new THREE.LineBasicMaterial({
+      color: darkMatter ? 0x09000d : 0xddeeff,
+      transparent: true,
+      opacity: darkMatter ? 0.92 : 0.8,
+      blending: darkMatter ? THREE.NormalBlending : THREE.AdditiveBlending,
+    });
     const disc = new THREE.Line(geo, mat);
-    disc.userData.baseOpacity = 0.8;
+    disc.userData.baseOpacity = darkMatter ? 0.92 : 0.8;
     group.add(disc);
     // 十字スジ
     for (let a = 0; a < 4; a += 1) {
@@ -2223,9 +2234,14 @@ export class Effects {
       const lineGeo = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0), new THREE.Vector3(Math.cos(rad) * 0.15, Math.sin(rad) * 0.15, 0),
       ]);
-      const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
+      const lineMat = new THREE.LineBasicMaterial({
+        color: darkMatter ? 0x21002b : 0xffffff,
+        transparent: true,
+        opacity: darkMatter ? 0.55 : 0.6,
+        blending: darkMatter ? THREE.NormalBlending : THREE.AdditiveBlending,
+      });
       const spoke = new THREE.Line(lineGeo, lineMat);
-      spoke.userData.baseOpacity = 0.6;
+      spoke.userData.baseOpacity = darkMatter ? 0.55 : 0.6;
       group.add(spoke);
     }
     group.position.copy(origin);

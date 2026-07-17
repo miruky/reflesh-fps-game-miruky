@@ -12,6 +12,8 @@ import {
   camoTierFor,
   camoWeaponsOfClass,
   DARK_MATTER_CAMO,
+  DARK_MATTER_DAMAGE_MULTIPLIER,
+  DARK_MATTER_PROJECTILE_COLOR,
   DIAMOND_CAMO,
   darkMatterFor,
   diamondFor,
@@ -35,6 +37,8 @@ import {
   PAP_CAMO_NAMES,
   REWARD_CAMO_CHAPTER,
   REWARD_CAMO_IDS,
+  SECONDARY_GOLD_HS,
+  SECONDARY_GOLD_KILLS,
   TOKOYAMI_CAMO,
   weaponIdByName,
   weaponNameOf,
@@ -105,11 +109,14 @@ describe('カモ段階表', () => {
       expect(v.metalness, id).toBeGreaterThanOrEqual(0);
       expect(v.metalness, id).toBeLessThanOrEqual(1);
     }
-    // 仕様の要: gold=金属金, diamond=高密度スタッドだが抗グレア, dark-matter=脈動
+    // 仕様の要: gold=金属金, diamond=高密度スタッドだが抗グレア,
+    // dark-matter=黒帝系の低発光黒曜石
     expect(CAMO_VISUALS.gold.metalness).toBe(1.0);
     expect(CAMO_VISUALS.diamond.roughness).toBeGreaterThanOrEqual(0.24);
     expect(CAMO_VISUALS.diamond.roughness).toBeLessThanOrEqual(0.32);
-    expect(CAMO_VISUALS['dark-matter'].pattern).toBe('pulse');
+    expect(CAMO_VISUALS['dark-matter'].pattern).toBe('void');
+    expect(CAMO_VISUALS['dark-matter'].emissiveIntensity).toBeLessThanOrEqual(0.2);
+    expect(CAMO_VISUALS['dark-matter'].colorA).toBeLessThan(0x050505);
   });
 
   it('diamond は金属下地+銀色スタッド専用パターンを使う', () => {
@@ -159,12 +166,22 @@ describe('対象武器とクラス', () => {
     expect(covered.size).toBe(CAMO_WEAPON_IDS.length);
   });
 
-  it('camoClassOf は対象外・未知IDで null', () => {
+  it('副武器を独立群へ分離し、対象外・未知IDは null', () => {
     expect(camoClassOf('kaede-ar')).toBe('ar');
     expect(camoClassOf('fists')).toBeNull();
-    expect(camoClassOf('suzume')).toBe('pistol');
-    expect(camoClassOf('banjin-smg')).toBe('exotic');
+    expect(camoClassOf('suzume')).toBe('secondary');
+    expect(camoClassOf('banjin-smg')).toBe('secondary');
     expect(camoClassOf('nope')).toBeNull();
+  });
+
+  it('特殊兵装の分母は主武器6本、副武器の分母は6本で混在しない', () => {
+    const exotic = camoWeaponsOfClass('exotic');
+    const secondary = camoWeaponsOfClass('secondary');
+    expect(exotic).toHaveLength(6);
+    expect(secondary).toEqual(SECONDARY_IDS);
+    expect(exotic).not.toContain('banjin-smg');
+    expect(secondary).toContain('banjin-smg');
+    expect(exotic.every((id) => WEAPON_DEFS[id]?.slot === 'primary')).toBe(true);
   });
 
   it('weaponIdByName は表示名から逆引きし、近接/投擲名は null', () => {
@@ -231,7 +248,7 @@ describe('diamondFor / darkMatterFor', () => {
     expect(diamondFor('launcher', all)).toBe(true);
   });
 
-  it('全クラスダイヤでダークマター解除、1クラス欠けると未解除', () => {
+  it('全武器ダイヤでダークマター解除、1武器欠けると未解除', () => {
     expect(darkMatterFor(allGoldStats())).toBe(true);
     expect(darkMatterFor(allGoldStats(['gouka-rl']))).toBe(false);
     expect(darkMatterFor({})).toBe(false);
@@ -280,14 +297,15 @@ describe('isCamoUnlocked / camoProgress', () => {
     expect(g2.target).toBe(500);
   });
 
-  it('diamond/dark-matter の進捗はゴールド武器数/ダイヤクラス数', () => {
+  it('diamond/dark-matter の進捗はゴールド武器数/ダイヤ済み全武器数', () => {
     const partial = allGoldStats(['gouka-rl']);
     const d = camoProgress('diamond', 'gouka-rl', partial);
     expect(d.current).toBe(0);
     expect(d.target).toBe(1);
     const dm = camoProgress('dark-matter', 'kaede-ar', partial);
-    expect(dm.current).toBe(CAMO_CLASSES.length - 1);
-    expect(dm.target).toBe(CAMO_CLASSES.length);
+    expect(dm.current).toBe(CAMO_WEAPON_IDS.length - 1);
+    expect(dm.target).toBe(CAMO_WEAPON_IDS.length);
+    expect(dm.label).toContain('全武器');
   });
 });
 
@@ -558,6 +576,30 @@ describe('HS困難武器の金解除条件統一(goldForWeapon / camoProgress / 
     expect(goldConditionFor('kaede-ar')).toEqual({ kills: 500, headshots: 100 });
   });
 
+  it('サブ武器は全6本とも250killsのみでHS不要', () => {
+    expect(SECONDARY_GOLD_KILLS).toBe(250);
+    expect(SECONDARY_GOLD_HS).toBe(0);
+    for (const id of SECONDARY_IDS) {
+      expect(goldConditionFor(id), id).toEqual({ kills: 250, headshots: 0 });
+      expect(goldForWeapon(id, { kills: 249, headshots: 999 }), id).toBe(false);
+      expect(goldForWeapon(id, { kills: 250, headshots: 0 }), id).toBe(true);
+      expect(camoTierFor({ kills: 250, headshots: 0 }, id), id).toBe(CAMO_TIERS.length);
+      const progress = camoProgress('gold', id, { [id]: { kills: 250, headshots: 0 } });
+      expect(progress).toMatchObject({ current: 250, target: 250 });
+      expect(progress.label).not.toContain('HS');
+    }
+  });
+
+  it('サブ武器6本が250killに達すると副武器ダイヤが解除され、特殊兵装へ影響しない', () => {
+    const secondaryGold: Record<string, WeaponCamoStats> = {};
+    for (const id of SECONDARY_IDS) secondaryGold[id] = { kills: 250, headshots: 0 };
+    expect(diamondFor('secondary', secondaryGold)).toBe(true);
+    expect(diamondFor('exotic', secondaryGold)).toBe(false);
+    const missing = { ...secondaryGold };
+    delete missing[SECONDARY_IDS[0]!];
+    expect(diamondFor('secondary', missing)).toBe(false);
+  });
+
   // 3経路(装備ゲート=goldForWeapon / 進捗表示=camoProgress / 解除通知=camoTierFor(weaponId付))が
   // 常に同じ結論を出すことを、しきい値境界で機械照合する
   const goldByProgress = (id: string, s: WeaponCamoStats): boolean => {
@@ -733,6 +775,11 @@ describe('applyCamoStats(カモ性能ボーナス)', () => {
     expect(dm.bloomRecoveryDegPerS).toBeGreaterThan(d.bloomRecoveryDegPerS);
     expect(dm.reloadTacticalMs).toBeLessThan(g.reloadTacticalMs);
     expect(dm.switchMs!).toBeLessThan(g.switchMs!);
+    expect(dm.damage).toBeCloseTo(base.damage * DARK_MATTER_DAMAGE_MULTIPLIER, 8);
+    expect(dm.tracerColor).toBe(DARK_MATTER_PROJECTILE_COLOR);
+    expect(dm.masteryCamo).toBe('dark-matter');
+    expect(d.damage).toBe(base.damage);
+    expect(g.damage).toBe(base.damage);
   });
 
   it('元defを一切変更しない(純関数・全カモで検証)', () => {

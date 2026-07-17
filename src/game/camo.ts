@@ -10,8 +10,12 @@ import {
   type WeaponDef,
 } from './weapons';
 
+// ダイヤの所属群。副武器は元の WeaponClass(pistol/exotic)へ混ぜない。
+// これにより「特殊兵装6本 + 副武器の万刃1本 = 7」という誤った分母を構造的に防ぐ。
+export type CamoClass = WeaponClass | 'secondary';
+
 // ── カモID ────────────────────────────────────────────────────────────────
-// 9段の武器別カモ(キル階段) + ダイヤ(クラス制覇) + ダークマター(全クラス制覇)
+// 9段の武器別カモ(キル階段) + ダイヤ(所属群制覇) + ダークマター(全武器制覇)
 export type CamoId =
   | 'dirt'
   | 'woodland'
@@ -136,10 +140,11 @@ export const CAMO_WEAPON_IDS: readonly string[] = [
   ...new Set([...PRIMARY_IDS.filter((id) => id !== 'fists'), ...SECONDARY_IDS]),
 ];
 
-// カモ対象武器が属するクラス集合(出現順・重複なし)。ダークマター判定の分母になる
-export const CAMO_CLASSES: readonly WeaponClass[] = CAMO_WEAPON_IDS.reduce<WeaponClass[]>(
+// カモ対象武器が属する群の集合(出現順・重複なし)。
+// ダイヤの判定単位であり、ダークマターの表示分母は CAMO_WEAPON_IDS を使う。
+export const CAMO_CLASSES: readonly CamoClass[] = CAMO_WEAPON_IDS.reduce<CamoClass[]>(
   (acc, id) => {
-    const cls = WEAPON_DEFS[id]?.class;
+    const cls = camoClassOf(id);
     if (cls && !acc.includes(cls)) acc.push(cls);
     return acc;
   },
@@ -147,7 +152,7 @@ export const CAMO_CLASSES: readonly WeaponClass[] = CAMO_WEAPON_IDS.reduce<Weapo
 );
 
 // クラス表示名(リザルト行・ARMORYのダイヤ進捗表示に使う)
-export const CAMO_CLASS_LABELS: Record<WeaponClass, string> = {
+export const CAMO_CLASS_LABELS: Record<CamoClass, string> = {
   ar: 'アサルトライフル',
   smg: 'サブマシンガン',
   marksman: 'マークスマン',
@@ -158,17 +163,19 @@ export const CAMO_CLASS_LABELS: Record<WeaponClass, string> = {
   pistol: 'ハンドガン',
   launcher: 'ロケットランチャー',
   exotic: '特殊兵装',
+  secondary: 'サブ武器',
 };
 
 // カモ対象武器のクラス(非対象・未知IDは null)
-export function camoClassOf(weaponId: string): WeaponClass | null {
+export function camoClassOf(weaponId: string): CamoClass | null {
   if (!CAMO_WEAPON_IDS.includes(weaponId)) return null;
+  if (SECONDARY_IDS.includes(weaponId)) return 'secondary';
   return WEAPON_DEFS[weaponId]?.class ?? null;
 }
 
 // クラスに属するカモ対象武器ID一覧
-export function camoWeaponsOfClass(cls: WeaponClass): readonly string[] {
-  return CAMO_WEAPON_IDS.filter((id) => WEAPON_DEFS[id]?.class === cls);
+export function camoWeaponsOfClass(cls: CamoClass): readonly string[] {
+  return CAMO_WEAPON_IDS.filter((id) => camoClassOf(id) === cls);
 }
 
 // 武器の表示名(未知IDはIDのまま返す)
@@ -211,8 +218,10 @@ export function camoTierFor(stats: WeaponCamoStats | undefined, weaponId?: strin
   const gc = weaponId ? goldConditionFor(weaponId) : null;
   let n = 0;
   for (const tier of CAMO_TIERS) {
-    const needKills = tier.id === 'gold' && gc ? gc.kills : tier.kills;
-    const needHs = tier.id === 'gold' && gc ? gc.headshots : tier.headshots;
+    // サブ武器のgold=250のように最終閾値が前段より低い場合も、ラダーを逆転させず
+    // 全前段を同時達成として扱う。通知・装備ゲート・UI進捗で同じ条件になる。
+    const needKills = gc ? Math.min(tier.kills, gc.kills) : tier.kills;
+    const needHs = gc ? Math.min(tier.headshots, gc.headshots) : tier.headshots;
     if (s.kills >= needKills && s.headshots >= needHs) n += 1;
     else break;
   }
@@ -229,6 +238,8 @@ export function goldFor(stats: WeaponCamoStats | undefined): boolean {
 // 9段ラダーの最終到達点は標準武器と同じ500キルに維持し、金→ダイヤの順序も保つ。
 export const EXOTIC_GOLD_KILLS = 500;
 export const EXOTIC_GOLD_HS = 0;
+export const SECONDARY_GOLD_KILLS = 250;
+export const SECONDARY_GOLD_HS = 0;
 export const GOLD_HEADSHOT_EXEMPT_WEAPON_IDS: readonly string[] = ['gouka-rl'];
 
 /**
@@ -237,6 +248,9 @@ export const GOLD_HEADSHOT_EXEMPT_WEAPON_IDS: readonly string[] = ['gouka-rl'];
  */
 export function goldConditionFor(weaponId: string): { kills: number; headshots: number } {
   const goldTier = CAMO_TIERS.find((t) => t.id === 'gold')!;
+  if (SECONDARY_IDS.includes(weaponId)) {
+    return { kills: SECONDARY_GOLD_KILLS, headshots: SECONDARY_GOLD_HS };
+  }
   const cls = WEAPON_DEFS[weaponId]?.class;
   if (cls === 'exotic' || GOLD_HEADSHOT_EXEMPT_WEAPON_IDS.includes(weaponId)) {
     return { kills: EXOTIC_GOLD_KILLS, headshots: EXOTIC_GOLD_HS };
@@ -266,7 +280,7 @@ export function goldForWeapon(weaponId: string, stats: WeaponCamoStats | undefin
 
 // ダイヤ: 同クラスのカモ対象武器が全てゴールドで解除(exotic は緩和条件で判定)
 export function diamondFor(
-  cls: WeaponClass,
+  cls: CamoClass,
   allStats: Record<string, WeaponCamoStats>,
 ): boolean {
   const weapons = camoWeaponsOfClass(cls);
@@ -274,9 +288,13 @@ export function diamondFor(
   return weapons.every((id) => goldForWeapon(id, statsOf(allStats, id)));
 }
 
-// ダークマター: 全クラスがダイヤで解除(全武器に適用可)
+// ダークマター: 全カモ対象武器でダイヤが解除済み(全武器に適用可)
 export function darkMatterFor(allStats: Record<string, WeaponCamoStats>): boolean {
-  return CAMO_CLASSES.every((cls) => diamondFor(cls, allStats));
+  // 全武器が自分の所属群のダイヤ条件を満たしたときだけ解除する。
+  return CAMO_WEAPON_IDS.every((id) => {
+    const cls = camoClassOf(id);
+    return cls !== null && diamondFor(cls, allStats);
+  });
 }
 
 // 指定カモが指定武器で解除済みか(diamond はその武器のクラス、dark-matter は全体で判定)。
@@ -327,8 +345,11 @@ export function camoProgress(
     return { current: 0, target: 1, label: REWARD_CAMO_LABEL[camoId] };
   }
   if (camoId === 'dark-matter') {
-    const current = CAMO_CLASSES.filter((cls) => diamondFor(cls, allStats)).length;
-    return { current, target: CAMO_CLASSES.length, label: '全クラスでダイヤを解除' };
+    const current = CAMO_WEAPON_IDS.filter((id) => {
+      const cls = camoClassOf(id);
+      return cls !== null && diamondFor(cls, allStats);
+    }).length;
+    return { current, target: CAMO_WEAPON_IDS.length, label: '全武器でダイヤを解除' };
   }
   if (camoId === 'diamond') {
     const cls = camoClassOf(weaponId);
@@ -341,8 +362,9 @@ export function camoProgress(
   if (!tier) return { current: 0, target: 1, label: '' };
   const s = statsOf(allStats, weaponId);
   // ゴールドは武器依存条件(exotic/業火RLは500kills・HS不要)
-  const effectiveKills = camoId === 'gold' ? goldConditionFor(weaponId).kills : tier.kills;
-  const effectiveHs = camoId === 'gold' ? goldConditionFor(weaponId).headshots : tier.headshots;
+  const gc = goldConditionFor(weaponId);
+  const effectiveKills = Math.min(tier.kills, gc.kills);
+  const effectiveHs = Math.min(tier.headshots, gc.headshots);
   if (effectiveHs > 0 && s.kills >= effectiveKills) {
     // キル条件は満了 → 残るHS条件の進捗を出す(ゴールド)
     return {
@@ -462,7 +484,11 @@ interface CamoStatBonus {
   adsSpread?: number; // ADS時の基礎拡散。<1 で精密射撃が安定する
   bloomPerShot?: number; // 連射ごとの拡散増加。<1 で持続射撃が安定する
   bloomRecovery?: number; // 拡散収束速度。>1 で次のバーストへ早く戻る
+  damage?: number; // 弾・特殊弾の基礎ダメージ。最終迷彩だけが持つ
 }
+
+export const DARK_MATTER_DAMAGE_MULTIPLIER = 1.5;
+export const DARK_MATTER_PROJECTILE_COLOR = 0x09000d;
 
 // 個性を重ねる高位カモ補正。Goldは装填・持ち替えのテンポ、Diamondは
 // ADS・集弾・反動制御に特化する。Dark Matterは最終報酬として全項目で
@@ -481,6 +507,7 @@ const CAMO_STAT_BONUS: Partial<Record<CamoId, CamoStatBonus>> = {
     reload: 0.78, ads: 0.76, swap: 0.76,
     moveSpread: 0.62, recoil: 0.62, recoilRecovery: 1.55,
     hipSpread: 0.76, adsSpread: 0.65, bloomPerShot: 0.68, bloomRecovery: 1.5,
+    damage: DARK_MATTER_DAMAGE_MULTIPLIER,
   },
 };
 
@@ -494,11 +521,17 @@ export function applyCamoStats(def: WeaponDef, camoId: string): WeaponDef {
   if (!b) return def; // 通常カモ/未装備/未知は素通し(コピーもしない)
   const next: WeaponDef = {
     ...def,
+    masteryCamo: camoId as 'gold' | 'diamond' | 'dark-matter',
     reloadTacticalMs: def.reloadTacticalMs * b.reload,
     reloadEmptyMs: def.reloadEmptyMs * b.reload,
     adsTimeMs: def.adsTimeMs * b.ads,
     switchMs: def.switchMs * b.swap,
   };
+  if (b.damage !== undefined) {
+    next.damage = def.damage * b.damage;
+    // 通常弾・扇・ビーム・キルカメラの全トレーサーを黒い弾道へ統一する。
+    next.tracerColor = DARK_MATTER_PROJECTILE_COLOR;
+  }
   if (b.moveSpread !== undefined) next.movementSpreadDeg = def.movementSpreadDeg * b.moveSpread;
   if (b.recoil !== undefined) {
     const m = b.recoil;
@@ -527,6 +560,7 @@ export type CamoPattern =
   | 'pulse'
   | 'solid'
   | 'circuit'
+  | 'void'
   | 'diamond-stud';
 
 export interface CamoVisual {
@@ -608,11 +642,13 @@ export const CAMO_VISUALS: Record<CamoId, CamoVisual> = {
     emissive: 0xc3c9cc, emissiveIntensity: 0.012,
     envMapIntensity: 0.32, sparkle: 0.2,
   },
-  // ダークマター = 暗紫の脈動ノイズ(uTimeアニメ)
+  // ダークマター = 黒帝の黒刀を規範にした黒曜石。ほぼ黒の母材へ、ごく細い紫黒の
+  // 裂け目だけが低エネルギーで流れる。明るい紫面を廃し、形状を黒い反射で読ませる。
   'dark-matter': {
-    id: 'dark-matter', colorA: 0x120520, colorB: 0x5e00a8, colorC: 0xb133ff,
-    pattern: 'pulse', scale: 6, metalness: 0.55, roughness: 0.4,
-    emissive: 0x7a1fd0, emissiveIntensity: 0.5,
+    id: 'dark-matter', colorA: 0x010103, colorB: 0x09000e, colorC: 0x26002f,
+    pattern: 'void', scale: 9, metalness: 0.78, roughness: 0.32,
+    emissive: 0x24002d, emissiveIntensity: 0.2,
+    envMapIntensity: 0.18,
   },
   // 常闇 = 絶対暗黒(クナイ専用。fists 1000近接キルで解除)
   tokoyami: {

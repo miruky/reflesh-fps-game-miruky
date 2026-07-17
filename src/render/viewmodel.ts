@@ -344,7 +344,7 @@ function getShared(): SharedMats {
       side: THREE.DoubleSide,
     });
     reflexDot.userData.shared = true;
-    const sleeve = clothMat(0x58a8c7, 0.9);
+    const sleeve = clothMat(0x765638, 0.92);
     sleeve.vertexColors = true;
     sharedMats = {
       metalVC: vcMat(0.62, 0.34),
@@ -353,14 +353,14 @@ function getShared(): SharedMats {
       glassThin,
       glassScope,
       reflexDot,
-      // 銃の黒ポリマーと同化しない水色の戦闘服 + 青緑系タクティカルグローブ。
-      // 金属度0・高roughnessで、ダイヤ／ゴールドの鏡面と視覚的に必ず分離する。
+      // コヨーテブラウンの戦闘服 + 茶系タクティカルグローブ。色相・粗さを分け、
+      // 黒い銃やダークマターにも埋没せず、肌ではなく兵士の装備として読める配色にする。
       sleeve,
-      glove: clothMat(0x2f718c, 0.92),
-      glovePalm: clothMat(0x75c5d3, 0.97),
-      gloveArmor: clothMat(0x173e55, 0.78),
-      gloveStitch: clothMat(0xb4efff, 0.9),
-      skin: clothMat(0x443f35, 0.88),
+      glove: clothMat(0x4a3525, 0.94),
+      glovePalm: clothMat(0x8a6848, 0.98),
+      gloveArmor: clothMat(0x2b2119, 0.82),
+      gloveStitch: clothMat(0xb79a73, 0.92),
+      skin: clothMat(0x6e4b33, 0.9),
     };
   }
   return sharedMats;
@@ -449,6 +449,16 @@ function camoPatternGLSL(v: CamoVisual): string {
         vec3 camoCol = mix(${A}, ${B}, vein);
         camoCol = mix(camoCol, ${C}, vein * smoothstep(0.5, 0.8, n2));
         camoEmissiveMul = vein * (0.55 + 0.45 * sin(uCamoTime * 2.4 + n2 * 6.2832));`;
+    case 'void':
+      // 黒帝系ダークマター。明るい紫の面を作らず、黒曜石母材の内部に細い裂け目だけを流す。
+      return `
+        float voidFlow = camoNoise(vCamoPos * ${S} + vec3(0.0, uCamoTime * 0.08, uCamoTime * 0.12));
+        float voidRift = 1.0 - smoothstep(0.018, 0.095, abs(voidFlow - 0.5));
+        float voidGrain = camoNoise(vCamoPos * ${S} * 2.7 + vec3(13.7, 4.1, uCamoTime * -0.05));
+        float voidCore = voidRift * smoothstep(0.72, 0.94, voidGrain);
+        vec3 camoCol = mix(${A}, ${B}, 0.16 + voidGrain * 0.24 + voidRift * 0.34);
+        camoCol = mix(camoCol, ${C}, voidCore * 0.42);
+        camoEmissiveMul = voidRift * (0.12 + voidCore * 0.34);`;
     case 'solid':
       // 単色(ゴールド): 微ノイズの色むら+まれなハイライト班のみ
       return `
@@ -2586,7 +2596,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.13, -0.2, 0.02, 0.48, 0.2, 0.2],
-          hand: [-0.042, -0.052, -0.245, 0.12, 0.08, 0.05],
+          hand: [-0.025, -0.046, -0.245, 0.12, 0.08, -0.48],
         },
         reloadGesture: 'staff',
       };
@@ -2598,7 +2608,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.16, -0.21, 0.03, 0.5, 0.22, 0.22],
-          hand: [-0.055, -0.04, -0.205, 0.08, 0.08, 0.04],
+          hand: [-0.032, -0.034, -0.205, 0.08, 0.08, -0.44],
         },
         reloadGesture: 'blade',
       };
@@ -2611,7 +2621,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.15, -0.22, 0.08, 0.5, 0.2, 0.24],
-          hand: [-0.12, -0.11, -0.08, 0.18, 0.12, 0.08],
+          hand: [-0.085, -0.098, -0.08, 0.18, 0.12, -0.46],
         },
         reloadGesture: 'blade',
       };
@@ -2626,7 +2636,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.17, -0.25, 0.05, 0.6, 0.28, 0.32],
-          hand: [-0.07, -0.075, -0.21 * bs, 0.32, 0.14, 0.06],
+          hand: [-0.04, -0.066, -0.21 * bs, 0.32, 0.14, -0.43],
         },
         reloadGesture: 'heavy',
       };
@@ -2640,7 +2650,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.13, -0.22, 0.11, 0.52, 0.2, 0.22],
-          hand: [-0.015, -0.09, 0.005, 0.28, 0.12, 0.08],
+          hand: [-0.005, -0.076, 0.005, 0.28, 0.12, -0.68],
         },
         reloadGesture: 'magazine',
       };
@@ -2652,7 +2662,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.16, -0.23, 0.06, 0.58, 0.28, 0.32],
-          hand: [-0.055, -0.058, -0.17 * bs, 0.32, 0.14, 0.06],
+          hand: [-0.028, -0.048, -0.17 * bs, 0.32, 0.14, -0.48],
         },
         reloadGesture: 'generic',
       };
@@ -2728,25 +2738,32 @@ export interface ReloadAnimationPose {
   readonly weaponWave: number;
 }
 
+/** 端点で速度と加速度が0になるquintic easing。リロード接続時の手首の跳ねを防ぐ。 */
+function smootherstepRange(value: number, start: number, end: number): number {
+  const x = THREE.MathUtils.clamp((value - start) / Math.max(1e-6, end - start), 0, 1);
+  return x * x * x * (x * (x * 6 - 15) + 10);
+}
+
 /** 段階式リロード: 掴む→抜く→交換→挿す→支持位置へ戻す。 */
 export function reloadAnimationPose(ratio: number): ReloadAnimationPose {
   const t = THREE.MathUtils.clamp(ratio, 0, 1);
-  const reachIn = THREE.MathUtils.smoothstep(t, 0.04, 0.2);
-  const reachOut = 1 - THREE.MathUtils.smoothstep(t, 0.76, 0.97);
+  const reachIn = smootherstepRange(t, 0.04, 0.2);
+  const reachOut = 1 - smootherstepRange(t, 0.76, 0.97);
   const supportReach = reachIn * reachOut;
-  const pullOut = THREE.MathUtils.smoothstep(t, 0.18, 0.36);
-  const insert = THREE.MathUtils.smoothstep(t, 0.56, 0.78);
+  const pullOut = smootherstepRange(t, 0.18, 0.36);
+  const insert = smootherstepRange(t, 0.56, 0.78);
   const magazineDrop = pullOut * (1 - insert);
   const supportPull =
-    THREE.MathUtils.smoothstep(t, 0.2, 0.38) *
-    (1 - THREE.MathUtils.smoothstep(t, 0.54, 0.74));
+    smootherstepRange(t, 0.2, 0.38) *
+    (1 - smootherstepRange(t, 0.54, 0.74));
+  const easedTime = smootherstepRange(t, 0, 1);
   return {
     magazineDrop,
     magazineForward: magazineDrop * 0.035,
     magazineTilt: magazineDrop * -0.24,
     supportReach,
     supportPull,
-    weaponWave: Math.sin(t * Math.PI),
+    weaponWave: Math.sin(easedTime * Math.PI),
   };
 }
 
@@ -3617,6 +3634,7 @@ export class ViewModel {
     }
     if (reloadPose) {
       const hasDetachableMagazine = this.rig.magazine !== undefined;
+      const gesture = this.reloadGesture;
       if (hasDetachableMagazine) {
         // 支持手を画面内で弾倉の左下へ運び、抜く区間では弾倉と同じ下向き軌道を足す。
         // 実中心へ直行させると大型レシーバ内部へ隠れる銃があるため、rest基準の可視軌道にする。
@@ -3634,14 +3652,13 @@ export class ViewModel {
         // 特殊武器は「存在しない弾倉」を掴まない。杖は前方へ握り直し、刃物は守り手を
         // 少し開き、重量物は短く支持位置を変える。いずれも前腕はhandへ接続済み。
         const wave = reloadPose.weaponWave;
-        const gesture = this.reloadGesture;
         const delta =
           gesture === 'staff'
-            ? [0.018, 0.014, -0.075, -0.16, 0.1, 0.08] as const
+            ? [0.035, 0.025, -0.14, -0.24, 0.18, 0.22] as const
             : gesture === 'blade'
-              ? [0.026, 0.018, -0.035, -0.1, 0.08, -0.12] as const
+              ? [0.04, 0.028, -0.065, -0.16, 0.12, -0.18] as const
               : gesture === 'heavy'
-                ? [0.034, -0.025, 0.03, -0.12, 0.12, -0.08] as const
+                ? [0.045, -0.032, 0.045, -0.16, 0.16, -0.12] as const
                 : [0.026, -0.018, 0.025, -0.1, 0.08, -0.07] as const;
         applyRigPoseDelta(
           this.rig.leftHand,
@@ -3651,19 +3668,22 @@ export class ViewModel {
           delta[3],
           delta[4],
           delta[5],
-          wave * 0.55,
+          wave * 0.85,
         );
       }
       // 射撃手はグリップを保持し、手首だけで銃のカントを受ける。
+      const rightDelta = gesture === 'staff'
+        ? [0.015, -0.014, 0.035, -0.14, -0.08, 0.16] as const
+        : [0, -0.006, 0.004, -0.08, 0, 0.08] as const;
       applyRigPoseDelta(
         this.rig.rightHand,
-        0,
-        -0.006,
-        0.004,
-        -0.08,
-        0,
-        0.08,
-        reloadPose.weaponWave,
+        rightDelta[0],
+        rightDelta[1],
+        rightDelta[2],
+        rightDelta[3],
+        rightDelta[4],
+        rightDelta[5],
+        reloadPose.weaponWave * (gesture === 'staff' ? 0.72 : 1),
       );
     } else {
       resetRigPose(this.rig.leftArm);

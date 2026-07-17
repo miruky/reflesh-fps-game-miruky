@@ -29,6 +29,31 @@ describe('tracer realism', () => {
     expect((line.material as THREE.LineBasicMaterial).opacity).toBeLessThanOrEqual(0.18);
     fx.dispose();
   });
+
+  it('ダークマター弾道は加算発光せず、黒い高不透明度の芯で描く', () => {
+    const { fx, scene } = makeEffects();
+    fx.tracer(ORIGIN, new THREE.Vector3(0, 0, -10), 0x09000d, true);
+    const line = scene.children.find((child) => child instanceof THREE.Line) as THREE.Line;
+    const mat = line.material as THREE.LineBasicMaterial;
+    expect(mat.color.getHex()).toBe(0x09000d);
+    expect(mat.opacity).toBeGreaterThanOrEqual(0.8);
+    expect(mat.blending).toBe(THREE.NormalBlending);
+    fx.dispose();
+  });
+
+  it('ダークマターのビーム／手裏剣も黒いNormalBlendingで統一する', () => {
+    const { fx, scene } = makeEffects();
+    fx.beamLine(ORIGIN, new THREE.Vector3(0, 0, -10), true);
+    const disc = fx.shurikenDiscFly(ORIGIN, DIR, true);
+    const beam = scene.children.find(
+      (child) => child instanceof THREE.Line && child.parent === scene,
+    ) as THREE.Line;
+    expect((beam.material as THREE.LineBasicMaterial).color.getHex()).toBe(0x09000d);
+    const discLine = disc.children[0] as THREE.Line;
+    expect((discLine.material as THREE.LineBasicMaterial).color.getHex()).toBe(0x09000d);
+    expect((discLine.material as THREE.LineBasicMaterial).blending).toBe(THREE.NormalBlending);
+    fx.dispose();
+  });
 });
 
 describe('R34 Effects – 溜め攻撃 VFX', () => {

@@ -162,6 +162,9 @@ export interface WeaponDef {
   // viewmodel.buildGun/ViewModel.setWeapon は camo.ts の通常解放ラダー(選択カモ)より
   // 優先してこれを適用する(型は camo.ts の CamoId 循環importを避けるためリテラルで凍結)。
   papCamo?: 'pap1' | 'pap2' | 'pap3';
+  // 高位迷彩のゲームプレイ／弾体描画状態。applyCamoStats が試合専用コピーだけへ設定する。
+  // 共有WEAPON_DEFSを汚さず、物理弾・特殊弾も通常ヒットスキャンと同じ迷彩効果を参照できる。
+  masteryCamo?: 'gold' | 'diamond' | 'dark-matter';
 }
 
 const DEG = Math.PI / 180;

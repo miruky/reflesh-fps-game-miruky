@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CAMPAIGN, allMissions, type MissionChallengeDef } from './campaign';
-import { WEAPON_DEFS } from './weapons';
+import { SECONDARY_IDS, WEAPON_DEFS } from './weapons';
 import { ATTACHMENT_DEFS } from './attachments';
 import { CAMO_WEAPON_IDS } from './camo';
 import {
@@ -731,6 +731,27 @@ describe('カモチャレンジ積算(applyMatch)', () => {
     const ids = progress.newCamos.map((c) => c.camoId);
     expect(ids).toContain('gold');
     expect(ids).toContain('diamond');
+  });
+
+  it('サブ武器は250キル・HSなしでゴールド、全6本達成時だけ副武器ダイヤ', () => {
+    const profile = emptyProfile();
+    const last = SECONDARY_IDS.at(-1)!;
+    for (const id of SECONDARY_IDS.slice(0, -1)) {
+      profile.weaponStats[id] = { kills: 250, headshots: 0 };
+    }
+    const short = applyMatch(
+      profile,
+      summary({ kills: 249, killsByWeapon: { [last]: 249 } }),
+    );
+    expect(short.newCamos.map((c) => c.camoId)).not.toContain('gold');
+    expect(short.newCamos.map((c) => c.camoId)).not.toContain('diamond');
+    const exact = applyMatch(
+      profile,
+      summary({ kills: 1, killsByWeapon: { [last]: 1 } }),
+    );
+    expect(exact.newCamos.map((c) => c.camoId)).toContain('gold');
+    expect(exact.newCamos.map((c) => c.camoId)).toContain('diamond');
+    expect(exact.newCamos.find((c) => c.camoId === 'diamond')?.label).toContain('サブ武器');
   });
 
   it('最後のクラスがダイヤに達するとダークマターが解除される', () => {

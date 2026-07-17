@@ -185,7 +185,13 @@ import {
   
   
 } from './zombie-economy';
-import { weaponIdByName, equippedCamoFor, applyCamoStats, CAMO_VISUALS } from './camo';
+import {
+  weaponIdByName,
+  equippedCamoFor,
+  applyCamoStats,
+  CAMO_VISUALS,
+  DARK_MATTER_PROJECTILE_COLOR,
+} from './camo';
 import { loadProfile } from '../core/profile';
 import {
   generateStage,
@@ -846,12 +852,15 @@ export class Match {
   private readonly rocketTrailGeo = new THREE.CylinderGeometry(0.025, 0.0, 0.22, 6, 1);
   private readonly rocketMat = new THREE.MeshStandardMaterial({ color: 0xff6a3c, emissive: 0xff3300, emissiveIntensity: 2.2, roughness: 0.6 });
   private readonly rocketTrailMat = new THREE.MeshStandardMaterial({ color: 0x999999, transparent: true, opacity: 0.35, roughness: 1 });
+  private readonly darkRocketMat = new THREE.MeshStandardMaterial({ color: 0x010103, emissive: 0x17001f, emissiveIntensity: 0.32, roughness: 0.38, metalness: 0.74 });
+  private readonly darkRocketTrailMat = new THREE.MeshStandardMaterial({ color: DARK_MATTER_PROJECTILE_COLOR, transparent: true, opacity: 0.55, roughness: 1 });
   private rockets: Array<{
     mesh: THREE.Mesh;
     trailMesh: THREE.Mesh;
     pos: THREE.Vector3;
     vel: THREE.Vector3;
     timer: number;
+    damage: number;
   }> = [];
 
   // ── R33 特殊武器 弾体/状態 ──
@@ -860,6 +869,10 @@ export class Match {
   private readonly bowArrowMat = new THREE.MeshBasicMaterial({
     color: 0xffffff, transparent: true, opacity: 0.95,
     blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  private readonly darkBowArrowMat = new THREE.MeshBasicMaterial({
+    color: DARK_MATTER_PROJECTILE_COLOR, transparent: true, opacity: 0.96,
+    blending: THREE.NormalBlending, depthWrite: false,
   });
   private bowProjectiles: Array<{
     mesh: THREE.Mesh; trailGroup: THREE.Group;
@@ -874,6 +887,10 @@ export class Match {
   private readonly staffBoltMat = new THREE.MeshBasicMaterial({
     color: 0xbbbbff, transparent: true, opacity: 0.92,
     blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  private readonly darkStaffBoltMat = new THREE.MeshBasicMaterial({
+    color: 0x050008, transparent: true, opacity: 0.97,
+    blending: THREE.NormalBlending, depthWrite: false,
   });
   private staffProjectiles: Array<{
     mesh: THREE.Mesh; sparkGroup: THREE.Group;
@@ -1075,7 +1092,8 @@ export class Match {
     reduceMotion: () => this.settings.reduceMotion,
     updateEffects: (dt: number) => this.effects.update(dt),
     updateAtmosphere: (dt: number) => this.atmosphere?.update(dt, this.camera.position),
-    tracer: (from: THREE.Vector3, to: THREE.Vector3, color: number) => this.effects.tracer(from, to, color),
+    tracer: (from: THREE.Vector3, to: THREE.Vector3, color: number) =>
+      this.effects.tracer(from, to, color, color === DARK_MATTER_PROJECTILE_COLOR),
     blockedToMid: (rayOrg: THREE.Vector3, toMid: THREE.Vector3, dist: number) => {
       const hit = this.castRay(rayOrg, toMid, dist, null);
       return hit !== null && this.tags.get(hit.collider.handle)?.kind !== 'boundary';
@@ -1206,7 +1224,8 @@ export class Match {
     // 副武器defも per-Match のクローンにする(applyAttachments が deep-clone を返す)。
     // ゾンビ経済のパーク(スピードコーラ/ダブルタップ)が def.rpm/reloadMs を直接補正するため、
     // 共有の WEAPON_DEFS を掴んだままだと購入がグローバル定義を汚染し全モードへ波及する
-    // R57 ⑤: ゴールド/ダイヤ/ダークマター迷彩の性能ボーナス(ハンドリング系のみ・火力不変=バランス維持)を
+    // ゴールド/ダイヤ/ダークマター迷彩の性能ボーナスを適用。
+    // ダークマターだけは最終報酬として基礎ダメージも 1.5 倍になる。
     // 装備中カモに応じて上乗せ。ガンゲームはラダー強制武器のため除外。applyCamoStatsは元defを
     // 変更せずコピーを返す(通常/未装備カモは同一参照素通し=ゼロコスト)。
     const camoProfile = config.mode === 'gungame' ? null : loadProfile();
@@ -4352,23 +4371,34 @@ export class Match {
     const vel = fwd.clone().multiplyScalar(55); // 55 m/s 直進
 
     // 弾頭メッシュ(縦長シリンダーを進行方向に沿わせる)
-    const mesh = new THREE.Mesh(this.rocketGeo, this.rocketMat);
+    const darkMatter = this.activeWeapon.def.masteryCamo === 'dark-matter';
+    const mesh = new THREE.Mesh(this.rocketGeo, darkMatter ? this.darkRocketMat : this.rocketMat);
     mesh.position.copy(origin);
     // シリンダーはデフォルト Y 軸。進行方向(vel)へ向ける
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vel.clone().normalize());
     this.scene.add(mesh);
 
     // 煙トレイル(弾頭後端にアタッチ)
-    const trailMesh = new THREE.Mesh(this.rocketTrailGeo, this.rocketTrailMat);
+    const trailMesh = new THREE.Mesh(
+      this.rocketTrailGeo,
+      darkMatter ? this.darkRocketTrailMat : this.rocketTrailMat,
+    );
     // トレイルは弾頭の後ろ(-Y 方向に 0.3 )
     trailMesh.position.set(0, -0.3, 0);
     mesh.add(trailMesh);
 
-    this.rockets.push({ mesh, trailMesh, pos: origin, vel, timer: 0 });
+    this.rockets.push({
+      mesh,
+      trailMesh,
+      pos: origin,
+      vel,
+      timer: 0,
+      damage: this.activeWeapon.def.damage,
+    });
   }
 
   private updateRockets(dt: number): void {
-    const ROCKET_SPEC = { radius: 15, maxDamage: 220, name: '業火RL' } as const;
+    const ROCKET_SPEC = { radius: 15, selfDamage: 220, name: '業火RL' } as const;
     const SELF_FACTOR = 0.35;
     const SELF_RADIUS = 10; // 自爆半径(爆発半径15mより小さく=自殺リスク軽減)
     const MAX_LIFE = 8; // 8秒で自爆
@@ -4424,7 +4454,7 @@ export class Match {
         const center = bot.position;
         const dist = Math.min(center.distanceTo(point), bot.headPosition().distanceTo(point));
         if (dist > ROCKET_SPEC.radius) continue;
-        const dmg = ROCKET_SPEC.maxDamage * Math.max(0, 1 - dist / ROCKET_SPEC.radius);
+        const dmg = r.damage * Math.max(0, 1 - dist / ROCKET_SPEC.radius);
         if (dmg <= 0 || !this.explosionReaches(point, center)) continue;
         this.applyBotDamage(bot, dmg, center, false, ROCKET_SPEC.name);
       }
@@ -4436,7 +4466,8 @@ export class Match {
         const blastShake = Math.max(0, 1 - selfDist / ROCKET_SPEC.radius) * 0.55;
         if (blastShake > 0.01) this.addShake(blastShake);
         if (selfDist < SELF_RADIUS && this.explosionReaches(point, this.player.position)) {
-          const rawDmg = ROCKET_SPEC.maxDamage * Math.max(0, 1 - selfDist / SELF_RADIUS);
+          // 自爆は迷彩バフで増やさない。報酬強化がプレイヤーへの罰へ反転しないよう基礎値固定。
+          const rawDmg = ROCKET_SPEC.selfDamage * Math.max(0, 1 - selfDist / SELF_RADIUS);
           const selfDmg = rawDmg * SELF_FACTOR;
           if (selfDmg > 0 && this.config.mode !== 'training') {
             const died = this.player.takeDamage(selfDmg);
@@ -4467,7 +4498,7 @@ export class Match {
       for (const [handle, prop] of this.breakableProps) {
         const dist = prop.pos.distanceTo(point);
         if (dist > ROCKET_SPEC.radius) continue;
-        const dmg = ROCKET_SPEC.maxDamage * Math.max(0, 1 - dist / ROCKET_SPEC.radius);
+        const dmg = r.damage * Math.max(0, 1 - dist / ROCKET_SPEC.radius);
         if (dmg > 0) this.applyPropDamage(handle, dmg);
       }
 
@@ -4492,7 +4523,11 @@ export class Match {
     const fwd = this.cameraForward();
     const origin = this.player.eyePosition.clone().addScaledVector(fwd, 0.4);
     const vel = fwd.clone().multiplyScalar(100); // 強化: 矢速80→100m/s(偏差撃ちの負担軽減)
-    const mesh = new THREE.Mesh(this.bowArrowGeo, this.bowArrowMat.clone());
+    const darkMatter = this.activeWeapon.def.masteryCamo === 'dark-matter';
+    const mesh = new THREE.Mesh(
+      this.bowArrowGeo,
+      (darkMatter ? this.darkBowArrowMat : this.bowArrowMat).clone(),
+    );
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), fwd.clone().normalize());
     mesh.position.copy(origin);
     this.scene.add(mesh);
@@ -4620,7 +4655,11 @@ export class Match {
     const fwd = this.cameraForward();
     const origin = this.player.eyePosition.clone().addScaledVector(fwd, 0.5);
     const vel = fwd.clone().multiplyScalar(70); // 強化: 雷球40→70m/s(中距離の実用化)
-    const mesh = new THREE.Mesh(this.staffBoltGeo, this.staffBoltMat.clone());
+    const darkMatter = this.activeWeapon.def.masteryCamo === 'dark-matter';
+    const mesh = new THREE.Mesh(
+      this.staffBoltGeo,
+      (darkMatter ? this.darkStaffBoltMat : this.staffBoltMat).clone(),
+    );
     mesh.position.copy(origin);
     this.scene.add(mesh);
     const sparkGroup = new THREE.Group();
@@ -4629,7 +4668,7 @@ export class Match {
     const charged = this.staffChargeTimer >= 0.8;
     const aoeRadius = 3 * (charged ? 2.5 : 1); // 強化: 完全チャージ倍率1.5→2.5(=半径7.5m)
     // R33: 完全チャージ弾はAoE300(基礎160)
-    const boltDamage = charged ? 300 : weapon.def.damage;
+    const boltDamage = charged ? weapon.def.damage * (300 / 160) : weapon.def.damage;
     this.staffProjectiles.push({ mesh, sparkGroup, pos: origin.clone(), vel, damage: boltDamage, aoeRadius, timer: 0 });
     this.player.shotsFired += 1;
   }
@@ -4720,7 +4759,7 @@ export class Match {
     const hitPoint = hitResult
       ? origin.clone().addScaledVector(dir, hitResult.toi ?? reach)
       : origin.clone().addScaledVector(dir, reach);
-    this.effects.beamLine(muzzle, hitPoint);
+    this.effects.beamLine(muzzle, hitPoint, weapon.def.masteryCamo === 'dark-matter');
     this.player.shotsFired += 1;
     let kills = 0;
     for (const [bot, result] of results) {
@@ -4743,7 +4782,11 @@ export class Match {
     const fwd = this.cameraForward();
     const pos = this.player.eyePosition.clone().addScaledVector(fwd, 0.3);
     const vel = fwd.clone().multiplyScalar(SHURIKEN_DISC_SPEED);
-    const group = this.effects.shurikenDiscFly(pos, fwd);
+    const group = this.effects.shurikenDiscFly(
+      pos,
+      fwd,
+      this.activeWeapon.def.masteryCamo === 'dark-matter',
+    );
     // F8: fireShot(hitscan)の着弾点があれば飛行時間=距離/速度でクランプ(無ければ従来0.5s)
     const life = shurikenDiscLife(hitPoint ? hitPoint.distanceTo(pos) : null, SHURIKEN_DISC_SPEED);
     this.shurikenDiscs.push({ group, pos: pos.clone(), vel, timer: 0, life });
@@ -4971,7 +5014,12 @@ export class Match {
       const end = hit
         ? from.clone().addScaledVector(dir, hitToi(hit))
         : from.clone().addScaledVector(dir, remainingRange);
-      this.effects.tracer(tracerFrom, end, weapon.def.tracerColor);
+      this.effects.tracer(
+        tracerFrom,
+        end,
+        weapon.def.tracerColor,
+        weapon.def.masteryCamo === 'dark-matter',
+      );
       this.killcam.recordShot(tracerFrom, end, weapon.def.tracerColor, this.elapsed, true);
       if (!hit) return;
       const toi = hitToi(hit);
@@ -9581,10 +9629,14 @@ export class Match {
     this.rocketTrailGeo.dispose();
     this.rocketMat.dispose();
     this.rocketTrailMat.dispose();
+    this.darkRocketMat.dispose();
+    this.darkRocketTrailMat.dispose();
     this.bowArrowGeo.dispose();
     this.bowArrowMat.dispose();
+    this.darkBowArrowMat.dispose();
     this.staffBoltGeo.dispose();
     this.staffBoltMat.dispose();
+    this.darkStaffBoltMat.dispose();
     this.grenadeGeometry.dispose();
     // ポストプロセスとIBLを解放(scene.traverseの前。怠ると再戦ごとにVRAMリーク)
     if (this.composer) {
@@ -9642,7 +9694,7 @@ export class Match {
     this.addShake(0.18);
     this.alertBots(ALERT_RADIUS_SUPPRESSED);
     // 貫通hitscan ×3本 各200dmg
-    const BASE_DMG = 200;
+    const BASE_DMG = this.activeWeapon.def.damage;
     for (let i = 0; i < 3; i++) {
       const spread = (i - 1) * 0.015;
       const spreadDir = dir.clone().applyEuler(new THREE.Euler(spread, spread * 0.5, 0));
@@ -9665,7 +9717,7 @@ export class Match {
     this.sounds.tenraiTenbatsuSound();
     this.addShake(0.25);
     this.alertBots(ALERT_RADIUS);
-    const dmg = 800; // 桁外れ: 基礎160の5倍
+    const dmg = this.activeWeapon.def.damage * 5; // 桁外れ: 基礎160の5倍(迷彩倍率も継承)
     for (const bot of this.bots) {
       if (!bot.alive || bot.team === PLAYER_TEAM) continue;
       if (bot.position.distanceTo(center) <= radius) {
@@ -9748,6 +9800,7 @@ export class Match {
 
   // ── 特殊兵装: hold-fire溜め発射 ──────────────────────────────────
   private fireExoticHoldFireRelease(weaponId: string, charge01: number): void {
+    const weapon = this.activeWeapon;
     const origin = this.player.eyePosition.clone();
     const dir = new THREE.Vector3(0, 0, -1).applyEuler(
       new THREE.Euler(this.player.pitch, this.player.yaw, 0, 'YXZ'),
@@ -9763,11 +9816,11 @@ export class Match {
           for (let i = 0; i < pellets; i++) {
             const angle = ((i / (pellets - 1)) - 0.5) * Math.PI * 0.5;
             const spreadDir = dir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
-            this.fireExoticBeamRay(origin, spreadDir, 45 * charge01 * 2, 60, '万刃', true, 'exotic', true);
+            this.fireExoticBeamRay(origin, spreadDir, weapon.def.damage * charge01 * 2, 60, '万刃', true, 'exotic', true);
           }
         } else {
           for (let i = 0; i < 3; i++) {
-            this.fireExoticBeamRay(origin, dir, 45 * charge01 * 2, 60, '万刃', true, 'exotic', true);
+            this.fireExoticBeamRay(origin, dir, weapon.def.damage * charge01 * 2, 60, '万刃', true, 'exotic', true);
           }
           this.addShake(0.05);
         }
@@ -9785,7 +9838,7 @@ export class Match {
           const dot = toBotDir.dot(dir);
           const dist = bot.position.distanceTo(origin);
           if (dot > 0.5 && dist <= fanRange) {
-            const dmg = 35 * charge01 * 10;
+            const dmg = weapon.def.damage * charge01 * 10;
             this.applyBotDamage(bot, dmg, bot.position.clone(), false, '風神扇', true, false, 'exotic');
             this.botStunUntil.set(bot, this.elapsed + 0.8 * charge01);
           }
@@ -9804,7 +9857,7 @@ export class Match {
         for (const bot of this.bots) {
           if (!bot.alive || bot.team === PLAYER_TEAM) continue;
           if (bot.position.distanceTo(target) <= blastR) {
-            const dmg = 260 * charge01 * 3; // 桁外れ: 最大780
+            const dmg = weapon.def.damage * charge01 * 3; // 桁外れ: 基礎の最大3倍
             this.applyBotDamage(bot, dmg, bot.position.clone(), false, '業炎銃', true, false, 'exotic');
           }
         }
@@ -9831,7 +9884,7 @@ export class Match {
           const sweepDir = new THREE.Vector3(0, 0, -1).applyEuler(
             new THREE.Euler(this.player.pitch, yaw, 0, 'YXZ'),
           );
-          this.fireExoticBeamRay(origin, sweepDir, 90 * charge01 * 3, 600, '蜃気楼');
+          this.fireExoticBeamRay(origin, sweepDir, weapon.def.damage * charge01 * 3, 600, '蜃気楼');
         }
         this.alertBots(ALERT_RADIUS);
         break;
@@ -9865,7 +9918,7 @@ export class Match {
         );
         const spread = Math.sin(this.elapsed * 97.3) * 0.02; // 決定論スプレッド(乱数不使用)
         const spreadDir = rampageDir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), spread);
-        this.fireExoticBeamRay(rampageOrigin, spreadDir, 28, 360, '修羅', true, 'exotic', true);
+        this.fireExoticBeamRay(rampageOrigin, spreadDir, weapon.def.damage, 360, '修羅', true, 'exotic', true);
         this.sounds.shot('lmg');
         this.effects.shuraRampage(rampageOrigin);
       }

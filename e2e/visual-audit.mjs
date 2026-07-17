@@ -21,6 +21,7 @@ const val = (key, fallback) =>
   (args.find((arg) => arg.startsWith(`${key}=`)) ?? '').split('=').slice(1).join('=') || fallback;
 
 const weaponId = val('--weapon', 'kaede-ar');
+const camoId = val('--camo', weaponId === 'kaede-ar' ? 'diamond' : '');
 const quality = val('--quality', 'high');
 const stageId = val('--stage', 'kunren');
 const mode = val('--mode', 'training');
@@ -28,6 +29,8 @@ const zombieStartRound = Number(val('--round', '1'));
 const sampleFrameCount = Number(val('--frames', '180'));
 const settleMs = Number(val('--settle-ms', '2500'));
 const perfOnly = val('--perf-only', '0') === '1';
+const reloadFrameCount = Number(val('--reload-frames', '0'));
+const reloadFrameMs = Number(val('--reload-frame-ms', '120'));
 const safeZombie = val('--safe-zombie', '0') === '1';
 const softwareRenderer = val('--software', '0') === '1';
 const viewportName = val('--viewport', '1920x1080');
@@ -50,6 +53,12 @@ if (!Number.isInteger(zombieStartRound) || zombieStartRound < 1 || zombieStartRo
 }
 if (!Number.isInteger(sampleFrameCount) || sampleFrameCount < 1 || sampleFrameCount > 1000) {
   throw new Error(`bad frame count: ${sampleFrameCount}`);
+}
+if (!Number.isInteger(reloadFrameCount) || reloadFrameCount < 0 || reloadFrameCount > 40) {
+  throw new Error(`bad reload frame count: ${reloadFrameCount}`);
+}
+if (!Number.isFinite(reloadFrameMs) || reloadFrameMs < 40 || reloadFrameMs > 1000) {
+  throw new Error(`bad reload frame interval: ${reloadFrameMs}`);
 }
 if (!Number.isFinite(settleMs) || settleMs < 0 || settleMs > 60_000) {
   throw new Error(`bad settle time: ${settleMs}`);
@@ -101,6 +110,7 @@ try {
     ({
       allWeaponIds,
       primaryId,
+      selectedCamoId,
       graphicsQuality,
       selectedStageId,
       selectedMode,
@@ -134,7 +144,7 @@ try {
         JSON.stringify({
           xp: 99_999_999,
           weaponStats,
-          selectedCamos: primaryId === 'kaede-ar' ? { 'kaede-ar': 'diamond' } : {},
+          selectedCamos: selectedCamoId ? { [primaryId]: selectedCamoId } : {},
           ...(useSafeZombie
             ? { charms: { unlocked: ['perkcarry'], equipped: 'perkcarry' } }
             : {}),
@@ -188,6 +198,7 @@ try {
     {
       allWeaponIds: weaponIds,
       primaryId: weaponId,
+      selectedCamoId: camoId,
       graphicsQuality: quality,
       selectedStageId: stageId,
       selectedMode: mode,
@@ -240,6 +251,7 @@ try {
   const idleFrames = await sampleFrames();
 
   let activeFrames = [];
+  let reloadObserved = null;
   if (!perfOnly) {
     await page.mouse.down({ button: 'left' });
     await page.waitForTimeout(55);
@@ -257,13 +269,24 @@ try {
 
     if (weaponId !== 'fists') {
       await page.keyboard.press('KeyR');
-      for (const [delay, name] of [
-        [220, 'reload-220ms'],
-        [380, 'reload-600ms'],
-        [420, 'reload-1020ms'],
-      ]) {
-        await page.waitForTimeout(delay);
-        await shot(name);
+      // 訓練モードの無限弾薬などで入力が受理されない場合を、
+      // PNGがあるだけで「モーション検査済み」と誤判定しないよう記録する。
+      await page.waitForTimeout(20);
+      reloadObserved = await page.locator('[data-id="reload"]').isVisible();
+      if (reloadFrameCount > 0) {
+        for (let frame = 1; frame <= reloadFrameCount; frame += 1) {
+          await page.waitForTimeout(reloadFrameMs);
+          await shot(`reload-seq-${String(frame).padStart(2, '0')}-${frame * reloadFrameMs}ms`);
+        }
+      } else {
+        for (const [delay, name] of [
+          [220, 'reload-220ms'],
+          [380, 'reload-600ms'],
+          [420, 'reload-1020ms'],
+        ]) {
+          await page.waitForTimeout(delay);
+          await shot(name);
+        }
       }
       await page.waitForTimeout(2400);
     }
@@ -324,12 +347,16 @@ try {
 
   const report = {
     weaponId,
+    camoId,
     quality,
     stageId,
     mode,
     zombieStartRound,
     sampleFrameCount,
     perfOnly,
+    reloadFrameCount,
+    reloadFrameMs,
+    reloadObserved,
     safeZombie,
     softwareRenderer,
     viewport: viewportName,

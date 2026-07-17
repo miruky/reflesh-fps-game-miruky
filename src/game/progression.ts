@@ -22,9 +22,9 @@ import {
   REWARD_CAMO_CHAPTER,
   weaponNameOf,
   type CamoId,
+  type CamoClass,
   type WeaponCamoStats,
 } from './camo';
-import type { WeaponClass } from './weapons';
 
 // DailyState / emptyDailyState は dailies.ts で定義 → ここで re-export して後方互換を保つ
 export type { DailyState };
@@ -658,10 +658,10 @@ function applyCamoStats(profile: Profile, summary: MatchSummary): CamoUnlock[] {
   }
 
   const unlocks: CamoUnlock[] = [];
-  const classesTouched = new Set<WeaponClass>();
+  const classesTouched = new Set<CamoClass>();
   for (const id of touched) {
     const cls = camoClassOf(id);
-    if (!cls) continue; // 副武器/近接などカモ対象外は統計のみ積む
+    if (!cls) continue; // 拳などカモ対象外は統計のみ積む
     classesTouched.add(cls);
     // R57 ⑤: exotic(特殊兵装)は金の緩和閾値(HSのみ緩和)で判定するため weaponId を渡す。
     // 非exoticは省略時と同結論(500/100)=完全後方互換。金→ダイヤの解放順の逆転を解消。
@@ -690,13 +690,13 @@ function applyCamoStats(profile: Profile, summary: MatchSummary): CamoUnlock[] {
       });
     }
   }
-  // ダークマター: 全クラスダイヤの成立瞬間を検出
+  // ダークマター: 全カモ対象武器のダイヤ成立瞬間を検出
   if (!darkMatterFor(before) && darkMatterFor(profile.weaponStats)) {
     unlocks.push({
       camoId: DARK_MATTER_CAMO.id,
       camoName: DARK_MATTER_CAMO.name,
       weaponId: null,
-      label: `全クラス制覇「${DARK_MATTER_CAMO.name}」`,
+      label: `全武器ダイヤ制覇「${DARK_MATTER_CAMO.name}」`,
       xp: DARK_MATTER_CAMO.xp,
     });
   }
