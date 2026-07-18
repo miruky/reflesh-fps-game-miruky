@@ -154,37 +154,56 @@ function buildHandGeometries(
     const lengthBias = edge ? 0.88 : 1;
     // 右人差し指だけ僅かに伸ばし、トリガーへ掛かる輪郭を作る。支持手は4指を均等に巻く。
     const triggerFinger = !supportHand && i === 0;
-    const curl = triggerFinger ? 0.66 : guardHand ? 1.9 : supportHand ? 1.22 : 1.02;
+    const curl = triggerFinger ? 0.66 : guardHand ? 1.9 : supportHand ? 1.52 : 1.02;
     const spread = geometrySide * (i - 1.5) * 0.035;
 
-    const proximal = new THREE.CapsuleGeometry(0.0083, 0.025 * lengthBias, 4, 7);
+    const proximal = new THREE.CapsuleGeometry(
+      0.0083,
+      (supportHand && !guardHand ? 0.022 : 0.025) * lengthBias,
+      4,
+      7,
+    );
     transformGeometry(
       proximal,
-      new THREE.Vector3(x, guardHand ? 0 : -0.013, guardHand ? -0.022 : -0.033),
+      new THREE.Vector3(
+        x,
+        guardHand ? 0 : supportHand ? -0.004 : -0.013,
+        guardHand ? -0.022 : supportHand ? -0.026 : -0.033,
+      ),
       new THREE.Euler(curl, 0, spread),
     );
     buckets.glove.push(proximal);
 
-    const middle = new THREE.CapsuleGeometry(0.0075, (triggerFinger ? 0.028 : 0.021) * lengthBias, 4, 7);
+    const middle = new THREE.CapsuleGeometry(
+      0.0075,
+      (triggerFinger ? 0.028 : supportHand && !guardHand ? 0.0185 : 0.021) * lengthBias,
+      4,
+      7,
+    );
     transformGeometry(
       middle,
       new THREE.Vector3(
         x,
-        triggerFinger ? -0.022 : guardHand ? -0.01 : -0.030,
-        triggerFinger ? -0.059 : guardHand ? -0.034 : -0.055,
+        triggerFinger ? -0.022 : guardHand ? -0.01 : supportHand ? -0.012 : -0.030,
+        triggerFinger ? -0.059 : guardHand ? -0.034 : supportHand ? -0.043 : -0.055,
       ),
       new THREE.Euler(curl + (triggerFinger ? 0.18 : 0.34), 0, spread * 1.15),
     );
     // フルフィンガー軍用手袋。掌側の別素材で節を読み分け、肌色の棒には見せない。
     buckets.palm.push(middle);
 
-    const tip = new THREE.CapsuleGeometry(0.0069, 0.013 * lengthBias, 4, 7);
+    const tip = new THREE.CapsuleGeometry(
+      0.0069,
+      (supportHand && !guardHand ? 0.011 : 0.013) * lengthBias,
+      4,
+      7,
+    );
     transformGeometry(
       tip,
       new THREE.Vector3(
         x,
-        triggerFinger ? -0.031 : guardHand ? 0.004 : -0.044,
-        triggerFinger ? -0.080 : guardHand ? -0.025 : -0.066,
+        triggerFinger ? -0.031 : guardHand ? 0.004 : supportHand ? 0.003 : -0.044,
+        triggerFinger ? -0.080 : guardHand ? -0.025 : supportHand ? -0.05 : -0.066,
       ),
       new THREE.Euler(curl + (triggerFinger ? 0.28 : 0.58), 0, spread * 1.25),
     );
@@ -262,12 +281,28 @@ function buildHandGeometries(
   return merged;
 }
 
-function buildConnectedSleeve(side: -1 | 1, material: THREE.MeshStandardMaterial): THREE.Mesh {
-  // hand local +Z がプレイヤー側。袖口を手首(≈z0.079)へ重ね、二節で画面下へ自然に逃がす。
+function buildConnectedSleeve(
+  side: -1 | 1,
+  material: THREE.MeshStandardMaterial,
+  pose: FirstPersonArmPose,
+): THREE.Mesh {
+  // 手首を始点、武器別 arm.position を画面下側の肘／肩アンカーとして使う。
+  // 以前は全武器で hand local +Z へ固定生成していたため、手を内側へ回すほど袖まで
+  // 画面右へ捻れ、両腕が一本化して見えていた。アンカーを hand local へ逆変換すれば、
+  // 掌の回転と「腕が身体へ帰る方向」を独立させつつ、接続自体は hand 階層で保証できる。
   const wrist = new THREE.Vector3(0, 0, 0.073);
-  const fore = new THREE.Vector3(0.01 * side, -0.007, 0.145);
-  const mid = new THREE.Vector3(0.025 * side, -0.026, 0.235);
-  const elbow = new THREE.Vector3(0.052 * side, -0.074, 0.34);
+  const handPosition = new THREE.Vector3(pose.hand[0], pose.hand[1], pose.hand[2]);
+  const handRotation = new THREE.Euler(pose.hand[3], pose.hand[4], pose.hand[5]);
+  const inverseHandRotation = new THREE.Quaternion().setFromEuler(handRotation).invert();
+  const elbow = new THREE.Vector3(pose.arm[0], pose.arm[1], pose.arm[2])
+    .sub(handPosition)
+    .applyQuaternion(inverseHandRotation);
+  // 肘までの直線を二度だけ穏やかに曲げる。曲げ量はアンカー距離に比例し、拳銃から
+  // 重火器まで同じ解像度／同じ5DCのまま、配管ではなく自然な前腕シルエットにする。
+  const reach = wrist.distanceTo(elbow);
+  const bend = new THREE.Vector3(0.018 * side, -0.014, Math.min(0.026, reach * 0.08));
+  const fore = wrist.clone().lerp(elbow, 0.3).addScaledVector(bend, 0.75);
+  const mid = wrist.clone().lerp(elbow, 0.64).add(bend);
   const parts: THREE.BufferGeometry[] = [
     cylinderBetween(wrist, fore, 0.031, 0.036, 16),
     cylinderBetween(fore, mid, 0.036, 0.044, 16),
@@ -331,7 +366,7 @@ function buildArmSide(
   applyPose(hand, pose.hand);
   hand.userData.connectedLimb = true;
   hand.userData.palmFacesWeapon = side < 0;
-  hand.add(buildConnectedSleeve(side, materials.sleeve));
+  hand.add(buildConnectedSleeve(side, materials.sleeve, pose));
   const geometries = buildHandGeometries(side, grip);
   const handMeshes: Array<[HandMaterialFamily, THREE.MeshStandardMaterial]> = [
     ['glove', materials.glove],

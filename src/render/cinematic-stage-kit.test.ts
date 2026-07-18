@@ -62,17 +62,22 @@ describe('cinematic stage kit', () => {
     expect((root.getObjectByName('aaa:route-shoulders') as THREE.InstancedMesh).count).toBe(14);
     expect((root.getObjectByName('aaa:route-markings-and-drains') as THREE.InstancedMesh).count).toBe(56);
     expect((root.getObjectByName('aaa:ground-surface-patches') as THREE.InstancedMesh).count).toBe(36);
+    expect((root.getObjectByName('aaa:ground-surface-seams') as THREE.InstancedMesh).count).toBe(72);
     expect((root.getObjectByName('aaa:macro-rubble-clusters') as THREE.InstancedMesh).count).toBe(120);
     expect((root.getObjectByName('aaa:distant-skyline') as THREE.InstancedMesh).count).toBe(42);
     expect(root.getObjectByName('aaa:facade-base-grime')).toBeTruthy();
     expect(root.getObjectByName('aaa:facade-downspouts')).toBeTruthy();
+    expect((root.getObjectByName('aaa:perimeter-utility-poles') as THREE.InstancedMesh).count).toBe(20);
+    expect((root.getObjectByName('aaa:perimeter-practical-lamps') as THREE.InstancedMesh).count).toBe(20);
+    expect((root.getObjectByName('aaa:perimeter-utility-cabinets') as THREE.InstancedMesh).count).toBe(8);
+    expect(root.getObjectByName('aaa:perimeter-overhead-cables')).toBeTruthy();
     expect(root.getObjectByName('aaa:cinematic-environment')).toBeTruthy();
     expect(root.getObjectByName('aaa:distant-stage-matte')).toBeTruthy();
     let drawCalls = 0;
     root.traverse((node) => {
       if (node instanceof THREE.Mesh) drawCalls += 1;
     });
-    expect(drawCalls).toBeLessThanOrEqual(25);
+    expect(drawCalls).toBeLessThanOrEqual(30);
     dispose(root);
   });
 
@@ -80,7 +85,13 @@ describe('cinematic stage kit', () => {
     const stage = STAGES.find((entry) => entry.id === 'koushou')!;
     const a = buildCinematicStageKit({ stage, tier: 'medium', boxes, propPlacements: [] });
     const b = buildCinematicStageKit({ stage, tier: 'medium', boxes, propPlacements: [] });
-    for (const name of ['aaa:macro-routes', 'aaa:macro-rubble-clusters', 'aaa:distant-skyline']) {
+    for (const name of [
+      'aaa:macro-routes',
+      'aaa:macro-rubble-clusters',
+      'aaa:distant-skyline',
+      'aaa:ground-surface-seams',
+      'aaa:perimeter-utility-poles',
+    ]) {
       const am = a.getObjectByName(name) as THREE.InstancedMesh;
       const bm = b.getObjectByName(name) as THREE.InstancedMesh;
       expect(Array.from(am.instanceMatrix.array), name).toEqual(Array.from(bm.instanceMatrix.array));

@@ -305,6 +305,18 @@ function treeCrownGeometry(kind: Exclude<ScenicVegetation, 'none' | 'dead'>): TH
   const merged = mergeGeometries(parts, false);
   for (const part of parts) part.dispose();
   if (!merged) throw new Error('failed to merge cinematic tree crown');
+  // 同じ頂点数のまま球状クラスターの輪郭を崩す。規則的な丸い塊ではなく、枝ごとに
+  // 張り出しが異なる樹冠へし、遠距離でもジオラマのトピアリー感を抑える。
+  const position = merged.getAttribute('position') as THREE.BufferAttribute;
+  for (let i = 0; i < position.count; i += 1) {
+    const x = position.getX(i);
+    const y = position.getY(i);
+    const z = position.getZ(i);
+    const radialWarp = 1 + Math.sin(x * 3.71 + y * 2.13 + z * 4.07) * 0.055;
+    const verticalWarp = 1 + Math.sin(x * 2.31 - z * 3.19 + y * 1.73) * 0.035;
+    position.setXYZ(i, x * radialWarp, y * verticalWarp, z * radialWarp);
+  }
+  position.needsUpdate = true;
   merged.computeVertexNormals();
   return merged;
 }

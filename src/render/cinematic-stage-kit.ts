@@ -139,6 +139,7 @@ interface StageKitBudget {
   readonly routes: number;
   readonly routeMarks: number;
   readonly groundPatches: number;
+  readonly surfaceSeams: number;
   readonly facadePanels: number;
   readonly facadeFrames: number;
   readonly rooftopUnits: number;
@@ -147,20 +148,25 @@ interface StageKitBudget {
   readonly downspouts: number;
   readonly rubble: number;
   readonly skyline: number;
+  readonly infrastructure: number;
+  readonly utilityCabinets: number;
 }
 
 const BUDGETS: Readonly<Record<GraphicsQuality, StageKitBudget>> = {
   low: {
-    routes: 2, routeMarks: 8, groundPatches: 7, facadePanels: 24, facadeFrames: 18,
+    routes: 2, routeMarks: 8, groundPatches: 7, surfaceSeams: 12, facadePanels: 24, facadeFrames: 18,
     rooftopUnits: 8, contactShadows: 16, grimeBands: 12, downspouts: 6, rubble: 18, skyline: 10,
+    infrastructure: 6, utilityCabinets: 0,
   },
   medium: {
-    routes: 4, routeMarks: 24, groundPatches: 18, facadePanels: 90, facadeFrames: 60,
+    routes: 4, routeMarks: 24, groundPatches: 18, surfaceSeams: 36, facadePanels: 90, facadeFrames: 60,
     rooftopUnits: 28, contactShadows: 44, grimeBands: 36, downspouts: 18, rubble: 56, skyline: 24,
+    infrastructure: 12, utilityCabinets: 4,
   },
   high: {
-    routes: 7, routeMarks: 56, groundPatches: 36, facadePanels: 260, facadeFrames: 180,
+    routes: 7, routeMarks: 56, groundPatches: 36, surfaceSeams: 72, facadePanels: 260, facadeFrames: 180,
     rooftopUnits: 64, contactShadows: 88, grimeBands: 72, downspouts: 36, rubble: 120, skyline: 42,
+    infrastructure: 20, utilityCabinets: 8,
   },
 };
 
@@ -221,9 +227,15 @@ function makeMatrix(
 function routeColors(family: StageVisualFamily, stage: StageDef): { surface: THREE.Color; mark: THREE.Color } {
   switch (family) {
     case 'heritage':
-      return { surface: shade(stage.palette.floor, -0.22, -0.05), mark: shade(stage.palette.wall, 0.16, -0.08) };
-    case 'wilderness':
-      return { surface: shade(stage.palette.floor, -0.18, -0.08), mark: shade(stage.palette.floor, 0.14, -0.12) };
+      // 草地パレットでも主要動線は石畳として読ませる。床色由来だと全面が同じ緑へ
+      // 融合し、広場の距離・進行方向が失われていた。
+      return { surface: shade(stage.palette.wall, -0.28, -0.16), mark: shade(stage.palette.wall, 0.08, -0.12) };
+    case 'wilderness': {
+      const earth = new THREE.Color(stage.palette.obstacle)
+        .lerp(new THREE.Color(stage.palette.floor), 0.28)
+        .multiplyScalar(0.66);
+      return { surface: earth, mark: shade(stage.palette.wall, -0.06, -0.14) };
+    }
     case 'arctic':
       return { surface: shade(stage.palette.floor, -0.16, 0.02), mark: new THREE.Color(0xaecbe0) };
     case 'geothermal':
@@ -388,6 +400,41 @@ function buildGroundRoutes(
     patches.setColorAt(i, patchBase.clone().multiplyScalar(0.72 + rand() * 0.42));
   }
   root.add(configureInstances(patches, 2));
+
+  // 近景の床へ施工目地・細い亀裂を散らす。1本ずつのMeshにはせず全品質で1DCに集約し、
+  // 物理床より3cmだけ上へ置くことで、当たり判定を一切変えず足元の実寸スケールを作る。
+  const seamGeometry = new THREE.BoxGeometry(1, 1, 1);
+  const seamMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: family === 'urban' || family === 'industrial' || family === 'undead' ? 0.62 : 0.88,
+    metalness: 0,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -3,
+  });
+  const seams = new THREE.InstancedMesh(seamGeometry, seamMaterial, budget.surfaceSeams);
+  seams.name = 'aaa:ground-surface-seams';
+  seams.receiveShadow = false;
+  const seamBase = family === 'arctic'
+    ? new THREE.Color(0x6d8798)
+    : family === 'wilderness' || family === 'heritage'
+      ? shade(stage.palette.obstacle, -0.3, -0.16)
+      : shade(stage.palette.floor, -0.48, -0.14);
+  for (let i = 0; i < budget.surfaceSeams; i += 1) {
+    let x = 0;
+    let z = 0;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      x = (rand() * 2 - 1) * half;
+      z = (rand() * 2 - 1) * half;
+      if (!groundOccupied(boxes, x, z, 0.8)) break;
+    }
+    const longJoint = i % 7 === 0;
+    const width = longJoint ? 0.045 + rand() * 0.035 : 0.025 + rand() * 0.028;
+    const length = longJoint ? 2.8 + rand() * 3.8 : 0.65 + rand() * 2.2;
+    seams.setMatrixAt(i, makeMatrix(x, 0.028 + i * 0.000002, z, width, 0.008, length, rand() * Math.PI));
+    seams.setColorAt(i, seamBase.clone().multiplyScalar(0.7 + rand() * 0.38));
+  }
+  root.add(configureInstances(seams, 2));
   return root;
 }
 
@@ -855,6 +902,199 @@ function buildDistantWorld(
   return root;
 }
 
+function mergedFixtureGeometry(parts: THREE.BufferGeometry[], label: string): THREE.BufferGeometry {
+  const merged = mergeGeometries(parts, false);
+  for (const part of parts) part.dispose();
+  if (!merged) throw new Error(`failed to merge ${label}`);
+  merged.computeVertexNormals();
+  return merged;
+}
+
+function infrastructurePoleGeometry(family: StageVisualFamily): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const pole = new THREE.CylinderGeometry(0.085, 0.13, 4.9, 10, 3);
+  pole.translate(0, 2.45, 0);
+  parts.push(pole);
+  const crossArm = new THREE.BoxGeometry(family === 'airport' ? 1.35 : 0.92, 0.09, 0.11);
+  crossArm.translate(0, 4.62, 0);
+  parts.push(crossArm);
+  for (const x of [-0.36, 0.36]) {
+    const insulator = new THREE.CylinderGeometry(0.045, 0.055, 0.18, 8, 1);
+    insulator.translate(x, 4.76, 0);
+    parts.push(insulator);
+  }
+  const lampArm = new THREE.BoxGeometry(0.7, 0.055, 0.065);
+  lampArm.translate(0.34, family === 'heritage' ? 4.28 : 4.42, 0);
+  parts.push(lampArm);
+  return mergedFixtureGeometry(parts, 'stage infrastructure pole');
+}
+
+function utilityCabinetGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const body = new THREE.BoxGeometry(0.82, 1.35, 0.48);
+  body.translate(0, 0.675, 0);
+  parts.push(body);
+  const cap = new THREE.BoxGeometry(0.9, 0.08, 0.56);
+  cap.translate(0, 1.39, 0);
+  parts.push(cap);
+  const door = new THREE.BoxGeometry(0.64, 0.96, 0.035);
+  door.translate(0, 0.72, 0.258);
+  parts.push(door);
+  for (let slot = -2; slot <= 2; slot += 1) {
+    const vent = new THREE.BoxGeometry(0.34, 0.025, 0.025);
+    vent.translate(0, 0.42 + slot * 0.075, 0.285);
+    parts.push(vent);
+  }
+  return mergedFixtureGeometry(parts, 'stage utility cabinet');
+}
+
+/**
+ * 不可視境界のすぐ外へ、人間スケールのインフラを連続配置する。
+ * プレイヤー／AI／弾道とは交差せず、箱庭の外にも道路と生活圏が続くことだけを示す。
+ * highでも pole/lamp/cabinet/cable の最大4DCに固定する。
+ */
+function buildBoundaryInfrastructure(
+  stage: StageDef,
+  family: StageVisualFamily,
+  budget: StageKitBudget,
+  rand: Rand,
+): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'aaa:boundary-infrastructure';
+  markObject(root, 0);
+  const anchors: Array<{ x: number; z: number; height: number; yaw: number; lean: number }> = [];
+  for (let i = 0; i < budget.infrastructure; i += 1) {
+    const angle = (i / budget.infrastructure) * Math.PI * 2 + (rand() - 0.5) * 0.1;
+    const radius = stage.size * (0.535 + rand() * 0.055);
+    const height = 0.86 + rand() * 0.24;
+    anchors.push({
+      x: Math.cos(angle) * radius,
+      z: Math.sin(angle) * radius,
+      height,
+      yaw: -angle + Math.PI / 2,
+      lean: family === 'undead' || family === 'geothermal'
+        ? (rand() - 0.5) * 0.16
+        : (rand() - 0.5) * 0.025,
+    });
+  }
+
+  const poleMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: family === 'heritage' || family === 'wilderness' ? 0.82 : 0.56,
+    metalness: family === 'heritage' || family === 'wilderness' ? 0.08 : 0.46,
+    fog: true,
+  });
+  const poles = new THREE.InstancedMesh(infrastructurePoleGeometry(family), poleMaterial, anchors.length);
+  poles.name = 'aaa:perimeter-utility-poles';
+  poles.castShadow = false;
+  poles.receiveShadow = false;
+  const poleBase = family === 'heritage' || family === 'wilderness'
+    ? new THREE.Color(0x4b3b2c)
+    : shade(stage.palette.obstacle, -0.2, -0.12);
+  for (let i = 0; i < anchors.length; i += 1) {
+    const anchor = anchors[i]!;
+    poles.setMatrixAt(i, makeMatrix(
+      anchor.x,
+      0,
+      anchor.z,
+      anchor.height,
+      anchor.height,
+      anchor.height,
+      anchor.yaw,
+      0,
+      anchor.lean,
+    ));
+    poles.setColorAt(i, poleBase.clone().multiplyScalar(0.72 + rand() * 0.34));
+  }
+  root.add(configureInstances(poles, 0));
+
+  const lampColor = family === 'arctic' || family === 'airport'
+    ? new THREE.Color(0xc7eaff)
+    : family === 'undead' || stage.palette.mood === 'night'
+      ? shade(stage.palette.accent, 0.08, 0.04)
+      : new THREE.Color(0xffd6a0);
+  const lamps = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(0.34, 0.12, 0.2),
+    new THREE.MeshStandardMaterial({
+      color: lampColor,
+      emissive: lampColor,
+      emissiveIntensity: family === 'undead' || stage.palette.mood === 'night' ? 0.7 : 0.22,
+      roughness: 0.35,
+      metalness: 0.08,
+      fog: true,
+    }),
+    anchors.length,
+  );
+  lamps.name = 'aaa:perimeter-practical-lamps';
+  for (let i = 0; i < anchors.length; i += 1) {
+    const anchor = anchors[i]!;
+    lamps.setMatrixAt(i, makeMatrix(
+      anchor.x + Math.cos(anchor.yaw) * 0.68 * anchor.height,
+      4.42 * anchor.height,
+      anchor.z - Math.sin(anchor.yaw) * 0.68 * anchor.height,
+      anchor.height,
+      anchor.height,
+      anchor.height,
+      anchor.yaw,
+      0,
+      anchor.lean,
+    ));
+  }
+  root.add(configureInstances(lamps, 1));
+
+  if (budget.utilityCabinets > 0) {
+    const cabinets = new THREE.InstancedMesh(
+      utilityCabinetGeometry(),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.62, metalness: 0.42, fog: true }),
+      budget.utilityCabinets,
+    );
+    cabinets.name = 'aaa:perimeter-utility-cabinets';
+    cabinets.receiveShadow = false;
+    const base = shade(stage.palette.wall, -0.16, -0.12);
+    for (let i = 0; i < budget.utilityCabinets; i += 1) {
+      const anchor = anchors[(i * 2 + 1) % anchors.length]!;
+      cabinets.setMatrixAt(i, makeMatrix(
+        anchor.x + Math.cos(anchor.yaw + Math.PI / 2) * 0.85,
+        0,
+        anchor.z - Math.sin(anchor.yaw + Math.PI / 2) * 0.85,
+        0.84 + rand() * 0.28,
+        0.84 + rand() * 0.22,
+        0.84 + rand() * 0.28,
+        anchor.yaw,
+      ));
+      cabinets.setColorAt(i, base.clone().multiplyScalar(0.72 + rand() * 0.3));
+    }
+    root.add(configureInstances(cabinets, 2));
+  }
+
+  if (budget.utilityCabinets > 0 && family !== 'airport') {
+    const cableParts: THREE.BufferGeometry[] = [];
+    for (let i = 0; i < anchors.length; i += 1) {
+      const a = anchors[i]!;
+      const b = anchors[(i + 1) % anchors.length]!;
+      const ay = 4.72 * a.height;
+      const by = 4.72 * b.height;
+      const points = [
+        new THREE.Vector3(a.x, ay, a.z),
+        new THREE.Vector3((a.x * 2 + b.x) / 3, THREE.MathUtils.lerp(ay, by, 1 / 3) - 0.22, (a.z * 2 + b.z) / 3),
+        new THREE.Vector3((a.x + b.x * 2) / 3, THREE.MathUtils.lerp(ay, by, 2 / 3) - 0.22, (a.z + b.z * 2) / 3),
+        new THREE.Vector3(b.x, by, b.z),
+      ];
+      cableParts.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 8, 0.018, 3, false));
+    }
+    const cables = new THREE.Mesh(
+      mergedFixtureGeometry(cableParts, 'stage overhead cables'),
+      new THREE.MeshStandardMaterial({ color: 0x111317, roughness: 0.58, metalness: 0.34, fog: true }),
+    );
+    cables.name = 'aaa:perimeter-overhead-cables';
+    cables.castShadow = false;
+    cables.receiveShadow = false;
+    markObject(cables, 3);
+    root.add(cables);
+  }
+  return root;
+}
+
 /**
  * ステージ別生成アートを、プレイ境界よりも外側の遠景だけに合成する。
  *
@@ -1226,6 +1466,7 @@ export function buildCinematicStageKit(options: CinematicStageKitOptions): THREE
   root.add(buildGroundingLayer(options.stage, identity.family, options.boxes, budget, rand));
   root.add(buildMacroRubble(options.stage, identity.family, options.boxes, options.propPlacements, budget.rubble, rand));
   root.add(buildDistantWorld(options.stage, identity.family, budget.skyline, rand));
+  root.add(buildBoundaryInfrastructure(options.stage, identity.family, budget, rand));
   root.add(buildDistantStageMatte(options.stage, options.tier));
   root.add(buildHeroLandmark(options.stage, identity));
   root.add(buildCinematicEnvironment({

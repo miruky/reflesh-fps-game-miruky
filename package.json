@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "test:e2e": "node scripts/ui2-smoke.mjs",
     "audit:stages": "node e2e/stage-world-audit.mjs",
+    "audit:weapons": "node e2e/weapon-arm-audit.mjs",
     "lint": "eslint .",
     "fmt": "prettier --write ."
   },

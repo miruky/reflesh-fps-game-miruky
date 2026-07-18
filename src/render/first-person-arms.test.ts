@@ -112,6 +112,26 @@ describe('first-person arms', () => {
     disposeRig(rig, mats);
   });
 
+  it('武器別armアンカーへ袖の肘端を戻し、手首回転だけで腕方向を決めない', () => {
+    const mats = materials();
+    const rig = buildFirstPersonArms(mats, options);
+    rig.updateWorldMatrix(true, true);
+    for (const side of ['left', 'right'] as const) {
+      const sleeve = rig.getObjectByName(`vm:${side}SleeveConnected`) as THREE.Mesh;
+      const arm = options[side].arm;
+      const anchor = new THREE.Vector3(arm[0], arm[1], arm[2]);
+      const position = sleeve.geometry.getAttribute('position') as THREE.BufferAttribute;
+      let nearest = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < position.count; i += 1) {
+        const point = new THREE.Vector3(position.getX(i), position.getY(i), position.getZ(i))
+          .applyMatrix4(sleeve.matrixWorld);
+        nearest = Math.min(nearest, point.distanceTo(anchor));
+      }
+      expect(nearest, side).toBeLessThan(0.065);
+    }
+    disposeRig(rig, mats);
+  });
+
   it('クナイ用の既存FIST_POSESノード名を維持する', () => {
     const mats = materials();
     const rig = buildFirstPersonArms(mats, { ...options, fists: true });

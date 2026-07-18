@@ -2578,12 +2578,14 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
     case 'fists':
       return {
         right: {
-          arm: [0.08, -0.2, 0.12, 0.5, -0.12, 0],
+          arm: [0.18, -0.38, 0.24, 0.5, -0.12, 0],
           hand: [0.02, -0.07, -0.09, 0.2, 0.05, 0],
         },
         left: {
-          arm: [-0.1, -0.16, -0.02, 0.42, 0.24, 0.1],
-          hand: [-0.15, -0.13, -0.15, 0.18, 0.24, -0.82],
+          arm: [-0.22, -0.34, 0.14, 0.42, 0.24, 0.1],
+          // FIST_POSES.rest と同じ値から生成する。後段のrest適用で手だけ回転し、
+          // 接続袖の方向が二重に変わる旧ドリフトを構造的に排除する。
+          hand: [-0.29, -0.09, -0.16, 0.2, 0.48, -1.04],
         },
         reloadGesture: 'blade',
       };
@@ -2596,7 +2598,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.13, -0.2, 0.02, 0.48, 0.2, 0.2],
-          hand: [-0.036, -0.052, -0.245, 0.18, 0.1, -0.82],
+          hand: [-0.036, -0.052, -0.245, 0.18, 0.24, -1.02],
         },
         reloadGesture: 'staff',
       };
@@ -2608,7 +2610,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.16, -0.21, 0.03, 0.5, 0.22, 0.22],
-          hand: [-0.04, -0.044, -0.205, 0.16, 0.1, -0.84],
+          hand: [-0.04, -0.044, -0.205, 0.16, 0.28, -1.04],
         },
         reloadGesture: 'blade',
       };
@@ -2621,7 +2623,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.15, -0.22, 0.08, 0.5, 0.2, 0.24],
-          hand: [-0.092, -0.102, -0.08, 0.22, 0.14, -0.84],
+          hand: [-0.092, -0.102, -0.08, 0.22, 0.3, -1.06],
         },
         reloadGesture: 'blade',
       };
@@ -2636,7 +2638,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.17, -0.25, 0.05, 0.6, 0.28, 0.32],
-          hand: [-0.045, -0.07, -0.21 * bs, 0.34, 0.16, -0.8],
+          hand: [-0.045, -0.07, -0.21 * bs, 0.34, 0.3, -1.02],
         },
         reloadGesture: 'heavy',
       };
@@ -2649,8 +2651,8 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
           hand: [0.04, -0.095, 0.07, 0.3, -0.1, -0.06],
         },
         left: {
-          arm: [-0.13, -0.22, 0.11, 0.52, 0.2, 0.22],
-          hand: [-0.012, -0.08, 0.005, 0.3, 0.16, -0.94],
+          arm: [-0.16, -0.29, 0.19, 0.52, 0.2, 0.22],
+          hand: [-0.035, -0.084, 0.014, 0.3, 0.3, -1.12],
         },
         reloadGesture: 'magazine',
       };
@@ -2662,7 +2664,7 @@ export function resolveFirstPersonGripProfile(def: WeaponDef): FirstPersonGripPr
         },
         left: {
           arm: [-0.16, -0.23, 0.06, 0.58, 0.28, 0.32],
-          hand: [-0.034, -0.054, -0.17 * bs, 0.34, 0.17, -0.84],
+          hand: [-0.052, -0.058, -0.17 * bs, 0.34, 0.32, -1.06],
         },
         reloadGesture: 'generic',
       };
@@ -3674,20 +3676,9 @@ export class ViewModel {
           wave * 0.85,
         );
       }
-      // 射撃手はグリップを保持し、手首だけで銃のカントを受ける。
-      const rightDelta = gesture === 'staff'
-        ? [0.015, -0.014, 0.035, -0.14, -0.08, 0.16] as const
-        : [0, -0.006, 0.004, -0.08, 0, 0.08] as const;
-      applyRigPoseDelta(
-        this.rig.rightHand,
-        rightDelta[0],
-        rightDelta[1],
-        rightDelta[2],
-        rightDelta[3],
-        rightDelta[4],
-        rightDelta[5],
-        reloadPose.weaponWave * (gesture === 'staff' ? 0.72 : 1),
-      );
+      // 射撃手は銃と同じrootにあるため、rootのカントへ自然に追従する。ここでさらに
+      // 手首だけを加算するとグリップから離れて二重に見えるため、常にrestを保持する。
+      resetRigPose(this.rig.rightHand);
     } else {
       resetRigPose(this.rig.leftArm);
       resetRigPose(this.rig.leftHand);

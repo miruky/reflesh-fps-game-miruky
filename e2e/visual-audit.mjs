@@ -35,11 +35,12 @@ const reloadFrameMs = Number(val('--reload-frame-ms', '120'));
 const safeZombie = val('--safe-zombie', '0') === '1';
 const softwareRenderer = val('--software', '0') === '1';
 const viewportName = val('--viewport', '1920x1080');
+const kunaiState = val('--kunai-state', 'normal');
 const [width, height] = viewportName.split('x').map(Number);
 const port = Number(val('--port', '5229'));
 const baseArg = val('--base', '');
 const shotDir = process.env.AUDIT_SHOT_DIR || path.resolve('e2e/.audit-shots');
-const prefix = `${stageId}-${mode}-${weaponId}-${quality}-${viewportName}`;
+const prefix = `${stageId}-${mode}-${weaponId}-${kunaiState}-${quality}-${viewportName}`;
 
 const weaponSource = readFileSync(path.resolve('src/game/weapons.ts'), 'utf8');
 const weaponIds = Array.from(
@@ -47,6 +48,12 @@ const weaponIds = Array.from(
   (match) => match[1],
 );
 if (!weaponIds.includes(weaponId)) throw new Error(`unknown weapon: ${weaponId}`);
+if (!['normal', 'dark', 'raitei', 'kokuraitei'].includes(kunaiState)) {
+  throw new Error(`unknown kunai state: ${kunaiState}`);
+}
+if (weaponId !== 'fists' && kunaiState !== 'normal') {
+  throw new Error('--kunai-state is only valid with --weapon=fists');
+}
 if (!['low', 'medium', 'high'].includes(quality)) throw new Error(`unknown quality: ${quality}`);
 if (!Number.isFinite(width) || !Number.isFinite(height)) throw new Error(`bad viewport: ${viewportName}`);
 if (!Number.isInteger(zombieStartRound) || zombieStartRound < 1 || zombieStartRound > 999) {
@@ -229,6 +236,23 @@ try {
   await visible(page, '#hud:not([hidden])', 50_000);
   await page.waitForTimeout(settleMs);
 
+  // クナイは通常／黒帝／雷帝／黒雷帝を同じ実試合経路で監査する。訓練場は毎フレーム
+  // ゲージ満タンになるため、製品入力(M/N)だけで再現でき、内部状態の直書きは不要。
+  if (weaponId === 'fists' && kunaiState !== 'normal') {
+    if (mode !== 'training') throw new Error('kunai emperor-state audit requires training mode');
+    if (kunaiState === 'dark') {
+      await page.keyboard.press('KeyM');
+    } else if (kunaiState === 'raitei') {
+      await page.keyboard.press('KeyN');
+    } else {
+      for (let press = 0; press < 3; press += 1) {
+        await page.keyboard.press('KeyM');
+        await page.waitForTimeout(140);
+      }
+    }
+    await page.waitForTimeout(1800);
+  }
+
   const shot = async (name) => {
     await page.screenshot({ path: path.join(shotDir, `${prefix}-${name}.png`) });
   };
@@ -350,6 +374,7 @@ try {
 
   const report = {
     weaponId,
+    kunaiState,
     camoId,
     quality,
     stageId,
