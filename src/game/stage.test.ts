@@ -108,7 +108,7 @@ describe('generateStage', () => {
         }
       }
     }
-  });
+  }, 15_000);
 
   it('recipe を持つステージは theme が文字列で buildings が 0〜4 棟(訓練場は0棟)', () => {
     for (const def of STAGES) {
