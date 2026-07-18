@@ -1131,19 +1131,18 @@ function buildDistantStageMatte(stage: StageDef, tier: GraphicsQuality): THREE.G
   // 1リピート分の物理アスペクトを元画像(640/368)に合わせ、横伸びを防ぐ。
   const sourceAspect = 640 / 368;
   const imageHeightAtCorrectAspect = (Math.PI * 2 * radius / 4) / sourceAspect;
-  // シリンダ上下端が画角に入ると曲線状の「背景紙」に見える。幾何を上下に延長し、
-  // 中央の正しい縦横比にだけ画像を置き、外側はClampした空/地表色で自然に接続する。
-  const height = radius * 2.4;
-  const verticalRepeat = height / imageHeightAtCorrectAspect;
-  texture.repeat.y = verticalRepeat;
-  texture.offset.y = -(verticalRepeat - 1) / 2;
-  // 実画像領域の上下12%を透明にフェード。画像外はClampでアルフ0に留まり、
-  // 巨大シリンダの上下は完全に手続き的な空/床へ溶ける。
+  // サムネイルの天井・橋・クレーンを360度パノラマの頭上に再利用すると、
+  // 「巨大な天井」に見える。正しい縦横比の高さだけを使い、上偲42%を長くフェードして
+  // 実3D遠景とSky.jsへ戻す。マットは地平線の低い帯に限定する。
+  const height = imageHeightAtCorrectAspect;
+  texture.repeat.y = 1;
+  texture.offset.y = 0;
   const alphaBytes = new Uint8Array(64 * 4);
   for (let i = 0; i < 64; i += 1) {
     const t = i / 63;
-    const edge = Math.min(t, 1 - t);
-    const x = THREE.MathUtils.clamp(edge / 0.12, 0, 1);
+    const bottom = THREE.MathUtils.clamp(t / 0.12, 0, 1);
+    const top = THREE.MathUtils.clamp((1 - t) / 0.42, 0, 1);
+    const x = Math.min(bottom, top);
     const smooth = x * x * (3 - 2 * x);
     const value = Math.round(smooth * 255);
     alphaBytes[i * 4] = value;
@@ -1155,8 +1154,8 @@ function buildDistantStageMatte(stage: StageDef, tier: GraphicsQuality): THREE.G
   alphaMap.name = `stage-matte-alpha:${stage.id}`;
   alphaMap.wrapS = THREE.ClampToEdgeWrapping;
   alphaMap.wrapT = THREE.ClampToEdgeWrapping;
-  alphaMap.repeat.set(1, verticalRepeat);
-  alphaMap.offset.y = -(verticalRepeat - 1) / 2;
+  alphaMap.repeat.set(1, 1);
+  alphaMap.offset.y = 0;
   alphaMap.minFilter = THREE.LinearFilter;
   alphaMap.magFilter = THREE.LinearFilter;
   alphaMap.needsUpdate = true;
@@ -1168,7 +1167,7 @@ function buildDistantStageMatte(stage: StageDef, tier: GraphicsQuality): THREE.G
     alphaMap,
     side: THREE.BackSide,
     transparent: true,
-    opacity: undead ? 0.54 : 0.36,
+    opacity: undead ? 0.40 : 0.28,
     depthWrite: false,
     fog: true,
     toneMapped: false,
@@ -1176,7 +1175,7 @@ function buildDistantStageMatte(stage: StageDef, tier: GraphicsQuality): THREE.G
   material.userData.ownedMaps = [texture, alphaMap];
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = 'aaa:distant-stage-matte';
-  mesh.position.y = 1.7;
+  mesh.position.y = height / 2 - 4;
   mesh.rotation.y = ((stage.seed * 0.61803398875) % 1) * Math.PI * 2;
   mesh.renderOrder = -3;
   mesh.frustumCulled = false;

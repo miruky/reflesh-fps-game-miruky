@@ -22,6 +22,8 @@ const onlyStage = val('--stage', '');
 const output = val('--output', '/tmp/hibana-stage-world-audit');
 const port = Number(val('--port', '5241'));
 const settleMs = Number(val('--settle-ms', '650'));
+const walkMs = Number(val('--walk-ms', '0'));
+const strafeMs = Number(val('--strafe-ms', '0'));
 const viewportName = val('--viewport', '1280x720');
 const [width, height] = viewportName.split('x').map(Number);
 if (!['low', 'medium', 'high'].includes(quality)) throw new Error(`bad quality: ${quality}`);
@@ -74,6 +76,12 @@ try {
     const errors = [];
     const context = await browser.newContext({ viewport: { width, height } });
     await context.addInitScript(installSilentAudio);
+    await context.addInitScript(() => {
+      window.__hibanaAaaAssetReport = null;
+      window.addEventListener('hibana:aaa-assets', (event) => {
+        window.__hibanaAaaAssetReport = event.detail;
+      });
+    });
     await context.addInitScript(
       ({ selectedStageId, selectedMode, graphicsQuality }) => {
         let fakePointerLockElement = null;
@@ -146,7 +154,31 @@ try {
       await page.locator('[data-id="scr-deploy"]').waitFor({ state: 'visible' });
       await page.locator('[data-id="start"]').evaluate((element) => element.click());
       await page.locator('#hud:not([hidden])').waitFor({ state: 'visible', timeout: 50_000 });
+      await page.waitForFunction(
+        () => window.__hibanaAaaAssetReport !== null,
+        undefined,
+        { timeout: 20_000 },
+      );
+      const aaaAssets = await page.evaluate(() => window.__hibanaAaaAssetReport);
+      if (!aaaAssets || aaaAssets.loaded !== 1 || aaaAssets.failed !== 0) {
+        throw new Error(`AAA stage asset load failed: ${JSON.stringify(aaaAssets)}`);
+      }
       await page.waitForTimeout(settleMs);
+      // Optional deterministic first-person traversal for gate/interior QA.
+      // Chromium remains headless and the global silent-audio shim stays active.
+      if (strafeMs > 0) {
+        await page.keyboard.down('d');
+        await page.waitForTimeout(strafeMs);
+        await page.keyboard.up('d');
+      }
+      if (walkMs > 0) {
+        await page.keyboard.down('Shift');
+        await page.keyboard.down('w');
+        await page.waitForTimeout(walkMs);
+        await page.keyboard.up('w');
+        await page.keyboard.up('Shift');
+      }
+      await page.waitForTimeout(400);
       await page.screenshot({ path: path.join(output, `${stageId}.png`) });
       ok = true;
     } catch (error) {
@@ -157,6 +189,7 @@ try {
       const memory = performance.memory;
       return memory ? { used: memory.usedJSHeapSize, total: memory.totalJSHeapSize } : null;
     }).catch(() => null);
+    const aaaAssets = await page.evaluate(() => window.__hibanaAaaAssetReport).catch(() => null);
     results.push({
       stageId,
       mode,
@@ -164,6 +197,7 @@ try {
       elapsedMs: Math.round(performance.now() - startedAt),
       perfhud,
       heap,
+      aaaAssets,
       errors,
     });
     await context.close();
@@ -177,6 +211,7 @@ try {
 const report = {
   quality,
   viewport: viewportName,
+  traversal: { walkMs, strafeMs },
   stages: results.length,
   passed: results.filter((entry) => entry.ok && entry.errors.length === 0).length,
   failed: results.filter((entry) => !entry.ok || entry.errors.length > 0).length,

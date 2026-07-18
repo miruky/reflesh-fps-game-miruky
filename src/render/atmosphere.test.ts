@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { mulberry32 } from '../core/rng';
 import { BIOMES, generatePalette } from '../game/biomes';
 import { STAGES } from '../game/stages';
@@ -159,8 +160,9 @@ describe('MOOD_PRESETS', () => {
     for (const m of ['day', 'dusk', 'night', 'overcast', 'snow'] as MoodId[]) {
       const g = MOOD_PRESETS[m].grade;
       expect(g.tint).toHaveLength(3);
-      expect(g.contrast).toBeGreaterThan(0);
-      expect(g.saturation).toBeGreaterThan(0);
+      expect(g.contrast).toBeGreaterThanOrEqual(1.14);
+      expect(g.saturation).toBeGreaterThanOrEqual(0.9);
+      expect(g.saturation).toBeLessThanOrEqual(1.08);
       expect(g.vignetteR).toBeGreaterThanOrEqual(0.72); // 中央を広く残す(可読性)
     }
   });
@@ -222,5 +224,34 @@ describe('placeGrass', () => {
 describe('Atmosphere API', () => {
   it('クラスとして export されている', () => {
     expect(typeof Atmosphere).toBe('function');
+  });
+
+  it('遠景シルエットをフォグで消える距離ではなく外周中景へ置く', () => {
+    const scene = new THREE.Scene();
+    const palette = makePalette({
+      silhouette: 'ridge',
+      particle: 'none',
+      grassKind: 'none',
+      groundFog: 0,
+    });
+    const atmosphere = new Atmosphere(
+      scene,
+      { getPixelRatio: () => 1 } as unknown as THREE.WebGLRenderer,
+      palette,
+      'day',
+      'medium',
+      true,
+      100,
+      [],
+      new THREE.Vector3(0.4, 0.8, 0.2).normalize(),
+      mulberry32(0x1234),
+    );
+    const silhouette = scene.getObjectByName('aaa:atmosphere-distant-silhouette');
+    expect(silhouette).toBeInstanceOf(THREE.Mesh);
+    const geometry = (silhouette as THREE.Mesh).geometry;
+    geometry.computeBoundingSphere();
+    expect(geometry.boundingSphere?.radius).toBeGreaterThan(100);
+    expect(geometry.boundingSphere?.radius).toBeLessThan(220);
+    atmosphere.dispose();
   });
 });

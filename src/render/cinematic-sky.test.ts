@@ -48,6 +48,9 @@ describe('cinematic sky', () => {
     expect(shader.fragmentShader).toContain('uCloudMap');
     expect(shader.fragmentShader).toContain('texture2D(uCloudMap');
     expect(shader.fragmentShader).toContain('hibSkyBase');
+    expect(shader.fragmentShader).toContain('hibAltitude');
+    expect(shader.fragmentShader.match(/texture2D\(uCloudMap/g)).toHaveLength(2);
+    expect(shader.fragmentShader).toContain('min(hibSkyBase, vec3(uSkyClamp))');
     expect(shader.fragmentShader).not.toContain('gl_FragColor = vec4( retColor, 1.0 );');
     expect(Object.keys(shader.uniforms)).toContain('uCloudDetail');
     expect(handle.uniforms.cloudDetail.value).toBe(1);

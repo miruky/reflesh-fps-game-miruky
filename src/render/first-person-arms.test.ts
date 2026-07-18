@@ -80,6 +80,27 @@ describe('first-person arms', () => {
     disposeRig(rig, mats);
   });
 
+  it('支持手の指は掌から連続するコンパクトな握りに収まり、棒状に飛び出さない', () => {
+    const mats = materials();
+    const rig = buildFirstPersonArms(mats, options);
+    for (const side of ['left', 'right'] as const) {
+      const glove = rig.getObjectByName(`vm:${side}GloveSkin`) as THREE.Mesh;
+      const palm = rig.getObjectByName(`vm:${side}Hand:palm`) as THREE.Mesh;
+      glove.geometry.computeBoundingBox();
+      palm.geometry.computeBoundingBox();
+      const gloveSize = glove.geometry.boundingBox!.getSize(new THREE.Vector3());
+      const palmSize = palm.geometry.boundingBox!.getSize(new THREE.Vector3());
+      // 5指+掌+手首の手形だけの範囲。袖は別メッシュなのでこの大きさに混ざらない。
+      expect(gloveSize.x, side).toBeLessThan(0.12);
+      expect(gloveSize.y, side).toBeLessThan(0.13);
+      expect(gloveSize.z, side).toBeLessThan(0.22);
+      expect(palmSize.x, side).toBeLessThan(0.12);
+      expect(palmSize.y, side).toBeLessThan(0.13);
+      expect(palmSize.z, side).toBeLessThan(0.16);
+    }
+    disposeRig(rig, mats);
+  });
+
   it('旧来の直方体腕を生成せず、軽量な連続袖と立体指を使う', () => {
     const mats = materials();
     const rig = buildFirstPersonArms(mats, options);

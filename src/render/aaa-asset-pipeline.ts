@@ -28,6 +28,8 @@ export interface AaaAssetEntry {
   readonly maxInstances?: number;
   readonly castShadow?: boolean;
   readonly receiveShadow?: boolean;
+  readonly replacesDistantMatte?: boolean;
+  readonly replacesProceduralProps?: boolean;
   readonly lods?: readonly AaaAssetLod[];
 }
 
@@ -136,6 +138,12 @@ export function parseAaaAssetManifest(value: unknown): AaaAssetManifest {
           })
         : null;
     if (lods === null) throw new Error(`asset[${index}].lods is invalid`);
+    if (item.replacesDistantMatte !== undefined && typeof item.replacesDistantMatte !== 'boolean') {
+      throw new Error(`asset[${index}].replacesDistantMatte is invalid`);
+    }
+    if (item.replacesProceduralProps !== undefined && typeof item.replacesProceduralProps !== 'boolean') {
+      throw new Error(`asset[${index}].replacesProceduralProps is invalid`);
+    }
     const positiveNumber = (field: string): number | undefined => {
       const fieldValue = item[field];
       if (fieldValue === undefined) return undefined;
@@ -165,6 +173,8 @@ export function parseAaaAssetManifest(value: unknown): AaaAssetManifest {
       maxInstances: positiveNumber('maxInstances'),
       castShadow: typeof item.castShadow === 'boolean' ? item.castShadow : undefined,
       receiveShadow: typeof item.receiveShadow === 'boolean' ? item.receiveShadow : undefined,
+      replacesDistantMatte: item.replacesDistantMatte as boolean | undefined,
+      replacesProceduralProps: item.replacesProceduralProps as boolean | undefined,
       lods,
     };
   });
@@ -196,6 +206,52 @@ function disposeObject(root: THREE.Object3D): void {
   for (const material of materials) material.dispose();
 }
 
+export function tuneImportedStageMaterial(node: THREE.Mesh): void {
+  const kind = typeof node.userData.hibanaMaterial === 'string'
+    ? node.userData.hibanaMaterial
+    : undefined;
+  if (!kind) return;
+  const materials = Array.isArray(node.material) ? node.material : [node.material];
+  for (const material of materials) {
+    if (!(material instanceof THREE.MeshStandardMaterial)) continue;
+    if (kind === 'water') {
+      // 軽量な実時間水面: scene.environment のIBLを強く拾う。画面全体を
+      // 再レンダーする平面反射を使わないため、大面積でも追加パスは発生しない。
+      material.roughness = 0.072;
+      material.metalness = 0.34;
+      material.envMapIntensity = 1.9;
+      material.transparent = true;
+      material.opacity = 0.72;
+      material.dithering = true;
+      material.depthWrite = false;
+      material.side = THREE.DoubleSide;
+      if (material.normalMap) {
+        material.normalScale.set(0.52, 0.52);
+        material.normalMap.wrapS = THREE.RepeatWrapping;
+        material.normalMap.wrapT = THREE.RepeatWrapping;
+        material.normalMap.repeat.set(1.7, 1.7);
+        material.normalMap.anisotropy = 4;
+        material.normalMap.needsUpdate = true;
+      }
+      if (material.roughnessMap) {
+        material.roughnessMap.wrapS = THREE.RepeatWrapping;
+        material.roughnessMap.wrapT = THREE.RepeatWrapping;
+        material.roughnessMap.repeat.set(1.7, 1.7);
+        material.roughnessMap.needsUpdate = true;
+      }
+      material.needsUpdate = true;
+      node.castShadow = false;
+      node.receiveShadow = true;
+      node.renderOrder = 1;
+    } else if (kind === 'glass') {
+      material.roughness = Math.min(material.roughness, 0.18);
+      material.metalness = Math.max(material.metalness, 0.24);
+      material.envMapIntensity = Math.max(material.envMapIntensity, 0.92);
+      material.needsUpdate = true;
+    }
+  }
+}
+
 /**
  * 高密度glTFを非同期で追加する本番パイプライン。
  * - manifest/個別asset失敗は既存プロシージャル景観へfail-open
@@ -206,6 +262,16 @@ export class AaaStageAssetPipeline {
   readonly root = new THREE.Group();
   private readonly controller = new AbortController();
   private disposed = false;
+  private distantWorldReplacementLoaded = false;
+  private proceduralPropReplacementLoaded = false;
+
+  get hasDistantWorldReplacement(): boolean {
+    return this.distantWorldReplacementLoaded;
+  }
+
+  get hasProceduralPropReplacement(): boolean {
+    return this.proceduralPropReplacementLoaded;
+  }
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -293,9 +359,12 @@ export class AaaStageAssetPipeline {
             if (!(node instanceof THREE.Mesh)) return;
             node.castShadow = entry.castShadow ?? true;
             node.receiveShadow = entry.receiveShadow ?? true;
+            tuneImportedStageMaterial(node);
           });
           this.root.add(holder);
           loaded += 1;
+          if (entry.replacesDistantMatte) this.distantWorldReplacementLoaded = true;
+          if (entry.replacesProceduralProps) this.proceduralPropReplacementLoaded = true;
         }
       } catch (error) {
         failed += generated.length;
@@ -317,6 +386,8 @@ export class AaaStageAssetPipeline {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.distantWorldReplacementLoaded = false;
+    this.proceduralPropReplacementLoaded = false;
     this.controller.abort();
     this.scene.remove(this.root);
     disposeObject(this.root);

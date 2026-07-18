@@ -78,6 +78,39 @@ function cylinderBetween(
   return geometry;
 }
 
+/**
+ * 2つの関節の間をカプセルで繋ぐ。CapsuleGeometry の length は円筒部分だけなので、
+ * 全長が start-end に収まるよう両端半球の直径を引く。指節を独立座標で置くと、
+ * 曲げ角を調整した時に指先だけが掌から離れるため、必ず関節チェーンから生成する。
+ */
+function capsuleBetween(
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  radius: number,
+  capSegments = 4,
+  radialSegments = 7,
+): THREE.BufferGeometry {
+  const delta = new THREE.Vector3().subVectors(end, start);
+  const distance = Math.max(delta.length(), radius * 2 + 1e-4);
+  const midpoint = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+  const geometry = new THREE.CapsuleGeometry(
+    radius,
+    Math.max(1e-4, distance - radius * 2),
+    capSegments,
+    radialSegments,
+  );
+  const quaternion = new THREE.Quaternion().setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0),
+    delta.normalize(),
+  );
+  geometry.applyMatrix4(new THREE.Matrix4().compose(
+    midpoint,
+    quaternion,
+    new THREE.Vector3(1, 1, 1),
+  ));
+  return geometry;
+}
+
 function tintGeometry(geometry: THREE.BufferGeometry, value: number): void {
   const position = geometry.getAttribute('position');
   const colors = new Float32Array(position.count * 3);
@@ -148,93 +181,80 @@ function buildHandGeometries(
   );
 
   const xOffsets = [-0.027, -0.009, 0.009, 0.027];
+  // -Xから小指→薬指→中指→人差し指。旧実装は i===0 を人差し指としており、
+  // 右手の小指だけをトリガー方向へ伸ばす左右逆の輪郭になっていた。
+  const lengthBiases = [0.78, 0.98, 1.04, 0.94];
   for (let i = 0; i < xOffsets.length; i += 1) {
     const x = (xOffsets[i] ?? 0) * geometrySide;
-    const edge = i === 0 || i === 3;
-    const lengthBias = edge ? 0.88 : 1;
+    const lengthBias = lengthBiases[i] ?? 1;
     // 右人差し指だけ僅かに伸ばし、トリガーへ掛かる輪郭を作る。支持手は4指を均等に巻く。
-    const triggerFinger = !supportHand && i === 0;
-    const curl = triggerFinger ? 0.66 : guardHand ? 1.9 : supportHand ? 1.52 : 1.02;
-    const spread = geometrySide * (i - 1.5) * 0.035;
-
-    const proximal = new THREE.CapsuleGeometry(
-      0.0083,
-      (supportHand && !guardHand ? 0.022 : 0.025) * lengthBias,
-      4,
-      7,
+    const triggerFinger = !supportHand && i === (geometrySide > 0 ? 3 : 0);
+    const base = new THREE.Vector3(
+      x,
+      guardHand ? -0.002 : supportHand ? -0.004 : -0.01,
+      guardHand ? -0.025 : -0.039,
     );
-    transformGeometry(
-      proximal,
-      new THREE.Vector3(
-        x,
-        guardHand ? 0 : supportHand ? -0.004 : -0.013,
-        guardHand ? -0.022 : supportHand ? -0.026 : -0.033,
-      ),
-      new THREE.Euler(curl, 0, spread),
-    );
-    buckets.glove.push(proximal);
-
-    const middle = new THREE.CapsuleGeometry(
-      0.0075,
-      (triggerFinger ? 0.028 : supportHand && !guardHand ? 0.0185 : 0.021) * lengthBias,
-      4,
-      7,
-    );
-    transformGeometry(
-      middle,
-      new THREE.Vector3(
-        x,
-        triggerFinger ? -0.022 : guardHand ? -0.01 : supportHand ? -0.012 : -0.030,
-        triggerFinger ? -0.059 : guardHand ? -0.034 : supportHand ? -0.043 : -0.055,
-      ),
-      new THREE.Euler(curl + (triggerFinger ? 0.18 : 0.34), 0, spread * 1.15),
-    );
+    const segmentLengths = (
+      triggerFinger
+        ? [0.036, 0.03, 0.022]
+        : guardHand
+          ? [0.032, 0.026, 0.02]
+          : supportHand
+            ? [0.034, 0.027, 0.02]
+            : [0.035, 0.028, 0.021]
+    ).map((length) => length * lengthBias);
+    // 直進方向(-Z)から掌側(-Y)への曲げ。支持手は後段でZ軸180°回すため、
+    // 結果的に+Yの掌側へ巻き、ハンドガードを下から包む。
+    const jointAngles = triggerFinger
+      ? [0.26, 0.58, 0.82]
+      : guardHand
+        ? [0.72, 1.42, 2.02]
+        : supportHand
+          ? [0.48, 1.08, 1.68]
+          : [0.62, 1.2, 1.74];
+    const joints = [base];
+    for (let jointIndex = 0; jointIndex < segmentLengths.length; jointIndex += 1) {
+      const angle = jointAngles[jointIndex] ?? 0;
+      const length = segmentLengths[jointIndex] ?? 0;
+      const previous = joints[joints.length - 1]!;
+      const fan = geometrySide * (i - 1.5) * 0.018 * (jointIndex + 1);
+      joints.push(previous.clone().add(new THREE.Vector3(
+        Math.sin(fan) * length,
+        -Math.sin(angle) * length,
+        -Math.cos(angle) * length,
+      )));
+    }
+    buckets.glove.push(capsuleBetween(joints[0]!, joints[1]!, 0.0083));
     // フルフィンガー軍用手袋。掌側の別素材で節を読み分け、肌色の棒には見せない。
-    buckets.palm.push(middle);
-
-    const tip = new THREE.CapsuleGeometry(
-      0.0069,
-      (supportHand && !guardHand ? 0.011 : 0.013) * lengthBias,
-      4,
-      7,
-    );
-    transformGeometry(
-      tip,
-      new THREE.Vector3(
-        x,
-        triggerFinger ? -0.031 : guardHand ? 0.004 : supportHand ? 0.003 : -0.044,
-        triggerFinger ? -0.080 : guardHand ? -0.025 : supportHand ? -0.05 : -0.066,
-      ),
-      new THREE.Euler(curl + (triggerFinger ? 0.28 : 0.58), 0, spread * 1.25),
-    );
-    buckets.glove.push(tip);
+    buckets.palm.push(capsuleBetween(joints[1]!, joints[2]!, 0.0075));
+    buckets.glove.push(capsuleBetween(joints[2]!, joints[3]!, 0.0069));
 
     // 独立した4つのナックル。大きな一枚板を廃止し、指の始点を目で追えるようにする。
     const knuckle = new THREE.SphereGeometry(1, 9, 6);
+    const knuckleSpread = geometrySide * (i - 1.5) * 0.018;
     transformGeometry(
       knuckle,
-      new THREE.Vector3(x, 0.029, -0.023),
-      new THREE.Euler(-0.12, 0, spread),
+      new THREE.Vector3(x, 0.029, base.z + 0.004),
+      new THREE.Euler(-0.12, 0, knuckleSpread),
       new THREE.Vector3(0.0092, 0.006, 0.0115),
     );
     buckets.armor.push(knuckle);
   }
 
   // 親指は掌の横から斜めに生える2節構造。フルフィンガー手袋として材質を統一する。
-  const thumb0 = new THREE.CapsuleGeometry(0.0102, 0.027, 4, 8);
-  transformGeometry(
-    thumb0,
-    new THREE.Vector3((guardHand ? 0.033 : 0.037) * geometrySide, -0.002, guardHand ? 0.008 : 0.001),
-    new THREE.Euler(0.52, 0.24 * geometrySide, -0.78 * geometrySide),
-  );
-  buckets.glove.push(thumb0);
-  const thumb1 = new THREE.CapsuleGeometry(0.0086, 0.021, 4, 8);
-  transformGeometry(
-    thumb1,
-    new THREE.Vector3((guardHand ? 0.041 : 0.047) * geometrySide, guardHand ? -0.014 : -0.019, guardHand ? -0.012 : -0.023),
-    new THREE.Euler(0.92, 0.2 * geometrySide, -0.62 * geometrySide),
-  );
-  buckets.palm.push(thumb1);
+  const thumbRoot = new THREE.Vector3(0.031 * geometrySide, -0.004, 0.008);
+  const thumbJoint = thumbRoot.clone().add(new THREE.Vector3(
+    0.028 * geometrySide,
+    guardHand ? -0.018 : -0.014,
+    -0.018,
+  ));
+  const thumbTip = thumbJoint.clone().add(new THREE.Vector3(
+    0.014 * geometrySide,
+    guardHand ? -0.021 : -0.019,
+    -0.016,
+  ));
+  buckets.glove.push(capsuleBetween(thumbRoot, thumbJoint, 0.0102, 4, 8));
+  buckets.palm.push(capsuleBetween(thumbJoint, thumbTip, 0.0086, 4, 8));
 
   // 分割型ナックルプレート、手首ストラップ、掌の縫製線。小さな陰影が距離感を作る。
   const backPlate = new THREE.SphereGeometry(1, 12, 7);

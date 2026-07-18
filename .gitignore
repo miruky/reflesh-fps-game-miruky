@@ -6,3 +6,9 @@ dist/
 coverage/
 .claude/worktrees/
 .claude/settings.local.json
+tools/blender/work/
+tools/blender/renders/
+tools/blender/screenshots/
+tools/blender/progress.json
+tools/blender/__pycache__/
+e2e/.audit-shots/

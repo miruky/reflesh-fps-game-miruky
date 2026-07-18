@@ -62,7 +62,7 @@ export interface StagePalette {
 export type BuildingKind =
   | 'arena' | 'hangar' | 'tower' | 'warehouse' | 'cathedral'
   | 'bunker' | 'terminal' | 'refinery' | 'villa' | 'pagoda'
-  | 'fortress' | 'station' | 'checkpoint' | 'metro';
+  | 'fortress' | 'station' | 'checkpoint' | 'metro' | 'abbey';
 
 // ── 環境オブジェクト36種 ──────────────────────────────────────────────────
 export type PropKind =
@@ -156,6 +156,8 @@ export interface BoxSpec {
   shadowCaster?: boolean;
   /** 実際に内部を戦えるテーマ建築の所属。描画最適化と全ステージ監査に使う。 */
   district?: BuildingKind;
+  /** 衝突付きの窓／ガラス手すり。Blenderとfail-open描画の双方で半透明材を使う。 */
+  glazing?: boolean;
 }
 
 export type SpawnPoint = [number, number, number];
@@ -189,6 +191,17 @@ export interface PropPlacement {
   scaleJitter: number;
 }
 
+/** Blender/実画面QAが、配置済み建築の中心と向きを推測せず共有するための配置契約。 */
+export interface DistrictPlacement {
+  kind: BuildingKind;
+  cx: number;
+  cz: number;
+  /** 0/90/180/270度の量子化回転。コライダーと完全に同じ向き。 */
+  rot: number;
+  width: number;
+  depth: number;
+}
+
 export interface StageLayout {
   boxes: BoxSpec[];
   playerSpawns: SpawnPoint[];
@@ -198,6 +211,8 @@ export interface StageLayout {
    * boxes とは独立した列だが同一の generateStage() 呼び出しから生成されるため常に同期する。
    */
   propPlacements: PropPlacement[];
+  /** 実際に配置に成功した、戦闘可能な建築地区。 */
+  districtPlacements: DistrictPlacement[];
 }
 
 export interface Aabb {
@@ -292,6 +307,8 @@ function getBuildingFootprint(kind: BuildingKind, rot: number): [number, number]
     station: [60, 30],
     checkpoint: [50, 28],
     metro: [54, 32],
+    // 外郭城壁、四隅塔、内部階段を含む巨大修道城。
+    abbey: [124, 100],
   };
   const [lw, ld] = dims[kind];
   return rot & 1 ? [ld, lw] : [lw, ld];
@@ -582,11 +599,35 @@ function buildVilla(cx: number, cz: number, rot: number, p: StagePalette): BoxSp
     pb(cx, cz, rot, -21.5, -7, 0, 1, 8, 18, c),
     pb(cx, cz, rot, 5.5, -11, 0, 1, 8, 9, c),
     pb(cx, cz, rot, 5.5, 2, 0, 1, 3.2, 7, c),
+    // 南面は二つの4m開口を残して実壁を追加する。旧構成は28mの屋根下が
+    // ほぼ全面開放で、邸宅ではなく建設途中の柱梁に見えていた。
+    pb(cx, cz, rot, -16.5, 1.5, 0, 11, 8, 1, c),
+    pb(cx, cz, rot, -4.5, 1.5, 0, 5, 8, 1, c),
     pb(cx, cz, rot, 13, 14.5, 0, 14, 6, 1, c),
     pb(cx, cz, rot, 19.5, 7, 0, 1, 6, 16, c),
+    // 東翼北面も中央4mを玄関として空け、左右を床から屋根へ接続する。
+    pb(cx, cz, rot, 9, -0.5, 0, 4, 6, 1, c),
+    pb(cx, cz, rot, 17, -0.5, 0, 4, 6, 1, c),
     pb(cx, cz, rot, -8, -7, 8, 28, 0.5, 18, c),
     pb(cx, cz, rot, 13, 7, 6, 14, 0.5, 16, c),
+    // 上階のカーテンウォール。床・屋根へ実際に接続し、中央の引戸開口を残す。
+    { ...pb(cx, cz, rot, -16.5, 1.55, 4.5, 9, 3.45, 0.28, ac), glazing: true },
+    { ...pb(cx, cz, rot, -5.0, 1.55, 4.5, 6, 3.45, 0.28, ac), glazing: true },
+    { ...pb(cx, cz, rot, 2.5, 1.55, 4.5, 5, 3.45, 0.28, ac), glazing: true },
+    { ...pb(cx, cz, rot, 9.0, -0.55, 3.25, 4, 2.75, 0.28, ac), glazing: true },
+    { ...pb(cx, cz, rot, 17.0, -0.55, 3.25, 4, 2.75, 0.28, ac), glazing: true },
     pb(cx, cz, rot, -2, 7, 4.2, 20, 0.5, 5, ac, p.emissiveAccent),
+    // 二階バルコニーの実コライダー付き腰壁。視覚だけの手すりではないため、
+    // プレイヤー／BOT／弾道の読みに食い違いを作らない。
+    { ...pb(cx, cz, rot, -2, 9.4, 4.65, 20, 1.05, 0.3, ac), glazing: true },
+    { ...pb(cx, cz, rot, -11.85, 7, 4.65, 0.3, 1.05, 5, ac), glazing: true },
+    { ...pb(cx, cz, rot, 7.85, 7, 4.65, 0.3, 1.05, 5, ac), glazing: true },
+    // 屋上端部のパラペット。浮いた平板を建築的な屋根面へ変える。
+    pb(cx, cz, rot, -8, -15.35, 8.25, 28, 1.0, 0.3, c),
+    pb(cx, cz, rot, -21.35, -7, 8.25, 0.3, 1.0, 18, c),
+    pb(cx, cz, rot, 5.35, -7, 8.25, 0.3, 1.0, 18, c),
+    pb(cx, cz, rot, 13, 14.35, 6.25, 14, 1.0, 0.3, c),
+    pb(cx, cz, rot, 19.35, 7, 6.25, 0.3, 1.0, 16, c),
     pb(cx, cz, rot, -1, 10, 0, 8, 1.1, 1.2, ac),
     pb(cx, cz, rot, 8, 4, 0, 1.2, 1.2, 7, ac),
     ...buildStair(cx, cz, rot, -12, 4.2, 0.8, 0, 0, 0.8, 2.2, 15, c),
@@ -638,6 +679,115 @@ function buildFortress(cx: number, cz: number, rot: number, p: StagePalette): Bo
   ];
   for (const x of [-24, 24]) for (const z of [-15, 15]) boxes.push(pb(cx, cz, rot, x, z, 0, 5, 10, 5, c));
   return boxes.map((box) => ({ ...box, structural: true }));
+}
+
+/**
+ * 西洋ゴシック巨大修道城 (約123×100m)。
+ *
+ * 背景のハリボテではなく、北南の城門、外郭、回廊中庭、大聖堂身廊、
+ * 二階ギャラリー、城壁上、四隅塔の地上室を実際に戦闘で使える。
+ * 見た目の尖塔・切妻屋根・控壁はBlender側が同じ平面図に座らせる。
+ */
+function buildAbbey(cx: number, cz: number, rot: number, p: StagePalette): BoxSpec[] {
+  const stone = p.obstacle;
+  const trim = p.accent;
+  const glow = p.emissiveAccent;
+  const boxes: BoxSpec[] = [];
+
+  // 外郭: 南北に14mの門、東西に8mの通用口。
+  for (const z of [-36, 36]) {
+    boxes.push(pb(cx, cz, rot, -27.5, z, 0, 33, 8, 2, stone));
+    boxes.push(pb(cx, cz, rot, 27.5, z, 0, 33, 8, 2, stone));
+    boxes.push(pb(cx, cz, rot, 0, z, 6.2, 22, 1.8, 2.4, trim, glow));
+    boxes.push(pb(cx, cz, rot, 0, z - Math.sign(z) * 1.2, 7.5, 88, 0.55, 4.2, trim));
+  }
+  for (const x of [-46, 46]) {
+    boxes.push(pb(cx, cz, rot, x, -22, 0, 2, 8, 28, stone));
+    boxes.push(pb(cx, cz, rot, x, 22, 0, 2, 8, 28, stone));
+    boxes.push(pb(cx, cz, rot, x, 0, 6.0, 2.4, 2, 16, trim, glow));
+    boxes.push(pb(cx, cz, rot, x - Math.sign(x) * 1.2, 0, 7.5, 4.2, 0.55, 68, trim));
+  }
+
+  // 四隅塔の地上室。中庭側に3mの開口を残す。
+  for (const tx of [-41, 41]) {
+    for (const tz of [-31, 31]) {
+      const inwardX = -Math.sign(tx);
+      const inwardZ = -Math.sign(tz);
+      boxes.push(pb(cx, cz, rot, tx, tz + inwardZ * 4.5, 0, 10, 18, 1.4, stone));
+      boxes.push(pb(cx, cz, rot, tx + inwardX * 4.5, tz, 0, 1.4, 18, 10, stone));
+      boxes.push(pb(cx, cz, rot, tx - inwardX * 4.5, tz - inwardZ * 3.5, 0, 1.4, 18, 3, stone));
+      boxes.push(pb(cx, cz, rot, tx - inwardX * 4.5, tz + inwardZ * 3.5, 0, 1.4, 18, 3, stone));
+      boxes.push(pb(cx, cz, rot, tx, tz, -0.2, 10, 0.4, 10, stone));
+    }
+  }
+
+  // 回廊中庭: 中央18×16mは開放。四辺の回廊を循環できる。
+  boxes.push(pb(cx, cz, rot, 0, -14, -0.15, 48, 0.3, 8, stone));
+  boxes.push(pb(cx, cz, rot, 0, 14, -0.15, 48, 0.3, 8, stone));
+  boxes.push(pb(cx, cz, rot, -19, 0, -0.15, 10, 0.3, 20, stone));
+  boxes.push(pb(cx, cz, rot, 19, 0, -0.15, 10, 0.3, 20, stone));
+  for (const x of [-21, -14, -7, 7, 14, 21]) {
+    boxes.push(pb(cx, cz, rot, x, -17.4, 0, 0.9, 7.2, 0.9, stone));
+    boxes.push(pb(cx, cz, rot, x, 17.4, 0, 0.9, 7.2, 0.9, stone));
+  }
+  for (const z of [-9, -3, 3, 9]) {
+    boxes.push(pb(cx, cz, rot, -23.4, z, 0, 0.9, 7.2, 0.9, stone));
+    boxes.push(pb(cx, cz, rot, 23.4, z, 0, 0.9, 7.2, 0.9, stone));
+  }
+  boxes.push(pb(cx, cz, rot, 0, -17.2, 7.1, 48, 0.5, 5.6, trim));
+  boxes.push(pb(cx, cz, rot, 0, 17.2, 7.1, 48, 0.5, 5.6, trim));
+  boxes.push(pb(cx, cz, rot, -23.2, 0, 7.1, 5.6, 0.5, 28, trim));
+  boxes.push(pb(cx, cz, rot, 23.2, 0, 7.1, 5.6, 0.5, 28, trim));
+
+  // 西翼の大聖堂身廊。両端門、中央通路、二階側廊を持つ。
+  boxes.push(pb(cx, cz, rot, -28, 0, -0.2, 34, 0.4, 24, stone));
+  boxes.push(pb(cx, cz, rot, -28, -11.5, 0, 34, 16, 1, stone));
+  boxes.push(pb(cx, cz, rot, -28, 11.5, 0, 34, 16, 1, stone));
+  boxes.push(pb(cx, cz, rot, -44.5, -7.5, 0, 1, 16, 7, stone));
+  boxes.push(pb(cx, cz, rot, -44.5, 7.5, 0, 1, 16, 7, stone));
+  boxes.push(pb(cx, cz, rot, -44.5, 0, 10.5, 1, 5.5, 8, trim, glow));
+  boxes.push(pb(cx, cz, rot, -11.5, -7.5, 0, 1, 16, 7, stone));
+  boxes.push(pb(cx, cz, rot, -11.5, 7.5, 0, 1, 16, 7, stone));
+  boxes.push(pb(cx, cz, rot, -11.5, 0, 10.5, 1, 5.5, 8, trim, glow));
+  boxes.push(pb(cx, cz, rot, -28, -8.5, 6.3, 30, 0.5, 5, trim));
+  boxes.push(pb(cx, cz, rot, -28, 8.5, 6.3, 30, 0.5, 5, trim));
+  for (const x of [-40, -34, -28, -22, -16]) {
+    boxes.push(pb(cx, cz, rot, x, -6.2, 0, 1.1, 11.5, 1.1, trim, glow));
+    boxes.push(pb(cx, cz, rot, x, 6.2, 0, 1.1, 11.5, 1.1, trim, glow));
+  }
+
+  // 東翼の内部ホールと中央塔基部。周回しながら上階へ向かう。
+  boxes.push(pb(cx, cz, rot, 31, 0, -0.2, 22, 0.4, 26, stone));
+  boxes.push(pb(cx, cz, rot, 31, -12.5, 0, 22, 12, 1, stone));
+  boxes.push(pb(cx, cz, rot, 31, 12.5, 0, 22, 12, 1, stone));
+  boxes.push(pb(cx, cz, rot, 41.5, -8, 0, 1, 12, 8, stone));
+  boxes.push(pb(cx, cz, rot, 41.5, 8, 0, 1, 12, 8, stone));
+  boxes.push(pb(cx, cz, rot, 41.5, 0, 8.5, 1, 3.5, 9, trim, glow));
+  boxes.push(pb(cx, cz, rot, 20.5, -8, 0, 1, 12, 8, stone));
+  boxes.push(pb(cx, cz, rot, 20.5, 8, 0, 1, 12, 8, stone));
+  boxes.push(pb(cx, cz, rot, 20.5, 0, 8.5, 1, 3.5, 9, trim, glow));
+  boxes.push(pb(cx, cz, rot, 31, 0, 11.8, 22, 0.55, 26, trim));
+  boxes.push(pb(cx, cz, rot, 31, 0, 0, 8, 1.2, 5, trim, glow));
+
+  // 入城後すぐに城壁上へ上がる2系統。最終段は歩廊上面に連続。
+  boxes.push(...buildStair(cx, cz, rot, -40, -31.2, 0.85, 0, 0, 0.85, 2.4, 26, stone));
+  boxes.push(...buildStair(cx, cz, rot, 40, 31.2, -0.85, 0, 0, 0.85, 2.4, 26, stone));
+  // 身廊二階ギャラリーへの内部階段。
+  boxes.push(...buildStair(cx, cz, rot, -42, -8.2, 0.8, 0, 0, 0.8, 1.8, 22, stone));
+  boxes.push(...buildStair(cx, cz, rot, -14, 8.2, -0.8, 0, 0, 0.8, 1.8, 22, stone));
+
+  // 326m級のフルサイズマップ中央でも「建物が一つある」ではなく、
+  // 地域全体を占める城塞として読めるスケールへ拡張する。等方スケールなので
+  // 回転済みの建物でも開口、射線、階段の接続関係は保たれる。
+  const planScale = 1.28;
+  return boxes.map((box) => ({
+    ...box,
+    x: cx + (box.x - cx) * planScale,
+    z: cz + (box.z - cz) * planScale,
+    w: box.w * planScale,
+    d: box.d * planScale,
+    structural: true,
+  }));
 }
 
 /** 駅・廃駅。二面ホーム、線路帯、実際に渡れる跨線橋。 */
@@ -742,6 +892,8 @@ function generateBuilding(
       return buildCheckpoint(cx, cz, rot, p);
     case 'metro':
       return buildMetro(cx, cz, rot, p);
+    case 'abbey':
+      return buildAbbey(cx, cz, rot, p);
   }
 }
 
@@ -824,7 +976,7 @@ function generateExtendedTerrain(def: StageDef, half: number): BoxSpec[] {
 // ── 環境プロップ フットプリント近似 [w, d] (クリアランス計算用) ────────────
 const PROP_FOOTPRINTS: Record<PropKind, [number, number]> = {
   conifer: [3, 3], broadleaf: [5, 5], deadtree: [2, 2], sakura: [5, 5], bamboo: [2, 2],
-  rock: [3, 3], towercrane: [13, 5], portalkrane: [11, 4], smokestack: [2.5, 2.5],
+  rock: [3, 3], towercrane: [15, 5], portalkrane: [11, 4], smokestack: [2.5, 2.5],
   gastank: [5, 5], watertower: [4.5, 4.5], transformer: [3, 2.5], antenna: [1.5, 1.5],
   truck: [8, 3.5], derelictcar: [3, 5], forklift: [2.5, 3], barricadecar: [5, 5],
   concretebarrier: [1.5, 3], fence: [5, 1], watchpost: [4, 4], tankhull: [5, 7],
@@ -1381,7 +1533,10 @@ export function generateThemeObjects(
       clusterCz = Math.round(((rand() * 2 - 1) * (half - 20)) / GRID) * GRID;
     }
 
-    for (let n = 0; n < entry.count; n++) {
+    // 300m級マップで十数個しか無かった生活物を増やす。GLB側は素材単位へ
+    // マージされるため、密度を上げてもdraw callは増えず、衝突は既存の小型Boxだけを使う。
+    const placementCount = Math.ceil(entry.count * 1.45);
+    for (let n = 0; n < placementCount; n++) {
       let placedOk = false;
       for (let attempt = 0; attempt < 20; attempt++) {
         let px: number;
@@ -1408,6 +1563,11 @@ export function generateThemeObjects(
           px = Math.max(-(half - 8), Math.min(half - 8, px));
           pz = Math.max(-(half - 8), Math.min(half - 8, pz));
         }
+
+        // 建造物と同じく、プロップの実フットプリント全体を境界内へ収める。
+        // perimeter/clusterの中心だけを制限していた旧経路では、塔型クレーンの
+        // 片持ちブームが不可視壁を越える場合があった。
+        if (Math.abs(px) + fp[0] / 2 > half - 3 || Math.abs(pz) + fp[1] / 2 > half - 3) continue;
 
         // スポーンクリアランス
         const nearSpawn = allSpawns.some(([sx, sz]) => Math.hypot(px - sx, pz - sz) < SPAWN_CLEARANCE);
@@ -1477,12 +1637,23 @@ export function generateStage(def: StageDef): StageLayout {
   // 不可視境界の直前で開始する「箱の中」感と開始直後の壁接触を避ける。
   // generateThemeObjectsと完全に同じ式にし、建物/プロップのスポーン離隔契約を一致させる。
   const edge = Math.round((half * 0.78) / GRID) * GRID;
-  const corners: SpawnPoint[] = [
-    [edge, 0, edge],
-    [-edge, 0, edge],
-    [edge, 0, -edge],
-    [-edge, 0, -edge],
-  ];
+  const abbeyStage = def.recipe?.buildings[0] === 'abbey';
+  const abbeyApproach = Math.round((half * 0.56) / GRID) * GRID;
+  const corners: SpawnPoint[] = abbeyStage
+    ? [
+        // 修道城の回転はシードで固定され、東西軸に幅広の城門がある。
+        // 第1スポーンを東門街道上に置き、プレイ開始時に城壁ではなく門を見せる。
+        [abbeyApproach, 0, 0],
+        [-abbeyApproach, 0, 0],
+        [0, 0, abbeyApproach],
+        [0, 0, -abbeyApproach],
+      ]
+    : [
+        [edge, 0, edge],
+        [-edge, 0, edge],
+        [edge, 0, -edge],
+        [-edge, 0, -edge],
+      ];
   const botSpawns: SpawnPoint[] = [
     [0, 0, edge],
     [0, 0, -edge],
@@ -1493,9 +1664,13 @@ export function generateStage(def: StageDef): StageLayout {
   ];
   const baseCount = botSpawns.length; // 6
   const extra = Math.max(0, def.botCount - baseCount);
+  // 巨大修道城は中心だけで123×100mを占める。通常面の多人数ボット用
+  // 内周リングをそのまま使うと、ボット位置が城壁に重なり中央ランドマーク
+  // 自体が配置拒否される。城面だけ外周の入城ルート側へ初期位置を退避する。
+  const extraSpawnRadius = abbeyStage ? edge * 0.84 : edge * 0.6;
   for (let i = 0; i < extra; i += 1) {
     const ang = (i / Math.max(1, extra)) * Math.PI * 2 + 0.3;
-    const r = edge * 0.6;
+    const r = extraSpawnRadius;
     botSpawns.push([
       Math.round((Math.cos(ang) * r) / GRID) * GRID,
       0,
@@ -1507,20 +1682,42 @@ export function generateStage(def: StageDef): StageLayout {
   // ③ 建造物の配置 (recipe 指定時)
   // 建造物 AABB は placed にも追加し、後続の障害物が重ならないようにする。
   const placed: Aabb[] = [];
+  const districtPlacements: DistrictPlacement[] = [];
   let numPlaced = 0; // 障害物の配置数カウント(建造物は含まない)
 
   if (def.recipe) {
-    for (const [buildingIndex, bk] of def.recipe.buildings.entries()) {
+    // 300m級マップへ2〜4棟だけを散らしていた旧構成は、ランドマークの周囲だけが豪華で
+    // 残りが空き地に見える主因だった。固有の建築語彙はそのまま循環再利用し、通常面を
+    // 10〜12地区へ拡張する。配置は既存のAABB重複／スポーンクリアランス判定を全て通るため、
+    // 見た目だけの通り抜ける家や初期スポーン埋まりは作らない。巨大abbey面は中央の
+    // 123×100m城郭自体が複数地区相当なので、重複生成せず従来の1棟を維持する。
+    const authoredBuildings = def.recipe.buildings;
+    const targetDistrictCount = authoredBuildings.includes('abbey')
+      ? authoredBuildings.length
+      : Math.min(12, Math.max(10, authoredBuildings.length * 3));
+    // 各ステージの開始視線に、倉庫より大聖堂、バンカーよりアリーナのような
+    // 最も大きい固有建築を置く。残りは元の語彙順で循環し、全棟同じ外観にはしない。
+    const centralBuilding = [...authoredBuildings].sort((a, b) => {
+      const [aw, ad] = getBuildingFootprint(a, 0);
+      const [bw, bd] = getBuildingFootprint(b, 0);
+      return bw * bd - aw * ad;
+    })[0]!;
+    const districtVocabulary = [centralBuilding, ...authoredBuildings.filter((kind) => kind !== centralBuilding)];
+    const districtPlan = Array.from(
+      { length: targetDistrictCount },
+      (_, index) => districtVocabulary[index % districtVocabulary.length]!,
+    );
+    for (const [buildingIndex, bk] of districtPlan.entries()) {
       let placed_ok = false;
-      for (let attempt = 0; attempt < 80; attempt++) {
+      for (let attempt = 0; attempt < 180; attempt++) {
         // 巨大な固定マップでは中心48%だけに建物を詰めると同じ箱庭に見える。
         // 62%まで地区を広げ、外周スポーンとの距離は下のAABB実距離で厳密に守る。
         // 各面の先頭地区は中心の実体ランドマークとする。常に開始視線の先にテーマ建築があり、
         // 遠景画像だけで場所を表すことを避ける。衝突・階段・屋上・AI導線は通常建築と同じ。
         const centralLandmark = buildingIndex === 0 && attempt === 0;
         // 中央固定時もRNGを3回消費し、後続地区/遮蔽の決定論ストリームをずらさない。
-        const randomBx = Math.round(((rand() * 2 - 1) * half * 0.62) / GRID) * GRID;
-        const randomBz = Math.round(((rand() * 2 - 1) * half * 0.62) / GRID) * GRID;
+        const randomBx = Math.round(((rand() * 2 - 1) * half * 0.70) / GRID) * GRID;
+        const randomBz = Math.round(((rand() * 2 - 1) * half * 0.70) / GRID) * GRID;
         const randomRot = Math.floor(rand() * 4);
         const bx = centralLandmark ? 0 : randomBx;
         const bz = centralLandmark ? 0 : randomBz;
@@ -1550,10 +1747,11 @@ export function generateStage(def: StageDef): StageLayout {
         }));
         boxes.push(...buildBoxes);
         placed.push(aabbOf(bx, bz, fpW, fpD));
+        districtPlacements.push({ kind: bk, cx: bx, cz: bz, rot, width: fpW, depth: fpD });
         placed_ok = true;
         break;
       }
-      // 配置失敗時はスキップ(80回試行で安全な地区アンカーが見つからない場合のみ)
+      // 配置失敗時はスキップ(180回試行で安全な地区アンカーが見つからない場合のみ)
       void placed_ok;
     }
   }
@@ -1635,5 +1833,5 @@ export function generateStage(def: StageDef): StageLayout {
     box.breakable = { hp: Math.max(120, Math.min(260, Math.round(120 + Math.sqrt(vol) * 10))) };
   }
 
-  return { boxes, playerSpawns: corners, botSpawns, propPlacements };
+  return { boxes, playerSpawns: corners, botSpawns, propPlacements, districtPlacements };
 }

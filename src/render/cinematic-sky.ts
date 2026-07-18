@@ -13,11 +13,39 @@ interface CloudProfile {
 }
 
 const CLOUD_PROFILES: Readonly<Record<MoodId, CloudProfile>> = {
-  day: { coverage: 0.43, opacity: 0.48, scale: 2.1, speed: 0.004, shadowMul: 0.22, lightMul: 0.48 },
-  dusk: { coverage: 0.52, opacity: 0.56, scale: 1.9, speed: 0.005, shadowMul: 0.22, lightMul: 0.56 },
-  night: { coverage: 0.38, opacity: 0.34, scale: 1.9, speed: 0.003, shadowMul: 0.22, lightMul: 0.32 },
-  overcast: { coverage: 0.66, opacity: 0.6, scale: 1.75, speed: 0.004, shadowMul: 0.2, lightMul: 0.4 },
-  snow: { coverage: 0.64, opacity: 0.52, scale: 1.45, speed: 0.003, shadowMul: 0.34, lightMul: 0.56 },
+  day: { coverage: 0.38, opacity: 0.42, scale: 2.1, speed: 0.004, shadowMul: 0.12, lightMul: 0.44 },
+  dusk: {
+    coverage: 0.46,
+    opacity: 0.48,
+    scale: 1.9,
+    speed: 0.005,
+    shadowMul: 0.14,
+    lightMul: 0.52,
+  },
+  night: {
+    coverage: 0.36,
+    opacity: 0.32,
+    scale: 1.9,
+    speed: 0.003,
+    shadowMul: 0.1,
+    lightMul: 0.28,
+  },
+  overcast: {
+    coverage: 0.62,
+    opacity: 0.54,
+    scale: 1.75,
+    speed: 0.004,
+    shadowMul: 0.12,
+    lightMul: 0.36,
+  },
+  snow: {
+    coverage: 0.6,
+    opacity: 0.46,
+    scale: 1.45,
+    speed: 0.003,
+    shadowMul: 0.18,
+    lightMul: 0.48,
+  },
 };
 
 export interface CinematicSkyOptions {
@@ -174,26 +202,33 @@ ${shader.fragmentShader}`.replace(
       'gl_FragColor = vec4( retColor, 1.0 );',
       /* glsl */ `
       vec3 hibSkyBase = min(retColor * uSkyScale, vec3(uSkyClamp));
+      // Sky.jsの白い地平ヘイズをそのままフォグに繋げると、
+      // 300mステージ全体が白いスタジオ背景に見える。地平側だけ
+      // 減光し、既存大気散乱の色相差を保ったまま少し強調する。
+      float hibAltitude = smoothstep(-0.08, 0.42, direction.y);
+      hibSkyBase *= mix(0.74, 1.0, hibAltitude);
+      float hibSkyLuma = dot(hibSkyBase, vec3(0.2126, 0.7152, 0.0722));
+      hibSkyBase = clamp(mix(vec3(hibSkyLuma), hibSkyBase, 1.12), 0.0, uSkyClamp);
       if (uCloudDetail > 0.001) {
         vec2 hibUvA = vec2(fract(uv.x * uCloudScale + uCloudTime), clamp(uv.y * 1.6, 0.0, 1.0));
         vec2 hibUvB = vec2(fract(uv.x * uCloudScale * 2.35 - uCloudTime * 0.63 + 0.31), clamp(uv.y * 2.15 + 0.08, 0.0, 1.0));
         float hibBase = texture2D(uCloudMap, hibUvA).r;
         float hibDetail = texture2D(uCloudMap, hibUvB).r;
-        float hibN = hibBase * 0.76 + hibDetail * 0.24;
+        float hibN = hibBase * 0.68 + hibDetail * 0.32;
         // coverageは雲量。分布中央値付近へ遷移帯を置き、晴天は青空を残し、
         // 曇天は雲塊を繋げる。単純な減算では空全体が一様な灰色へ潰れる。
         float hibCloudFloor = mix(0.56, 0.40, uCloudCoverage);
-        float hibCloud = smoothstep(hibCloudFloor, hibCloudFloor + 0.14, hibN);
-        hibCloud *= mix(0.5, 1.0, smoothstep(0.2, 0.82, hibDetail));
+        float hibCloud = smoothstep(hibCloudFloor, hibCloudFloor + 0.11, hibN);
+        hibCloud *= mix(0.42, 1.0, smoothstep(0.24, 0.8, hibDetail));
         float hibHorizon = smoothstep(-0.15, 0.05, direction.y);
         hibHorizon *= 1.0 - smoothstep(0.76, 1.0, direction.y) * 0.34;
         float hibSunEdge = pow(max(dot(direction, vSunDirection), 0.0), 12.0);
-        float hibCloudLight = clamp(0.16 + hibBase * 0.42 + hibDetail * 0.16 + hibSunEdge * 0.5, 0.0, 1.0);
+        float hibCloudLight = clamp(0.08 + hibBase * 0.38 + hibDetail * 0.24 + hibSunEdge * 0.46, 0.0, 1.0);
         vec3 hibCloudColor = mix(uCloudShadow, uCloudLight, hibCloudLight);
         hibCloud *= hibHorizon * uCloudOpacity * uCloudDetail;
-        hibSkyBase = mix(hibSkyBase, hibCloudColor, clamp(hibCloud, 0.0, 0.72));
+        hibSkyBase = mix(hibSkyBase, hibCloudColor, clamp(hibCloud, 0.0, 0.68));
       }
-      gl_FragColor = vec4(hibSkyBase, 1.0);`,
+      gl_FragColor = vec4(min(hibSkyBase, vec3(uSkyClamp)), 1.0);`,
     );
   };
   material.needsUpdate = true;

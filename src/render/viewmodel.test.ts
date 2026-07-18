@@ -20,8 +20,8 @@ import { CAMO_IDS, CAMO_VISUALS } from '../game/camo';
 
 // 一人称腕は sleeve/glove の固有色で塗られる。銃本体にこれらが混ざっていなければ
 // 「腕なし」と判定できる(dark/darker/accent とは別色)。
-const SLEEVE_HEX = 0x765638;
-const GLOVE_HEX = 0x4a3525;
+const SLEEVE_HEX = 0x4f3e2b;
+const GLOVE_HEX = 0x291f17;
 
 describe('reloadAnimationPose', () => {
   it('開始/終了は静止し、中盤だけマガジンと支持手を動かす', () => {
@@ -115,6 +115,51 @@ describe('武器別の腕姿勢・ADS・視覚反動', () => {
       );
       expect(inward.x, def.id).toBeGreaterThan(0.25);
     }
+  });
+
+  it('全武器で一人称腕は必ず1リグ・左右各5メッシュだけで、袖は手から分離しない', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    for (const def of Object.values(WEAPON_DEFS)) {
+      vm.setWeapon(def);
+      let rigCount = 0;
+      const armMeshes: THREE.Mesh[] = [];
+      vm.root.traverse((node) => {
+        if (node.userData.firstPersonArmsRig === true) rigCount += 1;
+        if (node instanceof THREE.Mesh && node.userData.firstPersonArm === true) armMeshes.push(node);
+      });
+      expect(rigCount, def.id).toBe(1);
+      expect(armMeshes, def.id).toHaveLength(10);
+      const resolvedLeft = vm.root.getObjectByName(
+        def.shape === 'fists' ? 'vm:fistLHand' : 'vm:leftHand',
+      );
+      const resolvedRight = vm.root.getObjectByName(
+        def.shape === 'fists' ? 'vm:fistRHand' : 'vm:rightHand',
+      );
+      expect(resolvedLeft, `${def.id}:left`).toBeDefined();
+      expect(resolvedRight, `${def.id}:right`).toBeDefined();
+      expect(resolvedLeft!.getObjectByName('vm:leftSleeveConnected')?.parent, `${def.id}:leftSleeve`)
+        .toBe(resolvedLeft);
+      expect(resolvedRight!.getObjectByName('vm:rightSleeveConnected')?.parent, `${def.id}:rightSleeve`)
+        .toBe(resolvedRight);
+    }
+    vm.dispose();
+  });
+
+  it('実ViewModelの武器別回転後も、左掌法線が画面中央の武器側を向く', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const vm = new ViewModel(camera);
+    for (const def of Object.values(WEAPON_DEFS)) {
+      if (def.shape === 'fists') continue;
+      vm.setWeapon(def);
+      const leftHand = vm.root.getObjectByName('vm:leftHand');
+      expect(leftHand, def.id).toBeDefined();
+      leftHand!.updateWorldMatrix(true, false);
+      // 左手メッシュはZ軸180°反転後の local +Y が掌側。
+      const palmNormal = new THREE.Vector3(0, 1, 0).transformDirection(leftHand!.matrixWorld);
+      expect(palmNormal.x, def.id).toBeGreaterThan(0.75);
+    }
+    vm.dispose();
   });
 
   it('天雷杖は前後2点保持かつADSで後端をカメラから遠ざける', () => {

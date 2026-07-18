@@ -38,8 +38,8 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
     silhouette: 'ridge',
     grade: {
       tint: [1, 1, 1],
-      contrast: 1.14,
-      saturation: 1.1,
+      contrast: 1.18,
+      saturation: 1.02,
       vignette: 0.26,
       vignetteR: 0.82,
       grain: 0.012,
@@ -52,8 +52,8 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
     silhouette: 'ridge',
     grade: {
       tint: [1.06, 0.98, 0.9],
-      contrast: 1.06,
-      saturation: 1.18,
+      contrast: 1.14,
+      saturation: 1.08,
       vignette: 0.28,
       vignetteR: 0.78,
       grain: 0.02,
@@ -67,8 +67,8 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
     silhouette: 'skyline',
     grade: {
       tint: [0.86, 0.94, 1.12],
-      contrast: 1.12,
-      saturation: 1.0,
+      contrast: 1.16,
+      saturation: 0.98,
       vignette: 0.4,
       vignetteR: 0.72,
       grain: 0.035,
@@ -81,8 +81,8 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
     silhouette: 'skyline',
     grade: {
       tint: [0.98, 0.99, 1.02],
-      contrast: 1.07,
-      saturation: 0.98,
+      contrast: 1.15,
+      saturation: 0.94,
       vignette: 0.26,
       vignetteR: 0.82,
       grain: 0.016,
@@ -97,8 +97,8 @@ export const MOOD_PRESETS: Record<MoodId, MoodPreset> = {
       // R13 意図的な雪霧: tintを寒色へ振り(赤↓青↑)、彩度を落として銀青のヘイズに。
       // vignetteを上げて中央だけ抜けの良い「意図された霞」に見せる(白飛びの平板さを排除)。
       tint: [0.92, 0.98, 1.1],
-      contrast: 1.1,
-      saturation: 0.95,
+      contrast: 1.16,
+      saturation: 0.9,
       vignette: 0.32,
       vignetteR: 0.8,
       grain: 0.018,
@@ -385,10 +385,16 @@ export class Atmosphere {
     const strength = Math.min(this.palette.groundFog ?? 0, 0.65);
     if (strength <= 0) return;
     const top = Math.min(this.palette.groundFogTop ?? 1.1, 1.5);
-    // 白寄せ(whitePush): 元々一律0.15で足元を白く霞ませていたが、雪/曇はただでさえ
-    // 空とフォグが高明度で「バグっぽい白飛び」になる。雪/曇は0.05に抑え、フォグ固有の
-    // 銀青/乳白の色相を残して意図的な大気に。それ以外(砂塵/夕/夜)は0.15で従来通り。
-    const whitePush = mood === 'snow' || mood === 'overcast' ? 0.05 : 0.15;
+    // ムード別のごく小さな白寄せで低層霧の色相を保つ。
+    // 特に雪/曇/夜は、床と遠景を一枚の白い板へ溶かさない。
+    const whitePush =
+      mood === 'snow' || mood === 'overcast'
+        ? 0.02
+        : mood === 'night'
+          ? 0.03
+          : mood === 'dusk'
+            ? 0.08
+            : 0.06;
     const color = new THREE.Color(this.palette.fog).lerp(new THREE.Color(1, 1, 1), whitePush);
     const geo = new THREE.PlaneGeometry(size * 1.3, size * 1.3);
     this.geometries.push(geo);
@@ -565,12 +571,15 @@ export class Atmosphere {
     this.objects.push(points);
   }
 
-  // ── 遠景シルエット: 種別別に merge した1メッシュ。play壁の外(R=size*2.4)の環状 ──
+  // ── 遠景シルエット: 種別別に merge した1メッシュ。play壁の外の環状 ──
   private buildSilhouette(kind: SilhouetteKind, mood: MoodId, size: number): void {
     if (kind === 'none') return;
-    const radius = size * 2.4;
-    const baseCol = new THREE.Color(this.palette.fog).lerp(new THREE.Color(0, 0, 0), 0.25);
-    const rimCol = baseCol.clone().lerp(new THREE.Color(this.palette.sky), 0.35);
+    // 旧値2.4×はExp2フォグの完全減衰領域に入り、結果は「空に溶けた平面」
+    // だった。不可視壁(size/2)の十分外に保ちつつ中景に寄せ、
+    // 同じ1DC・同じ頂点数で地平線に実体感のある第二奥行きを作る。
+    const radius = size * 1.48;
+    const baseCol = new THREE.Color(this.palette.fog).lerp(new THREE.Color(0, 0, 0), 0.44);
+    const rimCol = baseCol.clone().lerp(new THREE.Color(this.palette.sky), 0.2);
 
     const parts: THREE.BufferGeometry[] = [];
     const windowParts: THREE.BufferGeometry[] = [];
@@ -583,7 +592,7 @@ export class Atmosphere {
     const n = countMap[kind];
     for (let i = 0; i < n; i += 1) {
       const ang = (i / n) * Math.PI * 2 + (this.rng() - 0.5) * 0.15;
-      const r = radius * (0.9 + this.rng() * 0.25);
+      const r = radius * (0.86 + this.rng() * 0.38);
       const x = Math.cos(ang) * r;
       const z = Math.sin(ang) * r;
 
@@ -621,6 +630,7 @@ export class Atmosphere {
       });
       this.materials.push(mat);
       const mesh = new THREE.Mesh(merged, mat);
+      mesh.name = 'aaa:atmosphere-distant-silhouette';
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       this.scene.add(mesh);
@@ -640,6 +650,7 @@ export class Atmosphere {
         });
         this.materials.push(winMat);
         const winMesh = new THREE.Mesh(win, winMat);
+        winMesh.name = 'aaa:atmosphere-distant-windows';
         winMesh.castShadow = false;
         this.scene.add(winMesh);
         this.objects.push(winMesh);

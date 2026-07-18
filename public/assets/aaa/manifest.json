@@ -1,4 +1,966 @@
 {
   "version": 1,
-  "assets": []
+  "assets": [
+    {
+      "id": "stage-kunren",
+      "url": "stages/kunren-lod0.glb",
+      "stages": [
+        "kunren"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/kunren-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/kunren-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-souko",
+      "url": "stages/souko-lod0.glb",
+      "stages": [
+        "souko"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/souko-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/souko-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-nakaniwa",
+      "url": "stages/nakaniwa-lod0.glb",
+      "stages": [
+        "nakaniwa"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/nakaniwa-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/nakaniwa-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-kairou",
+      "url": "stages/kairou-lod0.glb",
+      "stages": [
+        "kairou"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/kairou-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/kairou-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-kouwan",
+      "url": "stages/kouwan-lod0.glb",
+      "stages": [
+        "kouwan"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/kouwan-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/kouwan-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-takadai",
+      "url": "stages/takadai-lod0.glb",
+      "stages": [
+        "takadai"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/takadai-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/takadai-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-sakyuu",
+      "url": "stages/sakyuu-lod0.glb",
+      "stages": [
+        "sakyuu"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/sakyuu-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/sakyuu-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-setsugen",
+      "url": "stages/setsugen-lod0.glb",
+      "stages": [
+        "setsugen"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/setsugen-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/setsugen-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-koushou",
+      "url": "stages/koushou-lod0.glb",
+      "stages": [
+        "koushou"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/koushou-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/koushou-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-yoichi",
+      "url": "stages/yoichi-lod0.glb",
+      "stages": [
+        "yoichi"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/yoichi-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/yoichi-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-okujou",
+      "url": "stages/okujou-lod0.glb",
+      "stages": [
+        "okujou"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/okujou-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/okujou-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-saisekiba",
+      "url": "stages/saisekiba-lod0.glb",
+      "stages": [
+        "saisekiba"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/saisekiba-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/saisekiba-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-chikurin",
+      "url": "stages/chikurin-lod0.glb",
+      "stages": [
+        "chikurin"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/chikurin-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/chikurin-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-tanada",
+      "url": "stages/tanada-lod0.glb",
+      "stages": [
+        "tanada"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/tanada-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/tanada-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-misaki",
+      "url": "stages/misaki-lod0.glb",
+      "stages": [
+        "misaki"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/misaki-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/misaki-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-haieki",
+      "url": "stages/haieki-lod0.glb",
+      "stages": [
+        "haieki"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/haieki-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/haieki-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-kyokoku",
+      "url": "stages/kyokoku-lod0.glb",
+      "stages": [
+        "kyokoku"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/kyokoku-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/kyokoku-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-kohan",
+      "url": "stages/kohan-lod0.glb",
+      "stages": [
+        "kohan"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/kohan-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/kohan-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-kuko",
+      "url": "stages/kuko-lod0.glb",
+      "stages": [
+        "kuko"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/kuko-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/kuko-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-onsengai",
+      "url": "stages/onsengai-lod0.glb",
+      "stages": [
+        "onsengai"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/onsengai-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/onsengai-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-z01",
+      "url": "stages/z01-lod0.glb",
+      "stages": [
+        "z01"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/z01-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/z01-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-z02",
+      "url": "stages/z02-lod0.glb",
+      "stages": [
+        "z02"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/z02-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/z02-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-z03",
+      "url": "stages/z03-lod0.glb",
+      "stages": [
+        "z03"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/z03-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/z03-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-z04",
+      "url": "stages/z04-lod0.glb",
+      "stages": [
+        "z04"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/z04-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/z04-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-z05",
+      "url": "stages/z05-lod0.glb",
+      "stages": [
+        "z05"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/z05-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/z05-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-z06",
+      "url": "stages/z06-lod0.glb",
+      "stages": [
+        "z06"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/z06-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/z06-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-z07",
+      "url": "stages/z07-lod0.glb",
+      "stages": [
+        "z07"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/z07-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/z07-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-z08",
+      "url": "stages/z08-lod0.glb",
+      "stages": [
+        "z08"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/z08-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/z08-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-z09",
+      "url": "stages/z09-lod0.glb",
+      "stages": [
+        "z09"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/z09-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/z09-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-z10",
+      "url": "stages/z10-lod0.glb",
+      "stages": [
+        "z10"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/z10-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/z10-lod2.glb",
+          "distance": 460
+        }
+      ]
+    },
+    {
+      "id": "stage-renshujo",
+      "url": "stages/renshujo-lod0.glb",
+      "stages": [
+        "renshujo"
+      ],
+      "instances": [
+        {
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "minTier": "medium",
+      "castShadow": false,
+      "receiveShadow": true,
+      "replacesDistantMatte": true,
+      "replacesProceduralProps": true,
+      "lods": [
+        {
+          "url": "stages/renshujo-lod1.glb",
+          "distance": 260
+        },
+        {
+          "url": "stages/renshujo-lod2.glb",
+          "distance": 460
+        }
+      ]
+    }
+  ]
 }

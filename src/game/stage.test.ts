@@ -129,19 +129,46 @@ describe('generateStage', () => {
     }
   });
 
-  it('全固定ステージの先頭地区は中心ランドマークとして実配置される', () => {
+  it('巨大修道城面を除く全固定ステージは9地区以上を実体配置する', () => {
     for (const def of STAGES) {
-      const first = def.recipe?.buildings[0];
-      if (!first) continue;
-      const boxes = generateStage(def).boxes.filter((box) => box.district === first);
+      const layout = generateStage(def);
+      const isAbbey = def.recipe?.buildings.includes('abbey') ?? false;
+      expect(layout.districtPlacements.length, `${def.id}: playable districts`)
+        .toBeGreaterThanOrEqual(isAbbey ? 1 : 9);
+    }
+  });
+
+  it('全固定ステージの最大ランドマーク地区は原点へ実配置される', () => {
+    for (const def of STAGES) {
+      const layout = generateStage(def);
+      const central = layout.districtPlacements[0];
+      if (!central) continue;
+      const first = central.kind;
+      const boxes = layout.boxes.filter((box) => box.district === first);
+      expect(central.cx, `${def.id}: central x`).toBe(0);
+      expect(central.cz, `${def.id}: central z`).toBe(0);
       expect(boxes.length, `${def.id}: ${first}`).toBeGreaterThan(0);
-      const xMin = Math.min(...boxes.map((box) => box.x - box.w / 2));
-      const xMax = Math.max(...boxes.map((box) => box.x + box.w / 2));
-      const zMin = Math.min(...boxes.map((box) => box.z - box.d / 2));
-      const zMax = Math.max(...boxes.map((box) => box.z + box.d / 2));
-      // 外階段/デッキが片側に張り出す建築も、地区全体の中心は原点から4m以内。
-      expect(Math.abs((xMin + xMax) / 2), `${def.id}: ${first} center x`).toBeLessThanOrEqual(4);
-      expect(Math.abs((zMin + zMax) / 2), `${def.id}: ${first} center z`).toBeLessThanOrEqual(4);
+      // 同種地区を複数配置する高密度マップでも、先頭地区の実体床／屋根が原点を覆う。
+      // 全同種AABBの総外接矩形では、外周の追加地区まで含まれて中心判定にならない。
+      if (first === 'abbey') {
+        // 修道城は原点が中庭なので床・壁で覆わない。単一abbeyの総外接中心を確認する。
+        const xMin = Math.min(...boxes.map((box) => box.x - box.w / 2));
+        const xMax = Math.max(...boxes.map((box) => box.x + box.w / 2));
+        const zMin = Math.min(...boxes.map((box) => box.z - box.d / 2));
+        const zMax = Math.max(...boxes.map((box) => box.z + box.d / 2));
+        expect(Math.abs((xMin + xMax) / 2), `${def.id}: abbey center x`).toBeLessThanOrEqual(4);
+        expect(Math.abs((zMin + zMax) / 2), `${def.id}: abbey center z`).toBeLessThanOrEqual(4);
+      } else {
+        expect(
+          boxes.some((box) =>
+            box.x - box.w / 2 <= 0
+            && box.x + box.w / 2 >= 0
+            && box.z - box.d / 2 <= 0
+            && box.z + box.d / 2 >= 0,
+          ),
+          `${def.id}: ${first} covers origin`,
+        ).toBe(true);
+      }
     }
   });
 
@@ -179,6 +206,25 @@ describe('generateStage', () => {
         });
         expect(connected, `${def.id}:${stair.district} stair top @ ${stair.x},${stair.z},y${top}`).toBe(true);
       }
+    }
+  });
+
+  it('通常面とゾンビ面の巨大修道城は内部戦闘導線を持つ', () => {
+    for (const stageId of ['takadai', 'z04']) {
+      const def = STAGES.find((stage) => stage.id === stageId)!;
+      const abbey = generateStage(def).boxes.filter((box) => box.district === 'abbey');
+      expect(abbey.length, stageId).toBeGreaterThan(150);
+      const xMin = Math.min(...abbey.map((box) => box.x - box.w / 2));
+      const xMax = Math.max(...abbey.map((box) => box.x + box.w / 2));
+      const zMin = Math.min(...abbey.map((box) => box.z - box.d / 2));
+      const zMax = Math.max(...abbey.map((box) => box.z + box.d / 2));
+      expect(Math.max(xMax - xMin, zMax - zMin), `${stageId}: long span`).toBeGreaterThanOrEqual(90);
+      expect(Math.min(xMax - xMin, zMax - zMin), `${stageId}: short span`).toBeGreaterThanOrEqual(70);
+      const stairs = abbey.filter((box) => Math.abs(box.h - 0.3) < 1e-6);
+      expect(stairs.length, `${stageId}: stairs`).toBeGreaterThanOrEqual(90);
+      expect(abbey.some((box) => box.y + box.h / 2 > 17), `${stageId}: towers`).toBe(true);
+      expect(abbey.filter((box) => box.h <= 0.6 && box.y > 5).length, `${stageId}: upper walks`).toBeGreaterThanOrEqual(8);
+      expect(abbey.filter((box) => box.h >= 7 && box.w <= 2.5 && box.d <= 2.5).length, `${stageId}: columns`).toBeGreaterThanOrEqual(20);
     }
   });
 
@@ -327,12 +373,13 @@ describe('generateThemeObjects', () => {
     }
   });
 
-  it('パイロット段階: 全ステージのプロップbox数が80以下', () => {
-    // R41a: prop mergeにより実DC=1/ステージのため上限を80(旧40×2)へ緩和
+  it('高密度化後も全ステージのプロップbox数が110以下', () => {
+    // Blender/Three.jsの双方で素材単位へマージされ実DCは固定。Rapier側の静的Box数だけを
+    // 100前後に制限し、オブジェクト密度とR100時のCPU余裕を両立する。
     for (const def of STAGES) {
       const rand = mulberry32(def.seed ^ 0x7e57ab1e);
       const boxes = generateThemeObjects(def, [], rand);
-      expect(boxes.length, `${def.id}: DC budget (${boxes.length} boxes)`).toBeLessThanOrEqual(80);
+      expect(boxes.length, `${def.id}: static prop budget (${boxes.length} boxes)`).toBeLessThanOrEqual(110);
     }
   });
 
@@ -381,11 +428,11 @@ describe('ミニシーン(scatter=scene)', () => {
     }
   });
 
-  it('シーン散布を追加しても全ステージのプロップbox数は80以下のまま', () => {
+  it('シーン散布を追加しても全ステージのプロップbox数は110以下のまま', () => {
     for (const def of STAGES) {
       const rand = mulberry32(def.seed ^ 0x7e57ab1e);
       const boxes = generateThemeObjects(def, [], rand);
-      expect(boxes.length, `${def.id}: DC budget (${boxes.length} boxes)`).toBeLessThanOrEqual(80);
+      expect(boxes.length, `${def.id}: static prop budget (${boxes.length} boxes)`).toBeLessThanOrEqual(110);
     }
   });
 

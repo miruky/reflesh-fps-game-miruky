@@ -1209,6 +1209,18 @@ export class Match {
     if (ninjaHp300Eligible(config.primaryId, config.mode)) playerOpts.maxHp = 300;
     if (config.hellMode) playerOpts.regenPerS = 12.5;
     this.player = new Player(this.physics, spawn, playerOpts);
+    // Every large stage opens toward its central landmark.  Previously only
+    // the training range did this, so corner spawns looked straight along an
+    // empty map edge and the stage-defining castle/port/temple sat off-screen.
+    // This changes only the initial view; mouse/controller input takes over
+    // immediately and player position/collision remain untouched.
+    {
+      const toCenter = new THREE.Vector3(-spawn.x, 0, -spawn.z);
+      if (toCenter.lengthSq() > 0.0001) {
+        const forward = toCenter.normalize();
+        this.player.yaw = Math.atan2(-forward.x, -forward.z);
+      }
+    }
     this.tags.set(this.player.collider.handle, { kind: 'player' });
     this.trainingRange = new TrainingRange({
       scene: this.scene,
@@ -1680,7 +1692,7 @@ export class Match {
     // Sky.js を可視背景にするため background は使わない
     this.scene.background = null;
     this.scene.fog = new THREE.FogExp2(
-      palette.fog,
+      new THREE.Color(palette.fog).multiplyScalar(lighting.fogColorScale),
       cinematicVisualFogDensity(palette.fogDensity, mood, readableUndead),
     );
     // R16: calcSpotRate(霧/暗所ほど発見が遅い)用にpaletteの霧密度・環境光を保持する
@@ -1814,6 +1826,7 @@ export class Match {
       if ((spec as { legacyHorizon?: boolean }).legacyHorizon === true) continue;
       const brkSpec = (spec as { breakable?: { hp: number } }).breakable;
       const isBreakable = !isGhost && brkSpec !== undefined;
+      const isGlazing = spec.glazing === true;
       const visualColor = cinematicStructuralColor(spec, palette);
       const visualColorKey = `#${visualColor.getHexString()}`;
 
@@ -1874,14 +1887,18 @@ export class Match {
         // 下の `!isDecor` 節)で従来どおり不変に処理される — 視覚メッシュの差し替えのみ。
         if (!(isProp && skipBoxes.has(spec))) {
           const surfaceKit = structuralSurfaceKit(spec.district);
-          const key = `${visualColorKey}:${spec.emissive}:${surfaceKit}`;
+          const key = `${visualColorKey}:${spec.emissive}:${surfaceKit}:${isGlazing}`;
           let material = materials.get(key);
           if (!material) {
             material = new THREE.MeshStandardMaterial({
               color: visualColor,
-              roughness: 0.72, // IBL投入で空の照り返しを拾えるよう少し滑らかに
-              metalness: 0.0,
+              roughness: isGlazing ? 0.14 : 0.72, // ガラスは空IBLを細く拾う
+              metalness: isGlazing ? 0.18 : 0.0,
               vertexColors: true,
+              transparent: isGlazing,
+              opacity: isGlazing ? 0.46 : 1,
+              depthWrite: !isGlazing,
+              side: isGlazing ? THREE.DoubleSide : THREE.FrontSide,
             });
             if (spec.emissive) {
               material.emissive = new THREE.Color(spec.color);
@@ -1892,7 +1909,7 @@ export class Match {
               material.envMapIntensity = 0.35; // 自発光体はIBLに打ち消されないよう抑制
             }
             // 実PBR風の材質差、雨だれ、微細凹凸を静的シェーダで付与。追加DC/texture uploadなし。
-            applySurfaceKit(material, surfaceKit);
+            if (!isGlazing) applySurfaceKit(material, surfaceKit);
             materials.set(key, material);
           }
           // R41a: prop:true の非破壊ボックスはマージ描画(DC削減)。shadowCaster のみ個別メッシュ。
@@ -1978,6 +1995,9 @@ export class Match {
     // 差し替わる分、正味のDC増はこれ未満に収まる=プランナー#7予算+8DC以内)。
     // rand は視覚専用の独立mulberry32(stage.seedから派生。stage.ts内部の既存乱数消費列は
     // 一切消費しない=既存ステージの配置結果・当たり判定は完全不変)。
+    const proceduralPropRoot = new THREE.Group();
+    proceduralPropRoot.name = 'stage:procedural-props';
+    this.scene.add(proceduralPropRoot);
     if (v2Placements.length > 0) {
       const visRand = mulberry32(this.config.stage.seed ^ 0x53a1e42c);
       const familyGeos = buildPropVisualFamilyGeometries(v2Placements, palette, visRand);
@@ -1989,7 +2009,7 @@ export class Match {
         const flags = propFamilyShadowFlags(familyKey);
         mesh.castShadow = flags.castShadow;
         mesh.receiveShadow = flags.receiveShadow;
-        this.scene.add(mesh);
+        proceduralPropRoot.add(mesh);
       }
     }
 
@@ -2021,6 +2041,7 @@ export class Match {
     });
     this.scene.add(stageKit);
     this.cinematicDetailRoots.push(stageKit);
+    const distantStageMatte = stageKit.getObjectByName('aaa:distant-stage-matte-root');
     // 障害物のビジュアル装飾(当たり判定には一切触れない・純粋に飾り)
     buildStagePropDecor(this.scene, visibleBoxes, palette);
     this.buildAtmosphere(this.config.stage.palette, this.config.stage.size);
@@ -2075,15 +2096,26 @@ export class Match {
       tier,
       propPlacements: v2Placements,
     }).then((report) => {
-      if (this.aaaAssetPipeline === pipeline) this.scene.userData.aaaAssetReport = report;
+      if (this.aaaAssetPipeline === pipeline) {
+        this.scene.userData.aaaAssetReport = report;
+        globalThis.dispatchEvent?.(new CustomEvent('hibana:aaa-assets', { detail: report }));
+        // Blender製の実3D遠景が正常に読み込まれた時だけ、旧サムネイル画像の
+        // シリンダーマットを外す。GLB失敗時は従来背景を残してfail-openする。
+        if (pipeline.hasDistantWorldReplacement && distantStageMatte) distantStageMatte.visible = false;
+        // 破壊可能プロップはBlenderへ焼かず個別Three.jsメッシュを維持する。
+        // 非破壊プロップだけ、GLBの読込・compile成功後に旧統合メッシュを隠す。
+        if (pipeline.hasProceduralPropReplacement) proceduralPropRoot.visible = false;
+      }
     }).catch((error: unknown) => {
       if (this.aaaAssetPipeline === pipeline) {
-        this.scene.userData.aaaAssetReport = {
+        const report = {
           requested: 0,
           loaded: 0,
           failed: 1,
           errors: [error instanceof Error ? error.message : String(error)],
         };
+        this.scene.userData.aaaAssetReport = report;
+        globalThis.dispatchEvent?.(new CustomEvent('hibana:aaa-assets', { detail: report }));
       }
     });
   }
@@ -2313,8 +2345,8 @@ export class Match {
     };
 
     // ── プロシージャル大気(Sky.js, 大気散乱)を可視背景にする ──
-    // R20: 可視の空(=太陽/日差し)を極限まで暗める(scale0.16/clamp0.5)。clampはbloom閾値(0.9)
-    // 未満なので太陽ディスクのブルーム光そのものが立たなくなる=眩しさが消える。ステージ全体の
+    // 可視空はムード別scale/clampを適用し、全てBloom閾値(0.9)未満に保つ。
+    // これにより太陽ディスクのブルーム光を立てず、昼/夜/雪の地平輝度だけを分離する。ステージ全体の
     // 明るさはシーンのライト(sun/Hemi/IBL)が担い、下のenvSky(IBLベイク)は据え置くので地面は暗くならない。
     const sky = new Sky();
     sky.scale.setScalar(Math.max(10000, size * 40));
@@ -2326,13 +2358,17 @@ export class Match {
     skyU.mieCoefficient.value = mieCoefficient;
     skyU.mieDirectionalG.value = mieDirectionalG;
     skyU.sunPosition.value.copy(this.sunDir);
+    const lighting = cinematicLightingProfile(
+      resolveMood(palette),
+      /^z\d\d$/.test(this.config.stage.id),
+    );
     this.cinematicSky = installCinematicSky(sky, {
       palette,
       mood: resolveMood(palette),
       tier: resolveGraphicsTier(this.settings.graphicsQuality, this.renderer.capabilities.isWebGL2),
       reduceMotion: this.settings.reduceMotion,
-      skyScale: 0.16,
-      skyClamp: 0.5,
+      skyScale: lighting.visibleSkyScale,
+      skyClamp: lighting.visibleSkyClamp,
     });
     this.visibleSkyUniforms = {
       uSkyScale: this.cinematicSky.uniforms.skyScale,
@@ -2359,10 +2395,6 @@ export class Match {
     // IBLは影を落とさないので sun.castShadow/影の落ち方には一切影響しない。
     const envIntensity = palette.environmentIntensity ?? (elevation < 6 ? 0.4 : 0.85);
     // R15: 白飛び完全解消のため天球IBLの上限を更に下げる(明るい空が金属/明部を洗い流すのを抑制)
-    const lighting = cinematicLightingProfile(
-      resolveMood(palette),
-      /^z\d\d$/.test(this.config.stage.id),
-    );
     this.scene.environmentIntensity = Math.min(envIntensity, lighting.environmentCap);
     envSky.geometry.dispose();
     (envSky.material as THREE.Material).dispose();
@@ -2372,9 +2404,8 @@ export class Match {
     // R13: snow/overcast は空へ寄せすぎると白飛びして「バグっぽい霧」になるため寄せを弱め、
     // フォグ固有の色相(銀青/霞)を保って意図的な大気に見せる
     if (this.scene.fog) {
-      const fogMood = resolveMood(palette);
-      const skyLerp = fogMood === 'snow' || fogMood === 'overcast' ? 0.2 : 0.35;
-      (this.scene.fog as THREE.FogExp2).color.lerp(new THREE.Color(palette.sky), skyLerp);
+      const skyFogTarget = new THREE.Color(palette.sky).multiplyScalar(lighting.fogColorScale);
+      (this.scene.fog as THREE.FogExp2).color.lerp(skyFogTarget, lighting.fogSkyMix);
     }
 
     // 四隅の小型ビーコンだけを残す。旧外周ライトバーはステージ幅(310m級)を
